@@ -1,21 +1,19 @@
 """
-Yahoo Finance（非公式API）で日本株の現在値を監視するツール（発注機能なし）
-=============================================================
+Yahoo Finance（非公式API）で日本株を監視・スクリーニングするツール（発注機能なし）
+=================================================================
 
-このスクリプトは、Yahoo Finance の「非公式API」から現在値（regularMarketPrice）を取得して、
-指定した価格を上抜けたら「買い候補」として表示します。
+このスクリプトは、Yahoo Finance の「非公式API」からデータを取得して、
+WATCHリストに入れた複数銘柄を 1 秒ごとに監視し、条件に合う銘柄だけ表示します。
+
+Issue #1 の要件（スクリーニング条件）:
+- WATCHリストで複数銘柄指定（例: 7203.T）
+- 前日比 +1%以上
+- 当日高値の 98%以上
+- 出来高あり（0より大きい）
 
 注意:
 - 非公式APIなので、仕様変更・アクセス制限で動かなくなる可能性があります。
 - 取引判断や損益については自己責任でお願いします（本ツールは発注しません）。
-
-要件:
-- requests を使う
-- 銘柄コードは 7203.T の形式（例: トヨタ = 7203.T）
-- 1秒ごとに株価取得
-- 指定価格を上抜けたら買い候補として表示
-- 発注機能なし
-- 1つのPythonファイルで完結
 
 動作確認の目安:
   Python 3.10+（3.9でもたぶん動きます）
@@ -51,6 +49,23 @@ YAHOO_QUOTE_URL = "https://query1.finance.yahoo.com/v7/finance/quote"
 # 例:
 # https://query1.finance.yahoo.com/v8/finance/chart/7203.T?interval=1m&range=1d
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+
+# ----------------------------
+# 監視したい銘柄（ここを編集）
+# ----------------------------
+# 銘柄コードは「7203.T」の形式です。
+# 例: トヨタ 7203.T / ソフトバンクG 9984.T
+WATCH: list[str] = [
+    "7203.T",
+    # "9984.T",
+]
+
+# ----------------------------
+# スクリーニング条件（ここを編集）
+# ----------------------------
+MIN_CHANGE_PCT = 1.0          # 前日比（%）がこの値以上
+MIN_RATIO_TO_DAY_HIGH = 0.98  # 現在値が当日高値の何%以上か（0.98 = 98%）
+REQUIRE_VOLUME = True         # 出来高が 0 より大きいことを必須にする
 
 
 def _browser_headers(referer: Optional[str] = None) -> dict[str, str]:
@@ -98,6 +113,9 @@ class Quote:
     symbol: str
     price: float
     currency: str
+    change_percent: Optional[float]  # 前日比（%）
+    day_high: Optional[float]        # 当日高値
+    volume: Optional[float]          # 出来高（整数が多いが float で受ける）
     market_time_utc: Optional[datetime]
 
 
@@ -145,13 +163,24 @@ def _fetch_quote_v7(session: requests.Session, symbol: str, timeout_sec: float =
         raise RuntimeError(f"regularMarketPrice が取得できませんでした。symbol={symbol} データ={q0!r}")
 
     currency = q0.get("currency") or ""
+    change_percent = q0.get("regularMarketChangePercent")
+    day_high = q0.get("regularMarketDayHigh")
+    volume = q0.get("regularMarketVolume")
 
     market_time = q0.get("regularMarketTime")
     market_time_utc = None
     if isinstance(market_time, (int, float)):
         market_time_utc = datetime.fromtimestamp(float(market_time), tz=timezone.utc)
 
-    return Quote(symbol=symbol, price=float(price), currency=str(currency), market_time_utc=market_time_utc)
+    return Quote(
+        symbol=symbol,
+        price=float(price),
+        currency=str(currency),
+        change_percent=float(change_percent) if isinstance(change_percent, (int, float)) else None,
+        day_high=float(day_high) if isinstance(day_high, (int, float)) else None,
+        volume=float(volume) if isinstance(volume, (int, float)) else None,
+        market_time_utc=market_time_utc,
+    )
 
 
 def _fetch_quote_v8_chart(session: requests.Session, symbol: str, timeout_sec: float = 10.0) -> Quote:
@@ -186,6 +215,9 @@ def _fetch_quote_v8_chart(session: requests.Session, symbol: str, timeout_sec: f
     meta = r0.get("meta") or {}
 
     currency = str(meta.get("currency") or "")
+    change_percent = meta.get("regularMarketChangePercent")
+    day_high = meta.get("regularMarketDayHigh")
+    volume = meta.get("regularMarketVolume")
 
     # 1) meta.regularMarketPrice があればそれを使う（「現在値」として最もそれっぽい）
     price = meta.get("regularMarketPrice")
@@ -209,7 +241,15 @@ def _fetch_quote_v8_chart(session: requests.Session, symbol: str, timeout_sec: f
     if isinstance(market_time, (int, float)):
         market_time_utc = datetime.fromtimestamp(float(market_time), tz=timezone.utc)
 
-    return Quote(symbol=symbol, price=float(price), currency=currency, market_time_utc=market_time_utc)
+    return Quote(
+        symbol=symbol,
+        price=float(price),
+        currency=currency,
+        change_percent=float(change_percent) if isinstance(change_percent, (int, float)) else None,
+        day_high=float(day_high) if isinstance(day_high, (int, float)) else None,
+        volume=float(volume) if isinstance(volume, (int, float)) else None,
+        market_time_utc=market_time_utc,
+    )
 
 
 def fetch_quote(session: requests.Session, symbol: str, timeout_sec: float = 10.0) -> Quote:
@@ -254,25 +294,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         description="Yahoo Finance（非公式API）で日本株の現在値を1秒ごとに監視し、上抜けを表示します（発注なし）。",
     )
     p.add_argument(
-        "symbol",
-        help="銘柄コード（例: 7203.T / 9984.T）",
-    )
-    p.add_argument(
-        "target_price",
-        type=float,
-        help="上抜け判定する価格（例: 3000）",
-    )
-    p.add_argument(
         "--interval",
         type=float,
         default=1.0,
         help="取得間隔（秒）。デフォルト 1.0",
     )
     p.add_argument(
-        "--print-every",
-        type=int,
-        default=1,
-        help="何回に1回、通常ログ（現在値）を表示するか。デフォルト 1（毎回表示）",
+        "--print-all",
+        action="store_true",
+        help="条件に合わない銘柄も含めて毎回ログを出します（デバッグ用）。",
+    )
+    p.add_argument(
+        "--only-changes",
+        action="store_true",
+        help="候補リストが変わった時だけ表示します（出力を減らしたい場合）。",
     )
     return p.parse_args(argv)
 
@@ -280,78 +315,92 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
-    symbol: str = args.symbol.strip()
-    target_price: float = float(args.target_price)
     interval_sec: float = float(args.interval)
-    print_every: int = int(args.print_every)
+    print_all: bool = bool(args.print_all)
+    only_changes: bool = bool(args.only_changes)
 
-    if not symbol:
-        print("symbol が空です。例: 7203.T")
-        return 2
     if interval_sec <= 0:
         print("--interval は 0 より大きい値にしてください。")
         return 2
-    if print_every <= 0:
-        print("--print-every は 1 以上にしてください。")
+    if not WATCH:
+        print("WATCH が空です。ファイル上部の WATCH に監視したい銘柄（例: 7203.T）を追加してください。")
         return 2
 
-    print("=== Yahoo Finance 日本株 価格監視（発注なし） ===")
-    print(f"- symbol: {symbol}")
-    print(f"- target_price: {target_price}")
+    print("=== Yahoo Finance 日本株 スクリーニング（発注なし） ===")
+    print(f"- watch: {', '.join(WATCH)}")
     print(f"- interval: {interval_sec} sec")
+    print(f"- 条件: 前日比 +{MIN_CHANGE_PCT}%以上 / 当日高値の {MIN_RATIO_TO_DAY_HIGH*100:.0f}%以上 / 出来高あり={REQUIRE_VOLUME}")
     print("- Ctrl+C で終了します。\n")
 
-    # 上抜け検知のために「直前の価格」を覚えておきます。
-    # 例: 前回 2999（未達）→今回 3001（達成）なら「上抜け」扱い。
-    prev_price: Optional[float] = None
-
-    # 一度上抜けを通知したあと、価格がターゲット以下に戻るまで再通知しないためのフラグ。
-    # これがないと、上抜け後にずっと「買い候補」が出続けてうるさくなります。
-    already_notified: bool = False
+    # only_changes 用。直前に出した候補セットを覚えておきます。
+    last_candidates: set[str] = set()
 
     # requests.Session を使うと、接続の再利用ができて少し効率が良くなります。
     with requests.Session() as session:
-        n = 0
         try:
             while True:
                 loop_started = time.perf_counter()
-                n += 1
 
-                try:
-                    q = fetch_quote(session, symbol)
-                except requests.HTTPError as e:
-                    # 429（Too Many Requests）などが起きたら、間隔を伸ばす等が必要かもしれません。
-                    print(f"[{now_str()}] HTTPエラー: {e}")
-                    q = None
-                except Exception as e:
-                    print(f"[{now_str()}] 取得エラー: {e}")
-                    q = None
+                quotes: list[Quote] = []
+                for sym in WATCH:
+                    try:
+                        q = fetch_quote(session, sym)
+                        quotes.append(q)
+                    except requests.HTTPError as e:
+                        # 429（Too Many Requests）などが起きたら、間隔を伸ばす等が必要かもしれません。
+                        print(f"[{now_str()}] {sym} HTTPエラー: {e}")
+                    except Exception as e:
+                        print(f"[{now_str()}] {sym} 取得エラー: {e}")
 
-                if q is not None:
-                    # 通常ログ（見たい人向け）
-                    if n % print_every == 0:
-                        mt = q.market_time_utc.isoformat() if q.market_time_utc else "N/A"
-                        print(f"[{now_str()}] price={q.price} {q.currency} (market_time_utc={mt})")
+                # 条件判定して「候補だけ」残す
+                candidates: list[Quote] = []
+                for q in quotes:
+                    # 必須項目が欠ける場合は判定できないので除外（非公式APIなので起こり得ます）
+                    if q.change_percent is None or q.day_high is None:
+                        if print_all:
+                            print(f"[{now_str()}] {q.symbol} 判定不可（change%/day_high が取得できない）")
+                        continue
 
-                    # 上抜け判定（「前回が target 以下」かどうかがポイント）
-                    crossed_up = (
-                        prev_price is not None
-                        and prev_price <= target_price
-                        and q.price > target_price
-                    )
+                    cond_change = q.change_percent >= MIN_CHANGE_PCT
+                    cond_high = q.price >= (MIN_RATIO_TO_DAY_HIGH * q.day_high)
 
-                    if crossed_up and not already_notified:
-                        print(f"\n[{now_str()}] 買い候補: {symbol}")
-                        print(f"  - 現在値: {q.price} {q.currency}")
-                        print(f"  - 指定価格: {target_price} を上抜け")
+                    cond_volume = True
+                    if REQUIRE_VOLUME:
+                        # volume が None のときは「出来高あり」を満たせない扱いにします
+                        cond_volume = (q.volume is not None) and (q.volume > 0)
+
+                    if cond_change and cond_high and cond_volume:
+                        candidates.append(q)
+                    elif print_all:
+                        # デバッグ用: なぜ落ちたかをざっくり見られるようにします
+                        v = "N/A" if q.volume is None else str(int(q.volume))
+                        print(
+                            f"[{now_str()}] {q.symbol} NG "
+                            f"(price={q.price}, chg%={q.change_percent:.2f}, high={q.day_high}, vol={v})"
+                        )
+
+                # 出力: 条件に合う銘柄だけ表示
+                candidate_symbols = {q.symbol for q in candidates}
+                should_print = (not only_changes) or (candidate_symbols != last_candidates)
+                if should_print:
+                    if candidates:
+                        print(f"\n[{now_str()}] 条件一致: {len(candidates)} 銘柄")
+                        # 見やすいように、前日比%が大きい順に並べます
+                        for q in sorted(candidates, key=lambda x: x.change_percent or -999, reverse=True):
+                            v = "N/A" if q.volume is None else str(int(q.volume))
+                            ratio = (q.price / q.day_high) if q.day_high else 0.0
+                            mt = q.market_time_utc.isoformat() if q.market_time_utc else "N/A"
+                            print(
+                                f"  - {q.symbol}: price={q.price} {q.currency}, "
+                                f"chg%={q.change_percent:.2f}, "
+                                f"day_high={q.day_high} (ratio={ratio*100:.2f}%), "
+                                f"vol={v}, time_utc={mt}"
+                            )
                         print()
-                        already_notified = True
+                    else:
+                        print(f"[{now_str()}] 条件一致: 0 銘柄")
 
-                    # いったん上抜け後、価格が target 以下に戻ったら「次の上抜け」で再通知できるようにする
-                    if already_notified and q.price <= target_price:
-                        already_notified = False
-
-                    prev_price = q.price
+                last_candidates = candidate_symbols
 
                 # 「1秒ごと」に近づけるために、処理時間を差し引いて sleep します。
                 elapsed = time.perf_counter() - loop_started
