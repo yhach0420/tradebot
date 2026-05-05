@@ -300,6 +300,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="取得間隔（秒）。デフォルト 1.0",
     )
     p.add_argument(
+        "--watch",
+        type=str,
+        default="",
+        help="監視銘柄をカンマ区切りで指定（例: 7203.T,9984.T）。指定するとファイル上部の WATCH を上書きします。",
+    )
+    p.add_argument(
+        "--watch-file",
+        type=str,
+        default="",
+        help="監視銘柄を1行1銘柄で書いたファイルパス。空行と # から始まる行は無視します。--watch より優先。",
+    )
+    p.add_argument(
         "--print-all",
         action="store_true",
         help="条件に合わない銘柄も含めて毎回ログを出します（デバッグ用）。",
@@ -312,22 +324,51 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _load_watch_from_file(path: str) -> list[str]:
+    with open(path, "r", encoding="utf-8") as f:
+        out: list[str] = []
+        for line in f:
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            out.append(s)
+        return out
+
+
+def _parse_watch_csv(s: str) -> list[str]:
+    # "7203.T, 9984.T" のような入力を想定
+    items = [x.strip() for x in s.split(",")]
+    return [x for x in items if x]
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
     interval_sec: float = float(args.interval)
     print_all: bool = bool(args.print_all)
     only_changes: bool = bool(args.only_changes)
+    watch_csv: str = str(args.watch or "")
+    watch_file: str = str(args.watch_file or "")
+
+    watch: list[str] = list(WATCH)
+    if watch_file:
+        try:
+            watch = _load_watch_from_file(watch_file)
+        except Exception as e:
+            print(f"--watch-file の読み込みに失敗しました: {watch_file} ({e})")
+            return 2
+    elif watch_csv:
+        watch = _parse_watch_csv(watch_csv)
 
     if interval_sec <= 0:
         print("--interval は 0 より大きい値にしてください。")
         return 2
-    if not WATCH:
-        print("WATCH が空です。ファイル上部の WATCH に監視したい銘柄（例: 7203.T）を追加してください。")
+    if not watch:
+        print("WATCH が空です。ファイル上部の WATCH を編集するか、--watch / --watch-file で指定してください。")
         return 2
 
     print("=== Yahoo Finance 日本株 スクリーニング（発注なし） ===")
-    print(f"- watch: {', '.join(WATCH)}")
+    print(f"- watch: {', '.join(watch)}")
     print(f"- interval: {interval_sec} sec")
     print(f"- 条件: 前日比 +{MIN_CHANGE_PCT}%以上 / 当日高値の {MIN_RATIO_TO_DAY_HIGH*100:.0f}%以上 / 出来高あり={REQUIRE_VOLUME}")
     print("- Ctrl+C で終了します。\n")
@@ -342,7 +383,7 @@ def main(argv: list[str]) -> int:
                 loop_started = time.perf_counter()
 
                 quotes: list[Quote] = []
-                for sym in WATCH:
+                for sym in watch:
                     try:
                         q = fetch_quote(session, sym)
                         quotes.append(q)
