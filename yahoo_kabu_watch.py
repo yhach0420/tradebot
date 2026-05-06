@@ -109,6 +109,15 @@ VWAP_DISTANCE_PCT = 0.5  # (price - vwap) / vwap * 100 >= 0.5
 # - そこで「entry候補の99.5%以上まで近づいたとき」だけ条件一致にします。
 ENTRY_NEAR_RATIO = 0.996
 
+# Entryの算出方法（新仕様）:
+# - 以前: entry = 当日高値(day_high)
+# - 変更: entry = 直近5分高値(recent_5m_high) * ENTRY_BREAKOUT_BUFFER
+#
+# ねらい:
+# - 当日高値は「すでに遠い」ことが多く、強い上昇でも Entry未成立 になりやすい
+# - 直近5分高値ベースにすると、ブレイクの“今この瞬間”に寄せやすい
+ENTRY_BREAKOUT_BUFFER = 1.001  # 0.1%上抜け（例: 5000円 → 5005円）
+
 # ----------------------------
 # 出来高急増（5日平均出来高との比較）
 # ----------------------------
@@ -162,6 +171,17 @@ LEVEL_CHANGE_YEN = 10   # 10円以上変わったら通知
 # 仕様:
 # - 2〜3分連続で条件不一致になった場合のみ条件外れ通知する
 EXIT_CONFIRM_COUNT = 3
+
+# ----------------------------
+# Entry上抜け（breakout）状態のリセット条件
+# ----------------------------
+# 目的:
+# - breakout_state が「昔のentry突破」を引きずると、新しいentry候補で再度ブレイクしても
+#   🚀通知が出なくなります。
+#
+# 仕様:
+# - entry が前回「突破済みになった時のentry」から 0.3%以上変わったら breakout_state を False に戻す
+BREAKOUT_ENTRY_RESET_PCT = 0.3
 
 # ----------------------------
 # 25日移動平均（MA25）取得
@@ -263,6 +283,188 @@ class IntradaySignals:
     vwap: Optional[float]
     vwap_distance_pct: Optional[float]
     vol_3m_gt_prev_3m: Optional[bool]
+
+
+@dataclass
+class ReplaySignalEval:
+    """
+    Replayモード専用:
+    🚀 Entry上抜け（breakout）が出た瞬間を「signal」として記録し、
+    その後の価格推移から期待値（伸びたか/耐えたか）を簡易検証します。
+
+    注意:
+    - 通常監視モードには影響させない（Replayモード内だけで使う）
+    - Discord通知は不要（ターミナル表示のみ）
+    """
+
+    symbol: str
+
+    # signal時点の情報
+    signal_time_utc: datetime
+    signal_price: float
+    entry_price: float
+    stop_price: float
+    take_price: float
+
+    # signal後の推移（signal時点から更新していく）
+    max_price_after: float
+    min_price_after: float
+    last_price_after: float
+
+    # 到達判定（固定take/stopは参考情報として残す）
+    take_hit: bool = False
+    stop_hit: bool = False
+
+    # 新しい利確ロジック:
+    # 1) signal_price から +1.0% 到達したら partial_take_hit=True
+    partial_take_hit: bool = False
+    partial_take_time_utc: Optional[datetime] = None
+
+    # 2) partial_take_hit 後のトレーリング決済
+    trailing_exit_price: Optional[float] = None
+    trailing_exit_time_utc: Optional[datetime] = None
+    trailing_exit_reason: Optional[str] = None  # "VWAP" / "recent_5m_low"
+
+    # 最終損益（entry基準）
+    final_profit_pct: Optional[float] = None
+
+    resolved: bool = False
+    result: str = "HOLD"  # WIN / LOSE / HOLD
+
+    def update_with_price(
+        self,
+        *,
+        time_utc: datetime,
+        price: float,
+        vwap: Optional[float],
+        recent_5m_low: Optional[float],
+    ) -> None:
+        """
+        価格更新（新しい利確ロジック版）
+
+        - max/min を更新
+        - stop は常に最優先で LOSE（仕様）
+        - 固定take_price は参考として take_hit だけ記録（結果判定には使わない）
+        - 新しい利確:
+            1) signal_price から +1% 到達で partial_take_hit
+            2) partial_take_hit 後は (price < VWAP) または (price < recent_5m_low) で EXIT
+        """
+        p = float(price)
+        self.last_price_after = p
+        if p > self.max_price_after:
+            self.max_price_after = p
+        if p < self.min_price_after:
+            self.min_price_after = p
+
+        if self.resolved:
+            return
+
+        # 固定takeは参考として到達フラグのみ
+        if p >= float(self.take_price):
+            self.take_hit = True
+
+        # stop は最優先（仕様: stop到達なら LOSE）
+        if p <= float(self.stop_price):
+            self.stop_hit = True
+            self.resolved = True
+            self.result = "LOSE"
+            if self.entry_price > 0:
+                self.final_profit_pct = ((p - self.entry_price) / self.entry_price) * 100.0
+            return
+
+        # partial take（signal_price +1% 到達）
+        if not self.partial_take_hit:
+            target = float(self.signal_price) * 1.01
+            if p >= target:
+                self.partial_take_hit = True
+                self.partial_take_time_utc = time_utc
+                # partial_take_hit=True なら最低 HOLD 以上（仕様）
+                self.result = "HOLD"
+            return
+
+        # partial_take_hit 後のトレーリング決済
+        if self.partial_take_hit:
+            if isinstance(vwap, (int, float)) and p < float(vwap):
+                self.trailing_exit_price = p
+                self.trailing_exit_time_utc = time_utc
+                self.trailing_exit_reason = "VWAP"
+                self.resolved = True
+            elif isinstance(recent_5m_low, (int, float)) and p < float(recent_5m_low):
+                self.trailing_exit_price = p
+                self.trailing_exit_time_utc = time_utc
+                self.trailing_exit_reason = "recent_5m_low"
+                self.resolved = True
+
+            if self.resolved:
+                if self.entry_price > 0:
+                    self.final_profit_pct = ((p - self.entry_price) / self.entry_price) * 100.0
+                # partial_take_hit=True なら最低HOLD。利益が残っていればWIN。
+                if self.final_profit_pct is not None and self.final_profit_pct > 0:
+                    self.result = "WIN"
+                else:
+                    self.result = "HOLD"
+                return
+
+    def max_profit_pct(self) -> float:
+        """
+        最大利益率（%）:
+        - entry を基準にします（エントリー基準の期待値を見るため）
+        """
+        if self.entry_price <= 0:
+            return 0.0
+        return ((self.max_price_after - self.entry_price) / self.entry_price) * 100.0
+
+    def max_drawdown_pct(self) -> float:
+        """
+        最大ドローダウン（%）:
+        - entry を基準に、最悪（min）を見ます（負の値になります）。
+        """
+        if self.entry_price <= 0:
+            return 0.0
+        return ((self.min_price_after - self.entry_price) / self.entry_price) * 100.0
+
+
+def calc_entry_from_signals(sig: Optional[IntradaySignals]) -> Optional[float]:
+    """
+    Entry候補価格を「直近5分高値ベース」で計算します（新仕様）。
+
+    entry = recent_5m_high * ENTRY_BREAKOUT_BUFFER
+
+    - recent_5m_high が取れない場合は None（= entry も作れない）
+    """
+    if sig is None:
+        return None
+    if sig.recent_5m_high is None:
+        return None
+    base = float(sig.recent_5m_high)
+    if base <= 0:
+        return None
+    return base * float(ENTRY_BREAKOUT_BUFFER)
+
+
+# 最新の「直近シグナル」を、通知/再計算のために保持します。
+# 重要:
+# - Quote には recent_5m_high 等の情報が入っていないため、
+#   entry の計算には「そのループで計算した IntradaySignals」が必要です。
+# - そこで、各ループで計算した IntradaySignals を symbol ごとにここへ保存し、
+#   calculate_entry(q) はそれを参照して entry を統一します。
+_LATEST_INTRADAY_SIGNALS: dict[str, IntradaySignals] = {}
+
+
+def calculate_entry(q: Quote) -> Optional[float]:
+    """
+    entry 計算の共通関数（仕様: すべてここを通す）。
+
+    新仕様:
+    - entry = recent_5m_high * ENTRY_BREAKOUT_BUFFER
+
+    注意:
+    - recent_5m_high は 1分足系列から計算するため、Quote単体では分かりません。
+    - そのため、この関数は `_LATEST_INTRADAY_SIGNALS[q.symbol]` を参照します。
+    - day_high は「参考表示」だけにし、entry計算には使いません。
+    """
+    sig = _LATEST_INTRADAY_SIGNALS.get(q.symbol)
+    return calc_entry_from_signals(sig)
 
 
 def _calc_change_percent(*, price: float, previous_close: Optional[float]) -> Optional[float]:
@@ -1028,6 +1230,9 @@ def build_embed_match(
     vol_increase: Optional[bool] = None,
     entry_near_ratio: Optional[float] = None,
     entry_crossed: Optional[bool] = None,
+    cross_target_entry: Optional[float] = None,
+    prev_entry_snapshot: Optional[float] = None,
+    breakout_state: Optional[bool] = None,
 ) -> dict[str, Any]:
     """
     【条件一致】Embed
@@ -1057,6 +1262,12 @@ def build_embed_match(
         vol_inc_s = "あり" if vol_increase else "なし"
     fields.append(_embed_field("出来高増加", vol_inc_s, inline=True))
 
+    # Entry算出元（新仕様）:
+    # - Entryは「直近5分高値 × バッファ」で計算しています。
+    # - 当日高値(day_high)は参考情報として残します。
+    fields.append(_embed_field("Entry算出元", f"直近5分高値 × {ENTRY_BREAKOUT_BUFFER:.3f}", inline=False))
+    fields.append(_embed_field("当日高値(参考)", _fmt_yen(q.day_high), inline=True))
+
     # Entry接近率 / Entry上抜け（クロス）:
     # - 実戦で「今エントリー判断しやすいか」を最短で見られるように追加します。
     _ = entry_near_ratio  # 引数は「しきい値」の表示など将来拡張用（現状は entry から計算）
@@ -1069,6 +1280,22 @@ def build_embed_match(
     else:
         crossed_s = "成立" if entry_crossed else "未成立"
     fields.append(_embed_field("Entry上抜け", crossed_s, inline=True))
+
+    # Entry上抜け（クロス）の判定ターゲット:
+    # - 今回の仕様では「前ループ時点の entry」をターゲットにします。
+    # - そのため、通知で「どのentryを上抜け判定に使ったか」を明示します。
+    if cross_target_entry is not None:
+        fields.append(_embed_field("cross_target_entry", _fmt_yen(cross_target_entry), inline=True))
+    if prev_entry_snapshot is not None:
+        fields.append(_embed_field("prev_entry_snapshot", _fmt_yen(prev_entry_snapshot), inline=True))
+
+    # breakout_state（突破済み/未突破）:
+    # - 「なぜ🚀が出ないのか？」を見分けやすくするために表示します。
+    if breakout_state is None:
+        st_s = "N/A"
+    else:
+        st_s = "突破済み" if breakout_state else "未突破"
+    fields.append(_embed_field("breakout_state", st_s, inline=True))
 
     fields.append(
         _embed_field(
@@ -1112,6 +1339,8 @@ def build_embed_entry_cross(
     vwap_distance_pct: Optional[float],
     vol_increase: Optional[bool],
     entry_crossed: bool,
+    cross_target_entry: Optional[float] = None,
+    prev_entry_snapshot: Optional[float] = None,
 ) -> dict[str, Any]:
     """
     🚀 Entry上抜け（クロス）を強調するEmbed。
@@ -1131,6 +1360,9 @@ def build_embed_entry_cross(
         vol_increase=vol_increase,
         entry_near_ratio=float(ENTRY_NEAR_RATIO),
         entry_crossed=bool(entry_crossed),
+        cross_target_entry=cross_target_entry,
+        prev_entry_snapshot=prev_entry_snapshot,
+        breakout_state=True,
     )
     embed["title"] = f"🚀 Entry上抜け: {q.symbol}"
     embed["color"] = 0x3498DB  # blue
@@ -1496,10 +1728,24 @@ def run_replay(
     last_notified_levels: dict[str, tuple[float, float, float]] = {}
     # 条件外れ通知の安定化（連続不一致をカウント）
     exit_miss_count: dict[str, int] = {}
+    # Entry突破状態（最終仕様）:
+    # - False: まだentry未突破
+    # - True:  entry突破済み（突破中は再通知しない）
+    breakout_state_by_symbol: dict[str, bool] = {}
+    # breakout_state を True にした時点の entry（基準）を覚えます。
+    last_breakout_entry_by_symbol: dict[str, Optional[float]] = {}
     # Entry上抜け（クロス）判定用に「前回価格」を覚えておきます。
     prev_price_by_symbol: dict[str, Optional[float]] = {}
-    # Entry上抜け（クロス）判定用に「前回価格」を覚えておきます。
-    prev_price_by_symbol: dict[str, float] = {}
+    # （注）以前の型の残骸があるとバグるので、prev_price_by_symbol は上の Optional 版だけに統一します。
+
+    # =========================
+    # Replay期待値検証（ターミナル表示のみ）
+    # =========================
+    # - 🚀 Entry上抜けが出た瞬間を signal として記録
+    # - signal後の価格推移で take/stop 到達や最大利益/最大逆行を集計
+    replay_signals: list[ReplaySignalEval] = []
+    # symbol -> active signal indices（同一銘柄で複数signalが出た場合も追えるようにする）
+    active_signal_indices_by_symbol: dict[str, list[int]] = {}
 
     # 表示抑制用
     last_candidates: set[str] = set()
@@ -1670,6 +1916,41 @@ def run_replay(
 
                 # 全銘柄が再生し終えたら終了
                 if not quotes:
+                    # Replay終了時に「期待値検証結果」をまとめて表示します。
+                    # （Discordは不要、ターミナルだけでOK）
+                    print("\n=== Replay期待値検証（signals summary） ===")
+                    if not replay_signals:
+                        print("- signal は0件でした（🚀 Entry上抜けが発生していません）")
+                    else:
+                        for s in replay_signals:
+                            t_jst = _fmt_dt_jst_short(s.signal_time_utc)
+                            pt_t = _fmt_dt_jst_short(s.partial_take_time_utc) if s.partial_take_time_utc else "N/A"
+                            te_p = _fmt_yen(s.trailing_exit_price) if s.trailing_exit_price is not None else "N/A"
+                            te_r = s.trailing_exit_reason or "N/A"
+                            # final_profit_pct が未確定（HOLDで終了）なら、最後に見た価格で暫定計算します。
+                            if s.final_profit_pct is None and s.entry_price > 0:
+                                fp = ((float(s.last_price_after) - float(s.entry_price)) / float(s.entry_price)) * 100.0
+                            else:
+                                fp = float(s.final_profit_pct or 0.0)
+                            print(
+                                f"- {s.symbol} | "
+                                f"signal_time_jst={t_jst} | "
+                                f"signal_price={_fmt_yen(s.signal_price)} | "
+                                f"entry_price={_fmt_yen(s.entry_price)} | "
+                                f"max_price_after={_fmt_yen(s.max_price_after)} | "
+                                f"min_price_after={_fmt_yen(s.min_price_after)} | "
+                                f"max_profit_pct={s.max_profit_pct():.2f}% | "
+                                f"max_drawdown_pct={s.max_drawdown_pct():.2f}% | "
+                                f"partial_take_hit={'Y' if s.partial_take_hit else 'N'} | "
+                                f"partial_take_time={pt_t} | "
+                                f"trailing_exit_price={te_p} | "
+                                f"trailing_exit_reason={te_r} | "
+                                f"final_profit_pct={fp:.2f}% | "
+                                f"take_hit={'Y' if s.take_hit else 'N'} | "
+                                f"stop_hit={'Y' if s.stop_hit else 'N'} | "
+                                f"result={s.result}"
+                            )
+                    print()
                     print(f"\n[{now_str()}] リプレイ完了（全銘柄のデータを再生し終えました）")
                     return 0
 
@@ -1685,6 +1966,45 @@ def run_replay(
                         pct = 100
                 # 例: [15:23:00][Replay 72%] replay_time_jst=2026-05-01 15:23:00
                 print(f"[{now_str()}][Replay {pct}%] replay_time_jst={replay_t_jst}")
+
+                # -----------------------------
+                # signal後の価格推移を更新（期待値検証）
+                # -----------------------------
+                # このループの「現在値」で、未解決signalの max/min と take/stop 到達を更新します。
+                for q in quotes:
+                    idxs = active_signal_indices_by_symbol.get(q.symbol) or []
+                    if not idxs:
+                        continue
+                    # この時点では「その日の累積VWAP」は running_vwap_* から計算できます。
+                    vv = float(running_vwap_v.get(q.symbol, 0.0))
+                    vwap_now = (float(running_vwap_pv.get(q.symbol, 0.0)) / vv) if vv > 0 else None
+
+                    # recent_5m_low は「再生済みバー」から作ります（直近5分・最新足は除外）
+                    played = idx_by_symbol.get(q.symbol, 0)
+                    bars_played = bars_by_symbol.get(q.symbol, [])[:played]
+                    recent_5m_low = None
+                    if len(bars_played) >= 6:
+                        lows_window = [float(b.low) for b in bars_played[-6:-1]]
+                        if lows_window:
+                            recent_5m_low = float(min(lows_window))
+                    for idx in list(idxs):
+                        s = replay_signals[idx]
+                        s.update_with_price(
+                            time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
+                            price=float(q.price),
+                            vwap=vwap_now,
+                            recent_5m_low=recent_5m_low,
+                        )
+                        if s.resolved:
+                            # 解決済みは active から外す（次ループ以降の更新を省略）
+                            try:
+                                idxs.remove(idx)
+                            except Exception:
+                                pass
+                    if idxs:
+                        active_signal_indices_by_symbol[q.symbol] = idxs
+                    else:
+                        active_signal_indices_by_symbol.pop(q.symbol, None)
 
                 # -----------------------------
                 # ここから下は「通常の判定ロジック」と同じ流れ
@@ -1790,6 +2110,7 @@ def run_replay(
                         vwap=vwap,
                     )
                     intraday_by_symbol[q.symbol] = sig
+                    _LATEST_INTRADAY_SIGNALS[q.symbol] = sig
 
                     # 1) VWAP乖離（必須）
                     if sig.vwap_distance_pct is None:
@@ -1831,7 +2152,10 @@ def run_replay(
                     # 条件一致（新規だけ）
                     to_notify = [q for q in candidates if q.symbol not in last_discord_candidate_symbols]
                     for q in to_notify:
-                        entry = float(q.day_high)
+                        entry_calc = calculate_entry(q)
+                        if entry_calc is None:
+                            continue
+                        entry = float(entry_calc)
                         stop = entry * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
                         take = entry * (1.0 + TAKE_PROFIT_PCT_FROM_ENTRY)
                         ma25 = ma25_by_symbol.get(q.symbol)
@@ -1839,10 +2163,29 @@ def run_replay(
                             continue
                         try:
                             sig = intraday_by_symbol.get(q.symbol)
+                            # Entry上抜け（最終仕様・シンプル版）:
+                            # - 判定は「price >= entry」
+                            # - ただし、同じ銘柄で連続通知しないために breakout_state を使います。
+                            st = bool(breakout_state_by_symbol.get(q.symbol, False))
                             crossed = False
-                            prev_p = prev_price_by_symbol.get(q.symbol)
-                            if prev_p is not None and entry > 0:
-                                crossed = (float(prev_p) <= float(entry) and float(q.price) >= float(entry))
+                            if entry > 0:
+                                # 1) entry が大きく変わったら「別のentry候補」とみなして state をリセット
+                                #    （古い突破状態を引きずらないため）
+                                last_entry = last_breakout_entry_by_symbol.get(q.symbol)
+                                if st and last_entry is not None and float(last_entry) > 0:
+                                    diff_pct = (abs(float(entry) - float(last_entry)) / float(last_entry)) * 100.0
+                                    if diff_pct >= float(BREAKOUT_ENTRY_RESET_PCT):
+                                        breakout_state_by_symbol[q.symbol] = False
+                                        st = False
+                                        last_breakout_entry_by_symbol.pop(q.symbol, None)
+
+                                if float(q.price) >= float(entry) and st is False:
+                                    crossed = True
+                                    breakout_state_by_symbol[q.symbol] = True
+                                    last_breakout_entry_by_symbol[q.symbol] = float(entry)
+                                if float(q.price) < float(entry):
+                                    breakout_state_by_symbol[q.symbol] = False
+                                    last_breakout_entry_by_symbol.pop(q.symbol, None)
 
                             # リプレイ時は「Replay時刻(JST)」をEmbedに入れます。
                             if crossed:
@@ -1875,6 +2218,7 @@ def run_replay(
                                     vol_increase=(sig.vol_3m_gt_prev_3m if sig else None),
                                     entry_near_ratio=float(ENTRY_NEAR_RATIO),
                                     entry_crossed=False,
+                                    breakout_state=bool(breakout_state_by_symbol.get(q.symbol, False)),
                                 )
                             msg = {"embeds": [embed]}
                             discord_notify(
@@ -1884,6 +2228,32 @@ def run_replay(
                                 bot_token=bot_token,
                             )
                             last_notified_levels[q.symbol] = (float(entry), float(stop), float(take))
+
+                            # -----------------------------
+                            # 🚀 の瞬間を signal として記録（期待値検証用）
+                            # -----------------------------
+                            # 仕様:
+                            # - 🚀 Entry上抜け が出たタイミングを signal とする
+                            # - signal_price は通知時の現在値
+                            # - entry/stop/take も保存
+                            # - 以降の価格で max/min, take/stop 到達を追跡
+                            if crossed:
+                                # 同一銘柄で「同じ足で二重に記録」しない保険:
+                                # breakout_state により crossed は初回だけ True になる想定ですが、念のため入れます。
+                                s = ReplaySignalEval(
+                                    symbol=q.symbol,
+                                    signal_time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
+                                    signal_price=float(q.price),
+                                    entry_price=float(entry),
+                                    stop_price=float(stop),
+                                    take_price=float(take),
+                                    max_price_after=float(q.price),
+                                    min_price_after=float(q.price),
+                                    last_price_after=float(q.price),
+                                )
+                                replay_signals.append(s)
+                                idx = len(replay_signals) - 1
+                                active_signal_indices_by_symbol.setdefault(q.symbol, []).append(idx)
                         except Exception as e:
                             print(f"[{now_str()}] Discord通知失敗(replay): {q.symbol} ({e})")
 
@@ -1912,6 +2282,9 @@ def run_replay(
                             # 通知したらカウントをリセットし、候補集合からも外します（スパム防止）
                             exit_miss_count.pop(sym, None)
                             last_discord_candidate_symbols.discard(sym)
+                            # 条件外れが確定したら breakout_state もリセットします（仕様）。
+                            breakout_state_by_symbol[sym] = False
+                            last_breakout_entry_by_symbol.pop(sym, None)
                         except Exception as e:
                             print(f"[{now_str()}] Discord条件外れ通知失敗(replay): {sym} ({e})")
 
@@ -1926,7 +2299,10 @@ def run_replay(
                         q = candidates_by_symbol.get(sym)
                         if q is None or sym in new_notified_symbols:
                             continue
-                        new_entry = float(q.day_high)
+                        new_entry_calc = calculate_entry(q)
+                        if new_entry_calc is None:
+                            continue
+                        new_entry = float(new_entry_calc)
                         new_stop = new_entry * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
                         new_take = new_entry * (1.0 + TAKE_PROFIT_PCT_FROM_ENTRY)
                         if not (
@@ -2165,6 +2541,11 @@ def main(argv: list[str]) -> int:
                 vwap_by_symbol: dict[str, Optional[float]] = {}
                 score_by_symbol: dict[str, int] = {}
                 intraday_by_symbol: dict[str, IntradaySignals] = {}
+                # 「このループで計算した entry」（= 直近5分高値ベース）を保存しておき、
+                # 通知や状態管理（breakout_state）で同じ値を使います。
+                current_entry_by_symbol: dict[str, Optional[float]] = {}
+                # Entry上抜け（breakout）判定結果（このループ内で通知表示に使う）
+                entry_cross_by_symbol: dict[str, bool] = {}
 
                 for q in quotes:
                     reasons: list[str] = []
@@ -2344,6 +2725,9 @@ def main(argv: list[str]) -> int:
                                 vwap=vwap,
                             )
                             intraday_by_symbol[q.symbol] = sig
+                            _LATEST_INTRADAY_SIGNALS[q.symbol] = sig
+                            # このループの entry（新仕様）を確定して保存
+                            current_entry_by_symbol[q.symbol] = calculate_entry(q)
 
                             # 3) 直近5分高値ブレイク（必須）
                             if sig.recent_5m_high is None:
@@ -2367,19 +2751,46 @@ def main(argv: list[str]) -> int:
                                 # 必須を満たした上で、スコアとしても +1（将来の並び替え等に使える）
                                 score_by_symbol[q.symbol] = score_by_symbol.get(q.symbol, 0) + 1
 
-                            # 追加条件: Entry候補（entry=当日高値）への接近
-                            if q.day_high is not None:
-                                entry = float(q.day_high)
-                                if entry > 0:
-                                    if float(q.price) < (entry * float(ENTRY_NEAR_RATIO)):
-                                        reasons.append("Entry候補から遠い")
+                            # 追加条件: Entry候補（新仕様: 直近5分高値ベース）への接近
+                            # entry = recent_5m_high * ENTRY_BREAKOUT_BUFFER
+                            entry_calc = calc_entry_from_signals(sig)
+                            if entry_calc is None:
+                                reasons.append("Entry計算不可")
+                            else:
+                                if float(q.price) < (float(entry_calc) * float(ENTRY_NEAR_RATIO)):
+                                    reasons.append("Entry候補から遠い")
 
-                                    # Entry上抜け（クロス）判定:
-                                    # - prev_price_snapshot は「前回ループの価格」です。
-                                    # - prev <= entry かつ now >= entry のとき「上抜け成立」とします。
-                                    prev_p = prev_price_snapshot.get(q.symbol)
-                                    crossed = bool(prev_p is not None and float(prev_p) <= entry and float(q.price) >= entry)
-                                    entry_cross_by_symbol[q.symbol] = crossed
+                            # Entry上抜け（breakout）判定（最終仕様・シンプル版）:
+                            # - まずは「price >= entry」で突破とします。
+                            # - ただし、同じ銘柄で連続通知しないために breakout_state を使います。
+                            #
+                            # 状態:
+                            # - breakout_state=False: まだentry未突破
+                            # - breakout_state=True : entry突破済み
+                            entry_now = current_entry_by_symbol.get(q.symbol)
+                            if entry_now is None:
+                                entry_cross_by_symbol[q.symbol] = False
+                            else:
+                                st = bool(breakout_state_by_symbol.get(q.symbol, False))
+                                # entry が大きく変わったら state をリセット（新しいentry候補に追従する）
+                                last_entry = last_breakout_entry_by_symbol.get(q.symbol)
+                                if st and last_entry is not None and float(last_entry) > 0:
+                                    diff_pct = (abs(float(entry_now) - float(last_entry)) / float(last_entry)) * 100.0
+                                    if diff_pct >= float(BREAKOUT_ENTRY_RESET_PCT):
+                                        breakout_state_by_symbol[q.symbol] = False
+                                        st = False
+                                        last_breakout_entry_by_symbol.pop(q.symbol, None)
+                                if float(q.price) >= float(entry_now) and st is False:
+                                    # 初回突破 → 🚀通知対象
+                                    entry_cross_by_symbol[q.symbol] = True
+                                    breakout_state_by_symbol[q.symbol] = True
+                                    last_breakout_entry_by_symbol[q.symbol] = float(entry_now)
+                                else:
+                                    entry_cross_by_symbol[q.symbol] = False
+                                # entry を下回ったら未突破へ戻す（次の突破でまた通知できる）
+                                if float(q.price) < float(entry_now):
+                                    breakout_state_by_symbol[q.symbol] = False
+                                    last_breakout_entry_by_symbol.pop(q.symbol, None)
                     # vwap が None のままでも理由は追加しない（通過扱い）
                     if vwap is None:
                         vwap_by_symbol[q.symbol] = None
@@ -2443,6 +2854,8 @@ def main(argv: list[str]) -> int:
 
                 last_candidates = candidate_symbols
 
+                # ※ prev_entry_snapshot は一旦使わない方針なので、prev_entry_by_symbol の更新も停止します。
+
                 # Discord通知:
                 # candidates の中から「前回ループで候補に入っていなかった銘柄」だけ送ります。
                 # これにより、同じ銘柄が条件一致し続けても毎秒スパム通知されません。
@@ -2457,7 +2870,13 @@ def main(argv: list[str]) -> int:
                         # 見やすさのため、前日比が大きい順に送ります。
                         to_notify_sorted = sorted(to_notify, key=lambda x: x.change_percent or -999, reverse=True)
                         for q in to_notify_sorted:
-                            entry = float(q.day_high)
+                            # Entry候補は「直近5分高値ベース」で計算します（新仕様）。
+                            sig = intraday_by_symbol.get(q.symbol)
+                            entry_calc = calc_entry_from_signals(sig)
+                            if entry_calc is None:
+                                # ここまで来る時点で recent_5m_high はあるはずですが、念のためガード
+                                continue
+                            entry = float(entry_calc)
                             stop = entry * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
                             take = entry * (1.0 + TAKE_PROFIT_PCT_FROM_ENTRY)
                             try:
@@ -2481,7 +2900,6 @@ def main(argv: list[str]) -> int:
                                     market_cap=(float(market_cap) if market_cap is not None else None),
                                 )
                                 # 通常モードの通知にも、今回追加した「エントリー判断に必要な情報」を載せます。
-                                sig = intraday_by_symbol.get(q.symbol)
                                 crossed = bool(entry_cross_by_symbol.get(q.symbol, False))
                                 if sig:
                                     # 通常の条件一致Embed（🟢）か、Entry上抜けEmbed（🚀）かを切り替えます。
@@ -2554,6 +2972,9 @@ def main(argv: list[str]) -> int:
                             )
                             exit_miss_count.pop(sym, None)
                             last_discord_candidate_symbols.discard(sym)
+                            # 条件外れが確定したら breakout_state もリセットします（仕様）。
+                            breakout_state_by_symbol[sym] = False
+                            last_breakout_entry_by_symbol.pop(sym, None)
                         except Exception as e:
                             print(f"[{now_str()}] Discord条件外れ通知失敗: {sym} ({e})")
 
@@ -2573,9 +2994,10 @@ def main(argv: list[str]) -> int:
                             continue
                         if sym in new_notified_symbols:
                             continue
-                        if q.day_high is None:
+                        new_entry_calc = calculate_entry(q)
+                        if new_entry_calc is None:
                             continue
-                        new_entry = float(q.day_high)
+                        new_entry = float(new_entry_calc)
                         new_stop = new_entry * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
                         new_take = new_entry * (1.0 + TAKE_PROFIT_PCT_FROM_ENTRY)
                         changed = (
