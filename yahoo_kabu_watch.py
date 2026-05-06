@@ -239,7 +239,7 @@ def fetch_avg_volume_5(session: requests.Session, symbol: str, timeout_sec: floa
 
     Yahoo Finance の chart（日足）から出来高配列を取り、
     「直近の5営業日分の出来高」を平均します。
-    - データ不足なら None（見送り理由に「平均出来高取得不可」が出ます）
+    - データ不足なら None（= 表示/Discordでは N/A。現状は必須条件ではありません）
     """
     url = YAHOO_CHART_URL.format(symbol=symbol)
     params = {"interval": "1d", "range": "3mo"}  # 5営業日分を確実に確保（閑散期/祝日対策）
@@ -639,10 +639,10 @@ def _build_discord_message(
     stop: float,
     take: float,
     ma25: float,
-    vol_avg5: float,
-    vol_spike_ratio: float,
+    vol_avg5: Optional[float],
+    vol_spike_ratio: Optional[float],
     vwap: Optional[float],
-    market_cap: float,
+    market_cap: Optional[float],
 ) -> str:
     """
     Discord に送る「仕様どおりの項目」を 1メッセージにまとめます。
@@ -671,11 +671,11 @@ def _build_discord_message(
         f"- 前日比: {chg_s}\n"
         f"- 出来高: {_fmt_volume(q.volume)}\n"
         f"- 5日平均出来高: {_fmt_volume(vol_avg5)}\n"
-        f"- 出来高急増倍率: {vol_spike_ratio:.2f}x\n"
+        f"- 出来高急増倍率: {('N/A' if vol_spike_ratio is None else f'{vol_spike_ratio:.2f}x')}\n"
         f"- 25日移動平均: {_fmt_price(ma25)}\n"
         f"- 当日高値: {_fmt_price(q.day_high)}\n"
         f"- VWAP: {_fmt_price(vwap)}\n"
-        f"- 時価総額: {int(round(market_cap)):,}\n"
+        f"- 時価総額: {('取得不可' if market_cap is None else f'{int(round(market_cap)):,}')}\n"
         f"- エントリー候補: {_fmt_price(entry)}\n"
         f"- 損切り候補: {_fmt_price(stop)}\n"
         f"- 利確候補: {_fmt_price(take)}"
@@ -718,25 +718,26 @@ WATCHLIST_JSON_PATH = os.path.join(os.path.dirname(__file__), "watchlist.json")
 SYMBOLS_CSV_PATH = os.path.join(os.path.dirname(__file__), "symbols.csv")
 
 
-def _load_watchlist_json(path: str) -> list[str]:
+def _load_watchlist_json(path: str) -> tuple[list[str], Optional[str]]:
     """
     watchlist.json を読み込みます。
     - 想定: JSON 配列 ["7203.T", ...]
     - dict で来る場合も {"symbols": [...]} などを軽く吸収します。
     """
     if not os.path.exists(path):
-        return []
+        return ([], None)
     try:
         raw = json.loads(open(path, "r", encoding="utf-8").read())
         if isinstance(raw, list):
-            return [str(s).strip() for s in raw if str(s).strip()]
+            return ([str(s).strip() for s in raw if str(s).strip()], None)
         if isinstance(raw, dict):
             maybe = raw.get("symbols") or raw.get("watchlist") or []
             if isinstance(maybe, list):
-                return [str(s).strip() for s in maybe if str(s).strip()]
-    except Exception:
-        pass
-    return []
+                return ([str(s).strip() for s in maybe if str(s).strip()], None)
+    except Exception as e:
+        # JSON が壊れている等の理由を返します（呼び出し側でログ出しして前回のリストを維持する）
+        return ([], str(e))
+    return ([], "watchlist.json の形式が想定外です（JSON配列を期待しています）")
 
 
 def _load_symbols_csv(path: str) -> list[str]:
@@ -770,39 +771,33 @@ def main(argv: list[str]) -> int:
     watch_csv: str = str(args.watch or "")
     watch_file: str = str(args.watch_file or "")
 
-    # 監視銘柄の取得（段階的拡張）
-    # - watchlist.json があればそれを優先
-    # - 無ければ symbols.csv を見る
-    # - 両方無ければ、このファイル上部の WATCH を使う
-    watch: list[str] = []
-    loaded_watchlist = _load_watchlist_json(WATCHLIST_JSON_PATH)
-    if loaded_watchlist:
-        watch = loaded_watchlist
-    else:
-        loaded_symbols = _load_symbols_csv(SYMBOLS_CSV_PATH)
-        if loaded_symbols:
-            watch = loaded_symbols
-        else:
-            watch = list(WATCH)
-
+    # 監視銘柄の決め方（初心者向けに整理）
+    #
+    # 1) --watch-file / --watch が指定された場合は「固定リスト」として扱います。
+    #    → Discord の !watch add/remove とは独立です（コマンドライン指定が最優先）。
+    #
+    # 2) コマンドライン指定が無い場合:
+    #    → watchlist.json が存在するなら、それを「正」として毎ループ読み直します（今回の仕様）。
+    #    → watchlist.json が無い場合だけ、symbols.csv → WATCH にフォールバックします。
+    fixed_watch: Optional[list[str]] = None
     if watch_file:
         try:
-            watch = _load_watch_from_file(watch_file)
+            fixed_watch = _load_watch_from_file(watch_file)
         except Exception as e:
             print(f"--watch-file の読み込みに失敗しました: {watch_file} ({e})")
             return 2
     elif watch_csv:
-        watch = _parse_watch_csv(watch_csv)
+        fixed_watch = _parse_watch_csv(watch_csv)
 
     if interval_sec <= 0:
         print("--interval は 0 より大きい値にしてください。")
         return 2
-    if not watch:
-        print("WATCH が空です。ファイル上部の WATCH を編集するか、--watch / --watch-file で指定してください。")
-        return 2
 
     print("=== Yahoo Finance 日本株 スクリーニング（発注なし） ===")
-    print(f"- watch: {', '.join(watch)}")
+    if fixed_watch is not None:
+        print(f"- watch(固定): {', '.join(fixed_watch) if fixed_watch else '(empty)'}")
+    else:
+        print(f"- watch: (watchlist.json があれば毎回読み直します)")
     print(f"- interval: {interval_sec} sec")
     print(
         f"- 条件: 前日比 {MIN_CHANGE_PCT}%以上 {MAX_CHANGE_PCT}%未満 / "
@@ -833,11 +828,52 @@ def main(argv: list[str]) -> int:
     # - None もキャッシュして、短い時間での再試行を減らします。
     vwap_cache: dict[str, tuple[Optional[float], float]] = {}
 
+    # watchlist.json のリアルタイム反映用:
+    # - 前回の監視銘柄リスト（壊れたJSONを読んだ場合に「前回のリストを維持」するため）
+    last_watch: list[str] = []
+
     # requests.Session を使うと、接続の再利用ができて少し効率が良くなります。
     with requests.Session() as session:
         try:
             while True:
                 loop_started = time.perf_counter()
+
+                # =========================
+                # 監視銘柄の決定（毎ループ）
+                # =========================
+                watch: list[str] = []
+
+                if fixed_watch is not None:
+                    # コマンドライン指定がある場合は固定です（リアルタイム反映しません）。
+                    watch = list(fixed_watch)
+                else:
+                    # watchlist.json が存在する場合は「常にそれを正」として読み直します。
+                    if os.path.exists(WATCHLIST_JSON_PATH):
+                        watch_loaded, err = _load_watchlist_json(WATCHLIST_JSON_PATH)
+                        if err:
+                            # 壊れていた場合はエラーログを出して前回のリストを維持します。
+                            print(f"[{now_str()}] watchlist.json 読み込みエラー（前回の監視リストを維持）: {err}")
+                            watch = list(last_watch)
+                        else:
+                            watch = watch_loaded
+                            last_watch = list(watch)
+
+                        # 空配列 [] は「監視銘柄なし」という明示状態。
+                        # フォールバックはせず、メッセージを出して待機します。
+                        if not watch:
+                            print(f"[{now_str()}] 監視銘柄なし。Discordで !watch add <symbol> してください。")
+                            time.sleep(interval_sec)
+                            continue
+                    else:
+                        # watchlist.json が無い場合だけ symbols.csv → WATCH にフォールバック
+                        loaded_symbols = _load_symbols_csv(SYMBOLS_CSV_PATH)
+                        watch = loaded_symbols if loaded_symbols else list(WATCH)
+
+                # 念のため: 完全に空なら待機（固定watchで empty 指定など）
+                if not watch:
+                    print(f"[{now_str()}] 監視銘柄なし。Discordで !watch add <symbol> してください。")
+                    time.sleep(interval_sec)
+                    continue
 
                 quotes: list[Quote] = []
                 for sym in watch:
@@ -855,8 +891,9 @@ def main(argv: list[str]) -> int:
                 skip_reasons_by_symbol: dict[str, list[str]] = {}
                 ma25_by_symbol: dict[str, float] = {}
                 avg5_by_symbol: dict[str, float] = {}
-                vol_spike_ratio_by_symbol: dict[str, float] = {}
+                vol_spike_ratio_by_symbol: dict[str, Optional[float]] = {}
                 vwap_by_symbol: dict[str, Optional[float]] = {}
+                score_by_symbol: dict[str, int] = {}
 
                 for q in quotes:
                     reasons: list[str] = []
@@ -869,8 +906,8 @@ def main(argv: list[str]) -> int:
                         reasons.append("当日高値が取得できない")
                     if q.volume is None:
                         reasons.append("出来高が取得できない")
-                    if q.market_cap is None:
-                        reasons.append("時価総額取得不可")
+                    # 時価総額（marketCap）は Yahoo 側で取れない銘柄があるため、
+                    # 取得できないこと自体では見送りにしません（仕様変更）。
 
                     # 2) 前日比: MIN <= chg < MAX
                     if q.change_percent is not None:
@@ -889,7 +926,16 @@ def main(argv: list[str]) -> int:
                         if q.volume < float(MIN_VOLUME):
                             reasons.append("出来高不足")
 
-                    # 5) 出来高急増: 現在出来高 >=（5日平均出来高 * MIN_VOLUME_SPIKE_RATIO）
+                    # 5) 出来高急増（スコア加点）:
+                    # 以前は「必須条件」でしたが、仕様変更で「加点条件」にしました。
+                    # - 出来高30万以上（MIN_VOLUME）は必須のまま（別条件で判定）
+                    # - 出来高急増は必須ではない
+                    # - 5日平均出来高が取れた場合だけ倍率を計算して、
+                    #   倍率が MIN_VOLUME_SPIKE_RATIO 以上なら +1点します。
+                    #
+                    # 5日平均出来高が取れない場合:
+                    # - 見送りにはしません（必須条件ではないため）
+                    # - 表示/Discordでは N/A 扱いになります
                     avg5: Optional[float] = None
                     if q.volume is not None:
                         try:
@@ -907,14 +953,20 @@ def main(argv: list[str]) -> int:
                         except Exception:
                             avg5 = None
 
-                    if avg5 is None:
-                        reasons.append("平均出来高取得不可")
-                    else:
+                    # スコアの初期値（今は出来高急増だけですが、将来増やせます）
+                    score = 0
+
+                    if avg5 is not None:
                         avg5_by_symbol[q.symbol] = avg5
                         ratio = q.volume / avg5 if avg5 > 0 else 0.0
                         vol_spike_ratio_by_symbol[q.symbol] = ratio
-                        if ratio < MIN_VOLUME_SPIKE_RATIO:
-                            reasons.append("出来高急増条件不足")
+                        if ratio >= MIN_VOLUME_SPIKE_RATIO:
+                            score += 1
+                    else:
+                        # 取れない場合は N/A 表示になるようにしておく
+                        vol_spike_ratio_by_symbol[q.symbol] = None
+
+                    score_by_symbol[q.symbol] = score
 
                     # 6) MA25: 取れないなら見送り、取れたら price > ma25 だけ通す
                     ma25: Optional[float] = None
@@ -941,6 +993,7 @@ def main(argv: list[str]) -> int:
                             reasons.append("25日線以下")
 
                     # 7) 時価総額レンジ: MIN_MARKET_CAP <= marketCap <= MAX_MARKET_CAP
+                    # marketCap が取得できた場合だけレンジ判定します。
                     if q.market_cap is not None:
                         if q.market_cap < MIN_MARKET_CAP or q.market_cap > MAX_MARKET_CAP:
                             reasons.append("時価総額レンジ外")
@@ -1005,7 +1058,8 @@ def main(argv: list[str]) -> int:
                             vol_spike_ratio_s = "N/A" if vol_spike_ratio is None else f"{vol_spike_ratio:.2f}x"
                             vwap = vwap_by_symbol.get(q.symbol)
                             vwap_s = _fmt_price(vwap) if vwap is not None else "N/A"
-                            mcap_s = "N/A" if q.market_cap is None else f"{int(round(q.market_cap)):,}"
+                            mcap_s = "取得不可" if q.market_cap is None else f"{int(round(q.market_cap)):,}"
+                            score = score_by_symbol.get(q.symbol, 0)
                             prev_s = _fmt_price(q.previous_close)
                             chg_s = "N/A" if q.change_percent is None else f"{q.change_percent:.2f}%"
                             print(
@@ -1015,6 +1069,7 @@ def main(argv: list[str]) -> int:
                                 f"chg%={chg_s}, "
                                 f"day_high={q.day_high} (ratio={ratio*100:.2f}%), "
                                 f"vol={v}, vol_avg5={avg5_s}, spike={vol_spike_ratio_s}, "
+                                f"score={score}, "
                                 f"vwap={vwap_s}, mcap={mcap_s}, ma25={ma25_s}, time_utc={mt}"
                             )
                         print()
@@ -1070,20 +1125,16 @@ def main(argv: list[str]) -> int:
                                 vwap = vwap_by_symbol.get(q.symbol)
                                 market_cap = q.market_cap
 
-                                if vol_avg5 is None or vol_spike_ratio is None or market_cap is None:
-                                    # こちらも候補判定で欠けない想定ですが、万一に備えます。
-                                    continue
-
                                 msg = _build_discord_message(
                                     q,
                                     entry=entry,
                                     stop=stop,
                                     take=take,
                                     ma25=float(ma25),
-                                    vol_avg5=float(vol_avg5),
-                                    vol_spike_ratio=float(vol_spike_ratio),
+                                    vol_avg5=vol_avg5,
+                                    vol_spike_ratio=vol_spike_ratio,
                                     vwap=vwap,
-                                    market_cap=float(market_cap),
+                                    market_cap=(float(market_cap) if market_cap is not None else None),
                                 )
                                 _discord_post(webhook_url, msg)
                             except Exception as e:
