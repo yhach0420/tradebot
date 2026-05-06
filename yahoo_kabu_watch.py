@@ -239,6 +239,9 @@ class Quote:
     previous_close: Optional[float]  # 前日終値（previousClose）
     change_percent: Optional[float]  # 前日比（%）
     day_high: Optional[float]        # 当日高値
+    # 当日安値（朝スクリーニング用に追加）
+    # - Yahooのレスポンスによっては欠けることがあるため Optional にします。
+    day_low: Optional[float]
     volume: Optional[float]          # 出来高（整数が多いが float で受ける）
     market_time_utc: Optional[datetime]
     market_cap: Optional[float]  # 時価総額（Yahoo Financeの値）
@@ -331,6 +334,26 @@ class ReplaySignalEval:
     resolved: bool = False
     result: str = "HOLD"  # WIN / LOSE / HOLD
 
+    # ポジション種別（期待値検証の見分け用）
+    # - "BASE": 通常のEntry上抜け（最初のポジション）
+    # - "ADD1": 追加ポジション1
+    # - "ADD2": 追加ポジション2
+    position_kind: str = "BASE"
+
+    # 決済スタイル:
+    # - "trailing": 既存の「partial_take(+1%) → トレーリング決済」ロジック
+    # - "fixed":    take_price 到達で WIN、stop_price 到達で LOSE（追加ポジション用）
+    exit_style: str = "trailing"
+
+    # =========================
+    # 期待値検証の「除外フラグ」（追加仕様）
+    # =========================
+    # 初心者向けポイント:
+    # - signal は検出されたとしても「期待値検証の集計対象に含めない」ことがあります。
+    # - 例えば「同一銘柄は1日に1回まで採用」という制限モードでは、2回目以降を除外します。
+    excluded_from_eval: bool = False
+    excluded_reason: str = ""
+
     def update_with_price(
         self,
         *,
@@ -359,9 +382,29 @@ class ReplaySignalEval:
         if self.resolved:
             return
 
-        # 固定takeは参考として到達フラグのみ
-        if p >= float(self.take_price):
-            self.take_hit = True
+        # -----------------------------
+        # 固定決済（追加ポジション向け）
+        # -----------------------------
+        # 初心者向けポイント:
+        # - 追加ポジションは「浅い利確」を明確に検証したいので、
+        #   take_price 到達でWIN、stop_price 到達でLOSEとして解決します。
+        if str(self.exit_style) == "fixed":
+            # stop は最優先（仕様）
+            if p <= float(self.stop_price):
+                self.stop_hit = True
+                self.resolved = True
+                self.result = "LOSE"
+                if self.entry_price > 0:
+                    self.final_profit_pct = ((p - self.entry_price) / self.entry_price) * 100.0
+                return
+
+            if p >= float(self.take_price):
+                self.take_hit = True
+                self.resolved = True
+                self.result = "WIN"
+                if self.entry_price > 0:
+                    self.final_profit_pct = ((p - self.entry_price) / self.entry_price) * 100.0
+                return
 
         # stop は最優先（仕様: stop到達なら LOSE）
         if p <= float(self.stop_price):
@@ -422,6 +465,27 @@ class ReplaySignalEval:
         if self.entry_price <= 0:
             return 0.0
         return ((self.min_price_after - self.entry_price) / self.entry_price) * 100.0
+
+
+@dataclass(frozen=True)
+class MorningScreenResult:
+    """
+    朝スクリーニングの集計結果（1銘柄ぶん）。
+
+    初心者向けポイント:
+    - まず「必要な値をまとめた箱」を作っておくと、後の整形/Discord出力が楽になります。
+    - Quote（現在値など）だけでは足りない指標（VWAP/MA25など）をここで追加保持します。
+    """
+
+    symbol: str
+    score: int
+    quote: Quote
+    vwap: Optional[float]
+    ma25: Optional[float]
+    avg_vol5: Optional[float]
+    vol_spike_ratio: Optional[float]
+    day_range_pct: Optional[float]
+    reasons: list[str]
 
 
 def calc_entry_from_signals(sig: Optional[IntradaySignals]) -> Optional[float]:
@@ -705,6 +769,7 @@ def _fetch_quote_v7(session: requests.Session, symbol: str, timeout_sec: float =
     #   previousClose から計算した値を“正”として採用します（要件）。
     change_percent = _calc_change_percent(price=float(price), previous_close=float(previous_close) if isinstance(previous_close, (int, float)) else None)
     day_high = q0.get("regularMarketDayHigh")
+    day_low = q0.get("regularMarketDayLow")
     volume = q0.get("regularMarketVolume")
 
     # 時価総額（marketCap）
@@ -735,6 +800,7 @@ def _fetch_quote_v7(session: requests.Session, symbol: str, timeout_sec: float =
         previous_close=float(previous_close) if isinstance(previous_close, (int, float)) else None,
         change_percent=float(change_percent) if isinstance(change_percent, (int, float)) else None,
         day_high=float(day_high) if isinstance(day_high, (int, float)) else None,
+        day_low=float(day_low) if isinstance(day_low, (int, float)) else None,
         volume=float(volume) if isinstance(volume, (int, float)) else None,
         market_time_utc=market_time_utc,
         market_cap=market_cap,
@@ -783,6 +849,7 @@ def _fetch_quote_v8_chart(session: requests.Session, symbol: str, timeout_sec: f
         else None
     )
     day_high = meta.get("regularMarketDayHigh")
+    day_low = meta.get("regularMarketDayLow")
     volume = meta.get("regularMarketVolume")
     market_cap_raw = meta.get("marketCap")
     if market_cap_raw is None:
@@ -830,6 +897,7 @@ def _fetch_quote_v8_chart(session: requests.Session, symbol: str, timeout_sec: f
         previous_close=float(previous_close) if isinstance(previous_close, (int, float)) else None,
         change_percent=float(change_percent) if isinstance(change_percent, (int, float)) else None,
         day_high=float(day_high) if isinstance(day_high, (int, float)) else None,
+        day_low=float(day_low) if isinstance(day_low, (int, float)) else None,
         volume=float(volume) if isinstance(volume, (int, float)) else None,
         market_time_utc=market_time_utc,
         market_cap=market_cap,
@@ -878,17 +946,30 @@ def fetch_history_1m(
 
     仕様:
     - interval=1m
-    - range は "1d" または "5d"
+    - range は "1d" / "5d" / "10d" / "20d" / "60d"
+      - ただし Yahoo Finance 側の仕様都合で、そのまま通らないことがあります。
+      - その場合は、内部で「近いYahooのrange」へマップして取得します（検証用途向け）。
 
     戻り値:
     - bars: 1分足の配列（欠損データは除外）
     - meta: chart.result[0].meta（currency/previousClose等が入ることがあります）
     """
-    if range_str not in ("1d", "5d"):
-        raise ValueError("range_str は '1d' または '5d' を指定してください")
+    # Yahoo Finance の chart API は、range に "1d","5d","1mo","3mo"... のような値を要求します。
+    # 一方でユーザー要件として「10d/20d/60d」を指定したいので、近い値へマップして互換を持たせます。
+    range_map = {
+        "1d": "1d",
+        "5d": "5d",
+        # 10d/20d は概ね 1ヶ月(1mo) に含まれる想定
+        "10d": "1mo",
+        "20d": "1mo",
+        # 60d は概ね 3ヶ月(3mo) に含まれる想定
+        "60d": "3mo",
+    }
+    if range_str not in range_map:
+        raise ValueError("range_str は '1d','5d','10d','20d','60d' を指定してください")
 
     url = YAHOO_CHART_URL.format(symbol=symbol)
-    params = {"interval": "1m", "range": range_str}
+    params = {"interval": "1m", "range": range_map[range_str]}
     referer = f"https://finance.yahoo.com/quote/{symbol}"
     headers = _browser_headers(referer=referer)
 
@@ -1075,6 +1156,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         description="Yahoo Finance（非公式API）で日本株の現在値を1秒ごとに監視し、上抜けを表示します（発注なし）。",
     )
     p.add_argument(
+        "--morning-screen",
+        action="store_true",
+        help=(
+            "朝スクリーニング機能を実行します。"
+            " デイトレ開始前に『その日触るべき監視候補』を自動選定して、ターミナルとDiscordに出力します。"
+            " 通常監視やReplayには影響しません。"
+        ),
+    )
+    p.add_argument(
         "--replay",
         action="store_true",
         help=(
@@ -1086,8 +1176,25 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--replay-range",
         type=str,
         default="1d",
-        choices=["1d", "5d"],
-        help="リプレイで取得する期間。1d（直近1日）または 5d（直近5日）。デフォルト 1d",
+        choices=["1d", "5d", "10d", "20d", "60d"],
+        help="リプレイで取得する期間。1d/5d/10d/20d/60d。デフォルト 1d",
+    )
+    p.add_argument(
+        "--replay-morning-screen",
+        type=str,
+        default="",
+        help=(
+            "Replay中に、指定したJST時刻（HH:MM）で『Morning Screen → 監視銘柄へ自動追加 → その後のsignal検証』を行います。"
+            " 例: --replay-morning-screen 09:07"
+        ),
+    )
+    p.add_argument(
+        "--one-trade-per-symbol-per-day",
+        action="store_true",
+        help=(
+            "Replay期待値検証で『同一銘柄は1日に最大1回まで』Entry signal を採用します（JST日付基準）。"
+            " このモードでは、同じJST日付で同じsymbolの2回目以降のsignalは、検出ログは出してもよいが集計対象外にします。"
+        ),
     )
     p.add_argument(
         "--interval",
@@ -1690,12 +1797,306 @@ def _load_symbols_csv(path: str) -> list[str]:
         return []
 
 
+def _load_morning_screen_symbols() -> list[str]:
+    """
+    朝スクリーニング用の「対象銘柄」を決めます。
+
+    仕様（ユーザー要件）:
+    - symbols.csv があれば symbols.csv の銘柄を対象
+    - なければ watchlist.json の銘柄を対象
+    - どちらも無ければ 既存WATCH を対象
+
+    初心者向けポイント:
+    - 通常監視の優先順位（watchlist.json優先）とは “別仕様” なので、
+      朝スクリーニングでは専用の関数を作って分離します（既存挙動を壊さないため）。
+    """
+    if os.path.exists(SYMBOLS_CSV_PATH):
+        syms = _load_symbols_csv(SYMBOLS_CSV_PATH)
+        if syms:
+            return syms
+
+    if os.path.exists(WATCHLIST_JSON_PATH):
+        watch_loaded, err = _load_watchlist_json(WATCHLIST_JSON_PATH)
+        if err:
+            # 壊れていても朝スクリーニング自体は止めず、WATCHへフォールバックします。
+            print(f"[{now_str()}] watchlist.json 読み込みエラー（朝スクリーニングはWATCHへフォールバック）: {err}")
+        if watch_loaded:
+            return watch_loaded
+
+    return list(WATCH)
+
+
+def _calc_day_range_pct(*, day_high: Optional[float], day_low: Optional[float], previous_close: Optional[float], price: float) -> Optional[float]:
+    """
+    当日値幅（%）を計算します。
+
+    仕様（ユーザー要件）:
+    - 「当日値幅が 1%以上」なら加点
+
+    初心者向けポイント:
+    - 「%」にするには、何かの基準値で割る必要があります。
+    - ここでは、前日終値が取れるなら前日終値を基準（より自然）、
+      取れないなら現在値を基準にします（安全なフォールバック）。
+    """
+    if not isinstance(day_high, (int, float)) or not isinstance(day_low, (int, float)):
+        return None
+    hi = float(day_high)
+    lo = float(day_low)
+    if hi <= 0 or lo <= 0:
+        return None
+    if hi < lo:
+        # 変なデータが来た時の安全策
+        hi, lo = lo, hi
+
+    base: float
+    if isinstance(previous_close, (int, float)) and float(previous_close) > 0:
+        base = float(previous_close)
+    else:
+        base = float(price) if float(price) > 0 else 0.0
+    if base <= 0:
+        return None
+
+    return ((hi - lo) / base) * 100.0
+
+
+def _morning_screen_score(
+    *,
+    q: Quote,
+    vwap: Optional[float],
+    ma25: Optional[float],
+    avg_vol5: Optional[float],
+    day_range_pct: Optional[float],
+) -> tuple[int, list[str], Optional[float]]:
+    """
+    朝スクリーニング用のスコアリングを行います。
+
+    仕様（ユーザー要件）:
+    - 前日比 +1%以上 +5%未満：+2点
+    - 前日比 +5%以上 +8%未満：+1点
+    - 前日比 +8%以上：-2点
+    - 出来高30万株以上：+1点
+    - 出来高が5日平均出来高の1.5倍以上：+2点
+    - 現在値 > VWAP：+2点
+    - 現在値 > 25日移動平均：+1点
+    - 当日高値の98%以上：+2点
+    - 当日値幅が1%以上：+1点
+
+    戻り値:
+    - score: 合計点
+    - reasons: 表示用の理由（主に“加点に効いた要素”）
+    - vol_spike_ratio: 出来高 / 5日平均出来高（表示用）
+    """
+    score = 0
+    reasons: list[str] = []
+
+    chg = q.change_percent
+    if isinstance(chg, (int, float)):
+        chg_f = float(chg)
+        if 1.0 <= chg_f < 5.0:
+            score += 2
+            reasons.append("前日比+1-5%")
+        elif 5.0 <= chg_f < 8.0:
+            score += 1
+            reasons.append("前日比+5-8%")
+        elif chg_f >= 8.0:
+            score -= 2
+            reasons.append("急騰(8%+)")  # マイナスも「注意点」として理由に残す
+
+    vol = q.volume
+    if isinstance(vol, (int, float)):
+        vol_f = float(vol)
+        if vol_f >= 300_000.0:
+            score += 1
+            reasons.append("出来高30万+")
+
+    vol_spike_ratio: Optional[float] = None
+    if isinstance(vol, (int, float)) and isinstance(avg_vol5, (int, float)) and float(avg_vol5) > 0:
+        vol_spike_ratio = float(vol) / float(avg_vol5)
+        if vol_spike_ratio >= 1.5:
+            score += 2
+            reasons.append("出来高急増")
+
+    if isinstance(vwap, (int, float)) and float(vwap) > 0 and float(q.price) > float(vwap):
+        score += 2
+        reasons.append("VWAP上")
+
+    if isinstance(ma25, (int, float)) and float(ma25) > 0 and float(q.price) > float(ma25):
+        score += 1
+        reasons.append("MA25上")
+
+    if isinstance(q.day_high, (int, float)) and float(q.day_high) > 0:
+        if float(q.price) >= float(q.day_high) * 0.98:
+            score += 2
+            reasons.append("高値付近")
+
+    if isinstance(day_range_pct, (int, float)):
+        if float(day_range_pct) >= 1.0:
+            score += 1
+            reasons.append("値幅1%+")
+
+    return score, reasons, vol_spike_ratio
+
+
+def _format_morning_screen_message(results: list[MorningScreenResult]) -> str:
+    """
+    Discord/ターミナルに出す「朝スクリーニング結果」テキストを作ります。
+
+    仕様（ユーザー要件）:
+    - 上位10銘柄まで表示
+    - 指定のフォーマットに近い形で（順位/スコア/現在値/前日比/出来高/VWAP/理由）
+    """
+    lines: list[str] = []
+    lines.append("📊 朝スクリーニング結果")
+    lines.append("")
+
+    if not results:
+        lines.append("該当なし（除外条件により0件でした）")
+        return "\n".join(lines)
+
+    top = results[:10]
+    for i, r in enumerate(top, start=1):
+        q = r.quote
+        reason_text = " / ".join(r.reasons) if r.reasons else "—"
+        lines.append(f"{i}位 {r.symbol} スコア: {r.score}")
+        lines.append(f"現在値: {_fmt_yen(q.price)}")
+        lines.append(f"前日比: {_fmt_pct(q.change_percent)}")
+        lines.append(f"出来高: {_fmt_volume_man(q.volume)}")
+        lines.append(f"VWAP: {_fmt_yen(r.vwap)}")
+        lines.append(f"理由: {reason_text}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
+def run_morning_screen() -> int:
+    """
+    朝スクリーニングを実行します（通常監視とは完全に別ルート）。
+
+    除外条件（ユーザー要件）:
+    - 出来高が10万株未満は除外
+    - 前日比がマイナスは除外
+    - 価格が取得できない銘柄は除外
+    """
+    symbols = _load_morning_screen_symbols()
+    if not symbols:
+        print(f"[{now_str()}] 朝スクリーニング: 対象銘柄が空です。symbols.csv / watchlist.json / WATCH を確認してください。")
+        return 2
+
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+    alert_channel_id = _parse_channel_id(os.getenv("ALERT_CHANNEL_ID", ""))
+    bot_token = _get_discord_token_with_compat_warning()
+    discord_enabled = bool((alert_channel_id is not None and bot_token) or webhook_url)
+
+    # 朝は1回実行が多いので、ここで「何を対象にしたか」をターミナルに出します。
+    print("=== 朝スクリーニング ===")
+    print(f"- 対象銘柄数: {len(symbols)}")
+    if os.path.exists(SYMBOLS_CSV_PATH):
+        print("- ソース: symbols.csv（最優先）")
+    elif os.path.exists(WATCHLIST_JSON_PATH):
+        print("- ソース: watchlist.json（symbols.csvが無い場合の次点）")
+    else:
+        print("- ソース: WATCH（フォールバック）")
+    print("")
+
+    results: list[MorningScreenResult] = []
+
+    with requests.Session() as session:
+        for sym in symbols:
+            try:
+                q = fetch_quote(session, sym)
+            except Exception as e:
+                # 仕様: 価格が取得できない銘柄は除外（落とさず続行）
+                print(f"[{now_str()}] {sym} 価格取得失敗（除外）: {e}")
+                continue
+
+            # 除外条件: 出来高 < 10万
+            if not isinstance(q.volume, (int, float)) or float(q.volume) < 100_000.0:
+                continue
+
+            # 除外条件: 前日比がマイナス
+            if not isinstance(q.change_percent, (int, float)) or float(q.change_percent) < 0.0:
+                continue
+
+            # 指標取得（可能な限り）:
+            # - 失敗しても「その指標はN/A」でスコア計算を続行します。
+            vwap: Optional[float]
+            ma25: Optional[float]
+            avg5: Optional[float]
+            try:
+                vwap = fetch_vwap(session, sym)
+            except Exception:
+                vwap = None
+            try:
+                ma25 = fetch_ma25(session, sym)
+            except Exception:
+                ma25 = None
+            try:
+                avg5 = fetch_avg_volume_5(session, sym)
+            except Exception:
+                avg5 = None
+
+            day_range_pct = _calc_day_range_pct(
+                day_high=q.day_high,
+                day_low=q.day_low,
+                previous_close=q.previous_close,
+                price=float(q.price),
+            )
+
+            score, reasons, vol_spike_ratio = _morning_screen_score(
+                q=q,
+                vwap=vwap,
+                ma25=ma25,
+                avg_vol5=avg5,
+                day_range_pct=day_range_pct,
+            )
+
+            results.append(
+                MorningScreenResult(
+                    symbol=sym,
+                    score=int(score),
+                    quote=q,
+                    vwap=vwap,
+                    ma25=ma25,
+                    avg_vol5=avg5,
+                    vol_spike_ratio=vol_spike_ratio,
+                    day_range_pct=day_range_pct,
+                    reasons=reasons,
+                )
+            )
+
+    # 並び順: スコア降順 → 前日比降順 → 出来高降順（同点のときの見やすさ用）
+    def _sort_key(r: MorningScreenResult) -> tuple:
+        chg = float(r.quote.change_percent) if isinstance(r.quote.change_percent, (int, float)) else 0.0
+        vol = float(r.quote.volume) if isinstance(r.quote.volume, (int, float)) else 0.0
+        return (int(r.score), chg, vol)
+
+    results_sorted = sorted(results, key=_sort_key, reverse=True)
+
+    msg = _format_morning_screen_message(results_sorted)
+    print(msg)
+
+    if discord_enabled:
+        try:
+            discord_notify(
+                {"content": msg},
+                webhook_url=webhook_url,
+                alert_channel_id=alert_channel_id,
+                bot_token=bot_token,
+            )
+        except Exception as e:
+            print(f"[{now_str()}] Discord送信失敗（朝スクリーニング）: {e}")
+
+    return 0
+
+
 def run_replay(
     *,
     interval_sec: float,
     only_changes: bool,
     fixed_watch: Optional[list[str]],
     replay_range: str,
+    replay_morning_screen_hhmm: str = "",
+    one_trade_per_symbol_per_day: bool = False,
 ) -> int:
     """
     過去データの仮想リプレイ（テストモード）。
@@ -1708,8 +2109,8 @@ def run_replay(
     - 各時点の price/high/low/volume を使って通常の判定ロジックを動かす
     - 条件一致通知 / 条件外れ通知 / 候補価格変更通知 を Discord に送る
     """
-    if replay_range not in ("1d", "5d"):
-        print("--replay-range は 1d または 5d を指定してください。")
+    if replay_range not in ("1d", "5d", "10d", "20d", "60d"):
+        print("--replay-range は 1d/5d/10d/20d/60d を指定してください。")
         return 2
 
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
@@ -1766,6 +2167,98 @@ def run_replay(
 
     # watchlist.json の読み込み失敗時の保険（通常と同様）
     last_watch: list[str] = []
+
+    # =========================
+    # Replay Morning Screen（追加仕様）
+    # =========================
+    # 初心者向けポイント:
+    # - 「未来データ」を使うと検証にならないので、指定時刻までの1分足だけでスクリーニングします。
+    # - 指定時刻になったら、その日だけ監視対象にTOP10を追加して、以降のsignal/期待値を検証します。
+
+    def _parse_hhmm(hhmm: str) -> Optional[tuple[int, int]]:
+        s = (hhmm or "").strip()
+        if not s:
+            return None
+        if ":" not in s:
+            return None
+        a, b = s.split(":", 1)
+        try:
+            hh = int(a)
+            mm = int(b)
+        except Exception:
+            return None
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            return None
+        return (hh, mm)
+
+    ms_time = _parse_hhmm(replay_morning_screen_hhmm)
+    if replay_morning_screen_hhmm.strip() and ms_time is None:
+        print("--replay-morning-screen は HH:MM 形式で指定してください（例: 09:07）")
+        return 2
+
+    # スクリーニング対象のユニバース（仕様: symbols.csv > watchlist.json > WATCH）
+    ms_universe: list[str] = _load_morning_screen_symbols() if ms_time is not None else []
+
+    # 1分足は「必要になった銘柄だけ」取ってキャッシュします（全部取ると重いので）
+    ms_bars_cache: dict[str, list[ReplayBar]] = {}
+    ms_meta_cache: dict[str, dict] = {}
+
+    # 日別のMorning Screen結果（Replay終了時にまとめて表示するため）
+    # key は JST日付 "YYYY-MM-DD"
+    ms_daily: dict[str, dict[str, Any]] = {}
+
+    # 日付が変わったときのリセット用（JST基準）
+    ms_current_day_jst: Optional[str] = None
+
+    # =========================
+    # 前日継続監視（追加仕様）
+    # =========================
+    # 初心者向けポイント:
+    # - 前日に強かった銘柄が「翌日も続伸」するかを検証したい場合、
+    #   前日のReplay結果から“継続候補”を作り、翌日の監視開始時点で追加します。
+    #
+    # - 「継続候補」は Morning Screen TOP10 とは別枠で管理し、
+    #   Summary出力でも「当日選出」と「前日継続」を分けて見られるようにします。
+    ms_carryover_by_day: dict[str, list[str]] = {}  # day_jst -> carryover symbols
+
+    def _pnl_yen_100_shares_replay(s: ReplaySignalEval) -> float:
+        """
+        100株あたり損益（円）を計算します（Replay共通）。
+
+        NOTE:
+        - Morning Screen Replay Summary と同じルールに揃えます。
+        """
+        if isinstance(s.final_profit_pct, (int, float)):
+            return float(s.signal_price) * 100.0 * (float(s.final_profit_pct) / 100.0)
+        if s.result == "WIN":
+            return (float(s.take_price) - float(s.entry_price)) * 100.0
+        if s.result == "LOSE":
+            return (float(s.stop_price) - float(s.entry_price)) * 100.0
+        return 0.0
+
+    def _day_jst_str(dt_utc: datetime) -> str:
+        """UTC datetime を JST日付（YYYY-MM-DD）に変換します。"""
+        t = dt_utc
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return t.astimezone(JST).strftime("%Y-%m-%d")
+
+    # 同一銘柄の重複エントリー制限（追加仕様）:
+    # - key: JST日付（YYYY-MM-DD）
+    # - value: その日に「採用済み」の銘柄セット
+    accepted_entry_symbols_by_day: dict[str, set[str]] = {}
+
+    # 追加ポジション（買い増し）用の状態:
+    # - key: (JST日付, symbol)
+    # - value: 追加回数（0,1,2）
+    add_count_by_day_symbol: dict[tuple[str, str], int] = {}
+    # - key: (JST日付, symbol)
+    # - value: 直近のEntry価格（BASE/ADD含む“最後に建てたポジション”の価格）
+    last_entry_price_by_day_symbol: dict[tuple[str, str], float] = {}
+    # - value: 前回ADDの時刻（UTC datetime）。最低5分間隔を作るために使います。
+    last_add_time_by_day_symbol: dict[tuple[str, str], datetime] = {}
+    # - value: 出来高増加が「継続」しているかを見るための前回値
+    prev_vol_inc_by_day_symbol: dict[tuple[str, str], bool] = {}
 
     with requests.Session() as session:
         # -----------------------------
@@ -1838,6 +2331,11 @@ def run_replay(
         # 銘柄ごとの再生ポインタ
         idx_by_symbol: dict[str, int] = {sym: 0 for sym in bars_by_symbol.keys()}
 
+        # base_watch: 元々のReplay監視銘柄（毎日これがベース）
+        # active_watch: 当日の監視銘柄（Morning Screenで追加される可能性あり）
+        base_watch: set[str] = set(bars_by_symbol.keys())
+        active_watch: set[str] = set(base_watch)
+
         # 進行率用:
         # - 全銘柄・全バーの総数に対して、何本再生したかで%を出します。
         total_bars = sum(len(bars) for bars in bars_by_symbol.values())
@@ -1856,7 +2354,9 @@ def run_replay(
                 # 1秒ぶん進める（各銘柄の1分足を1本進める）
                 # -----------------------------
                 quotes: list[Quote] = []
-                for sym, bars in bars_by_symbol.items():
+                # 重要: “当日の監視対象”だけ進めます（Morning Screenで追加された銘柄もここに入ります）
+                for sym in sorted(active_watch):
+                    bars = bars_by_symbol.get(sym) or []
                     i = idx_by_symbol.get(sym, 0)
                     if i >= len(bars):
                         continue
@@ -1905,6 +2405,9 @@ def run_replay(
                             previous_close=float(prev_close) if isinstance(prev_close, (int, float)) else None,
                             change_percent=float(chg) if isinstance(chg, (int, float)) else None,
                             day_high=float(running_day_high[sym]),
+                            # Replayは最小限の再現でOKなので day_low は概算（running min）ではなく None にします。
+                            # 朝スクリーニングで必要な値ですが、Replay要件には入っていません。
+                            day_low=None,
                             volume=float(running_day_volume[sym]),  # 日内累積出来高として扱う
                             market_time_utc=bar.timestamp_utc,
                             market_cap=None,
@@ -1932,8 +2435,10 @@ def run_replay(
                                 fp = ((float(s.last_price_after) - float(s.entry_price)) / float(s.entry_price)) * 100.0
                             else:
                                 fp = float(s.final_profit_pct or 0.0)
+                            excluded_s = "EXCLUDED" if bool(getattr(s, "excluded_from_eval", False)) else "OK"
                             print(
                                 f"- {s.symbol} | "
+                                f"pos={getattr(s, 'position_kind', 'BASE')} | "
                                 f"signal_time_jst={t_jst} | "
                                 f"signal_price={_fmt_yen(s.signal_price)} | "
                                 f"entry_price={_fmt_yen(s.entry_price)} | "
@@ -1948,9 +2453,389 @@ def run_replay(
                                 f"final_profit_pct={fp:.2f}% | "
                                 f"take_hit={'Y' if s.take_hit else 'N'} | "
                                 f"stop_hit={'Y' if s.stop_hit else 'N'} | "
-                                f"result={s.result}"
+                                f"result={s.result} | "
+                                f"eval={excluded_s}"
                             )
                     print()
+
+                    # =========================
+                    # 期待値検証サマリー（追加仕様）
+                    # =========================
+                    # 初心者向けポイント:
+                    # - 「各signalの詳細」だけだと全体の傾向が掴みにくいので、
+                    #   最後に集計（勝率・平均値・損益）をまとめて見られるようにします。
+
+                    def _safe_avg(xs: list[float]) -> float:
+                        """空リストでも落ちない平均（空なら0）。"""
+                        return (sum(xs) / len(xs)) if xs else 0.0
+
+                    def _signal_time_bucket_jst(t_utc: datetime) -> str:
+                        """
+                        時間帯分類（JST）:
+                        - 前場寄り直後: 09:00〜09:30
+                        - 前場:       09:30〜11:30
+                        - 後場前半:   12:30〜14:00
+                        - 後場後半:   14:00〜15:30
+                        """
+                        t = t_utc
+                        if t.tzinfo is None:
+                            t = t.replace(tzinfo=timezone.utc)
+                        jst = t.astimezone(JST)
+                        hm = jst.hour * 60 + jst.minute
+                        if (9 * 60) <= hm < (9 * 60 + 30):
+                            return "前場寄り直後(09:00-09:30)"
+                        if (9 * 60 + 30) <= hm < (11 * 60 + 30):
+                            return "前場(09:30-11:30)"
+                        if (12 * 60 + 30) <= hm < (14 * 60):
+                            return "後場前半(12:30-14:00)"
+                        if (14 * 60) <= hm < (15 * 60 + 30):
+                            return "後場後半(14:00-15:30)"
+                        return "時間外"
+
+                    def _profit_pct_for_summary(s: ReplaySignalEval) -> float:
+                        """
+                        サマリー用の“最終損益%”を返します。
+
+                        仕様（ユーザー要件）:
+                        - final_profit_pct があればそれを採用
+                        - 無い場合:
+                          - WIN: take_price到達時の利益（entry基準）
+                          - LOSE: stop_price到達時の損失（entry基準）
+                          - HOLD: 取れなければ 0%
+                        """
+                        if isinstance(s.final_profit_pct, (int, float)):
+                            return float(s.final_profit_pct)
+                        if s.entry_price <= 0:
+                            return 0.0
+                        if s.result == "WIN":
+                            return ((float(s.take_price) - float(s.entry_price)) / float(s.entry_price)) * 100.0
+                        if s.result == "LOSE":
+                            return ((float(s.stop_price) - float(s.entry_price)) / float(s.entry_price)) * 100.0
+                        return 0.0
+
+                    def _pnl_yen_100_shares(s: ReplaySignalEval) -> float:
+                        """
+                        100株あたり損益（円）を計算します。
+
+                        仕様（ユーザー要件）:
+                        - final_profit_pct がある場合:
+                          pnl_yen = signal_price * 100 * final_profit_pct / 100
+                        - final_profit_pct がない場合:
+                          - WIN: take_price到達時の利益（円）
+                          - LOSE: stop_price到達時の損失（円）
+                          - HOLD: 取れなければ 0円
+                        """
+                        if isinstance(s.final_profit_pct, (int, float)):
+                            return float(s.signal_price) * 100.0 * (float(s.final_profit_pct) / 100.0)
+                        if s.result == "WIN":
+                            return (float(s.take_price) - float(s.entry_price)) * 100.0
+                        if s.result == "LOSE":
+                            return (float(s.stop_price) - float(s.entry_price)) * 100.0
+                        return 0.0
+
+                    # 集計対象（重複エントリー制限などで除外されたsignalは除く）
+                    eval_signals = [s for s in replay_signals if not bool(getattr(s, "excluded_from_eval", False))]
+                    excluded_n = len(replay_signals) - len(eval_signals)
+
+                    total = len(eval_signals)
+                    win = sum(1 for s in eval_signals if s.result == "WIN")
+                    lose = sum(1 for s in eval_signals if s.result == "LOSE")
+                    hold = sum(1 for s in eval_signals if s.result == "HOLD")
+                    win_rate = (win / total * 100.0) if total > 0 else 0.0
+
+                    # 利益率/損失率の平均（WIN/LOSEに分けて集計）
+                    profit_pcts = [_profit_pct_for_summary(s) for s in eval_signals if s.result == "WIN"]
+                    loss_pcts = [_profit_pct_for_summary(s) for s in eval_signals if s.result == "LOSE"]
+                    avg_profit_pct = _safe_avg(profit_pcts)
+                    avg_loss_pct = _safe_avg(loss_pcts)
+
+                    # 最大利益率 / 最大下落率の平均（全signal対象）
+                    max_profit_pcts = [float(s.max_profit_pct()) for s in eval_signals]
+                    max_drawdown_pcts = [float(s.max_drawdown_pct()) for s in eval_signals]
+                    avg_max_profit_pct = _safe_avg(max_profit_pcts)
+                    avg_max_drawdown_pct = _safe_avg(max_drawdown_pcts)
+
+                    pnls = [_pnl_yen_100_shares(s) for s in eval_signals]
+                    total_pnl_yen = sum(pnls)
+                    avg_pnl_yen = (total_pnl_yen / total) if total > 0 else 0.0
+
+                    print("【期待値検証サマリー】")
+                    print(f"総signal数: {total}")
+                    if excluded_n > 0:
+                        print(f"除外signal数: {excluded_n}（例: 同一銘柄1日1回モードなど）")
+                    print(f"WIN数: {win}")
+                    print(f"LOSE数: {lose}")
+                    print(f"HOLD数: {hold}")
+                    print(f"勝率: {win_rate:.1f}%")
+                    print(f"平均利益率: {avg_profit_pct:.2f}%")
+                    print(f"平均損失率: {avg_loss_pct:.2f}%")
+                    print(f"平均最大利益率: {avg_max_profit_pct:.2f}%")
+                    print(f"平均最大下落率: {avg_max_drawdown_pct:.2f}%")
+                    print(f"100株あたり合計損益: {total_pnl_yen:+,.0f}円")
+                    print(f"100株あたり平均損益: {avg_pnl_yen:+,.0f}円")
+                    print()
+
+                    # =========================
+                    # 銘柄別サマリー（追加仕様）
+                    # =========================
+                    by_symbol: dict[str, list[ReplaySignalEval]] = {}
+                    for s in eval_signals:
+                        by_symbol.setdefault(s.symbol, []).append(s)
+
+                    print("【銘柄別サマリー】")
+                    for sym in sorted(by_symbol.keys()):
+                        xs = by_symbol[sym]
+                        t = len(xs)
+                        w = sum(1 for s in xs if s.result == "WIN")
+                        l = sum(1 for s in xs if s.result == "LOSE")
+                        h = sum(1 for s in xs if s.result == "HOLD")
+                        wr = (w / t * 100.0) if t > 0 else 0.0
+                        pnl = sum(_pnl_yen_100_shares(s) for s in xs)
+                        print(sym)
+                        print(f"signal数: {t}")
+                        print(f"WIN: {w}")
+                        print(f"LOSE: {l}")
+                        print(f"HOLD: {h}")
+                        print(f"勝率: {wr:.1f}%")
+                        print(f"100株損益: {pnl:+,.0f}円")
+                        print()
+
+                    # =========================
+                    # 時間帯別サマリー（追加仕様）
+                    # =========================
+                    by_bucket: dict[str, list[ReplaySignalEval]] = {}
+                    for s in eval_signals:
+                        by_bucket.setdefault(_signal_time_bucket_jst(s.signal_time_utc), []).append(s)
+
+                    # 表示順を固定（時間外は最後）
+                    bucket_order = [
+                        "前場寄り直後(09:00-09:30)",
+                        "前場(09:30-11:30)",
+                        "後場前半(12:30-14:00)",
+                        "後場後半(14:00-15:30)",
+                        "時間外",
+                    ]
+
+                    print("【時間帯別サマリー】")
+                    for b in bucket_order:
+                        xs = by_bucket.get(b) or []
+                        if not xs:
+                            continue
+                        t = len(xs)
+                        w = sum(1 for s in xs if s.result == "WIN")
+                        l = sum(1 for s in xs if s.result == "LOSE")
+                        wr = (w / t * 100.0) if t > 0 else 0.0
+                        pnl = sum(_pnl_yen_100_shares(s) for s in xs)
+                        print(b)
+                        print(f"signal数: {t}")
+                        print(f"WIN: {w}")
+                        print(f"LOSE: {l}")
+                        print(f"勝率: {wr:.1f}%")
+                        print(f"100株損益: {pnl:+,.0f}円")
+                        print()
+
+                    # =========================
+                    # Morning Screen Replay Summary（追加仕様）
+                    # =========================
+                    # ターミナル表示のみでOK（Discordは不要）
+                    if ms_time is not None:
+                        print("【Morning Screen Replay Summary】")
+                        if not ms_daily:
+                            print("- Morning Screen は1度も実行されませんでした（指定時刻が再生範囲に無い等）")
+                            print()
+                        else:
+                            def _pnl_yen_100_shares_ms(s: ReplaySignalEval) -> float:
+                                if isinstance(s.final_profit_pct, (int, float)):
+                                    return float(s.signal_price) * 100.0 * (float(s.final_profit_pct) / 100.0)
+                                if s.result == "WIN":
+                                    return (float(s.take_price) - float(s.entry_price)) * 100.0
+                                if s.result == "LOSE":
+                                    return (float(s.stop_price) - float(s.entry_price)) * 100.0
+                                return 0.0
+
+                            by_day_stats: dict[str, dict[str, Any]] = {
+                                day: {
+                                    "selected": {"signals": 0, "win": 0, "lose": 0, "hold": 0, "pnl": 0.0},
+                                    "carryover": {"signals": 0, "win": 0, "lose": 0, "hold": 0, "pnl": 0.0},
+                                }
+                                for day in ms_daily.keys()
+                            }
+
+                            by_symbol_ms: dict[str, dict[str, Any]] = {}
+                            for day, info in ms_daily.items():
+                                for sym in (info.get("symbols") or []):
+                                    agg = by_symbol_ms.setdefault(
+                                        sym,
+                                        {
+                                            "picked": 0,
+                                            "signals": 0,
+                                            "win": 0,
+                                            "lose": 0,
+                                            "hold": 0,
+                                            "pnl": 0.0,
+                                            # 継続監視（追加仕様）
+                                            "carry_picked": 0,
+                                            "carry_signals": 0,
+                                            "carry_win": 0,
+                                            "carry_lose": 0,
+                                            "carry_hold": 0,
+                                            "carry_pnl": 0.0,
+                                        },
+                                    )
+                                    agg["picked"] += 1
+                                for sym in (info.get("carryover_symbols") or []):
+                                    agg = by_symbol_ms.setdefault(
+                                        sym,
+                                        {
+                                            "picked": 0,
+                                            "signals": 0,
+                                            "win": 0,
+                                            "lose": 0,
+                                            "hold": 0,
+                                            "pnl": 0.0,
+                                            "carry_picked": 0,
+                                            "carry_signals": 0,
+                                            "carry_win": 0,
+                                            "carry_lose": 0,
+                                            "carry_hold": 0,
+                                            "carry_pnl": 0.0,
+                                        },
+                                    )
+                                    agg["carry_picked"] += 1
+
+                            # Morning Screen Summary も「期待値検証の集計対象」に合わせます
+                            # （= 同一銘柄1日1回モード等で excluded_from_eval な signal は除外）
+                            ms_eval_signals = [s for s in replay_signals if not bool(getattr(s, "excluded_from_eval", False))]
+                            for s in ms_eval_signals:
+                                t = s.signal_time_utc
+                                if t.tzinfo is None:
+                                    t = t.replace(tzinfo=timezone.utc)
+                                day_jst = t.astimezone(JST).strftime("%Y-%m-%d")
+                                info = ms_daily.get(day_jst)
+                                if not info:
+                                    continue
+                                selected_set = set(info.get("symbols") or [])
+                                carry_set = set(info.get("carryover_symbols") or [])
+
+                                # 分類ルール（初心者向けにシンプルに）:
+                                # - carryover に入っている銘柄は carryover 側へ寄せる（重複カウント防止）
+                                # - selected は “screen_time以降” のsignalだけを対象にする
+                                bucket: Optional[str] = None
+                                if s.symbol in carry_set:
+                                    bucket = "carryover"
+                                elif s.symbol in selected_set:
+                                    st_utc = info.get("screen_time_utc")
+                                    if isinstance(st_utc, datetime):
+                                        st2 = st_utc
+                                        if st2.tzinfo is None:
+                                            st2 = st2.replace(tzinfo=timezone.utc)
+                                        if t < st2:
+                                            continue
+                                    bucket = "selected"
+                                else:
+                                    continue
+
+                                dd = by_day_stats.get(day_jst)
+                                if dd is not None and bucket is not None:
+                                    ddb = dd.get(bucket) or {}
+                                    ddb["signals"] = int(ddb.get("signals") or 0) + 1
+                                    ddb["pnl"] = float(ddb.get("pnl") or 0.0) + float(_pnl_yen_100_shares_ms(s))
+                                    if s.result == "WIN":
+                                        ddb["win"] = int(ddb.get("win") or 0) + 1
+                                    elif s.result == "LOSE":
+                                        ddb["lose"] = int(ddb.get("lose") or 0) + 1
+                                    else:
+                                        ddb["hold"] = int(ddb.get("hold") or 0) + 1
+                                    dd[bucket] = ddb
+
+                                agg = by_symbol_ms.setdefault(
+                                    s.symbol,
+                                    {
+                                        "picked": 0,
+                                        "signals": 0,
+                                        "win": 0,
+                                        "lose": 0,
+                                        "hold": 0,
+                                        "pnl": 0.0,
+                                        "carry_picked": 0,
+                                        "carry_signals": 0,
+                                        "carry_win": 0,
+                                        "carry_lose": 0,
+                                        "carry_hold": 0,
+                                        "carry_pnl": 0.0,
+                                    },
+                                )
+                                if bucket == "carryover":
+                                    agg["carry_signals"] += 1
+                                    agg["carry_pnl"] += float(_pnl_yen_100_shares_ms(s))
+                                    if s.result == "WIN":
+                                        agg["carry_win"] += 1
+                                    elif s.result == "LOSE":
+                                        agg["carry_lose"] += 1
+                                    else:
+                                        agg["carry_hold"] += 1
+                                else:
+                                    agg["signals"] += 1
+                                    agg["pnl"] += float(_pnl_yen_100_shares_ms(s))
+                                    if s.result == "WIN":
+                                        agg["win"] += 1
+                                    elif s.result == "LOSE":
+                                        agg["lose"] += 1
+                                    else:
+                                        agg["hold"] += 1
+
+                            for day in sorted(ms_daily.keys()):
+                                info = ms_daily[day]
+                                hhmm = str(info.get("hhmm") or "")
+                                syms = list(info.get("symbols") or [])
+                                carry_syms = list(info.get("carryover_symbols") or [])
+                                scores = dict(info.get("scores") or {})
+                                stt = by_day_stats.get(day) or {}
+                                sel = stt.get("selected") or {}
+                                car = stt.get("carryover") or {}
+                                picked = ", ".join([f"{s}({int(scores.get(s, 0))})" for s in syms]) if syms else "(none)"
+                                carry_picked = ", ".join(carry_syms) if carry_syms else "(none)"
+                                print(f"- 日付: {day}")
+                                print(f"  指定時刻: {hhmm} JST")
+                                print(f"  当日選出(TOP10): {picked}")
+                                print(f"  前日継続: {carry_picked}")
+                                print(
+                                    "  [当日選出] "
+                                    f"signal数: {int(sel.get('signals') or 0)}  "
+                                    f"WIN/LOSE/HOLD: {int(sel.get('win') or 0)}/{int(sel.get('lose') or 0)}/{int(sel.get('hold') or 0)}  "
+                                    f"100株損益: {float(sel.get('pnl') or 0.0):+,.0f}円"
+                                )
+                                print(
+                                    "  [前日継続] "
+                                    f"signal数: {int(car.get('signals') or 0)}  "
+                                    f"WIN/LOSE/HOLD: {int(car.get('win') or 0)}/{int(car.get('lose') or 0)}/{int(car.get('hold') or 0)}  "
+                                    f"100株損益: {float(car.get('pnl') or 0.0):+,.0f}円"
+                                )
+                                print()
+
+                            print("【Morning Screen 銘柄別サマリー】")
+                            for sym in sorted(by_symbol_ms.keys()):
+                                a = by_symbol_ms[sym]
+                                picked_n = int(a.get("picked") or 0)
+                                sig_n = int(a.get("signals") or 0)
+                                w = int(a.get("win") or 0)
+                                pnl = float(a.get("pnl") or 0.0)
+                                wr = (w / sig_n * 100.0) if sig_n > 0 else 0.0
+                                carry_picked_n = int(a.get("carry_picked") or 0)
+                                carry_sig_n = int(a.get("carry_signals") or 0)
+                                carry_w = int(a.get("carry_win") or 0)
+                                carry_pnl = float(a.get("carry_pnl") or 0.0)
+                                carry_wr = (carry_w / carry_sig_n * 100.0) if carry_sig_n > 0 else 0.0
+                                print(sym)
+                                print(f"選出回数: {picked_n}")
+                                print(f"signal数: {sig_n}")
+                                print(f"勝率: {wr:.1f}%")
+                                print(f"100株損益: {pnl:+,.0f}円")
+                                print(f"継続監視回数: {carry_picked_n}")
+                                print(f"継続監視時signal数: {carry_sig_n}")
+                                print(f"継続監視時勝率: {carry_wr:.1f}%")
+                                print(f"継続監視時100株損益: {carry_pnl:+,.0f}円")
+                                print()
                     print(f"\n[{now_str()}] リプレイ完了（全銘柄のデータを再生し終えました）")
                     return 0
 
@@ -1959,6 +2844,356 @@ def run_replay(
                 # -----------------------------
                 replay_t = max((q.market_time_utc for q in quotes if q.market_time_utc), default=None)
                 replay_t_jst = _fmt_dt_jst(replay_t)
+
+                # =========================
+                # Replay Morning Screen（指定時刻）を実行
+                # =========================
+                # 実行条件:
+                # - --replay-morning-screen が指定されている
+                # - 現在のReplay時刻（JST）が指定時刻に到達した
+                # - その日（JST日付）ではまだ実行していない
+                if ms_time is not None and replay_t is not None:
+                    rt = replay_t
+                    if rt.tzinfo is None:
+                        rt = rt.replace(tzinfo=timezone.utc)
+                    jst_now = rt.astimezone(JST)
+                    day_jst = jst_now.strftime("%Y-%m-%d")
+                    hh, mm = ms_time
+
+                    # 日付が変わったら当日の追加監視をリセット（ベースwatchに戻す）
+                    if ms_current_day_jst != day_jst:
+                        prev_day_jst = ms_current_day_jst
+                        ms_current_day_jst = day_jst
+                        active_watch = set(base_watch)
+
+                        # -----------------------------
+                        # 前日継続監視銘柄の抽出 → 当日監視へ追加
+                        # -----------------------------
+                        # 条件（ユーザー要件）:
+                        # - WIN（= 前日にWINが存在）
+                        # - 100株損益 > 0（銘柄合計）
+                        # - signal数 >= 2（銘柄合計）
+                        # - max_profit_pct >= 1.0（銘柄内の最大）
+                        if ms_time is not None and prev_day_jst:
+                            # 前日シグナルを銘柄ごとに集計
+                            prev_syms: dict[str, list[ReplaySignalEval]] = {}
+                            # 継続候補抽出も「期待値検証の集計対象」に合わせます
+                            # （= excluded_from_eval な signal は除外）
+                            carry_eval_signals = [s for s in replay_signals if not bool(getattr(s, "excluded_from_eval", False))]
+                            for ss in carry_eval_signals:
+                                if _day_jst_str(ss.signal_time_utc) != prev_day_jst:
+                                    continue
+                                prev_syms.setdefault(ss.symbol, []).append(ss)
+
+                            carry: list[str] = []
+                            for sym, xs in prev_syms.items():
+                                sig_n = len(xs)
+                                if sig_n < 2:
+                                    continue
+                                win_n = sum(1 for x in xs if x.result == "WIN")
+                                if win_n <= 0:
+                                    continue
+                                pnl = sum(float(_pnl_yen_100_shares_replay(x)) for x in xs)
+                                if pnl <= 0:
+                                    continue
+                                max_profit = max(float(x.max_profit_pct()) for x in xs) if xs else 0.0
+                                if max_profit < 1.0:
+                                    continue
+                                carry.append(sym)
+
+                            # 翌営業日（当日）に適用するcarryoverリストとして保存
+                            ms_carryover_by_day[day_jst] = sorted(set(carry))
+
+                            # 当日の監視対象へ追加（Morning Screen TOP10 とは別枠）
+                            carry_today = ms_carryover_by_day.get(day_jst) or []
+                            if carry_today:
+                                for sym in carry_today:
+                                    if sym in active_watch:
+                                        continue
+                                    hist = _ensure_ms_history(sym)
+                                    if hist is None:
+                                        continue
+                                    b, m = hist
+                                    bars_by_symbol.setdefault(sym, b)
+                                    meta_by_symbol.setdefault(sym, m)
+
+                                    # idx を “今の時刻” に合わせる（timestamp>=rt の最初）
+                                    seek = 0
+                                    for i2, bb in enumerate(b):
+                                        if bb.timestamp_utc >= rt:
+                                            seek = i2
+                                            break
+                                    idx_by_symbol[sym] = seek
+
+                                    # 前日終値INIT（metaにあれば）
+                                    pc = m.get("previousClose")
+                                    prev_close_by_day[f"{sym}::INIT"] = float(pc) if isinstance(pc, (int, float)) else None
+
+                                    # 当日状態の初期化（簡易）
+                                    running_day_high[sym] = float("-inf")
+                                    running_day_volume[sym] = 0.0
+                                    running_vwap_pv[sym] = 0.0
+                                    running_vwap_v[sym] = 0.0
+                                    day_key = rt.strftime("%Y-%m-%d")
+                                    current_day_key[sym] = day_key
+                                    for bb in b[:seek]:
+                                        if bb.timestamp_utc.strftime("%Y-%m-%d") != day_key:
+                                            continue
+                                        running_day_high[sym] = max(float(running_day_high.get(sym, float("-inf"))), float(bb.high))
+                                        running_day_volume[sym] = float(running_day_volume.get(sym, 0.0)) + float(bb.volume)
+                                        tp = (float(bb.high) + float(bb.low) + float(bb.close)) / 3.0
+                                        running_vwap_pv[sym] = float(running_vwap_pv.get(sym, 0.0)) + tp * float(bb.volume)
+                                        running_vwap_v[sym] = float(running_vwap_v.get(sym, 0.0)) + float(bb.volume)
+
+                                    if seek > 0:
+                                        prev_price_by_symbol[sym] = float(b[seek - 1].close)
+                                    else:
+                                        prev_price_by_symbol.setdefault(sym, None)
+
+                                    active_watch.add(sym)
+
+                                print(
+                                    f"[{now_str()}][Replay Carryover] {day_jst} 継続監視追加: "
+                                    f"{', '.join(carry_today)}"
+                                )
+
+                    if (jst_now.hour, jst_now.minute) >= (hh, mm) and day_jst not in ms_daily:
+                        # -----------------------------
+                        # 1) Morning Screen（Replay版）
+                        # -----------------------------
+                        # 初心者向けポイント:
+                        # - 「その時点の市場状況」を再現するには、rt 以前のバーだけを使います。
+                        # - 以降のバー（未来）は絶対に使いません。
+
+                        def _ensure_ms_history(sym: str) -> Optional[tuple[list[ReplayBar], dict]]:
+                            if sym in ms_bars_cache:
+                                return (ms_bars_cache[sym], ms_meta_cache.get(sym) or {})
+                            try:
+                                b, m = fetch_history_1m(session, sym, range_str=replay_range)
+                                if not b:
+                                    return None
+                                ms_bars_cache[sym] = b
+                                ms_meta_cache[sym] = m
+                                return (b, m)
+                            except Exception:
+                                return None
+
+                        def _bars_until_time_jst_day(
+                            bars: list[ReplayBar],
+                            *,
+                            t_utc: datetime,
+                        ) -> tuple[list[ReplayBar], Optional[float]]:
+                            """
+                            指定時刻までの「その日（JST日付）」のバーを返します。
+                            - future（t_utcより後）は含めません
+                            - prev_close は「当日最初のバーの直前のclose」を返します（取れれば）
+                            """
+                            if t_utc.tzinfo is None:
+                                t_utc = t_utc.replace(tzinfo=timezone.utc)
+                            target_day = t_utc.astimezone(JST).date()
+
+                            day_bars: list[ReplayBar] = []
+                            first_t: Optional[datetime] = None
+                            for b in bars:
+                                bt = b.timestamp_utc
+                                if bt.tzinfo is None:
+                                    bt = bt.replace(tzinfo=timezone.utc)
+                                if bt.astimezone(JST).date() != target_day:
+                                    continue
+                                if first_t is None:
+                                    first_t = bt
+                                if bt <= t_utc:
+                                    day_bars.append(b)
+                            if not day_bars or first_t is None:
+                                return ([], None)
+
+                            prev_close: Optional[float] = None
+                            prev_bar: Optional[ReplayBar] = None
+                            for b in bars:
+                                if b.timestamp_utc < first_t:
+                                    prev_bar = b
+                                else:
+                                    break
+                            if prev_bar is not None:
+                                prev_close = float(prev_bar.close)
+                            return (day_bars, prev_close)
+
+                        ms_results: list[MorningScreenResult] = []
+                        for sym in ms_universe:
+                            hist = _ensure_ms_history(sym)
+                            if hist is None:
+                                continue
+                            b, meta = hist
+                            day_bars, prev_close = _bars_until_time_jst_day(b, t_utc=rt)
+                            if not day_bars:
+                                continue
+
+                            last_bar = day_bars[-1]
+                            price = float(last_bar.close)
+                            day_high = max(float(x.high) for x in day_bars)
+                            day_low = min(float(x.low) for x in day_bars)
+                            vol = sum(float(x.volume) for x in day_bars)
+
+                            # 除外条件（朝スクリーニング仕様）
+                            if vol < 100_000.0:
+                                continue
+
+                            chg = _calc_change_percent(price=price, previous_close=prev_close)
+                            if not isinstance(chg, (int, float)) or float(chg) < 0.0:
+                                continue
+
+                            # VWAP（概算）
+                            pv = 0.0
+                            vv = 0.0
+                            for x in day_bars:
+                                v = float(x.volume)
+                                if v <= 0:
+                                    continue
+                                tp = (float(x.high) + float(x.low) + float(x.close)) / 3.0
+                                pv += tp * v
+                                vv += v
+                            vwap = (pv / vv) if vv > 0 else None
+
+                            # MA25 / 5日平均出来高（通常と同じ関数を再利用）
+                            ma25: Optional[float] = None
+                            avg5: Optional[float] = None
+                            try:
+                                cached = ma25_cache.get(sym)
+                                if cached:
+                                    cached_ma25, fetched_at = cached
+                                    if (time.perf_counter() - fetched_at) < MA25_CACHE_TTL_SEC:
+                                        ma25 = cached_ma25
+                                if ma25 is None:
+                                    fetched = fetch_ma25(session, sym)
+                                    if fetched is not None:
+                                        ma25_cache[sym] = (float(fetched), time.perf_counter())
+                                        ma25 = float(fetched)
+                            except Exception:
+                                ma25 = None
+                            try:
+                                cached = avg5_cache.get(sym)
+                                if cached:
+                                    cached_avg5, fetched_at = cached
+                                    if (time.perf_counter() - fetched_at) < VOL_AVG5_CACHE_TTL_SEC:
+                                        avg5 = cached_avg5
+                                if avg5 is None:
+                                    fetched = fetch_avg_volume_5(session, sym)
+                                    if fetched is not None:
+                                        avg5_cache[sym] = (float(fetched), time.perf_counter())
+                                        avg5 = float(fetched)
+                            except Exception:
+                                avg5 = None
+
+                            q_ms = Quote(
+                                symbol=sym,
+                                price=price,
+                                currency=str(meta.get("currency") or "JPY"),
+                                previous_close=float(prev_close) if isinstance(prev_close, (int, float)) else None,
+                                change_percent=float(chg) if isinstance(chg, (int, float)) else None,
+                                day_high=float(day_high),
+                                day_low=float(day_low),
+                                volume=float(vol),
+                                market_time_utc=rt,
+                                market_cap=None,
+                            )
+
+                            day_range_pct = _calc_day_range_pct(
+                                day_high=q_ms.day_high,
+                                day_low=q_ms.day_low,
+                                previous_close=q_ms.previous_close,
+                                price=float(q_ms.price),
+                            )
+                            score, reasons, vol_spike_ratio = _morning_screen_score(
+                                q=q_ms,
+                                vwap=vwap,
+                                ma25=ma25,
+                                avg_vol5=avg5,
+                                day_range_pct=day_range_pct,
+                            )
+                            ms_results.append(
+                                MorningScreenResult(
+                                    symbol=sym,
+                                    score=int(score),
+                                    quote=q_ms,
+                                    vwap=vwap,
+                                    ma25=ma25,
+                                    avg_vol5=avg5,
+                                    vol_spike_ratio=vol_spike_ratio,
+                                    day_range_pct=day_range_pct,
+                                    reasons=reasons,
+                                )
+                            )
+
+                        ms_sorted = sorted(
+                            ms_results,
+                            key=lambda r: (r.score, float(r.quote.change_percent or 0.0), float(r.quote.volume or 0.0)),
+                            reverse=True,
+                        )
+                        top10 = ms_sorted[:10]
+                        selected_syms = [r.symbol for r in top10]
+                        scores_by_symbol = {r.symbol: int(r.score) for r in top10}
+
+                        ms_daily[day_jst] = {
+                            "date": day_jst,
+                            "hhmm": f"{hh:02d}:{mm:02d}",
+                            "screen_time_utc": rt,
+                            "symbols": selected_syms,
+                            "scores": scores_by_symbol,
+                            # 前日継続監視（別枠）
+                            "carryover_symbols": list(ms_carryover_by_day.get(day_jst) or []),
+                        }
+
+                        # -----------------------------
+                        # 2) 監視銘柄へ自動追加（当日ぶん）
+                        # -----------------------------
+                        for sym in selected_syms:
+                            if sym in active_watch:
+                                continue
+                            hist = _ensure_ms_history(sym)
+                            if hist is None:
+                                continue
+                            b, m = hist
+                            bars_by_symbol.setdefault(sym, b)
+                            meta_by_symbol.setdefault(sym, m)
+
+                            # idx を “今の時刻” に合わせる（timestamp>=rt の最初）
+                            seek = 0
+                            for i2, bb in enumerate(b):
+                                if bb.timestamp_utc >= rt:
+                                    seek = i2
+                                    break
+                            idx_by_symbol[sym] = seek
+
+                            # 前日終値INIT（metaにあれば）
+                            pc = m.get("previousClose")
+                            prev_close_by_day[f"{sym}::INIT"] = float(pc) if isinstance(pc, (int, float)) else None
+
+                            # 当日状態の初期化（簡易）
+                            running_day_high[sym] = float("-inf")
+                            running_day_volume[sym] = 0.0
+                            running_vwap_pv[sym] = 0.0
+                            running_vwap_v[sym] = 0.0
+                            day_key = rt.strftime("%Y-%m-%d")
+                            current_day_key[sym] = day_key
+                            for bb in b[:seek]:
+                                if bb.timestamp_utc.strftime("%Y-%m-%d") != day_key:
+                                    continue
+                                running_day_high[sym] = max(float(running_day_high.get(sym, float("-inf"))), float(bb.high))
+                                running_day_volume[sym] = float(running_day_volume.get(sym, 0.0)) + float(bb.volume)
+                                tp = (float(bb.high) + float(bb.low) + float(bb.close)) / 3.0
+                                running_vwap_pv[sym] = float(running_vwap_pv.get(sym, 0.0)) + tp * float(bb.volume)
+                                running_vwap_v[sym] = float(running_vwap_v.get(sym, 0.0)) + float(bb.volume)
+
+                            if seek > 0:
+                                prev_price_by_symbol[sym] = float(b[seek - 1].close)
+                            else:
+                                prev_price_by_symbol.setdefault(sym, None)
+
+                            active_watch.add(sym)
+
+                        picked = ", ".join([f"{s}({scores_by_symbol.get(s, 0)})" for s in selected_syms]) if selected_syms else "(none)"
+                        print(f"[{now_str()}][Replay MorningScreen] {day_jst} {hh:02d}:{mm:02d} JST picked: {picked}")
+
                 pct = 0
                 if total_bars > 0:
                     pct = int((progressed_bars / total_bars) * 100)
@@ -2112,6 +3347,154 @@ def run_replay(
                     intraday_by_symbol[q.symbol] = sig
                     _LATEST_INTRADAY_SIGNALS[q.symbol] = sig
 
+                    # =========================
+                    # 追加ポジション（ADD）判定（改善版 / Replay期待値検証に反映）
+                    # =========================
+                    # 目的:
+                    # - 弱い銘柄や失速局面でのADDを抑制し、損失拡大を防ぎたい。
+                    #
+                    # 追加条件（ユーザー要件）:
+                    # - current_price > average_entry_price
+                    # - current_price > vwap
+                    # - current_price >= recent_5m_high * 1.001
+                    # - 出来高増加継続（前回も今回も増加=True）
+                    # - 最大ADD回数 = 2
+                    # - 前回ADDから最低5分経過
+                    # - VWAP乖離率 > 3.0% の場合ADD禁止
+                    #
+                    # ADD発生時ログ:
+                    # - ADD理由 / 平均取得単価 / 現在保有数 / ADD回数 / VWAP乖離率 / 含み損益率
+                    try:
+                        # “保有中”判定: active に未解決ポジションがある
+                        active_idxs = active_signal_indices_by_symbol.get(q.symbol) or []
+                        holding = bool(active_idxs)
+
+                        # 時刻（JST）
+                        tcur = q.market_time_utc
+                        if tcur is None:
+                            tcur = datetime.now(tz=timezone.utc)
+                        if tcur.tzinfo is None:
+                            tcur = tcur.replace(tzinfo=timezone.utc)
+                        jst_cur = tcur.astimezone(JST)
+
+                        # 14:30 以降は禁止
+                        after_1430 = (jst_cur.hour * 60 + jst_cur.minute) >= (14 * 60 + 30)
+
+                        day_jst = _day_jst_str(tcur)
+                        key = (day_jst, q.symbol)
+
+                        add_count = int(add_count_by_day_symbol.get(key, 0))
+                        # 前回ADDからの経過
+                        last_add_t = last_add_time_by_day_symbol.get(key)
+                        min_5min_passed = True
+                        if isinstance(last_add_t, datetime):
+                            dt_sec = (tcur - last_add_t).total_seconds()
+                            min_5min_passed = dt_sec >= 5 * 60
+
+                        # 平均取得単価（未解決ポジションを「保有」とみなし、各ポジション=100株として平均）
+                        total_qty = 0
+                        total_cost = 0.0
+                        for idx in active_idxs:
+                            try:
+                                ps = replay_signals[int(idx)]
+                            except Exception:
+                                continue
+                            qty = 100
+                            total_qty += qty
+                            total_cost += float(ps.entry_price) * float(qty)
+                        avg_entry: Optional[float] = None
+                        if total_qty > 0:
+                            avg_entry = total_cost / float(total_qty)
+
+                        # 出来高増加「継続」
+                        vol_inc_now = (sig.vol_3m_gt_prev_3m is True)
+                        vol_inc_prev = bool(prev_vol_inc_by_day_symbol.get(key, False))
+                        vol_inc_cont = bool(vol_inc_prev and vol_inc_now)
+                        prev_vol_inc_by_day_symbol[key] = bool(vol_inc_now)  # 次ループ用に更新
+
+                        # VWAP乖離率（禁止条件）
+                        vwap_dist = sig.vwap_distance_pct if isinstance(sig.vwap_distance_pct, (int, float)) else None
+                        vwap_dist_block = (vwap_dist is not None) and (float(vwap_dist) > 3.0)
+
+                        # recent_5m_high の上に「少しだけ上抜け」しているか（1.001倍）
+                        rebreak_strong = False
+                        if isinstance(sig.recent_5m_high, (int, float)):
+                            rebreak_strong = float(q.price) >= float(sig.recent_5m_high) * 1.001
+
+                        # 追加条件チェック
+                        conds_ok = True
+                        conds_ok = conds_ok and holding
+                        conds_ok = conds_ok and (not after_1430)
+                        conds_ok = conds_ok and (add_count < 2)
+                        conds_ok = conds_ok and min_5min_passed
+                        conds_ok = conds_ok and (avg_entry is not None and float(q.price) > float(avg_entry))
+                        conds_ok = conds_ok and (isinstance(vwap, (int, float)) and float(q.price) > float(vwap))
+                        conds_ok = conds_ok and bool(rebreak_strong)
+                        conds_ok = conds_ok and bool(vol_inc_cont)
+                        conds_ok = conds_ok and (not vwap_dist_block)
+
+                        if conds_ok:
+                            next_add = add_count + 1
+                            # 追加ポジションの利確幅（前の仕様のまま）
+                            if next_add == 1:
+                                tp_pct = 0.025
+                                kind = "ADD1"
+                            else:
+                                tp_pct = 0.015
+                                kind = "ADD2"
+
+                            entry2 = float(q.price)
+                            stop2 = entry2 * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
+                            take2 = entry2 * (1.0 + tp_pct)
+
+                            s2 = ReplaySignalEval(
+                                symbol=q.symbol,
+                                signal_time_utc=tcur,
+                                signal_price=float(q.price),
+                                entry_price=float(entry2),
+                                stop_price=float(stop2),
+                                take_price=float(take2),
+                                max_price_after=float(q.price),
+                                min_price_after=float(q.price),
+                                last_price_after=float(q.price),
+                                position_kind=str(kind),
+                                exit_style="fixed",
+                            )
+                            replay_signals.append(s2)
+                            idx2 = len(replay_signals) - 1
+                            active_signal_indices_by_symbol.setdefault(q.symbol, []).append(idx2)
+
+                            # 状態更新
+                            add_count_by_day_symbol[key] = next_add
+                            last_add_time_by_day_symbol[key] = tcur
+
+                            # 含み損益率（平均取得単価ベース）
+                            upnl_pct = 0.0
+                            if avg_entry is not None and float(avg_entry) > 0:
+                                upnl_pct = ((float(q.price) - float(avg_entry)) / float(avg_entry)) * 100.0
+
+                            # ADD理由ログ（要求項目）
+                            reason_parts: list[str] = []
+                            reason_parts.append("price>avg_entry")
+                            reason_parts.append("price>VWAP")
+                            reason_parts.append(">=recent5m_high*1.001")
+                            reason_parts.append("vol_inc_cont")
+                            reason_parts.append("cooldown>=5m")
+                            reason_parts.append("vwap_dist<=3.0")
+                            reason_text = " / ".join(reason_parts)
+
+                            vd_s = "N/A" if vwap_dist is None else f"{float(vwap_dist):.2f}%"
+                            print(f"[{now_str()}][ADD] {day_jst} {q.symbol} {kind}")
+                            print(f"  理由: {reason_text}")
+                            print(f"  平均取得単価: {_fmt_yen(avg_entry)}")
+                            print(f"  現在保有数: {int(total_qty)}株")
+                            print(f"  ADD回数: {next_add}/2")
+                            print(f"  VWAP乖離率: {vd_s}")
+                            print(f"  含み損益率: {upnl_pct:+.2f}%")
+                    except Exception:
+                        # 追加ポジションは“検証補助”なので、失敗しても通常の判定は継続します。
+                        pass
+
                     # 1) VWAP乖離（必須）
                     if sig.vwap_distance_pct is None:
                         reasons.append("VWAP取得不可")
@@ -2240,9 +3623,25 @@ def run_replay(
                             if crossed:
                                 # 同一銘柄で「同じ足で二重に記録」しない保険:
                                 # breakout_state により crossed は初回だけ True になる想定ですが、念のため入れます。
+                                sig_time = (q.market_time_utc or datetime.now(tz=timezone.utc))
+                                day_jst = _day_jst_str(sig_time)
+
+                                # 重複エントリー制限:
+                                # - 同じJST日付で同じsymbolの2回目以降は「期待値検証から除外」します。
+                                # - signal自体（検出ログ/詳細）は残しても良いので、excluded フラグで管理します。
+                                exclude = False
+                                exclude_reason = ""
+                                if one_trade_per_symbol_per_day:
+                                    seen = accepted_entry_symbols_by_day.setdefault(day_jst, set())
+                                    if q.symbol in seen:
+                                        exclude = True
+                                        exclude_reason = "同一銘柄は1日1回まで（2回目以降は除外）"
+                                    else:
+                                        seen.add(q.symbol)
+
                                 s = ReplaySignalEval(
                                     symbol=q.symbol,
-                                    signal_time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
+                                    signal_time_utc=sig_time,
                                     signal_price=float(q.price),
                                     entry_price=float(entry),
                                     stop_price=float(stop),
@@ -2250,10 +3649,19 @@ def run_replay(
                                     max_price_after=float(q.price),
                                     min_price_after=float(q.price),
                                     last_price_after=float(q.price),
+                                    position_kind="BASE",
+                                    exit_style="trailing",
+                                    excluded_from_eval=bool(exclude),
+                                    excluded_reason=str(exclude_reason),
                                 )
                                 replay_signals.append(s)
-                                idx = len(replay_signals) - 1
-                                active_signal_indices_by_symbol.setdefault(q.symbol, []).append(idx)
+                                # 除外signalは“期待値検証の追跡”もしない（集計対象外なので）。
+                                if not exclude:
+                                    idx = len(replay_signals) - 1
+                                    active_signal_indices_by_symbol.setdefault(q.symbol, []).append(idx)
+                                    # 追加ポジション判定の基準となる「直近Entry価格」を更新します
+                                    day_jst2 = _day_jst_str(sig_time)
+                                    last_entry_price_by_day_symbol[(day_jst2, q.symbol)] = float(entry)
                         except Exception as e:
                             print(f"[{now_str()}] Discord通知失敗(replay): {q.symbol} ({e})")
 
@@ -2350,11 +3758,22 @@ def run_replay(
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
+    # -----------------------------
+    # 朝スクリーニング（新機能）
+    # -----------------------------
+    # 重要:
+    # - 通常監視やReplayに影響させないため、ここで早期returnします。
+    # - これにより「監視ループ」や「Replayの挙動」を一切変更せずに機能追加できます。
+    if bool(getattr(args, "morning_screen", False)):
+        return run_morning_screen()
+
     # --replay が指定されたときだけ TEST_REPLAY_MODE を有効化します。
     # （指定しなければ False のまま = いつものリアルタイム監視に戻ります）
     global TEST_REPLAY_MODE
     TEST_REPLAY_MODE = bool(getattr(args, "replay", False))
     replay_range: str = str(getattr(args, "replay_range", "1d"))
+    replay_morning_screen_hhmm: str = str(getattr(args, "replay_morning_screen", "") or "")
+    one_trade_per_symbol_per_day: bool = bool(getattr(args, "one_trade_per_symbol_per_day", False))
 
     interval_sec: float = float(args.interval)
     print_all: bool = bool(args.print_all)
@@ -2396,6 +3815,8 @@ def main(argv: list[str]) -> int:
             only_changes=only_changes,
             fixed_watch=fixed_watch,
             replay_range=replay_range,
+            replay_morning_screen_hhmm=replay_morning_screen_hhmm,
+            one_trade_per_symbol_per_day=one_trade_per_symbol_per_day,
         )
 
     print("=== Yahoo Finance 日本株 スクリーニング（発注なし） ===")
