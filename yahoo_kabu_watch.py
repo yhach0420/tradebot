@@ -11,6 +11,10 @@ Issue #1 の要件（スクリーニング条件）:
 - 当日高値の 98%以上
 - 出来高あり（0より大きい）
 
+追加（Discord通知）:
+- 条件に一致した銘柄を `DISCORD_WEBHOOK_URL` の Discord Webhook に通知します。
+- 「同じ銘柄を連続通知しない」ため、直前ループで条件一致していた銘柄は通知しません。
+
 注意:
 - 非公式APIなので、仕様変更・アクセス制限で動かなくなる可能性があります。
 - 取引判断や損益については自己責任でお願いします（本ツールは発注しません）。
@@ -23,6 +27,7 @@ Issue #1 の要件（スクリーニング条件）:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -66,6 +71,21 @@ WATCH: list[str] = [
 MIN_CHANGE_PCT = 1.0          # 前日比（%）がこの値以上
 MIN_RATIO_TO_DAY_HIGH = 0.98  # 現在値が当日高値の何%以上か（0.98 = 98%）
 REQUIRE_VOLUME = True         # 出来高が 0 より大きいことを必須にする
+
+# ----------------------------
+# Discord 通知（Issue #1 追加要件）
+# ----------------------------
+# - Webhook URL は環境変数 `DISCORD_WEBHOOK_URL` から読みます。
+# - 条件一致した銘柄のうち「前回ループでは候補に入っていなかった銘柄」だけ通知します
+#   （= 同じ銘柄を連続通知しないための仕組みです）。
+# - 初心者向けに、エントリー/損切り/利確候補は“分かりやすい簡易ルール”で計算します。
+#
+# 簡易ルール（必要なら調整してください）:
+# - エントリー候補: 当日高値（break想定で「高値更新」を狙うイメージ）
+# - 損切り候補: エントリーの -2% 下
+# - 利確候補: エントリーの +4% 上（リスクリワードを 1:2 くらいの形に）
+STOP_LOSS_PCT_FROM_ENTRY = 0.02
+TAKE_PROFIT_PCT_FROM_ENTRY = 0.04
 
 
 def _browser_headers(referer: Optional[str] = None) -> dict[str, str]:
@@ -324,6 +344,69 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _fmt_price(x: Optional[float]) -> str:
+    """
+    価格を見やすく表示するための整形です。
+    - 四捨五入して整数っぽく見える場合は整数で返します
+    - 少数が必要なら小数2桁まで出します
+    """
+    if x is None:
+        return "N/A"
+    xf = float(x)
+    if abs(xf - round(xf)) < 1e-9:
+        return str(int(round(xf)))
+    return f"{xf:.2f}"
+
+
+def _fmt_volume(v: Optional[float]) -> str:
+    if v is None:
+        return "N/A"
+    # 出来高は整数が多いので、表示は整数に寄せます。
+    return str(int(round(float(v))))
+
+
+def _build_discord_message(q: Quote, *, entry: float, stop: float, take: float) -> str:
+    """
+    Discord に送る「仕様どおりの項目」を 1メッセージにまとめます。
+    必須項目:
+    - 銘柄コード
+    - 現在値
+    - 前日比
+    - 出来高
+    - 当日高値
+    - エントリー候補
+    - 損切り候補
+    - 利確候補
+    """
+    chg = q.change_percent
+    if chg is None:
+        chg_s = "N/A"
+    else:
+        # 前日比は符号付きで表示します（例: +1.23%）。
+        sign = "+" if chg >= 0 else ""
+        chg_s = f"{sign}{chg:.2f}%"
+
+    return (
+        f"条件一致（WATCH）\n"
+        f"- 銘柄: {q.symbol}\n"
+        f"- 現在値: {_fmt_price(q.price)} {q.currency}\n"
+        f"- 前日比: {chg_s}\n"
+        f"- 出来高: {_fmt_volume(q.volume)}\n"
+        f"- 当日高値: {_fmt_price(q.day_high)}\n"
+        f"- エントリー候補: {_fmt_price(entry)}\n"
+        f"- 損切り候補: {_fmt_price(stop)}\n"
+        f"- 利確候補: {_fmt_price(take)}"
+    )
+
+
+def _discord_post(webhook_url: str, content: str) -> None:
+    """
+    requests.post で Discord Webhookへ送信します。
+    """
+    r = requests.post(webhook_url, json={"content": content}, timeout=20)
+    r.raise_for_status()
+
+
 def _load_watch_from_file(path: str) -> list[str]:
     with open(path, "r", encoding="utf-8") as f:
         out: list[str] = []
@@ -375,6 +458,13 @@ def main(argv: list[str]) -> int:
 
     # only_changes 用。直前に出した候補セットを覚えておきます。
     last_candidates: set[str] = set()
+
+    # Discord通知用:
+    # - Webhook URL が設定されていれば通知する
+    # - 「同じ銘柄を連続通知しない」ため、前回ループで候補に入っていた銘柄セットを保持する
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+    discord_enabled = bool(webhook_url)
+    last_discord_candidate_symbols: set[str] = set()
 
     # requests.Session を使うと、接続の再利用ができて少し効率が良くなります。
     with requests.Session() as session:
@@ -442,6 +532,41 @@ def main(argv: list[str]) -> int:
                         print(f"[{now_str()}] 条件一致: 0 銘柄")
 
                 last_candidates = candidate_symbols
+
+                # Discord通知:
+                # candidates の中から「前回ループで候補に入っていなかった銘柄」だけ送ります。
+                # これにより、同じ銘柄が条件一致し続けても毎秒スパム通知されません。
+                if discord_enabled and candidates:
+                    # candidates は list[Quote] なので、symbol 重複が無い前提で扱います（WATCH は通常ユニーク）。
+                    to_notify = [q for q in candidates if q.symbol not in last_discord_candidate_symbols]
+                    if to_notify:
+                        # 見やすさのため、前日比が大きい順に送ります。
+                        to_notify_sorted = sorted(
+                            to_notify, key=lambda x: x.change_percent or -999, reverse=True
+                        )
+                        for q in to_notify_sorted:
+                            # candidates 条件により day_high は None にならない想定です。
+                            # エントリー/損切り/利確候補は「初心者でも理解しやすい簡易ルール」で計算します。
+                            # デイトレ方針は人によって違うので、ここは必要に応じて調整してください。
+                            #
+                            # 簡易ルール:
+                            # - エントリー候補: 当日高値（高値更新を狙うイメージ）
+                            # - 損切り候補: エントリーの -2%（STOP_LOSS_PCT_FROM_ENTRY）
+                            # - 利確候補: エントリーの +4%（TAKE_PROFIT_PCT_FROM_ENTRY）
+                            entry = float(q.day_high)
+                            stop = entry * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
+                            take = entry * (1.0 + TAKE_PROFIT_PCT_FROM_ENTRY)
+                            try:
+                                msg = _build_discord_message(q, entry=entry, stop=stop, take=take)
+                                _discord_post(webhook_url, msg)
+                            except Exception as e:
+                                # 通知に失敗しても監視自体は止めない方が実用的です。
+                                print(f"[{now_str()}] Discord通知失敗: {q.symbol} ({e})")
+
+                # どの銘柄を「前回候補」とみなすかを更新します。
+                # これで「同じ銘柄を連続通知しない」を満たします。
+                if discord_enabled:
+                    last_discord_candidate_symbols = candidate_symbols
 
                 # 「1秒ごと」に近づけるために、処理時間を差し引いて sleep します。
                 elapsed = time.perf_counter() - loop_started
