@@ -26,8 +26,10 @@ Discordで `!issue <内容>` を受け取ったら…
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import discord
@@ -68,6 +70,45 @@ def require_env(name: str) -> str:
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")  # 起動後に validate します
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
+# =========================
+# watchlist.json（Issue #1 拡張）
+# =========================
+# yahoo_kabu_watch.py 側が監視銘柄を読み込むためのファイルです。
+# - 形式: JSON 配列（例: ["7203.T", "9984.T"]）
+# - 保存先: この discord_issue_bot.py と同じフォルダ
+BASE_DIR = Path(__file__).resolve().parent
+WATCHLIST_JSON_PATH = BASE_DIR / "watchlist.json"
+
+
+def _load_watchlist() -> list[str]:
+    """
+    watchlist.json を読み込みます。
+    - ファイルが無い場合は空リスト
+    - 想定外の形なら空リスト（初心者でも壊れにくいように）
+    """
+    if not WATCHLIST_JSON_PATH.exists():
+        return []
+    try:
+        raw = json.loads(WATCHLIST_JSON_PATH.read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            return [str(s).strip() for s in raw if str(s).strip()]
+        if isinstance(raw, dict):
+            # 念のため: {"symbols": [...]} のような形にも対応
+            maybe = raw.get("symbols") or raw.get("watchlist") or []
+            if isinstance(maybe, list):
+                return [str(s).strip() for s in maybe if str(s).strip()]
+    except Exception:
+        pass
+    return []
+
+
+def _save_watchlist(symbols: list[str]) -> None:
+    """
+    watchlist.json を保存します（重複なし・ソートして保存）。
+    """
+    uniq = sorted({s.strip() for s in symbols if s and s.strip()})
+    WATCHLIST_JSON_PATH.write_text(json.dumps(uniq, ensure_ascii=False, indent=2), encoding="utf-8")
 
 # =========================
 # GitHub Issue 作成
@@ -293,6 +334,65 @@ async def issue_command(ctx: commands.Context, *, content: str = "") -> None:
         await webhook_post(webhook_url, webhook_message)
     except Exception as e:
         await ctx.reply(f"Webhook 通知に失敗しました: {e}")
+
+
+# =========================
+# watch コマンド（監視銘柄の管理）
+# =========================
+# 仕様:
+# - !watch add 7203.T
+# - !watch remove 7203.T
+# - !watch list
+#
+# 保存先:
+# - watchlist.json（このファイルと同じフォルダ）
+@bot.group(name="watch", invoke_without_command=True)
+async def watch_group(ctx: commands.Context) -> None:
+    # サブコマンドが無い場合の案内
+    await ctx.reply("使い方: `!watch add <symbol>` / `!watch remove <symbol>` / `!watch list`")
+
+
+@watch_group.command(name="add")
+async def watch_add_command(ctx: commands.Context, symbol: str) -> None:
+    symbol = (symbol or "").strip()
+    if not symbol:
+        await ctx.reply("symbol が空です。例: `!watch add 7203.T`")
+        return
+
+    symbols = _load_watchlist()
+    if symbol in symbols:
+        await ctx.reply(f"すでに監視中です: {symbol}")
+        return
+
+    symbols.append(symbol)
+    _save_watchlist(symbols)
+    await ctx.reply(f"監視に追加しました: {symbol}")
+
+
+@watch_group.command(name="remove")
+async def watch_remove_command(ctx: commands.Context, symbol: str) -> None:
+    symbol = (symbol or "").strip()
+    if not symbol:
+        await ctx.reply("symbol が空です。例: `!watch remove 7203.T`")
+        return
+
+    symbols = _load_watchlist()
+    if symbol not in symbols:
+        await ctx.reply(f"監視中ではありません: {symbol}")
+        return
+
+    symbols = [s for s in symbols if s != symbol]
+    _save_watchlist(symbols)
+    await ctx.reply(f"監視から削除しました: {symbol}")
+
+
+@watch_group.command(name="list")
+async def watch_list_command(ctx: commands.Context) -> None:
+    symbols = _load_watchlist()
+    if not symbols:
+        await ctx.reply("watchlist.json は空です。`!watch add <symbol>` で追加してください。")
+        return
+    await ctx.reply("監視中銘柄:\n" + "\n".join(f"- {s}" for s in symbols))
 
 
 def main() -> int:

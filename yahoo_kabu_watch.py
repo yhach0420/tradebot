@@ -27,6 +27,8 @@ Issue #1 の要件（スクリーニング条件）:
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import os
 import sys
 import time
@@ -74,6 +76,23 @@ MIN_CHANGE_PCT = 1.0          # 前日比（%）がこの値以上
 MAX_CHANGE_PCT = 8.0          # 前日比（%）がこの値以上なら「急騰しすぎ」として除外（未満だけ通す）
 MIN_RATIO_TO_DAY_HIGH = 0.98  # 現在値が当日高値の何%以上か（0.98 = 98%）
 MIN_VOLUME = 300_000          # 最低出来高（この値以上だけ通す）
+
+# ----------------------------
+# 出来高急増（5日平均出来高との比較）
+# ----------------------------
+MIN_VOLUME_SPIKE_RATIO = 2.0  # 現在出来高 >= 5日平均出来高 * この倍率
+
+# 5日平均出来高は chart から計算します（毎秒取得は重いのでキャッシュ）。
+VOL_AVG5_CACHE_TTL_SEC = 60 * 10  # 10分
+
+# VWAP は日中に変わるので、比較的短めにキャッシュします
+VWAP_CACHE_TTL_SEC = 60 * 5  # 5分
+
+# ----------------------------
+# 時価総額フィルタ
+# ----------------------------
+MIN_MARKET_CAP = 30_000_000_000     # 300億円以上
+MAX_MARKET_CAP = 500_000_000_000   # 5000億円以下
 
 # ----------------------------
 # Discord 通知（Issue #1 追加要件）
@@ -148,6 +167,7 @@ class Quote:
     day_high: Optional[float]        # 当日高値
     volume: Optional[float]          # 出来高（整数が多いが float で受ける）
     market_time_utc: Optional[datetime]
+    market_cap: Optional[float]  # 時価総額（Yahoo Financeの値）
 
 
 def _calc_change_percent(*, price: float, previous_close: Optional[float]) -> Optional[float]:
@@ -213,6 +233,124 @@ def fetch_ma25(session: requests.Session, symbol: str, timeout_sec: float = 10.0
     return sum(last_25) / 25.0
 
 
+def fetch_avg_volume_5(session: requests.Session, symbol: str, timeout_sec: float = 10.0) -> Optional[float]:
+    """
+    5日平均出来高（SMA5）を取得します。
+
+    Yahoo Finance の chart（日足）から出来高配列を取り、
+    「直近の5営業日分の出来高」を平均します。
+    - データ不足なら None（見送り理由に「平均出来高取得不可」が出ます）
+    """
+    url = YAHOO_CHART_URL.format(symbol=symbol)
+    params = {"interval": "1d", "range": "3mo"}  # 5営業日分を確実に確保（閑散期/祝日対策）
+    referer = f"https://finance.yahoo.com/quote/{symbol}"
+    headers = _browser_headers(referer=referer)
+
+    r = session.get(url, params=params, headers=headers, timeout=timeout_sec)
+    r.raise_for_status()
+    data = r.json()
+
+    chart = data.get("chart") or {}
+    if chart.get("error"):
+        return None
+    results = chart.get("result") or []
+    if not results:
+        return None
+
+    r0 = results[0] or {}
+    indicators = r0.get("indicators") or {}
+    quotes = indicators.get("quote") or []
+    q0 = quotes[0] if quotes else {}
+    volumes = (q0 or {}).get("volume") or []
+
+    last_5: list[float] = []
+    for v in reversed(volumes):
+        if isinstance(v, (int, float)):
+            vv = float(v)
+            if vv > 0:
+                last_5.append(vv)
+                if len(last_5) >= 5:
+                    break
+
+    if len(last_5) < 5:
+        return None
+    return sum(last_5) / 5.0
+
+
+def fetch_vwap(session: requests.Session, symbol: str, timeout_sec: float = 10.0) -> Optional[float]:
+    """
+    VWAP（出来高加重平均価格）を取得/推定します。
+
+    Yahoo chart API が VWAP を直接返さない場合があるため、
+    ここでは「1分足の典型価格（(高値+安値+終値)/3）×出来高」を累積して概算 VWAP を計算します。
+
+    取得できない場合は None を返します（要件どおり、取得失敗でも条件からは除外しません）。
+    """
+    url = YAHOO_CHART_URL.format(symbol=symbol)
+    params = {"interval": "1m", "range": "1d"}
+    referer = f"https://finance.yahoo.com/quote/{symbol}"
+    headers = _browser_headers(referer=referer)
+
+    r = session.get(url, params=params, headers=headers, timeout=timeout_sec)
+    r.raise_for_status()
+    data = r.json()
+
+    chart = data.get("chart") or {}
+    if chart.get("error"):
+        return None
+    results = chart.get("result") or []
+    if not results:
+        return None
+
+    r0 = results[0] or {}
+    indicators = r0.get("indicators") or {}
+    quotes = indicators.get("quote") or []
+    q0 = quotes[0] if quotes else {}
+
+    # 1) もし vwap 配列がそのまま返ってくるなら、それを使います
+    if isinstance((q0 or {}).get("vwap"), list):
+        vwap_arr = q0.get("vwap") or []
+        for v in reversed(vwap_arr):
+            if isinstance(v, (int, float)):
+                vvp = float(v)
+                if vvp > 0:
+                    return vvp
+
+    # 2) 返ってこない場合は概算 VWAP
+    high_arr = (q0 or {}).get("high") or []
+    low_arr = (q0 or {}).get("low") or []
+    close_arr = (q0 or {}).get("close") or []
+    vol_arr = (q0 or {}).get("volume") or []
+
+    n = min(len(high_arr), len(low_arr), len(close_arr), len(vol_arr))
+    if n <= 0:
+        return None
+
+    total_pv = 0.0
+    total_v = 0.0
+    # 最新側がいいが、順序はどちらでも計算できるので簡単に走査します。
+    for i in range(n):
+        h = high_arr[i]
+        l = low_arr[i]
+        c = close_arr[i]
+        v = vol_arr[i]
+        if not isinstance(h, (int, float)) or not isinstance(l, (int, float)) or not isinstance(c, (int, float)):
+            continue
+        if not isinstance(v, (int, float)):
+            continue
+        vv = float(v)
+        if vv <= 0:
+            continue
+        # 典型価格（typical price）
+        tp = (float(h) + float(l) + float(c)) / 3.0
+        total_pv += tp * vv
+        total_v += vv
+
+    if total_v <= 0:
+        return None
+    return total_pv / total_v
+
+
 def _fetch_quote_v7(session: requests.Session, symbol: str, timeout_sec: float = 10.0) -> Quote:
     """
     Yahoo Finance（非公式API v7/finance/quote）から現在値を取得します。
@@ -258,7 +396,12 @@ def _fetch_quote_v7(session: requests.Session, symbol: str, timeout_sec: float =
 
     currency = q0.get("currency") or ""
     # previousClose（前日終値）: これが取れれば「前日比%」を自前で計算できます。
+    # Yahoo側のキー名は環境/銘柄で揺れることがあるので複数候補を見ます。
     previous_close = q0.get("regularMarketPreviousClose")
+    if previous_close is None:
+        previous_close = q0.get("previousClose")
+    if previous_close is None:
+        previous_close = q0.get("chartPreviousClose")
 
     # 前日比（%）:
     # - Yahooが regularMarketChangePercent を返すこともありますが、環境/銘柄によって欠けることがあるため
@@ -266,6 +409,22 @@ def _fetch_quote_v7(session: requests.Session, symbol: str, timeout_sec: float =
     change_percent = _calc_change_percent(price=float(price), previous_close=float(previous_close) if isinstance(previous_close, (int, float)) else None)
     day_high = q0.get("regularMarketDayHigh")
     volume = q0.get("regularMarketVolume")
+
+    # 時価総額（marketCap）
+    # Yahooのレスポンスキーは環境で揺れることがあるので複数候補を試します。
+    market_cap_raw = q0.get("marketCap")
+    if market_cap_raw is None:
+        market_cap_raw = q0.get("marketCapFloat")
+    market_cap: Optional[float]
+    if isinstance(market_cap_raw, (int, float)):
+        market_cap = float(market_cap_raw)
+    elif isinstance(market_cap_raw, str):
+        try:
+            market_cap = float(market_cap_raw.replace(",", ""))
+        except Exception:
+            market_cap = None
+    else:
+        market_cap = None
 
     market_time = q0.get("regularMarketTime")
     market_time_utc = None
@@ -281,6 +440,7 @@ def _fetch_quote_v7(session: requests.Session, symbol: str, timeout_sec: float =
         day_high=float(day_high) if isinstance(day_high, (int, float)) else None,
         volume=float(volume) if isinstance(volume, (int, float)) else None,
         market_time_utc=market_time_utc,
+        market_cap=market_cap,
     )
 
 
@@ -327,6 +487,19 @@ def _fetch_quote_v8_chart(session: requests.Session, symbol: str, timeout_sec: f
     )
     day_high = meta.get("regularMarketDayHigh")
     volume = meta.get("regularMarketVolume")
+    market_cap_raw = meta.get("marketCap")
+    if market_cap_raw is None:
+        market_cap_raw = meta.get("marketCapFloat")
+    market_cap: Optional[float]
+    if isinstance(market_cap_raw, (int, float)):
+        market_cap = float(market_cap_raw)
+    elif isinstance(market_cap_raw, str):
+        try:
+            market_cap = float(market_cap_raw.replace(",", ""))
+        except Exception:
+            market_cap = None
+    else:
+        market_cap = None
 
     # 1) meta.regularMarketPrice があればそれを使う（「現在値」として最もそれっぽい）
     price = meta.get("regularMarketPrice")
@@ -362,6 +535,7 @@ def _fetch_quote_v8_chart(session: requests.Session, symbol: str, timeout_sec: f
         day_high=float(day_high) if isinstance(day_high, (int, float)) else None,
         volume=float(volume) if isinstance(volume, (int, float)) else None,
         market_time_utc=market_time_utc,
+        market_cap=market_cap,
     )
 
 
@@ -458,7 +632,18 @@ def _fmt_volume(v: Optional[float]) -> str:
     return str(int(round(float(v))))
 
 
-def _build_discord_message(q: Quote, *, entry: float, stop: float, take: float, ma25: float) -> str:
+def _build_discord_message(
+    q: Quote,
+    *,
+    entry: float,
+    stop: float,
+    take: float,
+    ma25: float,
+    vol_avg5: float,
+    vol_spike_ratio: float,
+    vwap: Optional[float],
+    market_cap: float,
+) -> str:
     """
     Discord に送る「仕様どおりの項目」を 1メッセージにまとめます。
     必須項目:
@@ -485,8 +670,12 @@ def _build_discord_message(q: Quote, *, entry: float, stop: float, take: float, 
         f"- 現在値: {_fmt_price(q.price)} {q.currency}\n"
         f"- 前日比: {chg_s}\n"
         f"- 出来高: {_fmt_volume(q.volume)}\n"
+        f"- 5日平均出来高: {_fmt_volume(vol_avg5)}\n"
+        f"- 出来高急増倍率: {vol_spike_ratio:.2f}x\n"
         f"- 25日移動平均: {_fmt_price(ma25)}\n"
         f"- 当日高値: {_fmt_price(q.day_high)}\n"
+        f"- VWAP: {_fmt_price(vwap)}\n"
+        f"- 時価総額: {int(round(market_cap)):,}\n"
         f"- エントリー候補: {_fmt_price(entry)}\n"
         f"- 損切り候補: {_fmt_price(stop)}\n"
         f"- 利確候補: {_fmt_price(take)}"
@@ -518,6 +707,60 @@ def _parse_watch_csv(s: str) -> list[str]:
     return [x for x in items if x]
 
 
+# =========================
+# 監視銘柄の読み込み（段階的拡張）
+# =========================
+# 優先順位:
+# 1) watchlist.json
+# 2) symbols.csv（列: symbol,name）
+# 3) このファイル上部の WATCH（既存の動作）
+WATCHLIST_JSON_PATH = os.path.join(os.path.dirname(__file__), "watchlist.json")
+SYMBOLS_CSV_PATH = os.path.join(os.path.dirname(__file__), "symbols.csv")
+
+
+def _load_watchlist_json(path: str) -> list[str]:
+    """
+    watchlist.json を読み込みます。
+    - 想定: JSON 配列 ["7203.T", ...]
+    - dict で来る場合も {"symbols": [...]} などを軽く吸収します。
+    """
+    if not os.path.exists(path):
+        return []
+    try:
+        raw = json.loads(open(path, "r", encoding="utf-8").read())
+        if isinstance(raw, list):
+            return [str(s).strip() for s in raw if str(s).strip()]
+        if isinstance(raw, dict):
+            maybe = raw.get("symbols") or raw.get("watchlist") or []
+            if isinstance(maybe, list):
+                return [str(s).strip() for s in maybe if str(s).strip()]
+    except Exception:
+        pass
+    return []
+
+
+def _load_symbols_csv(path: str) -> list[str]:
+    """
+    symbols.csv を読み込みます。
+    - 期待する列: symbol,name
+    - symbol 列だけを使います
+    """
+    if not os.path.exists(path):
+        return []
+    try:
+        out: list[str] = []
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                sym = (row.get("symbol") or row.get("Symbol") or "").strip()
+                if sym:
+                    out.append(sym)
+        # 重複なしにします
+        return sorted({s for s in out if s})
+    except Exception:
+        return []
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
@@ -527,7 +770,21 @@ def main(argv: list[str]) -> int:
     watch_csv: str = str(args.watch or "")
     watch_file: str = str(args.watch_file or "")
 
-    watch: list[str] = list(WATCH)
+    # 監視銘柄の取得（段階的拡張）
+    # - watchlist.json があればそれを優先
+    # - 無ければ symbols.csv を見る
+    # - 両方無ければ、このファイル上部の WATCH を使う
+    watch: list[str] = []
+    loaded_watchlist = _load_watchlist_json(WATCHLIST_JSON_PATH)
+    if loaded_watchlist:
+        watch = loaded_watchlist
+    else:
+        loaded_symbols = _load_symbols_csv(SYMBOLS_CSV_PATH)
+        if loaded_symbols:
+            watch = loaded_symbols
+        else:
+            watch = list(WATCH)
+
     if watch_file:
         try:
             watch = _load_watch_from_file(watch_file)
@@ -569,6 +826,13 @@ def main(argv: list[str]) -> int:
     # - symbol ごとに (ma25, fetched_at_monotonic) を持ちます
     ma25_cache: dict[str, tuple[float, float]] = {}
 
+    # 出来高5日平均（VOL_AVG5）のキャッシュ:
+    avg5_cache: dict[str, tuple[float, float]] = {}
+
+    # VWAP のキャッシュ:
+    # - None もキャッシュして、短い時間での再試行を減らします。
+    vwap_cache: dict[str, tuple[Optional[float], float]] = {}
+
     # requests.Session を使うと、接続の再利用ができて少し効率が良くなります。
     with requests.Session() as session:
         try:
@@ -590,6 +854,9 @@ def main(argv: list[str]) -> int:
                 candidates: list[Quote] = []
                 skip_reasons_by_symbol: dict[str, list[str]] = {}
                 ma25_by_symbol: dict[str, float] = {}
+                avg5_by_symbol: dict[str, float] = {}
+                vol_spike_ratio_by_symbol: dict[str, float] = {}
+                vwap_by_symbol: dict[str, Optional[float]] = {}
 
                 for q in quotes:
                     reasons: list[str] = []
@@ -602,6 +869,8 @@ def main(argv: list[str]) -> int:
                         reasons.append("当日高値が取得できない")
                     if q.volume is None:
                         reasons.append("出来高が取得できない")
+                    if q.market_cap is None:
+                        reasons.append("時価総額取得不可")
 
                     # 2) 前日比: MIN <= chg < MAX
                     if q.change_percent is not None:
@@ -620,17 +889,42 @@ def main(argv: list[str]) -> int:
                         if q.volume < float(MIN_VOLUME):
                             reasons.append("出来高不足")
 
-                    # 5) MA25: 取れないなら見送り、取れたら price > ma25 だけ通す
+                    # 5) 出来高急増: 現在出来高 >=（5日平均出来高 * MIN_VOLUME_SPIKE_RATIO）
+                    avg5: Optional[float] = None
+                    if q.volume is not None:
+                        try:
+                            cached = avg5_cache.get(q.symbol)
+                            if cached:
+                                cached_avg5, fetched_at = cached
+                                if (time.perf_counter() - fetched_at) < VOL_AVG5_CACHE_TTL_SEC:
+                                    avg5 = cached_avg5
+
+                            if avg5 is None:
+                                fetched = fetch_avg_volume_5(session, q.symbol)
+                                if fetched is not None:
+                                    avg5_cache[q.symbol] = (float(fetched), time.perf_counter())
+                                    avg5 = float(fetched)
+                        except Exception:
+                            avg5 = None
+
+                    if avg5 is None:
+                        reasons.append("平均出来高取得不可")
+                    else:
+                        avg5_by_symbol[q.symbol] = avg5
+                        ratio = q.volume / avg5 if avg5 > 0 else 0.0
+                        vol_spike_ratio_by_symbol[q.symbol] = ratio
+                        if ratio < MIN_VOLUME_SPIKE_RATIO:
+                            reasons.append("出来高急増条件不足")
+
+                    # 6) MA25: 取れないなら見送り、取れたら price > ma25 だけ通す
                     ma25: Optional[float] = None
                     try:
-                        # キャッシュが有効なら使う（API呼び出し削減）
                         cached = ma25_cache.get(q.symbol)
                         if cached:
                             cached_ma25, fetched_at = cached
                             if (time.perf_counter() - fetched_at) < MA25_CACHE_TTL_SEC:
                                 ma25 = cached_ma25
 
-                        # キャッシュが無い/古いなら取り直す
                         if ma25 is None:
                             fetched = fetch_ma25(session, q.symbol)
                             if fetched is not None:
@@ -645,6 +939,46 @@ def main(argv: list[str]) -> int:
                         ma25_by_symbol[q.symbol] = ma25
                         if q.price <= ma25:
                             reasons.append("25日線以下")
+
+                    # 7) 時価総額レンジ: MIN_MARKET_CAP <= marketCap <= MAX_MARKET_CAP
+                    if q.market_cap is not None:
+                        if q.market_cap < MIN_MARKET_CAP or q.market_cap > MAX_MARKET_CAP:
+                            reasons.append("時価総額レンジ外")
+
+                    # 8) VWAP条件: 取得できれば price > VWAP
+                    # 取得できない場合は警告のみで、現時点では条件からは除外しません（＝将来のkabuステーションAPI移行時に
+                    # 「VWAPを必須条件」に切り替えやすくするための布石です）。
+                    vwap: Optional[float] = None
+                    used_cache = False
+                    if not reasons:
+                        # ここまでの条件で「ほぼ通る」銘柄だけ VWAP を取りにいきます（負荷を下げるため）
+                        try:
+                            cached = vwap_cache.get(q.symbol)
+                            used_cache = False
+                            if cached:
+                                cached_vwap, fetched_at = cached
+                                if (time.perf_counter() - fetched_at) < VWAP_CACHE_TTL_SEC:
+                                    # 期限内ならキャッシュをそのまま使います（None でもOK）
+                                    vwap = cached_vwap
+                                    used_cache = True
+
+                            # 期限切れ or キャッシュ無しなら取り直し
+                            if not used_cache:
+                                vwap_fetched = fetch_vwap(session, q.symbol)
+                                vwap_cache[q.symbol] = (vwap_fetched, time.perf_counter())
+                                vwap = vwap_fetched
+                        except Exception:
+                            vwap = None
+
+                        if vwap is None and not used_cache:
+                            print(f"[{now_str()}] {q.symbol} VWAP取得不可（条件除外しない）")
+                        else:
+                            vwap_by_symbol[q.symbol] = vwap
+                            if q.price <= vwap:
+                                reasons.append("VWAP以下")
+                    # vwap が None のままでも理由は追加しない（通過扱い）
+                    if vwap is None:
+                        vwap_by_symbol[q.symbol] = None
 
                     # 最終判定: reasons が空なら条件一致
                     if not reasons:
@@ -665,6 +999,13 @@ def main(argv: list[str]) -> int:
                             mt = q.market_time_utc.isoformat() if q.market_time_utc else "N/A"
                             ma25 = ma25_by_symbol.get(q.symbol)
                             ma25_s = _fmt_price(ma25) if ma25 is not None else "N/A"
+                            avg5 = avg5_by_symbol.get(q.symbol)
+                            avg5_s = _fmt_volume(avg5) if avg5 is not None else "N/A"
+                            vol_spike_ratio = vol_spike_ratio_by_symbol.get(q.symbol)
+                            vol_spike_ratio_s = "N/A" if vol_spike_ratio is None else f"{vol_spike_ratio:.2f}x"
+                            vwap = vwap_by_symbol.get(q.symbol)
+                            vwap_s = _fmt_price(vwap) if vwap is not None else "N/A"
+                            mcap_s = "N/A" if q.market_cap is None else f"{int(round(q.market_cap)):,}"
                             prev_s = _fmt_price(q.previous_close)
                             chg_s = "N/A" if q.change_percent is None else f"{q.change_percent:.2f}%"
                             print(
@@ -673,7 +1014,8 @@ def main(argv: list[str]) -> int:
                                 f"prevClose={prev_s}, "
                                 f"chg%={chg_s}, "
                                 f"day_high={q.day_high} (ratio={ratio*100:.2f}%), "
-                                f"vol={v}, ma25={ma25_s}, time_utc={mt}"
+                                f"vol={v}, vol_avg5={avg5_s}, spike={vol_spike_ratio_s}, "
+                                f"vwap={vwap_s}, mcap={mcap_s}, ma25={ma25_s}, time_utc={mt}"
                             )
                         print()
                     else:
@@ -723,7 +1065,26 @@ def main(argv: list[str]) -> int:
                                 if ma25 is None:
                                     # MA25 が無い銘柄は候補に残らない想定ですが、念のためガードします。
                                     continue
-                                msg = _build_discord_message(q, entry=entry, stop=stop, take=take, ma25=float(ma25))
+                                vol_avg5 = avg5_by_symbol.get(q.symbol)
+                                vol_spike_ratio = vol_spike_ratio_by_symbol.get(q.symbol)
+                                vwap = vwap_by_symbol.get(q.symbol)
+                                market_cap = q.market_cap
+
+                                if vol_avg5 is None or vol_spike_ratio is None or market_cap is None:
+                                    # こちらも候補判定で欠けない想定ですが、万一に備えます。
+                                    continue
+
+                                msg = _build_discord_message(
+                                    q,
+                                    entry=entry,
+                                    stop=stop,
+                                    take=take,
+                                    ma25=float(ma25),
+                                    vol_avg5=float(vol_avg5),
+                                    vol_spike_ratio=float(vol_spike_ratio),
+                                    vwap=vwap,
+                                    market_cap=float(market_cap),
+                                )
                                 _discord_post(webhook_url, msg)
                             except Exception as e:
                                 # 通知に失敗しても監視自体は止めない方が実用的です。
