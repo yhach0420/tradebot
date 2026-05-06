@@ -33,8 +33,8 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
 
 # requests は標準ライブラリではありません。無い場合は分かりやすく案内します。
 try:
@@ -58,6 +58,18 @@ YAHOO_QUOTE_URL = "https://query1.finance.yahoo.com/v7/finance/quote"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
 # ----------------------------
+# 過去データの仮想リプレイ（テスト用）
+# ----------------------------
+# 目的:
+# - 相場時間外でも「過去の1分足」を1秒ごとに再生し、
+#   いつもの判定ロジック（条件一致/条件外れ/候補価格変更）とDiscord通知を確認するための機能です。
+#
+# 重要:
+# - TEST_REPLAY_MODE = False のときは、既存のリアルタイム監視（現在値の取得）を一切変えません。
+# - コマンドラインで `python yahoo_kabu_watch.py --replay` を付けた時だけ True になります。
+TEST_REPLAY_MODE = False
+
+# ----------------------------
 # 監視したい銘柄（ここを編集）
 # ----------------------------
 # 銘柄コードは「7203.T」の形式です。
@@ -78,6 +90,26 @@ MIN_RATIO_TO_DAY_HIGH = 0.98  # 現在値が当日高値の何%以上か（0.98 
 MIN_VOLUME = 300_000          # 最低出来高（この値以上だけ通す）
 
 # ----------------------------
+# エントリータイミング検知（追加条件）
+# ----------------------------
+# 目的:
+# - 「強い銘柄っぽい」ではなく「エントリーに近い瞬間」だけ通知したい。
+#
+# 追加する必須条件:
+# - 直近5分高値ブレイク（price > recent_5m_high）
+# - 上昇傾向（price > price_5min_ago）
+# - VWAP乖離（price が VWAP より 0.2%以上 上）
+#
+# 注意:
+# - これらは 1分足系列が必要です（リアルタイムでは chart の 1m データを参照します）
+VWAP_DISTANCE_PCT = 0.5  # (price - vwap) / vwap * 100 >= 0.5
+
+# Entry候補（= entry）への接近条件:
+# - 「ブレイクした！」だけで通知が出ると、entry候補から遠い場面でも通知が増えがちです。
+# - そこで「entry候補の99.5%以上まで近づいたとき」だけ条件一致にします。
+ENTRY_NEAR_RATIO = 0.996
+
+# ----------------------------
 # 出来高急増（5日平均出来高との比較）
 # ----------------------------
 MIN_VOLUME_SPIKE_RATIO = 2.0  # 現在出来高 >= 5日平均出来高 * この倍率
@@ -87,6 +119,10 @@ VOL_AVG5_CACHE_TTL_SEC = 60 * 10  # 10分
 
 # VWAP は日中に変わるので、比較的短めにキャッシュします
 VWAP_CACHE_TTL_SEC = 60 * 5  # 5分
+
+# 1分足系列（直近シグナル計算用）のキャッシュ:
+# - 毎秒 chart を取りに行くと重いので、短いTTLでキャッシュします。
+INTRADAY_SERIES_CACHE_TTL_SEC = 20
 
 # ----------------------------
 # 時価総額フィルタ
@@ -108,6 +144,24 @@ MAX_MARKET_CAP = 500_000_000_000   # 5000億円以下
 # - 利確候補: エントリーの +4% 上（リスクリワードを 1:2 くらいの形に）
 STOP_LOSS_PCT_FROM_ENTRY = 0.02
 TAKE_PROFIT_PCT_FROM_ENTRY = 0.04
+
+# ----------------------------
+# 候補価格の大幅変更通知（Discord再通知）
+# ----------------------------
+# 条件一致中の銘柄でも、エントリー/損切り/利確の候補価格が大きく動いたら再通知します。
+# 判定は「%」と「円」の両方で見ます（どちらかに引っかかれば通知）。
+LEVEL_CHANGE_PCT = 1.0  # 1%以上変わったら通知
+LEVEL_CHANGE_YEN = 10   # 10円以上変わったら通知
+
+# ----------------------------
+# 条件外れ通知の安定化（連続不一致で確定）
+# ----------------------------
+# 目的:
+# - 一瞬だけ条件を割った（特にVWAP付近のチョン）で「条件外れ通知」が出てしまうのを防ぎたい。
+#
+# 仕様:
+# - 2〜3分連続で条件不一致になった場合のみ条件外れ通知する
+EXIT_CONFIRM_COUNT = 3
 
 # ----------------------------
 # 25日移動平均（MA25）取得
@@ -168,6 +222,47 @@ class Quote:
     volume: Optional[float]          # 出来高（整数が多いが float で受ける）
     market_time_utc: Optional[datetime]
     market_cap: Optional[float]  # 時価総額（Yahoo Financeの値）
+
+
+@dataclass(frozen=True)
+class ReplayBar:
+    """
+    リプレイで使う「1分足1本」の最小セットです。
+    - timestamp_utc: ローソク足の時刻（UTC）
+    - open/high/low/close: OHLC
+    - volume: その1分の出来高（バー出来高）
+    """
+
+    timestamp_utc: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+@dataclass(frozen=True)
+class IntradaySignals:
+    """
+    「エントリータイミング検知」に必要な、直近の1分足由来シグナル。
+
+    - recent_5m_high:
+        直近5分の高値（※現在の足は含めない想定）
+    - price_5min_ago:
+        5分前の価格（1分足 close を基準）
+    - vwap:
+        日中VWAP（概算）
+    - vwap_distance_pct:
+        VWAP乖離率(%) = (price - vwap) / vwap * 100
+    - vol_3m_gt_prev_3m:
+        直近3分出来高合計 > その前の3分出来高合計（加点用）
+    """
+
+    recent_5m_high: Optional[float]
+    price_5min_ago: Optional[float]
+    vwap: Optional[float]
+    vwap_distance_pct: Optional[float]
+    vol_3m_gt_prev_3m: Optional[bool]
 
 
 def _calc_change_percent(*, price: float, previous_close: Optional[float]) -> Optional[float]:
@@ -569,6 +664,203 @@ def fetch_quote(session: requests.Session, symbol: str, timeout_sec: float = 10.
         return _fetch_quote_v8_chart(session, symbol, timeout_sec=timeout_sec)
 
 
+def fetch_history_1m(
+    session: requests.Session,
+    symbol: str,
+    *,
+    range_str: str,
+    timeout_sec: float = 20.0,
+) -> tuple[list[ReplayBar], dict]:
+    """
+    Yahoo Finance の chart API から「過去1分足」を取得します（リプレイ用）。
+
+    仕様:
+    - interval=1m
+    - range は "1d" または "5d"
+
+    戻り値:
+    - bars: 1分足の配列（欠損データは除外）
+    - meta: chart.result[0].meta（currency/previousClose等が入ることがあります）
+    """
+    if range_str not in ("1d", "5d"):
+        raise ValueError("range_str は '1d' または '5d' を指定してください")
+
+    url = YAHOO_CHART_URL.format(symbol=symbol)
+    params = {"interval": "1m", "range": range_str}
+    referer = f"https://finance.yahoo.com/quote/{symbol}"
+    headers = _browser_headers(referer=referer)
+
+    r = session.get(url, params=params, headers=headers, timeout=timeout_sec)
+    r.raise_for_status()
+    data = r.json()
+
+    chart = (data.get("chart") or {})
+    error = chart.get("error")
+    if error:
+        raise RuntimeError(f"chart error: {error!r}")
+
+    results = chart.get("result") or []
+    if not results:
+        raise RuntimeError(f"chart result が空です。symbol={symbol}")
+
+    r0 = results[0] or {}
+    meta = r0.get("meta") or {}
+    ts_arr = r0.get("timestamp") or []
+    indicators = r0.get("indicators") or {}
+    quotes = indicators.get("quote") or []
+    q0 = quotes[0] if quotes else {}
+
+    opens = (q0 or {}).get("open") or []
+    highs = (q0 or {}).get("high") or []
+    lows = (q0 or {}).get("low") or []
+    closes = (q0 or {}).get("close") or []
+    vols = (q0 or {}).get("volume") or []
+
+    n = min(len(ts_arr), len(opens), len(highs), len(lows), len(closes), len(vols))
+    bars: list[ReplayBar] = []
+
+    # 欠損（None）が混ざりやすいので、数値が揃っている行だけ採用します。
+    for i in range(n):
+        ts = ts_arr[i]
+        o = opens[i]
+        h = highs[i]
+        l = lows[i]
+        c = closes[i]
+        v = vols[i]
+        if not isinstance(ts, (int, float)):
+            continue
+        if not all(isinstance(x, (int, float)) for x in (o, h, l, c, v)):
+            continue
+        dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+        bars.append(
+            ReplayBar(
+                timestamp_utc=dt,
+                open=float(o),
+                high=float(h),
+                low=float(l),
+                close=float(c),
+                volume=float(v),
+            )
+        )
+
+    return bars, meta
+
+
+def fetch_intraday_1m_series(
+    session: requests.Session,
+    symbol: str,
+    *,
+    timeout_sec: float = 20.0,
+) -> tuple[list[float], list[float], list[float]]:
+    """
+    リアルタイム監視用に「直近の1分足系列」を取ります。
+
+    返すもの:
+    - closes: close配列（Noneは除外しないでそのまま入る可能性があるので呼び出し側で注意）
+    - highs:  high配列
+    - vols:   volume配列（1分ごとの出来高）
+
+    なぜ必要？
+    - recent_5m_high（直近5分高値）
+    - price_5min_ago（5分前の価格）
+    - 直近3分出来高 vs その前3分出来高（加点）
+    を出すためです。
+    """
+    url = YAHOO_CHART_URL.format(symbol=symbol)
+    params = {"interval": "1m", "range": "1d"}
+    referer = f"https://finance.yahoo.com/quote/{symbol}"
+    headers = _browser_headers(referer=referer)
+
+    r = session.get(url, params=params, headers=headers, timeout=timeout_sec)
+    r.raise_for_status()
+    data = r.json()
+
+    chart = (data.get("chart") or {})
+    if chart.get("error"):
+        raise RuntimeError(f"chart error: {chart.get('error')!r}")
+    results = chart.get("result") or []
+    if not results:
+        raise RuntimeError("chart result が空です")
+
+    r0 = results[0] or {}
+    indicators = r0.get("indicators") or {}
+    quotes = indicators.get("quote") or []
+    q0 = quotes[0] if quotes else {}
+
+    closes = (q0 or {}).get("close") or []
+    highs = (q0 or {}).get("high") or []
+    vols = (q0 or {}).get("volume") or []
+
+    # 型をそろえる（Noneが混ざり得るので list[float] ではなく list を返したいが、
+    # 既存コードの型と合わせるため、数値だけをfloatに寄せつつ、Noneはそのまま残します）
+    def _as_float_or_none(x):
+        return float(x) if isinstance(x, (int, float)) else None
+
+    closes2 = [_as_float_or_none(x) for x in closes]
+    highs2 = [_as_float_or_none(x) for x in highs]
+    vols2 = [_as_float_or_none(x) for x in vols]
+    return closes2, highs2, vols2
+
+
+def calc_intraday_signals_from_series(
+    *,
+    price: float,
+    closes: list[Optional[float]],
+    highs: list[Optional[float]],
+    vols: list[Optional[float]],
+    vwap: Optional[float],
+) -> IntradaySignals:
+    """
+    1分足の配列から、エントリー判定に必要なシグナルを計算します。
+
+    仕様対応:
+    - recent_5m_high: 直近5分の高値（最新足は除外して計算）
+    - price_5min_ago: 5分前の価格（close）
+    - VWAP乖離率
+    - 出来高増加（直近3分合計 > その前3分合計）
+    """
+    # Noneを除いた「末尾の有効データ列」を作ります（欠損があるときの耐性）
+    highs_valid = [x for x in highs if isinstance(x, (int, float))]
+    closes_valid = [x for x in closes if isinstance(x, (int, float))]
+    vols_valid = [x for x in vols if isinstance(x, (int, float))]
+
+    recent_5m_high: Optional[float] = None
+    price_5min_ago: Optional[float] = None
+    vol_inc: Optional[bool] = None
+
+    # recent_5m_high:
+    # - 「直近5分」= 直近5本の1分足
+    # - 「上抜け」判定に使うので、現在の足（最新1本）は除外して max を取ります
+    if len(highs_valid) >= 6:
+        window = highs_valid[-6:-1]  # 5本
+        if window:
+            recent_5m_high = float(max(window))
+
+    # price_5min_ago:
+    # - close の 5本前（最新を含めた時系列の -6 番目）
+    if len(closes_valid) >= 6:
+        price_5min_ago = float(closes_valid[-6])
+
+    # 出来高増加（加点用）:
+    # - 直近3分合計 vs その前3分合計
+    if len(vols_valid) >= 6:
+        last3 = sum(float(x) for x in vols_valid[-3:])
+        prev3 = sum(float(x) for x in vols_valid[-6:-3])
+        vol_inc = last3 > prev3
+
+    # VWAP乖離率
+    vwap_distance_pct: Optional[float] = None
+    if isinstance(vwap, (int, float)) and float(vwap) > 0:
+        vwap_distance_pct = ((float(price) - float(vwap)) / float(vwap)) * 100.0
+
+    return IntradaySignals(
+        recent_5m_high=recent_5m_high,
+        price_5min_ago=price_5min_ago,
+        vwap=(float(vwap) if isinstance(vwap, (int, float)) else None),
+        vwap_distance_pct=vwap_distance_pct,
+        vol_3m_gt_prev_3m=vol_inc,
+    )
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     """
     コマンドライン引数の解析。
@@ -579,6 +871,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="yahoo_kabu_watch.py",
         description="Yahoo Finance（非公式API）で日本株の現在値を1秒ごとに監視し、上抜けを表示します（発注なし）。",
+    )
+    p.add_argument(
+        "--replay",
+        action="store_true",
+        help=(
+            "過去データの仮想リプレイ（テスト）を有効化します。"
+            " Yahoo Finance の過去1分足を取得し、1秒ごとに1分ずつ再生して通常の判定/Discord通知を動かします。"
+        ),
+    )
+    p.add_argument(
+        "--replay-range",
+        type=str,
+        default="1d",
+        choices=["1d", "5d"],
+        help="リプレイで取得する期間。1d（直近1日）または 5d（直近5日）。デフォルト 1d",
     )
     p.add_argument(
         "--interval",
@@ -632,6 +939,260 @@ def _fmt_volume(v: Optional[float]) -> str:
     return str(int(round(float(v))))
 
 
+# =========================
+# Discord通知の表示（Embed用の整形）
+# =========================
+# Discord Embed は「title / color / fields」などを持てるので、
+# 長い文章よりも「重要情報を上に」「補足は下に」まとめやすくなります。
+
+
+def _fmt_yen(x: Optional[float]) -> str:
+    """価格は「小数なし・円表示」に統一します。"""
+    if x is None:
+        return "N/A"
+    return f"{int(round(float(x)))}円"
+
+
+def _fmt_pct(x: Optional[float]) -> str:
+    """前日比%は小数2桁、符号付きで表示します。"""
+    if x is None:
+        return "N/A"
+    xf = float(x)
+    sign = "+" if xf >= 0 else ""
+    return f"{sign}{xf:.2f}%"
+
+
+def _fmt_ratio_pct(numer: Optional[float], denom: Optional[float]) -> str:
+    """例: 高値接近率 = price/day_high * 100（小数1桁）"""
+    if numer is None or denom is None:
+        return "N/A"
+    d = float(denom)
+    if d <= 0:
+        return "N/A"
+    return f"{(float(numer) / d) * 100.0:.1f}%"
+
+
+def _fmt_volume_man(v: Optional[float]) -> str:
+    """
+    出来高は「万株」表示にします。
+    例: 8,940,000 → 894万株
+    """
+    if v is None:
+        return "N/A"
+    man = int(round(float(v) / 10_000.0))
+    return f"{man}万株"
+
+
+def _embed_field(name: str, value: str, *, inline: bool = False) -> dict[str, Any]:
+    """Embed fields の最小構造。"""
+    return {"name": name, "value": value, "inline": bool(inline)}
+
+
+JST = timezone(timedelta(hours=9))
+
+
+def _fmt_dt_jst(dt_utc: Optional[datetime]) -> str:
+    """
+    UTCの datetime を JST 表示にします（リプレイの視認性改善用）。
+    例: 2026-05-01 15:23:00
+    """
+    if dt_utc is None:
+        return "N/A"
+    # dt_utc は tz=UTC の想定。念のため tz が無い場合も UTC として扱います。
+    if dt_utc.tzinfo is None:
+        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+    return dt_utc.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _fmt_dt_jst_short(dt_utc: Optional[datetime]) -> str:
+    """Embed内用の短いJST表示。例: 2026-05-01 15:23 JST"""
+    if dt_utc is None:
+        return "N/A"
+    if dt_utc.tzinfo is None:
+        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+    return dt_utc.astimezone(JST).strftime("%Y-%m-%d %H:%M JST")
+
+
+def build_embed_match(
+    q: Quote,
+    *,
+    entry: float,
+    stop: float,
+    take: float,
+    vwap: Optional[float],
+    ma25: float,
+    replay_time_jst: Optional[str] = None,
+    recent_5m_high: Optional[float] = None,
+    price_5min_ago: Optional[float] = None,
+    vwap_distance_pct: Optional[float] = None,
+    vol_increase: Optional[bool] = None,
+    entry_near_ratio: Optional[float] = None,
+    entry_crossed: Optional[bool] = None,
+) -> dict[str, Any]:
+    """
+    【条件一致】Embed
+    - 重要情報を上にまとめ、補足は下に置きます。
+    """
+    fields: list[dict[str, Any]] = []
+    # リプレイ時は「この通知がどの時刻の再生か」を最上段に出します。
+    # 通常モードでは None で渡せば表示されません。
+    if replay_time_jst:
+        fields.append(_embed_field("Replay時刻", replay_time_jst, inline=False))
+    fields.append(_embed_field("現在値", _fmt_yen(q.price), inline=True))
+    fields.append(_embed_field("前日比", _fmt_pct(q.change_percent), inline=True))
+    fields.append(_embed_field("出来高", _fmt_volume_man(q.volume), inline=True))
+    fields.append(_embed_field("高値接近率", _fmt_ratio_pct(q.price, q.day_high), inline=True))
+
+    # 追加情報（エントリー判断に必要なもの）
+    fields.append(_embed_field("直近5分高値", _fmt_yen(recent_5m_high), inline=True))
+    fields.append(_embed_field("5分前価格", _fmt_yen(price_5min_ago), inline=True))
+    if vwap_distance_pct is None:
+        vwap_dist_s = "N/A"
+    else:
+        vwap_dist_s = f"{vwap_distance_pct:.2f}%"
+    fields.append(_embed_field("VWAP乖離率", vwap_dist_s, inline=True))
+    if vol_increase is None:
+        vol_inc_s = "N/A"
+    else:
+        vol_inc_s = "あり" if vol_increase else "なし"
+    fields.append(_embed_field("出来高増加", vol_inc_s, inline=True))
+
+    # Entry接近率 / Entry上抜け（クロス）:
+    # - 実戦で「今エントリー判断しやすいか」を最短で見られるように追加します。
+    _ = entry_near_ratio  # 引数は「しきい値」の表示など将来拡張用（現状は entry から計算）
+    if entry > 0:
+        fields.append(_embed_field("Entry接近率", f"{(float(q.price)/float(entry))*100.0:.2f}%", inline=True))
+    else:
+        fields.append(_embed_field("Entry接近率", "N/A", inline=True))
+    if entry_crossed is None:
+        crossed_s = "N/A"
+    else:
+        crossed_s = "成立" if entry_crossed else "未成立"
+    fields.append(_embed_field("Entry上抜け", crossed_s, inline=True))
+
+    fields.append(
+        _embed_field(
+            "売買候補",
+            "\n".join(
+                [
+                    f"Entry: {_fmt_yen(entry)}",
+                    f"Stop: {_fmt_yen(stop)}",
+                    f"Take: {_fmt_yen(take)}",
+                ]
+            ),
+            inline=False,
+        )
+    )
+    fields.append(
+        _embed_field(
+            "補足",
+            "\n".join([f"VWAP: {_fmt_yen(vwap)}", f"25MA: {_fmt_yen(ma25)}"]),
+            inline=False,
+        )
+    )
+
+    return {
+        "title": f"🟢 条件一致: {q.symbol}",
+        "color": 0x2ECC71,  # green
+        "fields": fields,
+    }
+
+
+def build_embed_entry_cross(
+    q: Quote,
+    *,
+    entry: float,
+    stop: float,
+    take: float,
+    vwap: Optional[float],
+    ma25: float,
+    replay_time_jst: Optional[str],
+    recent_5m_high: Optional[float],
+    price_5min_ago: Optional[float],
+    vwap_distance_pct: Optional[float],
+    vol_increase: Optional[bool],
+    entry_crossed: bool,
+) -> dict[str, Any]:
+    """
+    🚀 Entry上抜け（クロス）を強調するEmbed。
+    - 条件一致Embedと同じ情報を持ちつつ、title と color を変えて目立たせます。
+    """
+    embed = build_embed_match(
+        q,
+        entry=entry,
+        stop=stop,
+        take=take,
+        vwap=vwap,
+        ma25=ma25,
+        replay_time_jst=replay_time_jst,
+        recent_5m_high=recent_5m_high,
+        price_5min_ago=price_5min_ago,
+        vwap_distance_pct=vwap_distance_pct,
+        vol_increase=vol_increase,
+        entry_near_ratio=float(ENTRY_NEAR_RATIO),
+        entry_crossed=bool(entry_crossed),
+    )
+    embed["title"] = f"🚀 Entry上抜け: {q.symbol}"
+    embed["color"] = 0x3498DB  # blue
+    return embed
+
+
+def build_embed_levels_change(
+    *,
+    symbol: str,
+    price: float,
+    change_percent: Optional[float],
+    old_entry: float,
+    new_entry: float,
+    old_stop: float,
+    new_stop: float,
+    old_take: float,
+    new_take: float,
+) -> dict[str, Any]:
+    """【候補価格変更】Embed"""
+    fields: list[dict[str, Any]] = []
+    fields.append(_embed_field("現在値", _fmt_yen(price), inline=True))
+    fields.append(_embed_field("前日比", _fmt_pct(change_percent), inline=True))
+    fields.append(
+        _embed_field(
+            "候補価格",
+            "\n".join(
+                [
+                    f"Entry: {_fmt_yen(old_entry)} → {_fmt_yen(new_entry)}",
+                    f"Stop: {_fmt_yen(old_stop)} → {_fmt_yen(new_stop)}",
+                    f"Take: {_fmt_yen(old_take)} → {_fmt_yen(new_take)}",
+                ]
+            ),
+            inline=False,
+        )
+    )
+    return {
+        "title": f"🟡 候補価格変更: {symbol}",
+        "color": 0xF1C40F,  # yellow
+        "fields": fields,
+    }
+
+
+def build_embed_out(
+    *,
+    symbol: str,
+    price: Optional[float],
+    change_percent: Optional[float],
+    reasons: list[str],
+) -> dict[str, Any]:
+    """【条件外れ】Embed"""
+    reason_text = " / ".join(reasons) if reasons else "条件から外れました"
+    fields: list[dict[str, Any]] = []
+    fields.append(_embed_field("現在値", _fmt_yen(price), inline=True))
+    fields.append(_embed_field("前日比", _fmt_pct(change_percent), inline=True))
+    fields.append(_embed_field("外れた理由", reason_text, inline=False))
+    return {
+        "title": f"🔴 条件外れ: {symbol}",
+        "color": 0xE74C3C,  # red
+        "fields": fields,
+    }
+
+
 def _build_discord_message(
     q: Quote,
     *,
@@ -643,43 +1204,13 @@ def _build_discord_message(
     vol_spike_ratio: Optional[float],
     vwap: Optional[float],
     market_cap: Optional[float],
-) -> str:
-    """
-    Discord に送る「仕様どおりの項目」を 1メッセージにまとめます。
-    必須項目:
-    - 銘柄コード
-    - 現在値
-    - 前日比
-    - 出来高
-    - 当日高値
-    - エントリー候補
-    - 損切り候補
-    - 利確候補
-    """
-    chg = q.change_percent
-    if chg is None:
-        chg_s = "N/A"
-    else:
-        # 前日比は符号付きで表示します（例: +1.23%）。
-        sign = "+" if chg >= 0 else ""
-        chg_s = f"{sign}{chg:.2f}%"
-
-    return (
-        f"条件一致（WATCH）\n"
-        f"- 銘柄: {q.symbol}\n"
-        f"- 現在値: {_fmt_price(q.price)} {q.currency}\n"
-        f"- 前日比: {chg_s}\n"
-        f"- 出来高: {_fmt_volume(q.volume)}\n"
-        f"- 5日平均出来高: {_fmt_volume(vol_avg5)}\n"
-        f"- 出来高急増倍率: {('N/A' if vol_spike_ratio is None else f'{vol_spike_ratio:.2f}x')}\n"
-        f"- 25日移動平均: {_fmt_price(ma25)}\n"
-        f"- 当日高値: {_fmt_price(q.day_high)}\n"
-        f"- VWAP: {_fmt_price(vwap)}\n"
-        f"- 時価総額: {('取得不可' if market_cap is None else f'{int(round(market_cap)):,}')}\n"
-        f"- エントリー候補: {_fmt_price(entry)}\n"
-        f"- 損切り候補: {_fmt_price(stop)}\n"
-        f"- 利確候補: {_fmt_price(take)}"
-    )
+) -> dict[str, Any]:
+    # 互換のため関数名は残しますが、通常通知では使わない情報を省略した Embed に置き換えます。
+    # - market_cap / 出来高急増倍率の詳細 / 長い説明文 は通常通知から外します（要件）。
+    _ = (vol_avg5, vol_spike_ratio, market_cap)  # 引数互換維持（未使用）
+    # 通常モードでは Replay時刻は付けません（リプレイ側は build_embed_match を直接呼んで付けます）。
+    embed = build_embed_match(q, entry=entry, stop=stop, take=take, vwap=vwap, ma25=ma25, replay_time_jst=None)
+    return {"embeds": [embed]}
 
 
 def _discord_post(webhook_url: str, content: str) -> None:
@@ -688,6 +1219,171 @@ def _discord_post(webhook_url: str, content: str) -> None:
     """
     r = requests.post(webhook_url, json={"content": content}, timeout=20)
     r.raise_for_status()
+
+
+def _discord_post_webhook_payload(webhook_url: str, payload: dict[str, Any]) -> None:
+    """Webhookへ Embed payload を送ります。"""
+    r = requests.post(webhook_url, json=payload, timeout=20)
+    r.raise_for_status()
+
+
+def _parse_channel_id(raw: str) -> Optional[int]:
+    """
+    環境変数で渡される Discord のチャンネルID（文字列）を int に変換します。
+    - 未設定（空文字）の場合は None
+    - 数字以外が混ざっていた場合も None（= チャンネル送信を使わずフォールバック）
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        return int(s)
+    except Exception:
+        return None
+
+
+def _discord_send_to_channel(
+    *,
+    bot_token: str,
+    channel_id: int,
+    content: str,
+) -> None:
+    """
+    Discord Bot Token を使って、指定チャンネルへメッセージ送信します（WebhookではなくBot送信）。
+
+    重要:
+    - これは「Webhookの送信先」ではなく、channel_id で指定したチャンネルに送ります。
+    - Bot がそのチャンネルを閲覧/送信できる権限が必要です。
+    """
+    url = f"https://discord.com/api/v10/channels/{int(channel_id)}/messages"
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json",
+    }
+    r = requests.post(url, headers=headers, json={"content": content}, timeout=20)
+    r.raise_for_status()
+
+
+def _discord_send_to_channel_payload(
+    *,
+    bot_token: str,
+    channel_id: int,
+    payload: dict[str, Any],
+) -> None:
+    """Bot送信（Embed payload 対応版）。"""
+    url = f"https://discord.com/api/v10/channels/{int(channel_id)}/messages"
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json",
+    }
+    r = requests.post(url, headers=headers, json=payload, timeout=20)
+    r.raise_for_status()
+
+
+def discord_notify(
+    payload: dict[str, Any],
+    *,
+    webhook_url: str,
+    alert_channel_id: Optional[int],
+    bot_token: str,
+) -> None:
+    """
+    通知を「最終的にどこへ送るか」を1か所にまとめた関数です。
+
+    優先順位（方針）:
+    1) ALERT_CHANNEL_ID + DISCORD_BOT_TOKEN があるなら、Bot送信に統一（推奨）
+    2) それが無理なら、従来どおり Webhook へ送信（互換）
+
+    運用メモ（初心者向け）:
+    - 当面いちばん簡単なのは「通知用チャンネルで作ったWebhook URL」を DISCORD_WEBHOOK_URL に入れる方法です。
+      そうすると Webhook でも通知ログを分離できます。
+    """
+    if alert_channel_id is not None and bot_token.strip():
+        _discord_send_to_channel_payload(
+            bot_token=bot_token.strip(),
+            channel_id=alert_channel_id,
+            payload=payload,
+        )
+        return
+    if webhook_url.strip():
+        _discord_post_webhook_payload(webhook_url.strip(), payload)
+        return
+    # どちらも無ければ「通知なし」（discord_enabled 側で制御する想定）
+
+
+def _get_discord_token_with_compat_warning() -> str:
+    """
+    DiscordのBotトークンを環境変数から取得します（環境変数名の整理版）。
+
+    仕様:
+    - 正: DISCORD_TOKEN
+    - 旧: DISCORD_BOT_TOKEN（廃止予定）
+      - もし残っていたら警告を表示しつつ、その値で動作を継続します（互換）。
+    """
+    tok = os.getenv("DISCORD_TOKEN", "").strip()
+    old = os.getenv("DISCORD_BOT_TOKEN", "").strip()
+    if old:
+        print(f"[{now_str()}] 警告: DISCORD_BOT_TOKEN は廃止予定です。DISCORD_TOKEN に移行してください。")
+        if not tok:
+            tok = old
+    return tok
+
+
+def _level_changed(*, old: float, new: float) -> bool:
+    """
+    候補価格が「大幅に変わったか」を判定します。
+
+    判定ルール（仕様）:
+    - 価格差が 1%以上変わったら通知
+    - または 値幅が 10円以上変わったら通知
+    """
+    diff = abs(float(new) - float(old))
+    if diff >= float(LEVEL_CHANGE_YEN):
+        return True
+
+    # %判定は old を基準にします（old=0 などの異常値は安全に弾く）
+    if float(old) <= 0:
+        return False
+    pct = (diff / float(old)) * 100.0
+    return pct >= float(LEVEL_CHANGE_PCT)
+
+
+def _build_levels_change_message(
+    *,
+    symbol: str,
+    price: float,
+    currency: str,
+    change_percent: Optional[float],
+    old_entry: float,
+    new_entry: float,
+    old_stop: float,
+    new_stop: float,
+    old_take: float,
+    new_take: float,
+) -> dict[str, Any]:
+    _ = currency  # 引数互換維持（Embedは円固定表示）
+    embed = build_embed_levels_change(
+        symbol=symbol,
+        price=price,
+        change_percent=change_percent,
+        old_entry=old_entry,
+        new_entry=new_entry,
+        old_stop=old_stop,
+        new_stop=new_stop,
+        old_take=old_take,
+        new_take=new_take,
+    )
+    return {"embeds": [embed]}
+
+
+def _build_discord_out_message(symbol: str, *, price: Optional[float], currency: str) -> dict[str, Any]:
+    """
+    条件外れ通知（Discord用）。
+    - 仕様: 条件一致していた銘柄が条件から外れたら通知する
+    """
+    _ = currency  # 引数互換維持（Embedは円固定表示）
+    embed = build_embed_out(symbol=symbol, price=price, change_percent=None, reasons=[])
+    return {"embeds": [embed]}
 
 
 def _load_watch_from_file(path: str) -> list[str]:
@@ -762,8 +1458,527 @@ def _load_symbols_csv(path: str) -> list[str]:
         return []
 
 
+def run_replay(
+    *,
+    interval_sec: float,
+    only_changes: bool,
+    fixed_watch: Optional[list[str]],
+    replay_range: str,
+) -> int:
+    """
+    過去データの仮想リプレイ（テストモード）。
+
+    仕様（ユーザー要件）:
+    - `python yahoo_kabu_watch.py --replay` の時だけ有効（TEST_REPLAY_MODE=True）
+    - Yahoo Finance から過去の1分足データを取得（range: 1d/5d）
+    - 対象銘柄は watchlist.json（通常と同じ監視銘柄決定ルール）
+    - 1分足データを 1 秒ごとに仮想的に再生する
+    - 各時点の price/high/low/volume を使って通常の判定ロジックを動かす
+    - 条件一致通知 / 条件外れ通知 / 候補価格変更通知 を Discord に送る
+    """
+    if replay_range not in ("1d", "5d"):
+        print("--replay-range は 1d または 5d を指定してください。")
+        return 2
+
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+    alert_channel_id = _parse_channel_id(os.getenv("ALERT_CHANNEL_ID", ""))
+    # Bot送信用トークンは DISCORD_TOKEN に統一します（旧: DISCORD_BOT_TOKEN は互換で吸収）
+    bot_token = _get_discord_token_with_compat_warning()
+    discord_enabled = bool((alert_channel_id is not None and bot_token) or webhook_url)
+
+    if webhook_url:
+        print(f"[{now_str()}] Discord通知: DISCORD_WEBHOOK_URL が設定されています（Webhookの送信先チャンネルに送られます）")
+    if alert_channel_id is not None and bot_token:
+        print(f"[{now_str()}] Discord通知: ALERT_CHANNEL_ID={alert_channel_id} へ Bot送信します（推奨）")
+    last_discord_candidate_symbols: set[str] = set()
+    # 条件外れ通知で「最後に見た価格」を出すために覚えておきます。
+    last_quote_by_symbol: dict[str, Quote] = {}
+    last_notified_levels: dict[str, tuple[float, float, float]] = {}
+    # 条件外れ通知の安定化（連続不一致をカウント）
+    exit_miss_count: dict[str, int] = {}
+    # Entry上抜け（クロス）判定用に「前回価格」を覚えておきます。
+    prev_price_by_symbol: dict[str, Optional[float]] = {}
+    # Entry上抜け（クロス）判定用に「前回価格」を覚えておきます。
+    prev_price_by_symbol: dict[str, float] = {}
+
+    # 表示抑制用
+    last_candidates: set[str] = set()
+
+    # 通常モード同様、MA25/出来高5日平均はキャッシュします（毎秒取り直すと重い）
+    ma25_cache: dict[str, tuple[float, float]] = {}
+    avg5_cache: dict[str, tuple[float, float]] = {}
+
+    # リプレイで「当日高値」「当日出来高（累積）」「VWAP（概算）」を作るための状態
+    running_day_high: dict[str, float] = {}
+    running_day_volume: dict[str, float] = {}
+    running_vwap_pv: dict[str, float] = {}  # (typical price * volume) 累積
+    running_vwap_v: dict[str, float] = {}   # volume 累積
+
+    # 日ごとの previous close を切り替えるための状態（簡易実装）
+    current_day_key: dict[str, str] = {}
+    prev_close_by_day: dict[str, Optional[float]] = {}
+
+    # watchlist.json の読み込み失敗時の保険（通常と同様）
+    last_watch: list[str] = []
+
+    with requests.Session() as session:
+        # -----------------------------
+        # 監視銘柄の決定（通常と同じ）
+        # -----------------------------
+        watch: list[str] = []
+        if fixed_watch is not None:
+            watch = list(fixed_watch)
+        else:
+            if os.path.exists(WATCHLIST_JSON_PATH):
+                watch_loaded, err = _load_watchlist_json(WATCHLIST_JSON_PATH)
+                if err:
+                    print(f"[{now_str()}] watchlist.json 読み込みエラー（前回の監視リストを維持）: {err}")
+                    watch = list(last_watch)
+                else:
+                    watch = watch_loaded
+                    last_watch = list(watch)
+            else:
+                loaded_symbols = _load_symbols_csv(SYMBOLS_CSV_PATH)
+                watch = loaded_symbols if loaded_symbols else list(WATCH)
+
+        if not watch:
+            print(f"[{now_str()}] 監視銘柄なし。watchlist.json を用意してください。")
+            return 2
+
+        print("=== TEST REPLAY MODE ===")
+        print(f"- replay_range: {replay_range}")
+        # リプレイ速度の見せ方を「直感的」にします。
+        # interval_sec=1.0 なら「1秒 = 1分」
+        # interval_sec=0.5 なら「0.5秒 = 1分」など。
+        if abs(interval_sec - 1.0) < 1e-9:
+            speed_s = "1秒 = 1分"
+        else:
+            speed_s = f"{interval_sec:.2f}秒 = 1分"
+        print(f"- replay_speed: {speed_s}")
+        print(f"- watch: {', '.join(watch)}\n")
+
+        # -----------------------------
+        # 過去1分足の取得（最初にまとめて取る）
+        # -----------------------------
+        bars_by_symbol: dict[str, list[ReplayBar]] = {}
+        meta_by_symbol: dict[str, dict] = {}
+        for sym in watch:
+            try:
+                bars, meta = fetch_history_1m(session, sym, range_str=replay_range)
+                if not bars:
+                    print(f"[{now_str()}] {sym} リプレイ用の1分足が空でした（スキップ）")
+                    continue
+                bars_by_symbol[sym] = bars
+                meta_by_symbol[sym] = meta
+            except Exception as e:
+                print(f"[{now_str()}] {sym} 過去1分足の取得に失敗（スキップ）: {e}")
+
+        if not bars_by_symbol:
+            print(f"[{now_str()}] リプレイ対象のデータが1つも取得できませんでした。")
+            return 2
+
+        # -----------------------------
+        # リプレイ対象の「開始/終了時刻」を表示（JST）
+        # -----------------------------
+        all_bars = [b for bars in bars_by_symbol.values() for b in bars]
+        start_utc = min((b.timestamp_utc for b in all_bars), default=None)
+        end_utc = max((b.timestamp_utc for b in all_bars), default=None)
+        print("=== Replay対象 ===")
+        print(f"- 対象日(目安): {_fmt_dt_jst(start_utc)[:10]} ～ {_fmt_dt_jst(end_utc)[:10]}")
+        print(f"- 開始時刻(JST): {_fmt_dt_jst(start_utc)}")
+        print(f"- 終了時刻(JST): {_fmt_dt_jst(end_utc)}")
+        print(f"- 対象銘柄: {', '.join(sorted(bars_by_symbol.keys()))}\n")
+
+        # 銘柄ごとの再生ポインタ
+        idx_by_symbol: dict[str, int] = {sym: 0 for sym in bars_by_symbol.keys()}
+
+        # 進行率用:
+        # - 全銘柄・全バーの総数に対して、何本再生したかで%を出します。
+        total_bars = sum(len(bars) for bars in bars_by_symbol.values())
+        progressed_bars = 0
+
+        # 初回 previousClose（取れれば使う）
+        for sym, meta in meta_by_symbol.items():
+            pc = meta.get("previousClose")
+            prev_close_by_day[f"{sym}::INIT"] = float(pc) if isinstance(pc, (int, float)) else None
+
+        try:
+            while True:
+                loop_started = time.perf_counter()
+
+                # -----------------------------
+                # 1秒ぶん進める（各銘柄の1分足を1本進める）
+                # -----------------------------
+                quotes: list[Quote] = []
+                for sym, bars in bars_by_symbol.items():
+                    i = idx_by_symbol.get(sym, 0)
+                    if i >= len(bars):
+                        continue
+                    bar = bars[i]
+                    idx_by_symbol[sym] = i + 1
+                    progressed_bars += 1
+
+                    # 日付キー（UTC日付で管理する簡易版）
+                    day_key = bar.timestamp_utc.strftime("%Y-%m-%d")
+                    if current_day_key.get(sym) != day_key:
+                        # 日が変わったら日内状態をリセット
+                        current_day_key[sym] = day_key
+                        running_day_high[sym] = float("-inf")
+                        running_day_volume[sym] = 0.0
+                        running_vwap_pv[sym] = 0.0
+                        running_vwap_v[sym] = 0.0
+
+                        # 前日終値（previous close）を切り替え
+                        if i == 0:
+                            prev_close_by_day[f"{sym}::{day_key}"] = prev_close_by_day.get(f"{sym}::INIT")
+                        else:
+                            # 直前バーの close を “前日終値” として扱う（簡易）
+                            prev_close_by_day[f"{sym}::{day_key}"] = float(bars[i - 1].close)
+
+                    running_day_high[sym] = max(running_day_high.get(sym, float("-inf")), float(bar.high))
+                    running_day_volume[sym] = float(running_day_volume.get(sym, 0.0)) + float(bar.volume)
+
+                    # VWAP（概算）: typical price * volume の累積
+                    tp = (float(bar.high) + float(bar.low) + float(bar.close)) / 3.0
+                    running_vwap_pv[sym] = float(running_vwap_pv.get(sym, 0.0)) + tp * float(bar.volume)
+                    running_vwap_v[sym] = float(running_vwap_v.get(sym, 0.0)) + float(bar.volume)
+
+                    meta = meta_by_symbol.get(sym) or {}
+                    currency = str(meta.get("currency") or "JPY")
+                    prev_close = prev_close_by_day.get(f"{sym}::{day_key}")
+                    chg = _calc_change_percent(price=float(bar.close), previous_close=prev_close)
+
+                    # Entry上抜け（クロス）判定用に「前回価格」を保持します（Replayでも同じ判定にする）。
+                    prev_price_by_symbol.setdefault(sym, None)
+
+                    quotes.append(
+                        Quote(
+                            symbol=sym,
+                            price=float(bar.close),
+                            currency=currency,
+                            previous_close=float(prev_close) if isinstance(prev_close, (int, float)) else None,
+                            change_percent=float(chg) if isinstance(chg, (int, float)) else None,
+                            day_high=float(running_day_high[sym]),
+                            volume=float(running_day_volume[sym]),  # 日内累積出来高として扱う
+                            market_time_utc=bar.timestamp_utc,
+                            market_cap=None,
+                        )
+                    )
+
+                    # 今回の価格を保存（次ループで prev として使う）
+                    prev_price_by_symbol[sym] = float(bar.close)
+
+                # 全銘柄が再生し終えたら終了
+                if not quotes:
+                    print(f"\n[{now_str()}] リプレイ完了（全銘柄のデータを再生し終えました）")
+                    return 0
+
+                # -----------------------------
+                # 毎ループ表示する「リプレイ時刻(JST)・進行率」
+                # -----------------------------
+                replay_t = max((q.market_time_utc for q in quotes if q.market_time_utc), default=None)
+                replay_t_jst = _fmt_dt_jst(replay_t)
+                pct = 0
+                if total_bars > 0:
+                    pct = int((progressed_bars / total_bars) * 100)
+                    if pct > 100:
+                        pct = 100
+                # 例: [15:23:00][Replay 72%] replay_time_jst=2026-05-01 15:23:00
+                print(f"[{now_str()}][Replay {pct}%] replay_time_jst={replay_t_jst}")
+
+                # -----------------------------
+                # ここから下は「通常の判定ロジック」と同じ流れ
+                # （データ供給源が realtime(quote) か replay(1m) かの違いだけ）
+                # -----------------------------
+                candidates: list[Quote] = []
+                skip_reasons_by_symbol: dict[str, list[str]] = {}
+                ma25_by_symbol: dict[str, float] = {}
+                avg5_by_symbol: dict[str, float] = {}
+                vol_spike_ratio_by_symbol: dict[str, Optional[float]] = {}
+                vwap_by_symbol: dict[str, Optional[float]] = {}
+                intraday_by_symbol: dict[str, IntradaySignals] = {}
+                entry_cross_by_symbol: dict[str, bool] = {}
+
+                for q in quotes:
+                    reasons: list[str] = []
+
+                    if q.change_percent is None:
+                        reasons.append("前日終値取得失敗")
+                    if q.day_high is None:
+                        reasons.append("当日高値が取得できない")
+                    if q.volume is None:
+                        reasons.append("出来高が取得できない")
+
+                    if q.change_percent is not None:
+                        if q.change_percent < MIN_CHANGE_PCT:
+                            reasons.append("前日比不足")
+                        if q.change_percent >= MAX_CHANGE_PCT:
+                            reasons.append("急騰しすぎ")
+
+                    if q.day_high is not None:
+                        if q.price < (MIN_RATIO_TO_DAY_HIGH * q.day_high):
+                            reasons.append("高値付近ではない")
+
+                    if q.volume is not None:
+                        if q.volume < float(MIN_VOLUME):
+                            reasons.append("出来高不足")
+
+                    # 5日平均出来高（通常と同じく API 取得 + キャッシュ）
+                    avg5: Optional[float] = None
+                    if q.volume is not None:
+                        try:
+                            cached = avg5_cache.get(q.symbol)
+                            if cached:
+                                cached_avg5, fetched_at = cached
+                                if (time.perf_counter() - fetched_at) < VOL_AVG5_CACHE_TTL_SEC:
+                                    avg5 = cached_avg5
+                            if avg5 is None:
+                                fetched = fetch_avg_volume_5(session, q.symbol)
+                                if fetched is not None:
+                                    avg5_cache[q.symbol] = (float(fetched), time.perf_counter())
+                                    avg5 = float(fetched)
+                        except Exception:
+                            avg5 = None
+
+                    if avg5 is not None:
+                        avg5_by_symbol[q.symbol] = avg5
+                        ratio = q.volume / avg5 if avg5 > 0 else 0.0
+                        vol_spike_ratio_by_symbol[q.symbol] = ratio
+                    else:
+                        vol_spike_ratio_by_symbol[q.symbol] = None
+
+                    # MA25（通常と同じく API 取得 + キャッシュ）
+                    ma25: Optional[float] = None
+                    try:
+                        cached = ma25_cache.get(q.symbol)
+                        if cached:
+                            cached_ma25, fetched_at = cached
+                            if (time.perf_counter() - fetched_at) < MA25_CACHE_TTL_SEC:
+                                ma25 = cached_ma25
+                        if ma25 is None:
+                            fetched = fetch_ma25(session, q.symbol)
+                            if fetched is not None:
+                                ma25_cache[q.symbol] = (float(fetched), time.perf_counter())
+                                ma25 = float(fetched)
+                    except Exception:
+                        ma25 = None
+
+                    if ma25 is None:
+                        reasons.append("25日線が取得できない")
+                    else:
+                        ma25_by_symbol[q.symbol] = ma25
+                        if q.price <= ma25:
+                            reasons.append("25日線以下")
+
+                    # VWAP（リプレイデータから概算）
+                    vv = running_vwap_v.get(q.symbol, 0.0)
+                    vwap = (running_vwap_pv.get(q.symbol, 0.0) / vv) if vv > 0 else None
+                    vwap_by_symbol[q.symbol] = vwap
+                    # ----------------------------------------
+                    # 追加条件（エントリータイミング検知）
+                    # ----------------------------------------
+                    # リプレイでは「今までに再生したバー」を使って直近シグナルを計算します。
+                    # - ここでは簡単に、bars_by_symbol の先頭から「今のindexまで」を渡して計算します。
+                    #   （銘柄数が多い場合は最適化余地がありますが、まずは分かりやすさ優先）
+                    played = idx_by_symbol.get(q.symbol, 0)
+                    bars_played = bars_by_symbol.get(q.symbol, [])[:played]
+                    sig = calc_intraday_signals_from_series(
+                        price=float(q.price),
+                        closes=[b.close for b in bars_played],
+                        highs=[b.high for b in bars_played],
+                        vols=[b.volume for b in bars_played],
+                        vwap=vwap,
+                    )
+                    intraday_by_symbol[q.symbol] = sig
+
+                    # 1) VWAP乖離（必須）
+                    if sig.vwap_distance_pct is None:
+                        reasons.append("VWAP取得不可")
+                    else:
+                        if sig.vwap_distance_pct < float(VWAP_DISTANCE_PCT):
+                            reasons.append("VWAP乖離不足")
+
+                    # 2) 直近5分高値ブレイク（必須）
+                    if sig.recent_5m_high is None:
+                        reasons.append("直近5分高値が取れない")
+                    else:
+                        if float(q.price) <= float(sig.recent_5m_high):
+                            reasons.append("5分高値ブレイク未成立")
+
+                    # 3) 上昇傾向（必須）
+                    if sig.price_5min_ago is None:
+                        reasons.append("5分前価格が取れない")
+                    else:
+                        if float(q.price) <= float(sig.price_5min_ago):
+                            reasons.append("上昇傾向なし")
+
+                    if not reasons:
+                        candidates.append(q)
+                    else:
+                        skip_reasons_by_symbol[q.symbol] = reasons
+
+                candidate_symbols = {q.symbol for q in candidates}
+                should_print = (not only_changes) or (candidate_symbols != last_candidates)
+                if should_print:
+                    # ここは「候補が何件か」だけを短く表示（時刻/進行率は上で毎回表示済み）
+                    print(f"[{now_str()}] 条件一致: {len(candidates)} 銘柄")
+                last_candidates = candidate_symbols
+
+                # -----------------------------
+                # Discord通知（3種類）
+                # -----------------------------
+                if discord_enabled:
+                    # 条件一致（新規だけ）
+                    to_notify = [q for q in candidates if q.symbol not in last_discord_candidate_symbols]
+                    for q in to_notify:
+                        entry = float(q.day_high)
+                        stop = entry * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
+                        take = entry * (1.0 + TAKE_PROFIT_PCT_FROM_ENTRY)
+                        ma25 = ma25_by_symbol.get(q.symbol)
+                        if ma25 is None:
+                            continue
+                        try:
+                            sig = intraday_by_symbol.get(q.symbol)
+                            crossed = False
+                            prev_p = prev_price_by_symbol.get(q.symbol)
+                            if prev_p is not None and entry > 0:
+                                crossed = (float(prev_p) <= float(entry) and float(q.price) >= float(entry))
+
+                            # リプレイ時は「Replay時刻(JST)」をEmbedに入れます。
+                            if crossed:
+                                embed = build_embed_entry_cross(
+                                    q,
+                                    entry=entry,
+                                    stop=stop,
+                                    take=take,
+                                    vwap=(sig.vwap if sig else vwap_by_symbol.get(q.symbol)),
+                                    ma25=float(ma25),
+                                    replay_time_jst=_fmt_dt_jst_short(q.market_time_utc),
+                                    recent_5m_high=(sig.recent_5m_high if sig else None),
+                                    price_5min_ago=(sig.price_5min_ago if sig else None),
+                                    vwap_distance_pct=(sig.vwap_distance_pct if sig else None),
+                                    vol_increase=(sig.vol_3m_gt_prev_3m if sig else None),
+                                    entry_crossed=True,
+                                )
+                            else:
+                                embed = build_embed_match(
+                                    q,
+                                    entry=entry,
+                                    stop=stop,
+                                    take=take,
+                                    vwap=vwap_by_symbol.get(q.symbol),
+                                    ma25=float(ma25),
+                                    replay_time_jst=_fmt_dt_jst_short(q.market_time_utc),
+                                    recent_5m_high=(sig.recent_5m_high if sig else None),
+                                    price_5min_ago=(sig.price_5min_ago if sig else None),
+                                    vwap_distance_pct=(sig.vwap_distance_pct if sig else None),
+                                    vol_increase=(sig.vol_3m_gt_prev_3m if sig else None),
+                                    entry_near_ratio=float(ENTRY_NEAR_RATIO),
+                                    entry_crossed=False,
+                                )
+                            msg = {"embeds": [embed]}
+                            discord_notify(
+                                msg,
+                                webhook_url=webhook_url,
+                                alert_channel_id=alert_channel_id,
+                                bot_token=bot_token,
+                            )
+                            last_notified_levels[q.symbol] = (float(entry), float(stop), float(take))
+                        except Exception as e:
+                            print(f"[{now_str()}] Discord通知失敗(replay): {q.symbol} ({e})")
+
+                    # 条件外れ（安定化: 連続不一致が EXIT_CONFIRM_COUNT に達した時だけ通知）
+                    out_symbols = sorted(last_discord_candidate_symbols - candidate_symbols)
+                    for sym in out_symbols:
+                        last_q = next((qq for qq in quotes if qq.symbol == sym), None)
+                        try:
+                            exit_miss_count[sym] = int(exit_miss_count.get(sym, 0)) + 1
+                            if exit_miss_count[sym] < int(EXIT_CONFIRM_COUNT):
+                                continue
+
+                            embed_out = build_embed_out(
+                                symbol=sym,
+                                price=(last_q.price if last_q else None),
+                                change_percent=(last_q.change_percent if last_q else None),
+                                reasons=skip_reasons_by_symbol.get(sym, []),
+                            )
+                            msg_out = {"embeds": [embed_out]}
+                            discord_notify(
+                                msg_out,
+                                webhook_url=webhook_url,
+                                alert_channel_id=alert_channel_id,
+                                bot_token=bot_token,
+                            )
+                            # 通知したらカウントをリセットし、候補集合からも外します（スパム防止）
+                            exit_miss_count.pop(sym, None)
+                            last_discord_candidate_symbols.discard(sym)
+                        except Exception as e:
+                            print(f"[{now_str()}] Discord条件外れ通知失敗(replay): {sym} ({e})")
+
+                    # 候補に戻った銘柄はカウントをリセット
+                    for sym in candidate_symbols:
+                        exit_miss_count.pop(sym, None)
+
+                    # 候補価格変更（条件一致中のみ）
+                    candidates_by_symbol = {q.symbol: q for q in candidates}
+                    new_notified_symbols = {q.symbol for q in to_notify}
+                    for sym, (old_entry, old_stop, old_take) in list(last_notified_levels.items()):
+                        q = candidates_by_symbol.get(sym)
+                        if q is None or sym in new_notified_symbols:
+                            continue
+                        new_entry = float(q.day_high)
+                        new_stop = new_entry * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
+                        new_take = new_entry * (1.0 + TAKE_PROFIT_PCT_FROM_ENTRY)
+                        if not (
+                            _level_changed(old=old_entry, new=new_entry)
+                            or _level_changed(old=old_stop, new=new_stop)
+                            or _level_changed(old=old_take, new=new_take)
+                        ):
+                            continue
+                        try:
+                            msg2 = _build_levels_change_message(
+                                symbol=q.symbol,
+                                price=float(q.price),
+                                currency=str(q.currency),
+                                change_percent=q.change_percent,
+                                old_entry=float(old_entry),
+                                new_entry=float(new_entry),
+                                old_stop=float(old_stop),
+                                new_stop=float(new_stop),
+                                old_take=float(old_take),
+                                new_take=float(new_take),
+                            )
+                            discord_notify(
+                                msg2,
+                                webhook_url=webhook_url,
+                                alert_channel_id=alert_channel_id,
+                                bot_token=bot_token,
+                            )
+                            last_notified_levels[q.symbol] = (float(new_entry), float(new_stop), float(new_take))
+                        except Exception as e:
+                            print(f"[{now_str()}] Discord再通知失敗(replay): {q.symbol} ({e})")
+
+                    last_discord_candidate_symbols = candidate_symbols
+
+                # 1秒ごとの再生
+                elapsed = time.perf_counter() - loop_started
+                sleep_sec = interval_sec - elapsed
+                if sleep_sec > 0:
+                    time.sleep(sleep_sec)
+
+        except KeyboardInterrupt:
+            print("\nCtrl+C を検知しました。終了します。")
+            return 0
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+
+    # --replay が指定されたときだけ TEST_REPLAY_MODE を有効化します。
+    # （指定しなければ False のまま = いつものリアルタイム監視に戻ります）
+    global TEST_REPLAY_MODE
+    TEST_REPLAY_MODE = bool(getattr(args, "replay", False))
+    replay_range: str = str(getattr(args, "replay_range", "1d"))
 
     interval_sec: float = float(args.interval)
     print_all: bool = bool(args.print_all)
@@ -793,6 +2008,20 @@ def main(argv: list[str]) -> int:
         print("--interval は 0 より大きい値にしてください。")
         return 2
 
+    # -----------------------------
+    # テスト用リプレイモード
+    # -----------------------------
+    # 注意:
+    # - 相場時間外でも、過去の1分足を「1秒ごとに1分」進めて判定/Discord通知を確認できます。
+    # - 通常モード（TEST_REPLAY_MODE=False）側は、既存コードをできるだけ触らない方針です。
+    if TEST_REPLAY_MODE:
+        return run_replay(
+            interval_sec=interval_sec,
+            only_changes=only_changes,
+            fixed_watch=fixed_watch,
+            replay_range=replay_range,
+        )
+
     print("=== Yahoo Finance 日本株 スクリーニング（発注なし） ===")
     if fixed_watch is not None:
         print(f"- watch(固定): {', '.join(fixed_watch) if fixed_watch else '(empty)'}")
@@ -811,10 +2040,33 @@ def main(argv: list[str]) -> int:
     last_candidates: set[str] = set()
 
     # Discord通知用:
-    # - Webhook URL が設定されていれば通知する
-    # - 「同じ銘柄を連続通知しない」ため、前回ループで候補に入っていた銘柄セットを保持する
+    # - これまでは DISCORD_WEBHOOK_URL（Webhook）だけでしたが、
+    #   今回から ALERT_CHANNEL_ID を指定すると「そのチャンネルへ送る」ことができます。
+    #
+    # 使い分け（初心者向け）:
+    # - まず簡単に分離したい場合:
+    #     通知用チャンネルでWebhookを作り、そのURLを DISCORD_WEBHOOK_URL に設定してください。
+    #     → これだけで通知ログが分離できます（Bot権限などの難しい話が不要）。
+    # - Bot送信に統一したい場合:
+    #     ALERT_CHANNEL_ID と DISCORD_BOT_TOKEN を設定してください。
+    #     → Webhookに依存せず、指定チャンネルへ直接送れます。
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
-    discord_enabled = bool(webhook_url)
+    alert_channel_id = _parse_channel_id(os.getenv("ALERT_CHANNEL_ID", ""))
+    # Bot送信用トークンは DISCORD_TOKEN に統一します（旧: DISCORD_BOT_TOKEN は互換で吸収）
+    bot_token = _get_discord_token_with_compat_warning()
+
+    # 通知が有効かどうか:
+    # - Bot送信（ALERT_CHANNEL_ID + DISCORD_BOT_TOKEN）か、
+    # - Webhook（DISCORD_WEBHOOK_URL）
+    # のどちらかが使えれば True です。
+    discord_enabled = bool((alert_channel_id is not None and bot_token) or webhook_url)
+
+    # ログ（仕様）:
+    # - Webhook URL が設定されている場合は「Webhookの送信先に送られる」ことを表示します。
+    if webhook_url:
+        print(f"[{now_str()}] Discord通知: DISCORD_WEBHOOK_URL が設定されています（Webhookの送信先チャンネルに送られます）")
+    if alert_channel_id is not None and bot_token:
+        print(f"[{now_str()}] Discord通知: ALERT_CHANNEL_ID={alert_channel_id} へ Bot送信します（推奨）")
     last_discord_candidate_symbols: set[str] = set()
 
     # MA25 のキャッシュ:
@@ -828,9 +2080,20 @@ def main(argv: list[str]) -> int:
     # - None もキャッシュして、短い時間での再試行を減らします。
     vwap_cache: dict[str, tuple[Optional[float], float]] = {}
 
+    # 1分足系列（直近シグナル計算用）のキャッシュ:
+    # - symbol ごとに (closes, highs, vols, fetched_at)
+    intraday_series_cache: dict[str, tuple[list[Optional[float]], list[Optional[float]], list[Optional[float]], float]] = {}
+
     # watchlist.json のリアルタイム反映用:
     # - 前回の監視銘柄リスト（壊れたJSONを読んだ場合に「前回のリストを維持」するため）
     last_watch: list[str] = []
+
+    # 候補価格の変更通知用:
+    # - 銘柄ごとに「前回Discordへ通知した entry/stop/take」を覚えておきます。
+    # - 条件一致中でも、この値が大きく変化したら再通知します。
+    last_notified_levels: dict[str, tuple[float, float, float]] = {}
+    # 条件外れ通知の安定化（連続不一致をカウント）
+    exit_miss_count: dict[str, int] = {}
 
     # requests.Session を使うと、接続の再利用ができて少し効率が良くなります。
     with requests.Session() as session:
@@ -875,11 +2138,18 @@ def main(argv: list[str]) -> int:
                     time.sleep(interval_sec)
                     continue
 
+                # Entry上抜け（クロス）判定用:
+                # - このループで「前回価格」を参照できるように、読み取り用のスナップショットを作ります。
+                prev_price_snapshot: dict[str, Optional[float]] = dict(prev_price_by_symbol)
+
                 quotes: list[Quote] = []
                 for sym in watch:
                     try:
                         q = fetch_quote(session, sym)
                         quotes.append(q)
+                        last_quote_by_symbol[sym] = q
+                        # 取得後に「今回の価格」を保存（次ループの prev になります）
+                        prev_price_by_symbol[sym] = float(q.price)
                     except requests.HTTPError as e:
                         # 429（Too Many Requests）などが起きたら、間隔を伸ばす等が必要かもしれません。
                         print(f"[{now_str()}] {sym} HTTPエラー: {e}")
@@ -894,6 +2164,7 @@ def main(argv: list[str]) -> int:
                 vol_spike_ratio_by_symbol: dict[str, Optional[float]] = {}
                 vwap_by_symbol: dict[str, Optional[float]] = {}
                 score_by_symbol: dict[str, int] = {}
+                intraday_by_symbol: dict[str, IntradaySignals] = {}
 
                 for q in quotes:
                     reasons: list[str] = []
@@ -998,9 +2269,13 @@ def main(argv: list[str]) -> int:
                         if q.market_cap < MIN_MARKET_CAP or q.market_cap > MAX_MARKET_CAP:
                             reasons.append("時価総額レンジ外")
 
-                    # 8) VWAP条件: 取得できれば price > VWAP
-                    # 取得できない場合は警告のみで、現時点では条件からは除外しません（＝将来のkabuステーションAPI移行時に
-                    # 「VWAPを必須条件」に切り替えやすくするための布石です）。
+                    # 8) VWAP/1分足由来の「エントリータイミング」条件
+                    #
+                    # ここが今回の改善ポイントです。
+                    # - 以前: "price > VWAP"（= 強い銘柄っぽい）だけで候補になることがあり、レンジ往復でも通知が出やすい
+                    # - 変更後: 「直近5分高値ブレイク」「5分前より上」「VWAPより0.2%以上上」を満たすときだけ候補にする
+                    #
+                    # これらを計算するために「1分足系列（close/high/volume）」も一緒に参照します。
                     vwap: Optional[float] = None
                     used_cache = False
                     if not reasons:
@@ -1024,11 +2299,87 @@ def main(argv: list[str]) -> int:
                             vwap = None
 
                         if vwap is None and not used_cache:
-                            print(f"[{now_str()}] {q.symbol} VWAP取得不可（条件除外しない）")
+                            # 今回からVWAP乖離が必須条件になるので、取得できない場合は候補になりません。
+                            print(f"[{now_str()}] {q.symbol} VWAP取得不可（この銘柄は候補になりません）")
                         else:
                             vwap_by_symbol[q.symbol] = vwap
-                            if q.price <= vwap:
-                                reasons.append("VWAP以下")
+                            # 1) VWAP乖離条件（必須）
+                            sig_tmp = calc_intraday_signals_from_series(
+                                price=float(q.price),
+                                closes=[],
+                                highs=[],
+                                vols=[],
+                                vwap=vwap,
+                            )
+                            intraday_by_symbol[q.symbol] = sig_tmp
+                            if sig_tmp.vwap_distance_pct is None:
+                                reasons.append("VWAP取得不可")
+                            else:
+                                if sig_tmp.vwap_distance_pct < float(VWAP_DISTANCE_PCT):
+                                    reasons.append("VWAP乖離不足")
+
+                            # 2) 1分足系列を取って recent_5m_high / price_5min_ago / 出来高増加 を計算
+                            # - 毎秒叩くと重いので短いTTLキャッシュを使います
+                            closes_1m: list[Optional[float]] = []
+                            highs_1m: list[Optional[float]] = []
+                            vols_1m: list[Optional[float]] = []
+                            try:
+                                cached = intraday_series_cache.get(q.symbol)
+                                if cached:
+                                    c_closes, c_highs, c_vols, fetched_at = cached
+                                    if (time.perf_counter() - fetched_at) < INTRADAY_SERIES_CACHE_TTL_SEC:
+                                        closes_1m, highs_1m, vols_1m = c_closes, c_highs, c_vols
+                                if not closes_1m:
+                                    c2, h2, v2 = fetch_intraday_1m_series(session, q.symbol)
+                                    closes_1m, highs_1m, vols_1m = c2, h2, v2
+                                    intraday_series_cache[q.symbol] = (closes_1m, highs_1m, vols_1m, time.perf_counter())
+                            except Exception:
+                                closes_1m, highs_1m, vols_1m = [], [], []
+
+                            sig = calc_intraday_signals_from_series(
+                                price=float(q.price),
+                                closes=closes_1m,
+                                highs=highs_1m,
+                                vols=vols_1m,
+                                vwap=vwap,
+                            )
+                            intraday_by_symbol[q.symbol] = sig
+
+                            # 3) 直近5分高値ブレイク（必須）
+                            if sig.recent_5m_high is None:
+                                reasons.append("直近5分高値が取れない")
+                            else:
+                                if float(q.price) <= float(sig.recent_5m_high):
+                                    reasons.append("5分高値ブレイク未成立")
+
+                            # 4) 上昇傾向（必須）
+                            if sig.price_5min_ago is None:
+                                reasons.append("5分前価格が取れない")
+                            else:
+                                if float(q.price) <= float(sig.price_5min_ago):
+                                    reasons.append("上昇傾向なし")
+
+                            # 5) 出来高増加（加点）
+                            # 仕様変更: 出来高増加を必須化
+                            if sig.vol_3m_gt_prev_3m is not True:
+                                reasons.append("出来高増加なし")
+                            else:
+                                # 必須を満たした上で、スコアとしても +1（将来の並び替え等に使える）
+                                score_by_symbol[q.symbol] = score_by_symbol.get(q.symbol, 0) + 1
+
+                            # 追加条件: Entry候補（entry=当日高値）への接近
+                            if q.day_high is not None:
+                                entry = float(q.day_high)
+                                if entry > 0:
+                                    if float(q.price) < (entry * float(ENTRY_NEAR_RATIO)):
+                                        reasons.append("Entry候補から遠い")
+
+                                    # Entry上抜け（クロス）判定:
+                                    # - prev_price_snapshot は「前回ループの価格」です。
+                                    # - prev <= entry かつ now >= entry のとき「上抜け成立」とします。
+                                    prev_p = prev_price_snapshot.get(q.symbol)
+                                    crossed = bool(prev_p is not None and float(prev_p) <= entry and float(q.price) >= entry)
+                                    entry_cross_by_symbol[q.symbol] = crossed
                     # vwap が None のままでも理由は追加しない（通過扱い）
                     if vwap is None:
                         vwap_by_symbol[q.symbol] = None
@@ -1095,30 +2446,23 @@ def main(argv: list[str]) -> int:
                 # Discord通知:
                 # candidates の中から「前回ループで候補に入っていなかった銘柄」だけ送ります。
                 # これにより、同じ銘柄が条件一致し続けても毎秒スパム通知されません。
-                if discord_enabled and candidates:
+                if discord_enabled:
                     # candidates は list[Quote] なので、symbol 重複が無い前提で扱います（WATCH は通常ユニーク）。
                     to_notify = [q for q in candidates if q.symbol not in last_discord_candidate_symbols]
+
+                    # -----------------------------
+                    # 1) 条件一致通知（新規だけ）
+                    # -----------------------------
                     if to_notify:
                         # 見やすさのため、前日比が大きい順に送ります。
-                        to_notify_sorted = sorted(
-                            to_notify, key=lambda x: x.change_percent or -999, reverse=True
-                        )
+                        to_notify_sorted = sorted(to_notify, key=lambda x: x.change_percent or -999, reverse=True)
                         for q in to_notify_sorted:
-                            # candidates 条件により day_high は None にならない想定です。
-                            # エントリー/損切り/利確候補は「初心者でも理解しやすい簡易ルール」で計算します。
-                            # デイトレ方針は人によって違うので、ここは必要に応じて調整してください。
-                            #
-                            # 簡易ルール:
-                            # - エントリー候補: 当日高値（高値更新を狙うイメージ）
-                            # - 損切り候補: エントリーの -2%（STOP_LOSS_PCT_FROM_ENTRY）
-                            # - 利確候補: エントリーの +4%（TAKE_PROFIT_PCT_FROM_ENTRY）
                             entry = float(q.day_high)
                             stop = entry * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
                             take = entry * (1.0 + TAKE_PROFIT_PCT_FROM_ENTRY)
                             try:
                                 ma25 = ma25_by_symbol.get(q.symbol)
                                 if ma25 is None:
-                                    # MA25 が無い銘柄は候補に残らない想定ですが、念のためガードします。
                                     continue
                                 vol_avg5 = avg5_by_symbol.get(q.symbol)
                                 vol_spike_ratio = vol_spike_ratio_by_symbol.get(q.symbol)
@@ -1136,10 +2480,133 @@ def main(argv: list[str]) -> int:
                                     vwap=vwap,
                                     market_cap=(float(market_cap) if market_cap is not None else None),
                                 )
-                                _discord_post(webhook_url, msg)
+                                # 通常モードの通知にも、今回追加した「エントリー判断に必要な情報」を載せます。
+                                sig = intraday_by_symbol.get(q.symbol)
+                                crossed = bool(entry_cross_by_symbol.get(q.symbol, False))
+                                if sig:
+                                    # 通常の条件一致Embed（🟢）か、Entry上抜けEmbed（🚀）かを切り替えます。
+                                    if crossed:
+                                        embed = build_embed_entry_cross(
+                                            q,
+                                            entry=entry,
+                                            stop=stop,
+                                            take=take,
+                                            vwap=sig.vwap,
+                                            ma25=float(ma25),
+                                            replay_time_jst=None,
+                                            recent_5m_high=sig.recent_5m_high,
+                                            price_5min_ago=sig.price_5min_ago,
+                                            vwap_distance_pct=sig.vwap_distance_pct,
+                                            vol_increase=sig.vol_3m_gt_prev_3m,
+                                            entry_crossed=True,
+                                        )
+                                        msg = {"embeds": [embed]}
+                                    else:
+                                        msg["embeds"][0]["fields"] = [
+                                            _embed_field("現在値", _fmt_yen(q.price), inline=True),
+                                            _embed_field("前日比", _fmt_pct(q.change_percent), inline=True),
+                                            _embed_field("出来高", _fmt_volume_man(q.volume), inline=True),
+                                            _embed_field("高値接近率", _fmt_ratio_pct(q.price, q.day_high), inline=True),
+                                            _embed_field("直近5分高値", _fmt_yen(sig.recent_5m_high), inline=True),
+                                            _embed_field("5分前価格", _fmt_yen(sig.price_5min_ago), inline=True),
+                                            _embed_field("VWAP乖離率", ("N/A" if sig.vwap_distance_pct is None else f"{sig.vwap_distance_pct:.2f}%"), inline=True),
+                                            _embed_field("出来高増加", ("N/A" if sig.vol_3m_gt_prev_3m is None else ("あり" if sig.vol_3m_gt_prev_3m else "なし")), inline=True),
+                                            _embed_field("Entry接近率", f"{(float(q.price)/float(entry))*100.0:.2f}%", inline=True),
+                                            _embed_field("Entry上抜け", ("成立" if crossed else "未成立"), inline=True),
+                                            _embed_field("売買候補", "\n".join([f"Entry: {_fmt_yen(entry)}", f"Stop: {_fmt_yen(stop)}", f"Take: {_fmt_yen(take)}"]), inline=False),
+                                            _embed_field("補足", "\n".join([f"VWAP: {_fmt_yen(sig.vwap)}", f"25MA: {_fmt_yen(float(ma25))}"]), inline=False),
+                                        ]
+                                discord_notify(
+                                    msg,
+                                    webhook_url=webhook_url,
+                                    alert_channel_id=alert_channel_id,
+                                    bot_token=bot_token,
+                                )
+
+                                # 新規条件一致通知を出した時点の候補価格を覚えておきます。
+                                last_notified_levels[q.symbol] = (float(entry), float(stop), float(take))
                             except Exception as e:
-                                # 通知に失敗しても監視自体は止めない方が実用的です。
                                 print(f"[{now_str()}] Discord通知失敗: {q.symbol} ({e})")
+
+                    # -----------------------------
+                    # 2) 条件外れ通知
+                    # -----------------------------
+                    # 前回は候補だったが、今回は候補ではない銘柄に対して通知します。
+                    out_symbols = sorted(last_discord_candidate_symbols - candidate_symbols)
+                    for sym in out_symbols:
+                        try:
+                            exit_miss_count[sym] = int(exit_miss_count.get(sym, 0)) + 1
+                            if exit_miss_count[sym] < int(EXIT_CONFIRM_COUNT):
+                                continue
+                            last_q = last_quote_by_symbol.get(sym)
+                            embed_out = build_embed_out(
+                                symbol=sym,
+                                price=(last_q.price if last_q else None),
+                                change_percent=(last_q.change_percent if last_q else None),
+                                reasons=skip_reasons_by_symbol.get(sym, []),
+                            )
+                            msg_out = {"embeds": [embed_out]}
+                            discord_notify(
+                                msg_out,
+                                webhook_url=webhook_url,
+                                alert_channel_id=alert_channel_id,
+                                bot_token=bot_token,
+                            )
+                            exit_miss_count.pop(sym, None)
+                            last_discord_candidate_symbols.discard(sym)
+                        except Exception as e:
+                            print(f"[{now_str()}] Discord条件外れ通知失敗: {sym} ({e})")
+
+                    # 候補に戻った銘柄はカウントをリセット
+                    for sym in candidate_symbols:
+                        exit_miss_count.pop(sym, None)
+
+                    # -----------------------------
+                    # 3) 候補価格の大幅変更通知（再通知）
+                    # -----------------------------
+                    # 条件一致している銘柄だけ対象（candidates の中だけ）
+                    candidates_by_symbol = {q.symbol: q for q in candidates}
+                    new_notified_symbols = {qq.symbol for qq in to_notify}
+                    for sym, (old_entry, old_stop, old_take) in list(last_notified_levels.items()):
+                        q = candidates_by_symbol.get(sym)
+                        if q is None:
+                            continue
+                        if sym in new_notified_symbols:
+                            continue
+                        if q.day_high is None:
+                            continue
+                        new_entry = float(q.day_high)
+                        new_stop = new_entry * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
+                        new_take = new_entry * (1.0 + TAKE_PROFIT_PCT_FROM_ENTRY)
+                        changed = (
+                            _level_changed(old=old_entry, new=new_entry)
+                            or _level_changed(old=old_stop, new=new_stop)
+                            or _level_changed(old=old_take, new=new_take)
+                        )
+                        if not changed:
+                            continue
+                        try:
+                            msg2 = _build_levels_change_message(
+                                symbol=q.symbol,
+                                price=float(q.price),
+                                currency=str(q.currency),
+                                change_percent=q.change_percent,
+                                old_entry=float(old_entry),
+                                new_entry=float(new_entry),
+                                old_stop=float(old_stop),
+                                new_stop=float(new_stop),
+                                old_take=float(old_take),
+                                new_take=float(new_take),
+                            )
+                            discord_notify(
+                                msg2,
+                                webhook_url=webhook_url,
+                                alert_channel_id=alert_channel_id,
+                                bot_token=bot_token,
+                            )
+                            last_notified_levels[q.symbol] = (float(new_entry), float(new_stop), float(new_take))
+                        except Exception as e:
+                            print(f"[{now_str()}] Discord再通知失敗: {q.symbol} ({e})")
 
                 # どの銘柄を「前回候補」とみなすかを更新します。
                 # これで「同じ銘柄を連続通知しない」を満たします。

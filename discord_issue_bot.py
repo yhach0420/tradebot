@@ -71,6 +71,126 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")  # 起動後に validate します
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
+# 旧互換:
+# - 以前の設定名 `DISCORD_BOT_TOKEN` が残っている場合でも、初心者が詰まらないように
+#   警告を出しつつ動作は継続します（最終的には DISCORD_TOKEN に統一してください）。
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+
+
+def get_discord_token_required() -> str:
+    """
+    DiscordのBotトークンを必須取得します（環境変数名を DISCORD_TOKEN に統一）。
+
+    仕様:
+    - 正: DISCORD_TOKEN
+    - 旧: DISCORD_BOT_TOKEN（廃止予定）
+      - 残っていたら警告を表示
+      - DISCORD_TOKEN が未設定なら旧値でフォールバックして動作継続
+    """
+    tok = (DISCORD_TOKEN or "").strip()
+    old = (DISCORD_BOT_TOKEN or "").strip()
+    if old:
+        print("警告: 環境変数 DISCORD_BOT_TOKEN は廃止予定です。DISCORD_TOKEN に移行してください。")
+        if not tok:
+            tok = old
+    if not tok:
+        # ここまで来たら両方とも無い
+        raise RuntimeError("環境変数 DISCORD_TOKEN が設定されていません。")
+    return tok
+
+# =========================
+# チャンネル役割の分離（Issue #? 拡張）
+# =========================
+# 目的:
+# - 「命令ログ（コマンド）」と「通知ログ（アラート）」を別チャンネルに分けたい。
+#
+# 仕様:
+# - CONTROL_CHANNEL_ID: Botコマンド受付専用チャンネル
+#   - !watch add / !watch remove / !watch list / !issue /（将来 !set など）
+# - ALERT_CHANNEL_ID: 通知送信用チャンネル
+#   - 条件一致通知 / 条件外れ通知 / 候補価格変更通知（trade監視側）
+#   - このBotでは「Issue作成結果の通知」をここに集約できます
+#
+# 設定方法:
+# - どちらも .env（=環境変数）で設定できます。
+# - 互換性のため、未設定なら「制限なし / 従来挙動（Webhook通知）」で動きます。
+#
+# 例（.env）:
+#   CONTROL_CHANNEL_ID=123456789012345678
+#   ALERT_CHANNEL_ID=987654321098765432
+CONTROL_CHANNEL_ID = os.getenv("CONTROL_CHANNEL_ID", "").strip()
+ALERT_CHANNEL_ID = os.getenv("ALERT_CHANNEL_ID", "").strip()
+
+
+def _parse_channel_id(raw: str) -> Optional[int]:
+    """
+    環境変数で渡されたチャンネルID（文字列）を int に変換します。
+    - 未設定（空文字）の場合は None
+    - 数字以外が混ざっていたら None（起動時に分かるように main() でもチェックします）
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        return int(s)
+    except Exception:
+        return None
+
+
+CONTROL_CHANNEL_ID_INT: Optional[int] = _parse_channel_id(CONTROL_CHANNEL_ID)
+ALERT_CHANNEL_ID_INT: Optional[int] = _parse_channel_id(ALERT_CHANNEL_ID)
+
+
+def _is_control_channel(ctx: commands.Context) -> bool:
+    """
+    「このコマンドが CONTROL チャンネルで実行されたか？」を判定します。
+
+    仕様:
+    - CONTROL_CHANNEL_ID が未設定なら、どのチャンネルでもコマンドを受け付けます（互換性）。
+    - 設定されている場合は、そのチャンネルID以外ではコマンドを拒否します。
+    """
+    if CONTROL_CHANNEL_ID_INT is None:
+        return True
+    ch = getattr(ctx, "channel", None)
+    ch_id = getattr(ch, "id", None)
+    return int(ch_id) == int(CONTROL_CHANNEL_ID_INT) if ch_id is not None else False
+
+
+async def _reply_control_only(ctx: commands.Context) -> None:
+    """
+    コマンドが別チャンネルで実行された場合の案内メッセージ。
+    """
+    if CONTROL_CHANNEL_ID_INT is None:
+        # 未設定なら基本的にここに来ない想定ですが、念のため
+        await ctx.reply("このコマンドは実行できません。")
+        return
+    await ctx.reply("コマンドは control チャンネルで実行してください。")
+
+
+async def _send_alert_message(content: str) -> None:
+    """
+    ALERT チャンネルに「通知だけ」を送るためのヘルパー。
+
+    注意:
+    - ALERT_CHANNEL_ID が未設定の場合は、何もしません（互換性）。
+    - 送信に失敗しても例外は投げます（呼び出し側で握りつぶす/ログする）
+    """
+    if ALERT_CHANNEL_ID_INT is None:
+        return
+
+    # 1) キャッシュから探す（bot が見たことのあるチャンネルなら速い）
+    ch = bot.get_channel(ALERT_CHANNEL_ID_INT)
+
+    # 2) キャッシュに無ければ fetch する（権限があれば取れる）
+    if ch is None:
+        ch = await bot.fetch_channel(ALERT_CHANNEL_ID_INT)
+
+    # チャンネル型は色々ありますが、とにかく send できるものだけ送ります
+    if hasattr(ch, "send"):
+        await ch.send(content)
+    else:
+        raise RuntimeError("ALERT_CHANNEL_ID のチャンネルに send できません（権限/種別を確認してください）。")
+
 # =========================
 # watchlist.json（Issue #1 拡張）
 # =========================
@@ -264,6 +384,12 @@ async def issue_command(ctx: commands.Context, *, content: str = "") -> None:
 
     - content: ユーザーが書いた Issue 内容（自由文）
     """
+    # このコマンドは CONTROL チャンネルでのみ受け付けます。
+    # （別チャンネルで実行されたら、正しいチャンネルに誘導します）
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
+
     # 1) 入力チェック（空だと困るので、使い方を返します）
     if not content.strip():
         await ctx.reply("使い方: `!issue <内容>` 例: `!issue エラー修正：ログインできない`")
@@ -272,9 +398,15 @@ async def issue_command(ctx: commands.Context, *, content: str = "") -> None:
     # 2) 起動に必要な環境変数があるか確認
     #    ここは「起動前に fail」でも良いのですが、Discord上でも原因が分かる方が親切なので両方でケアします。
     try:
-        discord_token = DISCORD_TOKEN or require_env("DISCORD_TOKEN")
+        discord_token = get_discord_token_required()
         github_token = GITHUB_TOKEN or require_env("GITHUB_TOKEN")
-        webhook_url = DISCORD_WEBHOOK_URL or require_env("DISCORD_WEBHOOK_URL")
+        # 通知先は 2 通り:
+        # - ALERT_CHANNEL_ID が設定されていれば「アラートチャンネルへ送る」
+        # - 無ければ従来どおり DISCORD_WEBHOOK_URL に送る
+        webhook_url = DISCORD_WEBHOOK_URL or ""
+        if ALERT_CHANNEL_ID_INT is None and not webhook_url:
+            # どちらも無いと通知できないのでエラー
+            _ = require_env("DISCORD_WEBHOOK_URL")
     except Exception as e:
         await ctx.reply(f"環境変数の設定が不足しています: {e}")
         return
@@ -331,7 +463,11 @@ async def issue_command(ctx: commands.Context, *, content: str = "") -> None:
         f"- url: {created.url}\n"
     )
     try:
-        await webhook_post(webhook_url, webhook_message)
+        # まずは ALERT チャンネルが設定されていれば、そこへ通知します（通知ログの分離）。
+        if ALERT_CHANNEL_ID_INT is not None:
+            await _send_alert_message(webhook_message)
+        else:
+            await webhook_post(webhook_url, webhook_message)
     except Exception as e:
         await ctx.reply(f"Webhook 通知に失敗しました: {e}")
 
@@ -348,12 +484,19 @@ async def issue_command(ctx: commands.Context, *, content: str = "") -> None:
 # - watchlist.json（このファイルと同じフォルダ）
 @bot.group(name="watch", invoke_without_command=True)
 async def watch_group(ctx: commands.Context) -> None:
+    # watch 系コマンドは CONTROL チャンネルでのみ受け付けます。
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
     # サブコマンドが無い場合の案内
     await ctx.reply("使い方: `!watch add <symbol>` / `!watch remove <symbol>` / `!watch list`")
 
 
 @watch_group.command(name="add")
 async def watch_add_command(ctx: commands.Context, symbol: str) -> None:
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
     symbol = (symbol or "").strip()
     if not symbol:
         await ctx.reply("symbol が空です。例: `!watch add 7203.T`")
@@ -371,6 +514,9 @@ async def watch_add_command(ctx: commands.Context, symbol: str) -> None:
 
 @watch_group.command(name="remove")
 async def watch_remove_command(ctx: commands.Context, symbol: str) -> None:
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
     symbol = (symbol or "").strip()
     if not symbol:
         await ctx.reply("symbol が空です。例: `!watch remove 7203.T`")
@@ -388,6 +534,9 @@ async def watch_remove_command(ctx: commands.Context, symbol: str) -> None:
 
 @watch_group.command(name="list")
 async def watch_list_command(ctx: commands.Context) -> None:
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
     symbols = _load_watchlist()
     if not symbols:
         await ctx.reply("watchlist.json は空です。`!watch add <symbol>` で追加してください。")
@@ -401,11 +550,22 @@ def main() -> int:
     起動時に必須環境変数が無ければ、ここで止めます。
     """
     # 早期に原因が分かるように、起動時にも必須チェックします。
-    _ = require_env("DISCORD_TOKEN")
+    _ = get_discord_token_required()
     _ = require_env("GITHUB_TOKEN")
-    _ = require_env("DISCORD_WEBHOOK_URL")
 
-    bot.run(require_env("DISCORD_TOKEN"))
+    # 通知先はどちらかが必要です:
+    # - ALERT_CHANNEL_ID（通知専用チャンネル）
+    # - または従来の DISCORD_WEBHOOK_URL（Webhookで特定チャンネルへ送る）
+    if ALERT_CHANNEL_ID_INT is None:
+        _ = require_env("DISCORD_WEBHOOK_URL")
+
+    # チャンネルIDが設定されているのに数値に変換できない場合は、ここで止めます。
+    if CONTROL_CHANNEL_ID and CONTROL_CHANNEL_ID_INT is None:
+        raise RuntimeError("CONTROL_CHANNEL_ID が数値ではありません。例: 123456789012345678")
+    if ALERT_CHANNEL_ID and ALERT_CHANNEL_ID_INT is None:
+        raise RuntimeError("ALERT_CHANNEL_ID が数値ではありません。例: 123456789012345678")
+
+    bot.run(get_discord_token_required())
     return 0
 
 
