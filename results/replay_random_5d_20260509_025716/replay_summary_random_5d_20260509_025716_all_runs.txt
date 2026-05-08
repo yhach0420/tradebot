@@ -1,0 +1,47 @@
+=== Replay 合算サマリー ===
+- saved_at_jst: 2026-05-09 03:00:33
+- repeat_label: random_5d
+- output_folder: results/replay_random_5d_20260509_025716/
+- 実行回数: 3
+- 合計signal数: 0
+- 平均勝率: 0.0%
+- 平均100株損益: +0円
+- 合計100株損益: +0円
+- 平均expectancy: +0円
+- ADD ON時損益(合算,100株): +0円
+- ADD OFF時損益(参考/BASEのみ合算,100株): +0円
+- プラスrun数/マイナスrun数: 0/0
+- 最大勝ちrun: +0円
+- 最大負けrun: +0円
+
+【各runの概要】
+- run01: seed=None  signals=0  勝率=0.0%  100株損益=+0円
+  replay_dates: 2026-04-15, 2026-04-17, 2026-04-22, 2026-05-01, 2026-05-08
+- run02: seed=None  signals=0  勝率=0.0%  100株損益=+0円
+  replay_dates: 2026-04-15, 2026-04-16, 2026-04-30, 2026-05-01, 2026-05-08
+- run03: seed=None  signals=0  勝率=0.0%  100株損益=+0円
+  replay_dates: 2026-04-10, 2026-04-14, 2026-04-21, 2026-04-28, 2026-05-08
+
+【BASE/ADD別（合算）】
+- BASE: signals=0  100株損益=+0円  expectancy=+0円
+- ADD1: signals=0  100株損益=+0円  expectancy=+0円
+- ADD2: signals=0  100株損益=+0円  expectancy=+0円
+
+【地合いフィルタ】
+- BLOCK数合計: 59
+- BLOCK理由ランキング:
+  - TOPIX_CRASH: 59
+  - high_update_low: 28
+  - rising<40%: 5
+  - afternoon_weak: 2
+
+【銘柄別 期待値ランキング（合算）】
+
+[MARKET_DEBUG]
+
+run01: (no signals)
+
+run02: (no signals)
+
+run03: (no signals)
+

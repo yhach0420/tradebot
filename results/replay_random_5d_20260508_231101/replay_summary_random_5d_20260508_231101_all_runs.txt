@@ -1,0 +1,62 @@
+=== Replay 合算サマリー ===
+- saved_at_jst: 2026-05-08 23:16:46
+- repeat_label: random_5d
+- output_folder: results/replay_random_5d_20260508_231101/
+- 実行回数: 10
+- 合計signal数: 79
+- 平均勝率: 37.6%
+- 平均100株損益: -18,067円
+- 合計100株損益: -180,670円
+- 平均expectancy: -2,465円
+- プラスrun数/マイナスrun数: 1/7
+- 最大勝ちrun: +92,804円
+- 最大負けrun: -85,034円
+
+【各runの概要】
+- run01: seed=None  signals=13  勝率=46.2%  100株損益=-15,856円
+  replay_dates: 2026-04-09, 2026-04-17, 2026-04-30, 2026-05-01, 2026-05-07
+- run02: seed=None  signals=0  勝率=0.0%  100株損益=+0円
+  replay_dates: 2026-04-10, 2026-04-13, 2026-04-16, 2026-04-28, 2026-04-30
+- run03: seed=None  signals=5  勝率=40.0%  100株損益=-7,474円
+  replay_dates: 2026-04-09, 2026-04-22, 2026-04-24, 2026-04-27, 2026-05-08
+- run04: seed=None  signals=16  勝率=31.2%  100株損益=-77,374円
+  replay_dates: 2026-04-10, 2026-04-14, 2026-05-01, 2026-05-07, 2026-05-08
+- run05: seed=None  signals=4  勝率=25.0%  100株損益=-19,832円
+  replay_dates: 2026-04-16, 2026-04-23, 2026-04-24, 2026-04-28, 2026-05-08
+- run06: seed=None  signals=13  勝率=46.2%  100株損益=-8,143円
+  replay_dates: 2026-04-10, 2026-04-13, 2026-04-17, 2026-04-27, 2026-05-07
+- run07: seed=None  signals=17  勝率=41.2%  100株損益=-59,761円
+  replay_dates: 2026-04-14, 2026-04-17, 2026-04-27, 2026-05-07, 2026-05-08
+- run08: seed=None  signals=0  勝率=0.0%  100株損益=+0円
+  replay_dates: 2026-04-10, 2026-04-16, 2026-04-17, 2026-04-23, 2026-04-27
+- run09: seed=None  signals=7  勝率=71.4%  100株損益=+92,804円
+  replay_dates: 2026-04-09, 2026-04-14, 2026-04-27, 2026-05-01, 2026-05-08
+- run10: seed=None  signals=4  勝率=75.0%  100株損益=-85,034円
+  replay_dates: 2026-04-14, 2026-04-17, 2026-04-30, 2026-05-01, 2026-05-08
+
+【BASE/ADD別（合算）】
+- BASE: signals=64  100株損益=-72,570円  expectancy=-1,134円
+- ADD1: signals=15  100株損益=-108,100円  expectancy=-7,207円
+- ADD2: signals=0  100株損益=+0円  expectancy=+0円
+
+【地合いフィルタ】
+- BLOCK数合計: 256
+- BLOCK理由ランキング:
+  - TOPIX<0%: 255
+  - TOPIX_CRASH: 255
+  - high_update_low: 110
+  - afternoon_weak: 69
+  - rising<40%: 16
+  - BREADTH_CRASH: 3
+
+【銘柄別 期待値ランキング（合算）】
+- 9984.T: signals=19  expectancy=+6,719円  100株損益=+127,669円
+- 9412.T: signals=4  expectancy=+2,195円  100株損益=+8,779円
+- 5803.T: signals=2  expectancy=+0円  100株損益=+0円
+- 7012.T: signals=22  expectancy=-1,387円  100株損益=-30,511円
+- 6920.T: signals=3  expectancy=-3,287円  100株損益=-9,860円
+- 8473.T: signals=6  expectancy=-7,851円  100株損益=-47,108円
+- 6890.T: signals=6  expectancy=-8,819円  100株損益=-52,917円
+- 8058.T: signals=16  expectancy=-9,613円  100株損益=-153,806円
+- 7003.T: signals=1  expectancy=-22,918円  100株損益=-22,918円
+

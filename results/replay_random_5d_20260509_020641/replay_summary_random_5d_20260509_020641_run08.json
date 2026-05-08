@@ -1,0 +1,436 @@
+{
+  "meta": {
+    "saved_at_jst": "2026-05-09 02:10:40",
+    "saved_at_utc": "2026-05-08 17:10:40",
+    "replay_range": "random_5d",
+    "replay_speed": "1秒 = 1分",
+    "watch_symbols": [
+      "5016.T",
+      "5803.T",
+      "6315.T",
+      "6501.T",
+      "6526.T",
+      "6857.T",
+      "6890.T",
+      "6920.T",
+      "7003.T",
+      "7011.T",
+      "7012.T",
+      "7013.T",
+      "7203.T",
+      "7974.T",
+      "8001.T",
+      "8002.T",
+      "8031.T",
+      "8058.T",
+      "8136.T",
+      "8306.T",
+      "8473.T",
+      "9412.T",
+      "9432.T",
+      "9434.T",
+      "9984.T"
+    ],
+    "start_time_jst": "2026-04-13 09:00:00",
+    "end_time_jst": "2026-05-08 15:30:00",
+    "replay_dates": [
+      "2026-04-13",
+      "2026-04-22",
+      "2026-04-24",
+      "2026-04-28",
+      "2026-04-30"
+    ],
+    "replay_random_days": 5,
+    "replay_random_months": 3,
+    "replay_seed": null,
+    "repeat_run_no": 8,
+    "repeat_total": 10,
+    "batch_stamp": "20260509_020641",
+    "morning_screen_hhmm_jst": "",
+    "one_trade_per_symbol_per_day": false
+  },
+  "overall_summary": {
+    "all_signals_detected": 0,
+    "signals_in_eval": 0,
+    "signals_excluded": 0,
+    "stats": {
+      "signals": 0,
+      "win": 0,
+      "lose": 0,
+      "hold": 0,
+      "win_rate_pct": 0.0,
+      "pnl_yen_100_shares": 0.0,
+      "avg_pnl_yen_100_shares_per_signal": 0.0,
+      "expectancy_yen_100_shares_per_signal": 0.0,
+      "expectancy_profit_pct_per_signal": 0.0,
+      "max_drawdown_pct_worst": 0.0,
+      "max_drawdown_yen_100_shares_worst_est": 0.0
+    },
+    "avg_profit_pct_win_only": 0.0,
+    "avg_loss_pct_lose_only": 0.0,
+    "avg_max_profit_pct": 0.0,
+    "avg_max_drawdown_pct": 0.0
+  },
+  "by_symbol_summary": {},
+  "by_time_bucket_summary": {},
+  "by_position_kind_summary": {},
+  "add_analysis": {
+    "add_count_bucket_by_day_symbol": {},
+    "by_add_count_bucket": {},
+    "compare_add_yes_vs_no": {
+      "add_yes": {
+        "signals": 0,
+        "win": 0,
+        "lose": 0,
+        "hold": 0,
+        "win_rate_pct": 0.0,
+        "pnl_yen_100_shares": 0.0,
+        "avg_pnl_yen_100_shares_per_signal": 0.0,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "expectancy_profit_pct_per_signal": 0.0,
+        "max_drawdown_pct_worst": 0.0,
+        "max_drawdown_yen_100_shares_worst_est": 0.0
+      },
+      "add_no": {
+        "signals": 0,
+        "win": 0,
+        "lose": 0,
+        "hold": 0,
+        "win_rate_pct": 0.0,
+        "pnl_yen_100_shares": 0.0,
+        "avg_pnl_yen_100_shares_per_signal": 0.0,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "expectancy_profit_pct_per_signal": 0.0,
+        "max_drawdown_pct_worst": 0.0,
+        "max_drawdown_yen_100_shares_worst_est": 0.0
+      }
+    },
+    "add_fail_symbol_ranking": []
+  },
+  "market_filter": {
+    "enabled": true,
+    "conditions": {
+      "CRASH_TOPIX_CHG_PCT_MAX": -1.5,
+      "CRASH_RISING_RATIO_MAX": 0.25,
+      "CRASH_HIGH_RATIO_MAX": 0.03,
+      "MARKET_RISING_RATIO_MIN": 0.4,
+      "MARKET_ENTRY_FAIL_RATE_30M_MAX": 0.6,
+      "MARKET_HIGH_UPDATE_RATIO_MIN": 0.07,
+      "MARKET_VWAP_BELOW_RATIO_MAX": 0.6,
+      "note": "CRASHはTOPIX<=閾値 または (上昇銘柄割合/高値付近割合) の複合で判定。TOPIX<0%はWEAK理由。"
+    },
+    "signal_candidate_count": 29,
+    "blocked_entry_count": 29,
+    "blocked_reason_ranking": [
+      {
+        "reason": "TOPIX_WEAK",
+        "count": 29
+      },
+      {
+        "reason": "TOPIX_CRASH",
+        "count": 29
+      },
+      {
+        "reason": "high_update_low",
+        "count": 9
+      },
+      {
+        "reason": "afternoon_weak",
+        "count": 9
+      }
+    ],
+    "weak_reject_count": 0,
+    "blocked_signals_stats": {
+      "signals": 0,
+      "win": 0,
+      "lose": 0,
+      "hold": 0,
+      "win_rate_pct": 0.0,
+      "pnl_yen_100_shares": 0.0,
+      "avg_pnl_yen_100_shares_per_signal": 0.0,
+      "expectancy_yen_100_shares_per_signal": 0.0,
+      "expectancy_profit_pct_per_signal": 0.0,
+      "max_drawdown_pct_worst": 0.0,
+      "max_drawdown_yen_100_shares_worst_est": 0.0
+    },
+    "performance_filter_on": {
+      "signals": 0,
+      "win": 0,
+      "lose": 0,
+      "hold": 0,
+      "win_rate_pct": 0.0,
+      "pnl_yen_100_shares": 0.0,
+      "avg_pnl_yen_100_shares_per_signal": 0.0,
+      "expectancy_yen_100_shares_per_signal": 0.0,
+      "expectancy_profit_pct_per_signal": 0.0,
+      "max_drawdown_pct_worst": 0.0,
+      "max_drawdown_yen_100_shares_worst_est": 0.0
+    },
+    "performance_filter_off": {
+      "signals": 0,
+      "win": 0,
+      "lose": 0,
+      "hold": 0,
+      "win_rate_pct": 0.0,
+      "pnl_yen_100_shares": 0.0,
+      "avg_pnl_yen_100_shares_per_signal": 0.0,
+      "expectancy_yen_100_shares_per_signal": 0.0,
+      "expectancy_profit_pct_per_signal": 0.0,
+      "max_drawdown_pct_worst": 0.0,
+      "max_drawdown_yen_100_shares_worst_est": 0.0
+    },
+    "blocked_pnl_yen_100_shares": 0.0,
+    "avoided_loss_yen_100_shares": 0.0,
+    "by_regime_on": {},
+    "by_regime_all_base": {}
+  },
+  "signals": [],
+  "add_comparison": {
+    "enable_add": false,
+    "pnl_add_on_yen_100_shares": 0.0,
+    "pnl_add_off_ref_yen_100_shares": 0.0,
+    "note": "ADD OFFはBASEのみで再集計した参考値（同一シグナルからADDを除外）"
+  },
+  "accident_analysis": {
+    "lose_top_n": 10,
+    "lose_top_metrics": {
+      "count": 0,
+      "avg_rsi14": null,
+      "avg_atr_pct": null,
+      "avg_vwap_distance_pct": null,
+      "avg_relative_strength_vs_topix_pct": null
+    },
+    "lose_worst10": [],
+    "win_avg_metrics": {
+      "count": 0,
+      "avg_rsi14": null,
+      "avg_atr_pct": null,
+      "avg_vwap_distance_pct": null,
+      "avg_relative_strength_vs_topix_pct": null
+    },
+    "lose_avg_metrics": {
+      "count": 0,
+      "avg_rsi14": null,
+      "avg_atr_pct": null,
+      "avg_vwap_distance_pct": null,
+      "avg_relative_strength_vs_topix_pct": null
+    }
+  },
+  "exit_analysis": {
+    "by_exit_reason": {},
+    "lose_worst10_exit_reason_ranking": []
+  },
+  "symbol_accident_analysis": {
+    "focus_symbols": [
+      "6501.T",
+      "7013.T",
+      "8058.T",
+      "8306.T",
+      "8473.T"
+    ],
+    "by_symbol": {}
+  },
+  "accident_avoidance_simulation": {
+    "base_only": true,
+    "simulations": [
+      {
+        "name": "RSI>82 exclude",
+        "signals_before": 0,
+        "signals_after": 0,
+        "excluded_signals": 0,
+        "pnl_before_yen_100_shares": 0.0,
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      },
+      {
+        "name": "ATR%>4 exclude",
+        "signals_before": 0,
+        "signals_after": 0,
+        "excluded_signals": 0,
+        "pnl_before_yen_100_shares": 0.0,
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      },
+      {
+        "name": "RS<0 exclude",
+        "signals_before": 0,
+        "signals_after": 0,
+        "excluded_signals": 0,
+        "pnl_before_yen_100_shares": 0.0,
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      },
+      {
+        "name": "VWAP dist>3% exclude",
+        "signals_before": 0,
+        "signals_after": 0,
+        "excluded_signals": 0,
+        "pnl_before_yen_100_shares": 0.0,
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      },
+      {
+        "name": "Afternoon exclude",
+        "signals_before": 0,
+        "signals_after": 0,
+        "excluded_signals": 0,
+        "pnl_before_yen_100_shares": 0.0,
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      },
+      {
+        "name": "Focus symbols exclude",
+        "signals_before": 0,
+        "signals_after": 0,
+        "excluded_signals": 0,
+        "pnl_before_yen_100_shares": 0.0,
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      }
+    ]
+  },
+  "filter_comparison": {
+    "signal_delta": {
+      "signals_filter_on": 0,
+      "signals_filter_off": 0,
+      "delta": 0
+    },
+    "expectancy_delta_yen_100_shares_per_signal": 0.0,
+    "weak_win_rate_pct_on": 0.0,
+    "rsi_filter_off_stats": {
+      "signals": 0,
+      "win": 0,
+      "lose": 0,
+      "hold": 0,
+      "win_rate_pct": 0.0,
+      "pnl_yen_100_shares": 0.0,
+      "avg_pnl_yen_100_shares_per_signal": 0.0,
+      "expectancy_yen_100_shares_per_signal": 0.0,
+      "expectancy_profit_pct_per_signal": 0.0,
+      "max_drawdown_pct_worst": 0.0,
+      "max_drawdown_yen_100_shares_worst_est": 0.0
+    },
+    "atr_filter_off_stats": {
+      "signals": 0,
+      "win": 0,
+      "lose": 0,
+      "hold": 0,
+      "win_rate_pct": 0.0,
+      "pnl_yen_100_shares": 0.0,
+      "avg_pnl_yen_100_shares_per_signal": 0.0,
+      "expectancy_yen_100_shares_per_signal": 0.0,
+      "expectancy_profit_pct_per_signal": 0.0,
+      "max_drawdown_pct_worst": 0.0,
+      "max_drawdown_yen_100_shares_worst_est": 0.0
+    },
+    "note": "フィルタ比較は仮想（suggested_block_reasonsベース）。実際のeval_signalsは除外しない。"
+  },
+  "symbol_scoring": {
+    "entry_blacklist_rules": {
+      "expectancy_lt_yen_100_shares": -5000.0,
+      "signals_gte": 2
+    },
+    "priority_rules": {
+      "expectancy_gt_yen_100_shares": 5000.0,
+      "win_rate_gt_pct": 60.0
+    },
+    "blacklist_symbols": [],
+    "priority_symbols": [],
+    "provisional_blacklist_candidates": [
+      "8058.T",
+      "6890.T",
+      "8473.T"
+    ],
+    "priority_emphasis_symbols": [
+      "9984.T"
+    ],
+    "quality_filter_rules": {
+      "mode": "expectancy_le_0",
+      "signals_gte": 2,
+      "expectancy_lte_yen_100_shares": 0.0,
+      "alt_mode": "win_rate_lt_50_and_expectancy_lt_0",
+      "win_rate_lt_pct": 50.0
+    },
+    "quality_blocked_symbols": [],
+    "quality_allowed_symbols": [],
+    "quality_alt_blocked_symbols": [],
+    "quality_reason_by_symbol": {},
+    "scores_by_symbol": {},
+    "pnl_all_yen_100_shares": 0.0,
+    "pnl_after_excluding_blacklist_yen_100_shares": 0.0,
+    "improvement_yen_100_shares": 0.0,
+    "quality_filter_comparison": {
+      "symbols_blocked": 0,
+      "signals_off": 0,
+      "signals_on": 0,
+      "signal_decrease_rate_pct": 0.0,
+      "pnl_off_yen_100_shares": 0.0,
+      "pnl_on_yen_100_shares": 0.0,
+      "improvement_yen_100_shares": 0.0,
+      "expectancy_off_yen_100_shares_per_signal": 0.0,
+      "expectancy_on_yen_100_shares_per_signal": 0.0,
+      "expectancy_delta_yen_100_shares_per_signal": 0.0
+    },
+    "quality_ranking_top50": [],
+    "exclusion_scenarios": [
+      {
+        "exclude_symbols": [
+          "7003.T"
+        ],
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      },
+      {
+        "exclude_symbols": [
+          "8058.T"
+        ],
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      },
+      {
+        "exclude_symbols": [
+          "8473.T"
+        ],
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      },
+      {
+        "exclude_symbols": [
+          "6890.T"
+        ],
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      },
+      {
+        "exclude_symbols": [
+          "7003.T",
+          "8058.T"
+        ],
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      },
+      {
+        "exclude_symbols": [
+          "7003.T",
+          "8058.T",
+          "8473.T",
+          "6890.T"
+        ],
+        "pnl_after_yen_100_shares": 0.0,
+        "improvement_yen_100_shares": 0.0
+      }
+    ]
+  },
+  "integrity_check": {
+    "signals_total": 0,
+    "signals_csv_rows": 0,
+    "positions_closed": 0,
+    "signals_in_eval": 0,
+    "unique_signal_id_count": 0,
+    "warnings": [
+      "signals.csv がヘッダーのみ（0行）"
+    ],
+    "signals_csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_5d_20260509_020641\\replay_summary_random_5d_20260509_020641_run08_signals.csv",
+    "note": "このrunは signal 0件のため signals.csv はヘッダーのみです"
+  }
+}

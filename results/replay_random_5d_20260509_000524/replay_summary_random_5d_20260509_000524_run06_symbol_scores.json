@@ -1,0 +1,152 @@
+{
+  "entry_blacklist_rules": {
+    "expectancy_lt_yen_100_shares": -5000.0,
+    "signals_gte": 2
+  },
+  "priority_rules": {
+    "expectancy_gt_yen_100_shares": 5000.0,
+    "win_rate_gt_pct": 60.0
+  },
+  "blacklist_symbols": [
+    "6920.T"
+  ],
+  "priority_symbols": [],
+  "provisional_blacklist_candidates": [
+    "8058.T",
+    "6890.T",
+    "8473.T"
+  ],
+  "priority_emphasis_symbols": [
+    "9984.T"
+  ],
+  "scores_by_symbol": {
+    "8306.T": {
+      "symbol": "8306.T",
+      "signals": 1,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -9900.794167073207,
+      "avg_pnl_yen_100_shares_per_signal": -9900.794167073207,
+      "max_drawdown_pct_worst": -3.404089450601068,
+      "max_drawdown_yen_100_shares_worst_est": -9900.794167073207,
+      "blacklisted": false,
+      "priority": false
+    },
+    "7013.T": {
+      "symbol": "7013.T",
+      "signals": 1,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -15147.98615790191,
+      "avg_pnl_yen_100_shares_per_signal": -15147.98615790191,
+      "max_drawdown_pct_worst": -4.710194700840146,
+      "max_drawdown_yen_100_shares_worst_est": -15147.98615790191,
+      "blacklisted": false,
+      "priority": false
+    },
+    "6501.T": {
+      "symbol": "6501.T",
+      "signals": 1,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -23834.718366143563,
+      "avg_pnl_yen_100_shares_per_signal": -23834.718366143563,
+      "max_drawdown_pct_worst": -4.601296981880997,
+      "max_drawdown_yen_100_shares_worst_est": -23834.718366143563,
+      "blacklisted": false,
+      "priority": false
+    },
+    "9412.T": {
+      "symbol": "9412.T",
+      "signals": 3,
+      "win_rate_pct": 66.66666666666666,
+      "expectancy_yen_100_shares_per_signal": 1925.224951570677,
+      "avg_pnl_yen_100_shares_per_signal": 1925.224951570677,
+      "max_drawdown_pct_worst": -1.7420935229154308,
+      "max_drawdown_yen_100_shares_worst_est": -6306.37855295386,
+      "blacklisted": false,
+      "priority": false
+    },
+    "6857.T": {
+      "symbol": "6857.T",
+      "signals": 1,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": 0.0,
+      "avg_pnl_yen_100_shares_per_signal": 0.0,
+      "max_drawdown_pct_worst": -1.6590055354948736,
+      "max_drawdown_yen_100_shares_worst_est": -49637.44562200662,
+      "blacklisted": false,
+      "priority": false
+    },
+    "6920.T": {
+      "symbol": "6920.T",
+      "signals": 2,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -92674.3570373189,
+      "avg_pnl_yen_100_shares_per_signal": -92674.3570373189,
+      "max_drawdown_pct_worst": -2.080348126754958,
+      "max_drawdown_yen_100_shares_worst_est": -92783.52645327112,
+      "blacklisted": true,
+      "priority": false
+    },
+    "7012.T": {
+      "symbol": "7012.T",
+      "signals": 1,
+      "win_rate_pct": 100.0,
+      "expectancy_yen_100_shares_per_signal": 2679.003489635969,
+      "avg_pnl_yen_100_shares_per_signal": 2679.003489635969,
+      "max_drawdown_pct_worst": -0.893484761495751,
+      "max_drawdown_yen_100_shares_worst_est": -2934.203956752046,
+      "blacklisted": false,
+      "priority": false
+    }
+  },
+  "pnl_all_yen_100_shares": -225777.5344214085,
+  "pnl_after_excluding_blacklist_yen_100_shares": -40428.820346770684,
+  "improvement_yen_100_shares": 185348.7140746378,
+  "exclusion_scenarios": [
+    {
+      "exclude_symbols": [
+        "7003.T"
+      ],
+      "pnl_after_yen_100_shares": -225777.5344214085,
+      "improvement_yen_100_shares": 0.0
+    },
+    {
+      "exclude_symbols": [
+        "8058.T"
+      ],
+      "pnl_after_yen_100_shares": -225777.5344214085,
+      "improvement_yen_100_shares": 0.0
+    },
+    {
+      "exclude_symbols": [
+        "8473.T"
+      ],
+      "pnl_after_yen_100_shares": -225777.5344214085,
+      "improvement_yen_100_shares": 0.0
+    },
+    {
+      "exclude_symbols": [
+        "6890.T"
+      ],
+      "pnl_after_yen_100_shares": -225777.5344214085,
+      "improvement_yen_100_shares": 0.0
+    },
+    {
+      "exclude_symbols": [
+        "7003.T",
+        "8058.T"
+      ],
+      "pnl_after_yen_100_shares": -225777.5344214085,
+      "improvement_yen_100_shares": 0.0
+    },
+    {
+      "exclude_symbols": [
+        "7003.T",
+        "8058.T",
+        "8473.T",
+        "6890.T"
+      ],
+      "pnl_after_yen_100_shares": -225777.5344214085,
+      "improvement_yen_100_shares": 0.0
+    }
+  ]
+}

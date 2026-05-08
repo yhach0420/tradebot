@@ -1,0 +1,114 @@
+=== Replay結果（自動保存） ===
+- saved_at_jst: 2026-05-09 03:57:10
+- replay_range: random_5d
+- replay_speed: 1秒 = 1分
+- start_time_jst: 2026-04-24 09:04:00
+- end_time_jst: 2026-05-08 15:30:00
+- watch_symbols: 5016.T, 5803.T, 6315.T, 6501.T, 6526.T, 6857.T, 6890.T, 6920.T, 7003.T, 7011.T, 7012.T, 7013.T, 7203.T, 7974.T, 8001.T, 8002.T, 8031.T, 8058.T, 8136.T, 8306.T, 8473.T, 9412.T, 9432.T, 9434.T, 9984.T
+- replay_dates:
+  - 2026-04-24
+  - 2026-04-30
+  - 2026-05-01
+  - 2026-05-07
+  - 2026-05-08
+- replay_seed: (random)
+- enable_add: False
+
+【全体サマリー】
+総signal数(検出): 0
+総signal数(集計対象): 0
+
+【Replay整合性チェック】
+- signal数: 0
+- closed_position数: 0
+- 集計signal数: 0
+- ユニークsignal_id数: 0
+- signals.csv行数: 0
+- WARNING: signals.csv がヘッダーのみ（0行）
+- signals_csv: C:\Users\yhach\Documents\tradebotfile\results\replay_random_5d_20260509_035544\replay_summary_random_5d_20260509_035544_run03_signals.csv
+  ※このrunは signal 0件のため signals.csv はヘッダーのみです
+WIN/LOSE/HOLD: 0/0/0
+勝率: 0.0%
+平均利益率(WIN): 0.00%
+平均損失率(LOSE): 0.00%
+平均最大利益率: 0.00%
+平均最大下落率: 0.00%
+100株損益(合計): +0円
+100株損益(平均): +0円
+expectancy（100株/1signal）: +0円
+expectancy（profit%/1signal）: +0.00%
+
+【銘柄別サマリー】
+
+【銘柄スコアリング（Replay期待値ベース）】
+- ブラックリスト銘柄: (none)
+- 優先銘柄: (none)
+- 暫定ブラックリスト候補: 8058.T, 6890.T, 8473.T
+- 優先強調: 9984.T
+- 除外後損益(100株): +0円
+- 除外による改善額(100株): +0円
+
+【銘柄品質フィルタ（Replayベース）】
+- 禁止銘柄数: 0
+- 禁止銘柄: (none)
+- quality ON/OFF: signals 0/0  減少率 0.0%
+- quality ON/OFF: expectancy +0円/+0円  Δ=+0円
+- 除外後仮想損益(quality ON,100株): +0円  改善 +0円
+
+【除外シミュレーション（仮想損益）】
+- 7003.T除外なら: 損益 +0円（改善 +0円）/100株
+- 8058.T除外なら: 損益 +0円（改善 +0円）/100株
+- 8473.T除外なら: 損益 +0円（改善 +0円）/100株
+- 6890.T除外なら: 損益 +0円（改善 +0円）/100株
+- 7003.T/8058.T除外なら: 損益 +0円（改善 +0円）/100株
+- 7003.T/8058.T/8473.T/6890.T除外なら: 損益 +0円（改善 +0円）/100株
+
+【時間帯別サマリー】
+
+【BASE/ADD別サマリー】
+
+【ADD回数別サマリー（銘柄×日）】
+
+【ADDあり vs ADDなし（signal単位）】
+- ADDあり: signals=0  勝率=0.0%  100株損益=+0円  expectancy=+0円
+- ADDなし: signals=0  勝率=0.0%  100株損益=+0円  expectancy=+0円
+
+【ADD失敗銘柄ランキング（ADDポジション損益ワースト）】
+- ADDが発生していないためランキングはありません。
+
+【地合いフィルタ（ON/OFF別）】
+- signal候補数: 146
+- ENTRY禁止回数: 0
+- WEAK追加条件で除外: 0
+- [ON] signals=0 勝率=0.0% 100株損益=+0円
+- [OFF] signals=0 勝率=0.0% 100株損益=+0円
+- [BLOCKED] signals=0 勝率=0.0% 100株損益=+0円
+- 地合い回避による損失回避額(推定): +0円/100株
+
+【ADD ON/OFF 比較】
+- ADD ON時損益(100株): +0円
+- ADD OFF時損益(参考/BASEのみ,100株): +0円
+
+【事故分析（BASEのみ）】
+- 負け上位(LOSE worst10) 平均: RSI=N/A  ATR%=N/A%  VWAP乖離=N/A%  RS(TOPIX比)=N/A%
+- WIN平均RSI: N/A / LOSE平均RSI: N/A
+- WIN平均ATR%: N/A% / LOSE平均ATR%: N/A%
+
+【事故回避シミュレーション（BASEのみ）】
+- RSI>82 exclude: 損益 +0円（改善 +0円） / 除外 0件
+- ATR%>4 exclude: 損益 +0円（改善 +0円） / 除外 0件
+- RS<0 exclude: 損益 +0円（改善 +0円） / 除外 0件
+- VWAP dist>3% exclude: 損益 +0円（改善 +0円） / 除外 0件
+- Afternoon exclude: 損益 +0円（改善 +0円） / 除外 0件
+- Focus symbols exclude: 損益 +0円（改善 +0円） / 除外 0件
+
+【フィルタ比較】
+- signal数(仮想): ON=0 / OFF=0 / Δ=0
+- 期待値変化(OFF-ON,円/100株/signal): +0円
+- WEAK時勝率(ON,BASE): 0.0%
+- RSIフィルタOFF(参考): signals=0 expectancy=+0円
+- ATRフィルタOFF(参考): signals=0 expectancy=+0円
+
+【地合いレジーム別（ON=採用分）】
+
+【signal詳細】

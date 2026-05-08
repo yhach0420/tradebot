@@ -1,0 +1,184 @@
+=== Replay結果（自動保存） ===
+- saved_at_jst: 2026-05-09 01:19:50
+- replay_range: random_5d
+- replay_speed: 1秒 = 1分
+- start_time_jst: 2026-04-16 09:04:00
+- end_time_jst: 2026-05-08 15:30:00
+- watch_symbols: 5016.T, 5803.T, 6315.T, 6501.T, 6526.T, 6857.T, 6890.T, 6920.T, 7003.T, 7011.T, 7012.T, 7013.T, 7203.T, 7974.T, 8001.T, 8002.T, 8031.T, 8058.T, 8136.T, 8306.T, 8473.T, 9412.T, 9432.T, 9434.T, 9984.T
+- replay_dates:
+  - 2026-04-16
+  - 2026-04-23
+  - 2026-04-24
+  - 2026-04-27
+  - 2026-05-08
+- replay_seed: (random)
+- enable_add: False
+
+【全体サマリー】
+総signal数(検出): 41
+総signal数(集計対象): 41
+WIN/LOSE/HOLD: 14/21/6
+勝率: 34.1%
+平均利益率(WIN): 1.54%
+平均損失率(LOSE): -4.49%
+平均最大利益率: 0.97%
+平均最大下落率: -2.46%
+100株損益(合計): -983,162円
+100株損益(平均): -23,980円
+expectancy（100株/1signal）: -23,980円
+expectancy（profit%/1signal）: -1.77%
+
+【銘柄別サマリー】
+- 5803.T: signals=2  WIN/LOSE/HOLD=0/0/2  勝率=0.0%  expectancy=+0円  平均損益=+0円  最大DD=0.04%  100株損益=+0円
+- 6501.T: signals=7  WIN/LOSE/HOLD=3/4/0  勝率=42.9%  expectancy=-10,651円  平均損益=-10,651円  最大DD=-5.33%  100株損益=-74,556円
+- 6526.T: signals=3  WIN/LOSE/HOLD=1/0/2  勝率=33.3%  expectancy=+3,150円  平均損益=+3,150円  最大DD=-1.62%  100株損益=+9,450円
+- 6857.T: signals=1  WIN/LOSE/HOLD=1/0/0  勝率=100.0%  expectancy=+126,020円  平均損益=+126,020円  最大DD=0.03%  100株損益=+126,020円
+- 6920.T: signals=5  WIN/LOSE/HOLD=1/4/0  勝率=20.0%  expectancy=-166,428円  平均損益=-166,428円  最大DD=-5.46%  100株損益=-832,141円
+- 7011.T: signals=12  WIN/LOSE/HOLD=4/8/0  勝率=33.3%  expectancy=-13,236円  平均損益=-13,236円  最大DD=-5.88%  100株損益=-158,827円
+- 7012.T: signals=4  WIN/LOSE/HOLD=3/0/1  勝率=75.0%  expectancy=+2,943円  平均損益=+2,943円  最大DD=-1.67%  100株損益=+11,774円
+- 7013.T: signals=2  WIN/LOSE/HOLD=0/2/0  勝率=0.0%  expectancy=-15,036円  平均損益=-15,036円  最大DD=-4.80%  100株損益=-30,072円
+- 8473.T: signals=2  WIN/LOSE/HOLD=0/2/0  勝率=0.0%  expectancy=-13,187円  平均損益=-13,187円  最大DD=-6.20%  100株損益=-26,374円
+- 9984.T: signals=3  WIN/LOSE/HOLD=1/1/1  勝率=33.3%  expectancy=-2,812円  平均損益=-2,812円  最大DD=-2.12%  100株損益=-8,436円
+
+【銘柄スコアリング（Replay期待値ベース）】
+- ブラックリスト銘柄: 6501.T, 6920.T, 7011.T, 7013.T, 8473.T
+- 優先銘柄: 6857.T, 9984.T
+- 暫定ブラックリスト候補: 8058.T, 6890.T, 8473.T
+- 優先強調: 9984.T
+- 除外後損益(100株): +138,808円
+- 除外による改善額(100株): +1,121,970円
+
+【銘柄品質フィルタ（Replayベース）】
+- 禁止銘柄数: 7
+- 禁止銘柄: 5803.T, 6501.T, 6920.T, 7011.T, 7013.T, 8473.T, 9984.T
+- quality ON/OFF: signals 8/41  減少率 80.5%
+- quality ON/OFF: expectancy +18,405円/-23,980円  Δ=+42,385円
+- 除外後仮想損益(quality ON,100株): +147,244円  改善 +1,130,405円
+
+【除外シミュレーション（仮想損益）】
+- 7003.T除外なら: 損益 -983,162円（改善 +0円）/100株
+- 8058.T除外なら: 損益 -983,162円（改善 +0円）/100株
+- 8473.T除外なら: 損益 -956,787円（改善 +26,374円）/100株
+- 6890.T除外なら: 損益 -983,162円（改善 +0円）/100株
+- 7003.T/8058.T除外なら: 損益 -983,162円（改善 +0円）/100株
+- 7003.T/8058.T/8473.T/6890.T除外なら: 損益 -956,787円（改善 +26,374円）/100株
+
+【時間帯別サマリー】
+- 前場寄り直後(09:00-09:30): signals=8  WIN/LOSE/HOLD=5/3/0  勝率=62.5%  100株損益=-181,703円
+- 前場(09:30-11:30): signals=15  WIN/LOSE/HOLD=8/7/0  勝率=53.3%  100株損益=+73,662円
+- 後場前半(12:30-14:00): signals=9  WIN/LOSE/HOLD=1/4/4  勝率=11.1%  100株損益=-508,117円
+- 後場後半(14:00-15:30): signals=8  WIN/LOSE/HOLD=0/7/1  勝率=0.0%  100株損益=-367,004円
+- 時間外: signals=1  WIN/LOSE/HOLD=0/0/1  勝率=0.0%  100株損益=+0円
+
+【BASE/ADD別サマリー】
+- BASE: signals=41  WIN/LOSE/HOLD=14/21/6  勝率=34.1%  100株損益=-983,162円  expectancy=-23,980円
+
+【ADD回数別サマリー（銘柄×日）】
+- ADD回数=0: 銘柄日=16  signals=41  WIN/LOSE/HOLD=14/21/6  勝率=34.1%  100株損益=-983,162円
+
+【ADDあり vs ADDなし（signal単位）】
+- ADDあり: signals=0  勝率=0.0%  100株損益=+0円  expectancy=+0円
+- ADDなし: signals=41  勝率=34.1%  100株損益=-983,162円  expectancy=-23,980円
+
+【ADD失敗銘柄ランキング（ADDポジション損益ワースト）】
+- ADDが発生していないためランキングはありません。
+
+【地合いフィルタ（ON/OFF別）】
+- signal候補数: 41
+- ENTRY禁止回数: 0
+- WEAK追加条件で除外: 0
+- [ON] signals=41 勝率=34.1% 100株損益=-983,162円
+- [OFF] signals=41 勝率=34.1% 100株損益=-983,162円
+- [BLOCKED] signals=0 勝率=0.0% 100株損益=+0円
+- 地合い回避による損失回避額(推定): +0円/100株
+
+【ADD ON/OFF 比較】
+- ADD ON時損益(100株): -983,162円
+- ADD OFF時損益(参考/BASEのみ,100株): -983,162円
+
+【事故分析（BASEのみ）】
+- 負け上位(LOSE worst10) 平均: RSI=N/A  ATR%=N/A%  VWAP乖離=N/A%  RS(TOPIX比)=N/A%
+- WIN平均RSI: N/A / LOSE平均RSI: N/A
+- WIN平均ATR%: N/A% / LOSE平均ATR%: N/A%
+
+【LOSE worst10（事故詳細）】
+- 6920.T 2026-04-27 13:26 JST bucket=後場前半(12:30-14:00) regime=CRASH entry=46296円 exit=43770円 fpct=-5.46% pnl=-252,645円 RSI=N/A ATR%=N/A VWAP=N/A RS=N/A volx=N/A exit_reason=STOP not_blocked=
+- 6920.T 2026-04-27 14:36 JST bucket=後場後半(14:00-15:30) regime=CRASH entry=46116円 exit=43770円 fpct=-5.09% pnl=-234,678円 RSI=N/A ATR%=N/A VWAP=N/A RS=N/A volx=N/A exit_reason=STOP not_blocked=
+- 6920.T 2026-04-27 12:42 JST bucket=後場前半(12:30-14:00) regime=CRASH entry=45996円 exit=43770円 fpct=-4.84% pnl=-223,486円 RSI=N/A ATR%=N/A VWAP=N/A RS=N/A volx=N/A exit_reason=STOP not_blocked=
+- 6920.T 2026-04-24 09:19 JST bucket=前場寄り直後(09:00-09:30) regime=CRASH entry=45435円 exit=43770円 fpct=-3.67% pnl=-166,812円 RSI=N/A ATR%=N/A VWAP=N/A RS=N/A volx=N/A exit_reason=STOP not_blocked=
+- 7011.T 2026-04-24 09:27 JST bucket=前場寄り直後(09:00-09:30) regime=CRASH entry=4792円 exit=4510円 fpct=-5.88% pnl=-28,186円 RSI=N/A ATR%=N/A VWAP=N/A RS=N/A volx=N/A exit_reason=STOP not_blocked=
+- 6501.T 2026-04-24 10:30 JST bucket=前場(09:30-11:30) regime=CRASH entry=5216円 exit=4938円 fpct=-5.33% pnl=-27,831円 RSI=N/A ATR%=N/A VWAP=N/A RS=N/A volx=N/A exit_reason=STOP not_blocked=
+- 6501.T 2026-04-24 14:13 JST bucket=後場後半(14:00-15:30) regime=CRASH entry=5203円 exit=4938円 fpct=-5.10% pnl=-26,529円 RSI=N/A ATR%=N/A VWAP=N/A RS=N/A volx=N/A exit_reason=STOP not_blocked=
+- 7011.T 2026-04-23 15:09 JST bucket=後場後半(14:00-15:30) regime=CRASH entry=4762円 exit=4510円 fpct=-5.29% pnl=-25,182円 RSI=N/A ATR%=N/A VWAP=N/A RS=N/A volx=N/A exit_reason=STOP not_blocked=
+- 6501.T 2026-04-24 10:24 JST bucket=前場(09:30-11:30) regime=CRASH entry=5188円 exit=4938円 fpct=-4.82% pnl=-25,022円 RSI=N/A ATR%=N/A VWAP=N/A RS=N/A volx=N/A exit_reason=STOP not_blocked=
+- 7011.T 2026-04-23 14:46 JST bucket=後場後半(14:00-15:30) regime=CRASH entry=4751円 exit=4510円 fpct=-5.07% pnl=-24,076円 RSI=N/A ATR%=N/A VWAP=N/A RS=N/A volx=N/A exit_reason=STOP not_blocked=
+
+【Exit分析（exit_reason別）】
+- STOP: signals=21 勝率=0.0% 損益=-1,218,709円 expectancy=-58,034円
+- TIME_EXIT: signals=6 勝率=0.0% 損益=+0円 expectancy=+0円
+- RECENT_5M_LOW_BREAK: signals=14 勝率=100.0% 損益=+235,547円 expectancy=+16,825円
+- 大損(LOSE worst10) exit_reasonランキング:
+  - STOP: 10
+
+【事故回避シミュレーション（BASEのみ）】
+- RSI>82 exclude: 損益 -983,162円（改善 +0円） / 除外 0件
+- ATR%>4 exclude: 損益 -983,162円（改善 +0円） / 除外 0件
+- RS<0 exclude: 損益 -983,162円（改善 +0円） / 除外 0件
+- VWAP dist>3% exclude: 損益 -983,162円（改善 +0円） / 除外 0件
+- Afternoon exclude: 損益 -108,040円（改善 +875,121円） / 除外 18件
+- Focus symbols exclude: 損益 -852,159円（改善 +131,002円） / 除外 11件
+
+【フィルタ比較】
+- signal数(仮想): ON=41 / OFF=41 / Δ=0
+- 期待値変化(OFF-ON,円/100株/signal): +0円
+- WEAK時勝率(ON,BASE): 18.2%
+- RSIフィルタOFF(参考): signals=41 expectancy=-23,980円
+- ATRフィルタOFF(参考): signals=41 expectancy=-23,980円
+
+【地合いレジーム別（ON=採用分）】
+- NORMAL: signals=4 勝率=75.0% 100株損益=+10,568円 expectancy=+2,642円
+- WEAK: signals=11 勝率=18.2% 100株損益=-47,910円 expectancy=-4,355円
+- CRASH: signals=26 勝率=34.6% 100株損益=-945,819円 expectancy=-36,378円
+
+【signal詳細】
+- 7013.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-16 09:32 JST | signal=3207円 | entry=3205円 | result=LOSE | final_profit_pct=-4.56% | 100株損益=-14,628円 | eval=OK
+- 8473.T | pos=BASE | bucket=後場前半(12:30-14:00) | time_jst=2026-04-16 12:47 JST | signal=3237円 | entry=3231円 | result=LOSE | final_profit_pct=-6.20% | 100株損益=-20,059円 | eval=OK
+- 7013.T | pos=BASE | bucket=後場後半(14:00-15:30) | time_jst=2026-04-16 15:24 JST | signal=3218円 | entry=3213円 | result=LOSE | final_profit_pct=-4.80% | 100株損益=-15,444円 | eval=OK
+- 6501.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-23 09:10 JST | signal=5229円 | entry=5228円 | result=WIN | final_profit_pct=0.68% | 100株損益=+3,578円 | eval=OK
+- 6501.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-23 09:42 JST | signal=5271円 | entry=5270円 | result=LOSE | final_profit_pct=-2.07% | 100株損益=-10,928円 | eval=OK
+- 7011.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-23 09:49 JST | signal=4713円 | entry=4701円 | result=WIN | final_profit_pct=1.24% | 100株損益=+5,846円 | eval=OK
+- 8473.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-23 10:01 JST | signal=3065円 | entry=3060円 | result=LOSE | final_profit_pct=-2.06% | 100株損益=-6,316円 | eval=OK
+- 7011.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-23 10:25 JST | signal=4705円 | entry=4702円 | result=WIN | final_profit_pct=0.94% | 100株損益=+4,433円 | eval=OK
+- 7011.T | pos=BASE | bucket=後場後半(14:00-15:30) | time_jst=2026-04-23 14:12 JST | signal=4739円 | entry=4729円 | result=LOSE | final_profit_pct=-4.63% | 100株損益=-21,920円 | eval=OK
+- 7011.T | pos=BASE | bucket=後場後半(14:00-15:30) | time_jst=2026-04-23 14:46 JST | signal=4751円 | entry=4751円 | result=LOSE | final_profit_pct=-5.07% | 100株損益=-24,076円 | eval=OK
+- 7011.T | pos=BASE | bucket=後場後半(14:00-15:30) | time_jst=2026-04-23 15:09 JST | signal=4763円 | entry=4762円 | result=LOSE | final_profit_pct=-5.29% | 100株損益=-25,182円 | eval=OK
+- 6920.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-24 09:19 JST | signal=45510円 | entry=45435円 | result=LOSE | final_profit_pct=-3.67% | 100株損益=-166,812円 | eval=OK
+- 6501.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-24 09:27 JST | signal=5164円 | entry=5152円 | result=WIN | final_profit_pct=1.03% | 100株損益=+5,297円 | eval=OK
+- 7011.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-24 09:27 JST | signal=4793円 | entry=4792円 | result=LOSE | final_profit_pct=-5.88% | 100株損益=-28,186円 | eval=OK
+- 6501.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-24 10:24 JST | signal=5189円 | entry=5188円 | result=LOSE | final_profit_pct=-4.82% | 100株損益=-25,022円 | eval=OK
+- 6501.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-24 10:30 JST | signal=5218円 | entry=5216円 | result=LOSE | final_profit_pct=-5.33% | 100株損益=-27,831円 | eval=OK
+- 6501.T | pos=BASE | bucket=後場後半(14:00-15:30) | time_jst=2026-04-24 14:13 JST | signal=5205円 | entry=5203円 | result=LOSE | final_profit_pct=-5.10% | 100株損益=-26,529円 | eval=OK
+- 7011.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-27 09:25 JST | signal=4655円 | entry=4648円 | result=WIN | final_profit_pct=1.47% | 100株損益=+6,847円 | eval=OK
+- 7011.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-27 09:35 JST | signal=4670円 | entry=4665円 | result=WIN | final_profit_pct=1.10% | 100株損益=+5,140円 | eval=OK
+- 6501.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-27 09:50 JST | signal=5326円 | entry=5318円 | result=WIN | final_profit_pct=1.29% | 100株損益=+6,879円 | eval=OK
+- 7011.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-27 10:00 JST | signal=4715円 | entry=4713円 | result=LOSE | final_profit_pct=-4.30% | 100株損益=-20,281円 | eval=OK
+- 7011.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-27 10:23 JST | signal=4724円 | entry=4719円 | result=LOSE | final_profit_pct=-4.42% | 100株損益=-20,895円 | eval=OK
+- 6857.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-27 11:08 JST | signal=30250円 | entry=30240円 | result=WIN | final_profit_pct=4.17% | 100株損益=+126,020円 | eval=OK
+- 6920.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-27 11:01 JST | signal=45830円 | entry=45776円 | result=WIN | final_profit_pct=0.99% | 100株損益=+45,481円 | eval=OK
+- 7011.T | pos=BASE | bucket=後場前半(12:30-14:00) | time_jst=2026-04-27 12:34 JST | signal=4725円 | entry=4724円 | result=LOSE | final_profit_pct=-4.52% | 100株損益=-21,378円 | eval=OK
+- 6920.T | pos=BASE | bucket=後場前半(12:30-14:00) | time_jst=2026-04-27 12:42 JST | signal=46180円 | entry=45996円 | result=LOSE | final_profit_pct=-4.84% | 100株損益=-223,486円 | eval=OK
+- 6920.T | pos=BASE | bucket=後場前半(12:30-14:00) | time_jst=2026-04-27 13:26 JST | signal=46300円 | entry=46296円 | result=LOSE | final_profit_pct=-5.46% | 100株損益=-252,645円 | eval=OK
+- 7011.T | pos=BASE | bucket=後場後半(14:00-15:30) | time_jst=2026-04-27 14:04 JST | signal=4703円 | entry=4702円 | result=LOSE | final_profit_pct=-4.08% | 100株損益=-19,175円 | eval=OK
+- 6920.T | pos=BASE | bucket=後場後半(14:00-15:30) | time_jst=2026-04-27 14:36 JST | signal=46130円 | entry=46116円 | result=LOSE | final_profit_pct=-5.09% | 100株損益=-234,678円 | eval=OK
+- 9984.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-05-08 09:16 JST | signal=6162円 | entry=6141円 | result=WIN | final_profit_pct=0.78% | 100株損益=+4,803円 | eval=OK
+- 9984.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-05-08 09:24 JST | signal=6233円 | entry=6225円 | result=LOSE | final_profit_pct=-2.12% | 100株損益=-13,238円 | eval=OK
+- 7012.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-05-08 09:20 JST | signal=3243円 | entry=3226円 | result=WIN | final_profit_pct=1.85% | 100株損益=+6,009円 | eval=OK
+- 7012.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-08 09:46 JST | signal=3267円 | entry=3255円 | result=WIN | final_profit_pct=0.94% | 100株損益=+3,086円 | eval=OK
+- 7012.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-08 10:04 JST | signal=3284円 | entry=3276円 | result=WIN | final_profit_pct=0.82% | 100株損益=+2,679円 | eval=OK
+- 6526.T | pos=BASE | bucket=後場前半(12:30-14:00) | time_jst=2026-05-08 12:30 JST | signal=2210円 | entry=2137円 | result=WIN | final_profit_pct=4.28% | 100株損益=+9,450円 | eval=OK
+- 6526.T | pos=BASE | bucket=後場前半(12:30-14:00) | time_jst=2026-05-08 12:51 JST | signal=2241円 | entry=2240円 | result=HOLD | final_profit_pct=-1.62% | 100株損益=+0円 | eval=OK
+- 9984.T | pos=BASE | bucket=後場前半(12:30-14:00) | time_jst=2026-05-08 13:54 JST | signal=6185円 | entry=6184円 | result=HOLD | final_profit_pct=-0.86% | 100株損益=+0円 | eval=OK
+- 6526.T | pos=BASE | bucket=後場前半(12:30-14:00) | time_jst=2026-05-08 13:48 JST | signal=2238円 | entry=2226円 | result=HOLD | final_profit_pct=-0.98% | 100株損益=+0円 | eval=OK
+- 7012.T | pos=BASE | bucket=後場前半(12:30-14:00) | time_jst=2026-05-08 13:51 JST | signal=3311円 | entry=3309円 | result=HOLD | final_profit_pct=-1.31% | 100株損益=+0円 | eval=OK
+- 5803.T | pos=BASE | bucket=後場後半(14:00-15:30) | time_jst=2026-05-08 15:03 JST | signal=6496円 | entry=6493円 | result=HOLD | final_profit_pct=1.36% | 100株損益=+0円 | eval=OK
+- 5803.T | pos=BASE | bucket=時間外 | time_jst=2026-05-08 15:30 JST | signal=6582円 | entry=6556円 | result=HOLD | final_profit_pct=0.40% | 100株損益=+0円 | eval=OK

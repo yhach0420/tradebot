@@ -1,0 +1,708 @@
+=== Replay結果（自動保存） ===
+【Replay設定】
+
+config_name: replay_safe_v1
+config_path: configs/replay_safe.json
+
+replay_range: random_5d (cli)
+replay_repeat: 10 (cli)
+replay_mode: fast (cli)
+
+early_exit=True (config)
+vwap_break_exit=True (config)
+recent_5m_low_break_exit=True (config)
+
+strict_afternoon=True (config)
+disable_afternoon_entry=False (default)
+topix_weak_block=True (config)
+
+afternoon.volume_spike_ratio_min=2.0 (config)
+afternoon.vwap_dist_pct_max=1.0 (config)
+afternoon.rebreak_mult=1.0015 (config)
+
+- saved_at_jst: 2026-05-09 06:59:40
+- replay_range: random_5d
+- replay_speed: 1秒 = 1分
+- start_time_jst: 2026-04-22 09:03:00
+- end_time_jst: 2026-05-08 15:30:00
+- watch_symbols: 5016.T, 5803.T, 6315.T, 6501.T, 6526.T, 6857.T, 6890.T, 6920.T, 7003.T, 7011.T, 7012.T, 7013.T, 7203.T, 7974.T, 8001.T, 8002.T, 8031.T, 8058.T, 8136.T, 8306.T, 8473.T, 9412.T, 9432.T, 9434.T, 9984.T
+- replay_dates:
+  - 2026-04-22
+  - 2026-04-23
+  - 2026-04-28
+  - 2026-05-07
+  - 2026-05-08
+- replay_seed: (random)
+- enable_add: False
+
+【全体サマリー】
+総signal数(検出): 57
+総signal数(集計対象): 57
+
+【Replay整合性チェック】
+- signal数: 57
+- closed_position数: 57
+- 集計signal数: 57
+- ユニークsignal_id数: 57
+- signals.csv行数: 57
+- signals_csv: C:\Users\yhach\Documents\tradebotfile\results\replay_random_5d_20260509_065909\replay_summary_random_5d_20260509_065909_run01_signals.csv
+WIN/LOSE/HOLD: 33/24/0
+勝率: 57.9%
+平均利益率(WIN): 0.89%
+平均損失率(LOSE): -0.33%
+平均最大利益率: 1.13%
+平均最大下落率: -0.16%
+100株損益(合計): +147,052円
+100株損益(平均): +2,580円
+expectancy（100株/1signal）: +2,580円
+expectancy（profit%/1signal）: +0.38%
+
+【銘柄別サマリー】
+- 5016.T: signals=1  WIN/LOSE/HOLD=0/1/0  勝率=0.0%  expectancy=-2,085円  平均損益=-2,085円  最大DD=-0.43%  100株損益=-2,085円
+- 5803.T: signals=6  WIN/LOSE/HOLD=3/3/0  勝率=50.0%  expectancy=+176円  平均損益=+176円  最大DD=-0.64%  100株損益=+1,054円
+- 6501.T: signals=2  WIN/LOSE/HOLD=0/2/0  勝率=0.0%  expectancy=-1,575円  平均損益=-1,575円  最大DD=-0.58%  100株損益=-3,149円
+- 6526.T: signals=6  WIN/LOSE/HOLD=4/2/0  勝率=66.7%  expectancy=+3,488円  平均損益=+3,488円  最大DD=-0.43%  100株損益=+20,930円
+- 6857.T: signals=6  WIN/LOSE/HOLD=3/3/0  勝率=50.0%  expectancy=+13,621円  平均損益=+13,621円  最大DD=-0.51%  100株損益=+81,725円
+- 6890.T: signals=8  WIN/LOSE/HOLD=3/5/0  勝率=37.5%  expectancy=-457円  平均損益=-457円  最大DD=-0.73%  100株損益=-3,659円
+- 6920.T: signals=3  WIN/LOSE/HOLD=1/2/0  勝率=33.3%  expectancy=+2,509円  平均損益=+2,509円  最大DD=-0.06%  100株損益=+7,528円
+- 7011.T: signals=3  WIN/LOSE/HOLD=2/1/0  勝率=66.7%  expectancy=+1,933円  平均損益=+1,933円  最大DD=-0.21%  100株損益=+5,798円
+- 7012.T: signals=4  WIN/LOSE/HOLD=3/1/0  勝率=75.0%  expectancy=+894円  平均損益=+894円  最大DD=-0.56%  100株損益=+3,578円
+- 8002.T: signals=1  WIN/LOSE/HOLD=1/0/0  勝率=100.0%  expectancy=+1,596円  平均損益=+1,596円  最大DD=0.08%  100株損益=+1,596円
+- 8058.T: signals=3  WIN/LOSE/HOLD=3/0/0  勝率=100.0%  expectancy=+4,278円  平均損益=+4,278円  最大DD=-0.10%  100株損益=+12,835円
+- 8306.T: signals=1  WIN/LOSE/HOLD=1/0/0  勝率=100.0%  expectancy=+867円  平均損益=+867円  最大DD=0.04%  100株損益=+867円
+- 9412.T: signals=5  WIN/LOSE/HOLD=3/2/0  勝率=60.0%  expectancy=+942円  平均損益=+942円  最大DD=-0.52%  100株損益=+4,708円
+- 9984.T: signals=8  WIN/LOSE/HOLD=6/2/0  勝率=75.0%  expectancy=+1,916円  平均損益=+1,916円  最大DD=-0.40%  100株損益=+15,327円
+
+【銘柄スコアリング（Replay期待値ベース）】
+- ブラックリスト銘柄: (none)
+- 優先銘柄: 9984.T
+- 暫定ブラックリスト候補: 8058.T, 6890.T, 8473.T
+- 優先強調: 9984.T
+- 除外後損益(100株): +147,052円
+- 除外による改善額(100株): +0円
+
+【銘柄品質フィルタ（Replayベース）】
+- 禁止銘柄数: 2
+- 禁止銘柄: 6501.T, 6890.T
+- quality ON/OFF: signals 47/57  減少率 17.5%
+- quality ON/OFF: expectancy +3,274円/+2,580円  Δ=+694円
+- 除外後仮想損益(quality ON,100株): +153,861円  改善 +6,808円
+
+【除外シミュレーション（仮想損益）】
+- 7003.T除外なら: 損益 +147,052円（改善 +0円）/100株
+- 8058.T除外なら: 損益 +134,218円（改善 -12,835円）/100株
+- 8473.T除外なら: 損益 +147,052円（改善 +0円）/100株
+- 6890.T除外なら: 損益 +150,711円（改善 +3,659円）/100株
+- 7003.T/8058.T除外なら: 損益 +134,218円（改善 -12,835円）/100株
+- 7003.T/8058.T/8473.T/6890.T除外なら: 損益 +137,876円（改善 -9,176円）/100株
+
+【時間帯別サマリー】
+- 前場寄り直後(09:00-09:30): signals=16  WIN/LOSE/HOLD=9/7/0  勝率=56.2%  100株損益=+75,952円
+- 前場(09:30-11:30): signals=41  WIN/LOSE/HOLD=24/17/0  勝率=58.5%  100株損益=+71,100円
+
+【BASE/ADD別サマリー】
+- BASE: signals=57  WIN/LOSE/HOLD=33/24/0  勝率=57.9%  100株損益=+147,052円  expectancy=+2,580円
+
+【ADD回数別サマリー（銘柄×日）】
+- ADD回数=0: 銘柄日=21  signals=57  WIN/LOSE/HOLD=33/24/0  勝率=57.9%  100株損益=+147,052円
+
+【ADDあり vs ADDなし（signal単位）】
+- ADDあり: signals=0  勝率=0.0%  100株損益=+0円  expectancy=+0円
+- ADDなし: signals=57  勝率=57.9%  100株損益=+147,052円  expectancy=+2,580円
+
+【ADD失敗銘柄ランキング（ADDポジション損益ワースト）】
+- ADDが発生していないためランキングはありません。
+
+【地合いフィルタ（ON/OFF別）】
+- signal候補数: 57
+- ENTRY禁止回数: 0
+- WEAK追加条件で除外: 0
+- [ON] signals=57 勝率=57.9% 100株損益=+147,052円
+- [OFF] signals=57 勝率=57.9% 100株損益=+147,052円
+- [BLOCKED] signals=0 勝率=0.0% 100株損益=+0円
+- 地合い回避による損失回避額(推定): +0円/100株
+
+【ADD ON/OFF 比較】
+- ADD ON時損益(100株): +147,052円
+- ADD OFF時損益(参考/BASEのみ,100株): +147,052円
+
+【Replay比較スイッチ】
+- STOP前早期Exit: True
+- 後場Entry禁止: False
+- 後場Entry厳格化: True
+- config_name: replay_safe_v1
+- config_path: configs/replay_safe.json
+
+【事故分析（BASEのみ）】
+- 負け上位(LOSE worst10) 平均: RSI=76.00  ATR%=0.41%  VWAP乖離=1.62%  RS(TOPIX比)=3.23%
+- WIN平均RSI: 68.04 / LOSE平均RSI: 73.23
+- WIN平均ATR%: 0.31% / LOSE平均ATR%: 0.49%
+
+【LOSE worst10（事故詳細）】
+- 6857.T 2026-04-22 09:25 JST bucket=UNKNOWN regime=WEAK entry=28208円 exit=28065円 fpct=-0.51% pnl=-14,321円 RSI=96.67 ATR%=0.33% VWAP=1.46% RS=2.91% volx=0.13x exit_reason=RECENT_5M_LOW_BREAK_EARLY not_blocked=atr_ok,rs_ok,vwap_ok
+- 6890.T 2026-05-08 09:47 JST bucket=UNKNOWN regime=NORMAL entry=9580円 exit=9510円 fpct=-0.73% pnl=-6,986円 RSI=80.00 ATR%=0.48% VWAP=3.78% RS=3.59% volx=0.39x exit_reason=RECENT_5M_LOW_BREAK_EARLY not_blocked=rsi_ok,atr_ok,rs_ok
+- 6857.T 2026-05-07 10:27 JST bucket=UNKNOWN regime=NORMAL entry=30110円 exit=30050円 fpct=-0.20% pnl=-6,014円 RSI=73.33 ATR%=0.13% VWAP=0.73% RS=-0.49% volx=1.07x exit_reason=RECENT_5M_LOW_BREAK_EARLY not_blocked=rsi_ok,atr_ok,vwap_ok
+- 6857.T 2026-04-28 09:12 JST bucket=UNKNOWN regime=NORMAL entry=30010円 exit=29960円 fpct=-0.17% pnl=-5,013円 RSI=85.60 ATR%=1.06% VWAP=1.25% RS=6.93% volx=0.19x exit_reason=RECENT_5M_LOW_BREAK_EARLY not_blocked=atr_ok,rs_ok,vwap_ok
+- 6890.T 2026-04-28 10:21 JST bucket=UNKNOWN regime=NORMAL entry=7437円 exit=7390円 fpct=-0.64% pnl=-4,751円 RSI=86.36 ATR%=0.29% VWAP=2.80% RS=2.73% volx=0.29x exit_reason=RECENT_5M_LOW_BREAK_EARLY not_blocked=atr_ok,rs_ok,vwap_ok
+- 6890.T 2026-05-08 10:12 JST bucket=UNKNOWN regime=WEAK entry=9499円 exit=9460円 fpct=-0.42% pnl=-3,953円 RSI=39.29 ATR%=0.36% VWAP=1.11% RS=2.57% volx=0.88x exit_reason=RECENT_5M_LOW_BREAK_EARLY not_blocked=rsi_ok,atr_ok,rs_ok,vwap_ok
+- 5803.T 2026-04-22 10:44 JST bucket=UNKNOWN regime=WEAK entry=5917円 exit=5879円 fpct=-0.64% pnl=-3,791円 RSI=86.67 ATR%=0.23% VWAP=1.90% RS=3.56% volx=0.41x exit_reason=RECENT_5M_LOW_BREAK_EARLY not_blocked=atr_ok,rs_ok,vwap_ok
+- 6890.T 2026-04-28 09:58 JST bucket=UNKNOWN regime=WEAK entry=7317円 exit=7280円 fpct=-0.51% pnl=-3,732円 RSI=64.71 ATR%=0.25% VWAP=1.56% RS=2.46% volx=0.21x exit_reason=RECENT_5M_LOW_BREAK_EARLY not_blocked=rsi_ok,atr_ok,rs_ok,vwap_ok
+- 6501.T 2026-04-23 09:10 JST bucket=UNKNOWN regime=NORMAL entry=5228円 exit=5198円 fpct=-0.58% pnl=-3,023円 RSI=68.79 ATR%=0.70% VWAP=0.55% RS=3.78% volx=0.06x exit_reason=VWAP_BREAK_EARLY not_blocked=rsi_ok,atr_ok,rs_ok,vwap_ok
+- 6890.T 2026-04-23 09:52 JST bucket=UNKNOWN regime=NORMAL entry=7257円 exit=7230円 fpct=-0.38% pnl=-2,726円 RSI=78.57 ATR%=0.22% VWAP=1.05% RS=4.29% volx=0.19x exit_reason=RECENT_5M_LOW_BREAK_EARLY not_blocked=rsi_ok,atr_ok,rs_ok,vwap_ok
+
+【Exit分析（exit_reason別）】
+- VWAP_BREAK_EARLY: signals=6 勝率=0.0% 損益=-9,928円 expectancy=-1,655円
+- RECENT_5M_LOW_BREAK_EARLY: signals=51 勝率=64.7% 損益=+156,981円 expectancy=+3,078円
+- 大損(LOSE worst10) exit_reasonランキング:
+  - RECENT_5M_LOW_BREAK_EARLY: 9
+  - VWAP_BREAK_EARLY: 1
+
+【事故回避シミュレーション（BASEのみ）】
+- RSI>82 exclude: 損益 +158,173円（改善 +11,121円） / 除外 10件
+- ATR%>4 exclude: 損益 +147,052円（改善 +0円） / 除外 0件
+- RS<0 exclude: 損益 +152,125円（改善 +5,072円） / 除外 3件
+- VWAP dist>3% exclude: 損益 +140,110円（改善 -6,942円） / 除外 4件
+- Afternoon exclude: 損益 +147,052円（改善 +0円） / 除外 0件
+- Focus symbols exclude: 損益 +136,500円（改善 -10,553円） / 除外 6件
+
+[PIPELINE_DEBUG]
+
+market_debug_count=532
+candidate_loop_entered=366
+to_notify_count=366
+entry_calc_ok=366
+entry_calc_none=0
+ma25_ok=366
+ma25_none=0
+intraday_signal_ready=366
+intraday_signal_none=0
+crossed_check_entered=366
+crossed_true=124
+crossed_false=242
+signal_generated=57
+replay_signals_append_count=57
+
+continue_reason_counts:
+AFTERNOON_VOL_SPIKE_WEAK: 49
+AFTERNOON_TOPIX_WEAK_BLOCK: 14
+AFTERNOON_VWAP_DIST_TOO_HIGH: 3
+AFTERNOON_5M_LOW_NOT_RISING: 1
+
+APPEND_SIGNAL_DEBUG:
+- 20260509_065909_run01_00001 9984.T entry_time=2026-04-22 09:10 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00002 6857.T entry_time=2026-04-22 09:14 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00003 6857.T entry_time=2026-04-22 09:16 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00004 5803.T entry_time=2026-04-22 09:17 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00005 5016.T entry_time=2026-04-22 09:20 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00006 6857.T entry_time=2026-04-22 09:25 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00007 9984.T entry_time=2026-04-22 09:24 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00008 5803.T entry_time=2026-04-22 09:31 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00009 6920.T entry_time=2026-04-22 09:35 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00010 9984.T entry_time=2026-04-22 09:53 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00011 9984.T entry_time=2026-04-22 10:10 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00012 5803.T entry_time=2026-04-22 10:14 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00013 9984.T entry_time=2026-04-22 10:14 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00014 9984.T entry_time=2026-04-22 10:22 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00015 9984.T entry_time=2026-04-22 10:31 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00016 9984.T entry_time=2026-04-22 10:42 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00017 5803.T entry_time=2026-04-22 10:44 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00018 6920.T entry_time=2026-04-22 10:58 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00019 5803.T entry_time=2026-04-22 11:01 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00020 6920.T entry_time=2026-04-22 11:23 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00021 6890.T entry_time=2026-04-23 09:52 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00022 6501.T entry_time=2026-04-23 09:10 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00023 6526.T entry_time=2026-04-23 09:10 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00024 6526.T entry_time=2026-04-23 09:23 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00025 7011.T entry_time=2026-04-23 09:25 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00026 6526.T entry_time=2026-04-23 09:27 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00027 6501.T entry_time=2026-04-23 09:42 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00028 7011.T entry_time=2026-04-23 09:49 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00029 7011.T entry_time=2026-04-23 10:25 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00030 6890.T entry_time=2026-04-28 09:58 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00031 5803.T entry_time=2026-04-28 09:10 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00032 6857.T entry_time=2026-04-28 09:12 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00033 6890.T entry_time=2026-04-28 10:19 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00034 6890.T entry_time=2026-04-28 10:21 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00035 8002.T entry_time=2026-04-28 09:39 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00036 8306.T entry_time=2026-04-28 09:40 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00037 6857.T entry_time=2026-04-28 10:32 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00038 7012.T entry_time=2026-05-07 09:01 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00039 9412.T entry_time=2026-05-07 09:34 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00040 9412.T entry_time=2026-05-07 09:37 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00041 7012.T entry_time=2026-05-07 09:25 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00042 9412.T entry_time=2026-05-07 09:43 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00043 6857.T entry_time=2026-05-07 10:27 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00044 7012.T entry_time=2026-05-07 10:17 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00045 8058.T entry_time=2026-05-07 10:21 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00046 8058.T entry_time=2026-05-07 10:30 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00047 7012.T entry_time=2026-05-07 10:35 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00048 6526.T entry_time=2026-05-07 10:43 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00049 8058.T entry_time=2026-05-07 10:47 JST excluded_from_eval=False excluded_reason=
+- 20260509_065909_run01_00050 6526.T entry_time=2026-05-07 11:01 JST excluded_from_eval=False excluded_reason=
+
+PRE_SIGNAL_OBJECT_DEBUG:
+- symbol=9984.T time=2026-04-22 09:10 entry_price=5350.344999999999 market_state=NORMAL
+- symbol=6857.T time=2026-04-22 09:14 entry_price=27657.629999999997 market_state=WEAK
+- symbol=6857.T time=2026-04-22 09:16 entry_price=27772.744999999995 market_state=WEAK
+- symbol=5803.T time=2026-04-22 09:17 entry_price=5778.772999999999 market_state=WEAK
+- symbol=5016.T time=2026-04-22 09:20 entry_price=4832.8279999999995 market_state=WEAK
+- symbol=6857.T time=2026-04-22 09:25 entry_price=28208.179999999997 market_state=WEAK
+- symbol=9984.T time=2026-04-22 09:24 entry_price=5397.392 market_state=WEAK
+- symbol=5803.T time=2026-04-22 09:31 entry_price=5795.789999999999 market_state=WEAK
+- symbol=6920.T time=2026-04-22 09:35 entry_price=44724.67999999999 market_state=WEAK
+- symbol=9984.T time=2026-04-22 09:53 entry_price=5464.459 market_state=WEAK
+- symbol=9984.T time=2026-04-22 10:10 entry_price=5485.48 market_state=WEAK
+- symbol=5803.T time=2026-04-22 10:14 entry_price=5840.834999999999 market_state=NORMAL
+- symbol=9984.T time=2026-04-22 10:14 entry_price=5504.499 market_state=NORMAL
+- symbol=9984.T time=2026-04-22 10:22 entry_price=5547.5419999999995 market_state=WEAK
+- symbol=9984.T time=2026-04-22 10:31 entry_price=5572.566999999999 market_state=WEAK
+- symbol=9984.T time=2026-04-22 10:42 entry_price=5591.585999999999 market_state=WEAK
+- symbol=5803.T time=2026-04-22 10:44 entry_price=5916.910999999999 market_state=WEAK
+- symbol=6920.T time=2026-04-22 10:58 entry_price=45004.95999999999 market_state=WEAK
+- symbol=5803.T time=2026-04-22 11:01 entry_price=5891.8859999999995 market_state=WEAK
+- symbol=6920.T time=2026-04-22 11:23 entry_price=45135.09 market_state=NORMAL
+- symbol=6890.T time=2026-04-23 09:52 entry_price=7257.249999999999 market_state=NORMAL
+- symbol=6501.T time=2026-04-23 09:10 entry_price=5228.222999999999 market_state=NORMAL
+- symbol=6526.T time=2026-04-23 09:10 entry_price=1961.9599999999998 market_state=NORMAL
+- symbol=6526.T time=2026-04-23 09:23 entry_price=1982.9809999999998 market_state=WEAK
+- symbol=7011.T time=2026-04-23 09:25 entry_price=4645.641 market_state=NORMAL
+- symbol=6526.T time=2026-04-23 09:27 entry_price=2001.4994999999997 market_state=NORMAL
+- symbol=6501.T time=2026-04-23 09:42 entry_price=5270.264999999999 market_state=NORMAL
+- symbol=7011.T time=2026-04-23 09:49 entry_price=4700.696 market_state=NORMAL
+- symbol=7011.T time=2026-04-23 10:25 entry_price=4701.696999999999 market_state=WEAK
+- symbol=6890.T time=2026-04-28 09:58 entry_price=7317.3099999999995 market_state=WEAK
+- symbol=5803.T time=2026-04-28 09:10 entry_price=6278.271999999999 market_state=NORMAL
+- symbol=6857.T time=2026-04-28 09:12 entry_price=30009.979999999996 market_state=NORMAL
+- symbol=6890.T time=2026-04-28 10:19 entry_price=7377.369999999999 market_state=NORMAL
+- symbol=6890.T time=2026-04-28 10:21 entry_price=7437.429999999999 market_state=NORMAL
+- symbol=8002.T time=2026-04-28 09:39 entry_price=6056.049999999999 market_state=NORMAL
+- symbol=8306.T time=2026-04-28 09:40 entry_price=2837.8349999999996 market_state=NORMAL
+- symbol=6857.T time=2026-04-28 10:32 entry_price=30050.019999999997 market_state=WEAK
+- symbol=7012.T time=2026-05-07 09:01 entry_price=3269.2659999999996 market_state=NORMAL
+- symbol=9412.T time=2026-05-07 09:34 entry_price=3553.5499999999997 market_state=WEAK
+- symbol=9412.T time=2026-05-07 09:37 entry_price=3568.5649999999996 market_state=WEAK
+- symbol=7012.T time=2026-05-07 09:25 entry_price=3277.2739999999994 market_state=WEAK
+- symbol=9412.T time=2026-05-07 09:43 entry_price=3583.5799999999995 market_state=WEAK
+- symbol=6857.T time=2026-05-07 10:27 entry_price=30110.079999999998 market_state=NORMAL
+- symbol=7012.T time=2026-05-07 10:17 entry_price=3316.3129999999996 market_state=NORMAL
+- symbol=8058.T time=2026-05-07 10:21 entry_price=5221.215999999999 market_state=WEAK
+- symbol=8058.T time=2026-05-07 10:30 entry_price=5249.244 market_state=NORMAL
+- symbol=7012.T time=2026-05-07 10:35 entry_price=3333.3299999999995 market_state=NORMAL
+- symbol=6526.T time=2026-05-07 10:43 entry_price=2025.0229999999997 market_state=NORMAL
+- symbol=8058.T time=2026-05-07 10:47 entry_price=5268.262999999999 market_state=NORMAL
+- symbol=6526.T time=2026-05-07 11:01 entry_price=2043.5414999999998 market_state=NORMAL
+
+POST_SIGNAL_OBJECT_DEBUG:
+- signal_id=20260509_065909_run01_00001 symbol=9984.T
+- signal_id=20260509_065909_run01_00002 symbol=6857.T
+- signal_id=20260509_065909_run01_00003 symbol=6857.T
+- signal_id=20260509_065909_run01_00004 symbol=5803.T
+- signal_id=20260509_065909_run01_00005 symbol=5016.T
+- signal_id=20260509_065909_run01_00006 symbol=6857.T
+- signal_id=20260509_065909_run01_00007 symbol=9984.T
+- signal_id=20260509_065909_run01_00008 symbol=5803.T
+- signal_id=20260509_065909_run01_00009 symbol=6920.T
+- signal_id=20260509_065909_run01_00010 symbol=9984.T
+- signal_id=20260509_065909_run01_00011 symbol=9984.T
+- signal_id=20260509_065909_run01_00012 symbol=5803.T
+- signal_id=20260509_065909_run01_00013 symbol=9984.T
+- signal_id=20260509_065909_run01_00014 symbol=9984.T
+- signal_id=20260509_065909_run01_00015 symbol=9984.T
+- signal_id=20260509_065909_run01_00016 symbol=9984.T
+- signal_id=20260509_065909_run01_00017 symbol=5803.T
+- signal_id=20260509_065909_run01_00018 symbol=6920.T
+- signal_id=20260509_065909_run01_00019 symbol=5803.T
+- signal_id=20260509_065909_run01_00020 symbol=6920.T
+- signal_id=20260509_065909_run01_00021 symbol=6890.T
+- signal_id=20260509_065909_run01_00022 symbol=6501.T
+- signal_id=20260509_065909_run01_00023 symbol=6526.T
+- signal_id=20260509_065909_run01_00024 symbol=6526.T
+- signal_id=20260509_065909_run01_00025 symbol=7011.T
+- signal_id=20260509_065909_run01_00026 symbol=6526.T
+- signal_id=20260509_065909_run01_00027 symbol=6501.T
+- signal_id=20260509_065909_run01_00028 symbol=7011.T
+- signal_id=20260509_065909_run01_00029 symbol=7011.T
+- signal_id=20260509_065909_run01_00030 symbol=6890.T
+- signal_id=20260509_065909_run01_00031 symbol=5803.T
+- signal_id=20260509_065909_run01_00032 symbol=6857.T
+- signal_id=20260509_065909_run01_00033 symbol=6890.T
+- signal_id=20260509_065909_run01_00034 symbol=6890.T
+- signal_id=20260509_065909_run01_00035 symbol=8002.T
+- signal_id=20260509_065909_run01_00036 symbol=8306.T
+- signal_id=20260509_065909_run01_00037 symbol=6857.T
+- signal_id=20260509_065909_run01_00038 symbol=7012.T
+- signal_id=20260509_065909_run01_00039 symbol=9412.T
+- signal_id=20260509_065909_run01_00040 symbol=9412.T
+- signal_id=20260509_065909_run01_00041 symbol=7012.T
+- signal_id=20260509_065909_run01_00042 symbol=9412.T
+- signal_id=20260509_065909_run01_00043 symbol=6857.T
+- signal_id=20260509_065909_run01_00044 symbol=7012.T
+- signal_id=20260509_065909_run01_00045 symbol=8058.T
+- signal_id=20260509_065909_run01_00046 symbol=8058.T
+- signal_id=20260509_065909_run01_00047 symbol=7012.T
+- signal_id=20260509_065909_run01_00048 symbol=6526.T
+- signal_id=20260509_065909_run01_00049 symbol=8058.T
+- signal_id=20260509_065909_run01_00050 symbol=6526.T
+
+[EXCEPTION_BEFORE_APPEND_TRACE]
+
+(no traces captured)
+
+EVAL_FILTER_DEBUG:
+- before_count: 57
+- after_count: 57
+
+【フィルタ比較】
+- signal数(仮想): ON=44 / OFF=57 / Δ=13
+- 期待値変化(OFF-ON,円/100株/signal): -1,168円
+- WEAK時勝率(ON,BASE): 60.7%
+- RSIフィルタOFF(参考): signals=57 expectancy=+2,580円
+- ATRフィルタOFF(参考): signals=57 expectancy=+2,580円
+
+【地合いレジーム別（ON=採用分）】
+- NORMAL: signals=29 勝率=55.2% 100株損益=+21,296円 expectancy=+734円
+- WEAK: signals=28 勝率=60.7% 100株損益=+125,757円 expectancy=+4,491円
+
+【signal詳細】
+- 9984.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-22 09:10 JST | signal=5362円 | entry=5350円 | result=WIN | final_profit_pct=0.91% | 100株損益=+4,876円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=397.40
+  topix_pct=+0.23
+  market_state=NORMAL
+  entry_allowed=True
+- 6857.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-22 09:14 JST | signal=27680円 | entry=27658円 | result=WIN | final_profit_pct=1.47% | 100株損益=+40,770円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.20
+  topix_pct=-0.08
+  market_state=WEAK
+  entry_allowed=True
+- 6857.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-22 09:16 JST | signal=27825円 | entry=27773円 | result=WIN | final_profit_pct=1.05% | 100株損益=+29,280円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.40
+  topix_pct=-0.03
+  market_state=WEAK
+  entry_allowed=True
+- 5803.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-22 09:17 JST | signal=5779円 | entry=5779円 | result=WIN | final_profit_pct=0.63% | 100株損益=+3,623円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.50
+  topix_pct=+0.00
+  market_state=WEAK
+  entry_allowed=True
+- 5016.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-22 09:20 JST | signal=4837円 | entry=4833円 | result=LOSE | final_profit_pct=-0.43% | 100株損益=-2,085円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.50
+  topix_pct=+0.00
+  market_state=WEAK
+  entry_allowed=True
+- 6857.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-22 09:25 JST | signal=28215円 | entry=28208円 | result=LOSE | final_profit_pct=-0.51% | 100株損益=-14,321円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.70
+  topix_pct=+0.05
+  market_state=WEAK
+  entry_allowed=True
+- 9984.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-22 09:24 JST | signal=5406円 | entry=5397円 | result=WIN | final_profit_pct=0.03% | 100株損益=+161円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.70
+  topix_pct=+0.05
+  market_state=WEAK
+  entry_allowed=True
+- 5803.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 09:31 JST | signal=5807円 | entry=5796円 | result=WIN | final_profit_pct=0.33% | 100株損益=+1,925円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.40
+  topix_pct=-0.03
+  market_state=WEAK
+  entry_allowed=True
+- 6920.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 09:35 JST | signal=44760円 | entry=44725円 | result=LOSE | final_profit_pct=-0.01% | 100株損益=-468円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.20
+  topix_pct=-0.08
+  market_state=WEAK
+  entry_allowed=True
+- 9984.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 09:53 JST | signal=5482円 | entry=5464円 | result=LOSE | final_profit_pct=-0.37% | 100株損益=-2,052円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=397.10
+  topix_pct=+0.15
+  market_state=WEAK
+  entry_allowed=True
+- 9984.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 10:10 JST | signal=5491円 | entry=5485円 | result=WIN | final_profit_pct=0.83% | 100株損益=+4,557円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.10
+  topix_pct=-0.10
+  market_state=WEAK
+  entry_allowed=True
+- 5803.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 10:14 JST | signal=5856円 | entry=5841円 | result=WIN | final_profit_pct=0.28% | 100株損益=+1,621円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.60
+  topix_pct=+0.03
+  market_state=NORMAL
+  entry_allowed=True
+- 9984.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 10:14 JST | signal=5510円 | entry=5504円 | result=WIN | final_profit_pct=0.48% | 100株損益=+2,653円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.80
+  topix_pct=+0.08
+  market_state=NORMAL
+  entry_allowed=True
+- 9984.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 10:22 JST | signal=5553円 | entry=5548円 | result=LOSE | final_profit_pct=-0.30% | 100株損益=-1,656円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.70
+  topix_pct=+0.05
+  market_state=WEAK
+  entry_allowed=True
+- 9984.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 10:31 JST | signal=5577円 | entry=5573円 | result=WIN | final_profit_pct=0.78% | 100株損益=+4,347円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.60
+  topix_pct=+0.03
+  market_state=WEAK
+  entry_allowed=True
+- 9984.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 10:42 JST | signal=5593円 | entry=5592円 | result=WIN | final_profit_pct=0.44% | 100株損益=+2,442円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.60
+  topix_pct=+0.03
+  market_state=WEAK
+  entry_allowed=True
+- 5803.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 10:44 JST | signal=5917円 | entry=5917円 | result=LOSE | final_profit_pct=-0.64% | 100株損益=-3,791円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.70
+  topix_pct=+0.05
+  market_state=WEAK
+  entry_allowed=True
+- 6920.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 10:58 JST | signal=45020円 | entry=45005円 | result=WIN | final_profit_pct=0.23% | 100株損益=+10,508円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=397.00
+  topix_pct=+0.13
+  market_state=WEAK
+  entry_allowed=True
+- 5803.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 11:01 JST | signal=5896円 | entry=5892円 | result=LOSE | final_profit_pct=-0.10% | 100株損益=-589円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=397.20
+  topix_pct=+0.18
+  market_state=WEAK
+  entry_allowed=True
+- 6920.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-22 11:23 JST | signal=45170円 | entry=45135円 | result=LOSE | final_profit_pct=-0.06% | 100株損益=-2,511円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=397.20
+  topix_pct=+0.18
+  market_state=NORMAL
+  entry_allowed=True
+- 6890.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-23 09:52 JST | signal=7260円 | entry=7257円 | result=LOSE | final_profit_pct=-0.38% | 100株損益=-2,726円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.40
+  topix_pct=-0.13
+  market_state=NORMAL
+  entry_allowed=True
+- 6501.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-23 09:10 JST | signal=5229円 | entry=5228円 | result=LOSE | final_profit_pct=-0.58% | 100株損益=-3,023円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=395.40
+  topix_pct=-0.38
+  market_state=NORMAL
+  entry_allowed=True
+- 6526.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-23 09:10 JST | signal=1964円 | entry=1962円 | result=LOSE | final_profit_pct=-0.43% | 100株損益=-847円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=395.40
+  topix_pct=-0.38
+  market_state=NORMAL
+  entry_allowed=True
+- 6526.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-23 09:23 JST | signal=1988円 | entry=1983円 | result=WIN | final_profit_pct=5.67% | 100株損益=+11,280円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=395.50
+  topix_pct=-0.35
+  market_state=WEAK
+  entry_allowed=True
+- 7011.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-23 09:25 JST | signal=4647円 | entry=4646円 | result=WIN | final_profit_pct=1.13% | 100株損益=+5,237円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=395.20
+  topix_pct=-0.43
+  market_state=NORMAL
+  entry_allowed=True
+- 6526.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-23 09:27 JST | signal=2004円 | entry=2001円 | result=WIN | final_profit_pct=4.70% | 100株損益=+9,409円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=395.90
+  topix_pct=-0.25
+  market_state=NORMAL
+  entry_allowed=True
+- 6501.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-23 09:42 JST | signal=5271円 | entry=5270円 | result=LOSE | final_profit_pct=-0.02% | 100株損益=-127円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.50
+  topix_pct=-0.10
+  market_state=NORMAL
+  entry_allowed=True
+- 7011.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-23 09:49 JST | signal=4713円 | entry=4701円 | result=LOSE | final_profit_pct=-0.06% | 100株損益=-270円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.70
+  topix_pct=-0.05
+  market_state=NORMAL
+  entry_allowed=True
+- 7011.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-23 10:25 JST | signal=4705円 | entry=4702円 | result=WIN | final_profit_pct=0.18% | 100株損益=+831円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=394.70
+  topix_pct=-0.55
+  market_state=WEAK
+  entry_allowed=True
+- 6890.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-28 09:58 JST | signal=7320円 | entry=7317円 | result=LOSE | final_profit_pct=-0.51% | 100株損益=-3,732円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=394.30
+  topix_pct=-0.66
+  market_state=WEAK
+  entry_allowed=True
+- 5803.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-28 09:10 JST | signal=6302円 | entry=6278円 | result=LOSE | final_profit_pct=-0.28% | 100株損益=-1,734円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=397.10
+  topix_pct=+0.79
+  market_state=NORMAL
+  entry_allowed=True
+- 6857.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-04-28 09:12 JST | signal=30100円 | entry=30010円 | result=LOSE | final_profit_pct=-0.17% | 100株損益=-5,013円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=397.00
+  topix_pct=+0.76
+  market_state=NORMAL
+  entry_allowed=True
+- 6890.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-28 10:19 JST | signal=7410円 | entry=7377円 | result=WIN | final_profit_pct=0.17% | 100株損益=+1,269円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=396.90
+  topix_pct=+0.74
+  market_state=NORMAL
+  entry_allowed=True
+- 6890.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-28 10:21 JST | signal=7450円 | entry=7437円 | result=LOSE | final_profit_pct=-0.64% | 100株損益=-4,751円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=397.50
+  topix_pct=+0.89
+  market_state=NORMAL
+  entry_allowed=True
+- 8002.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-28 09:39 JST | signal=6061円 | entry=6056円 | result=WIN | final_profit_pct=0.26% | 100株損益=+1,596円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=398.50
+  topix_pct=+1.14
+  market_state=NORMAL
+  entry_allowed=True
+- 8306.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-28 09:40 JST | signal=2839円 | entry=2838円 | result=WIN | final_profit_pct=0.31% | 100株損益=+867円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=398.70
+  topix_pct=+1.19
+  market_state=NORMAL
+  entry_allowed=True
+- 6857.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-04-28 10:32 JST | signal=30070円 | entry=30050円 | result=WIN | final_profit_pct=1.23% | 100株損益=+37,023円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=398.60
+  topix_pct=+1.17
+  market_state=WEAK
+  entry_allowed=True
+- 7012.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-05-07 09:01 JST | signal=3286円 | entry=3269円 | result=LOSE | final_profit_pct=-0.56% | 100株損益=-1,836円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=403.60
+  topix_pct=+1.00
+  market_state=NORMAL
+  entry_allowed=True
+- 9412.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 09:34 JST | signal=3560円 | entry=3554円 | result=WIN | final_profit_pct=0.60% | 100株損益=+2,149円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=403.00
+  topix_pct=+0.85
+  market_state=WEAK
+  entry_allowed=True
+- 9412.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 09:37 JST | signal=3570円 | entry=3569円 | result=WIN | final_profit_pct=0.18% | 100株損益=+644円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=403.60
+  topix_pct=+1.00
+  market_state=WEAK
+  entry_allowed=True
+- 7012.T | pos=BASE | bucket=前場寄り直後(09:00-09:30) | time_jst=2026-05-07 09:25 JST | signal=3279円 | entry=3277円 | result=WIN | final_profit_pct=0.05% | 100株損益=+173円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=403.40
+  topix_pct=+0.95
+  market_state=WEAK
+  entry_allowed=True
+- 9412.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 09:43 JST | signal=3590円 | entry=3584円 | result=LOSE | final_profit_pct=-0.24% | 100株損益=-860円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=403.10
+  topix_pct=+0.88
+  market_state=WEAK
+  entry_allowed=True
+- 6857.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 10:27 JST | signal=30140円 | entry=30110円 | result=LOSE | final_profit_pct=-0.20% | 100株損益=-6,014円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=406.10
+  topix_pct=+1.63
+  market_state=NORMAL
+  entry_allowed=True
+- 7012.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 10:17 JST | signal=3320円 | entry=3316円 | result=WIN | final_profit_pct=1.05% | 100株損益=+3,473円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=406.00
+  topix_pct=+1.60
+  market_state=NORMAL
+  entry_allowed=True
+- 8058.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 10:21 JST | signal=5222円 | entry=5221円 | result=WIN | final_profit_pct=1.30% | 100株損益=+6,779円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=406.30
+  topix_pct=+1.68
+  market_state=WEAK
+  entry_allowed=True
+- 8058.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 10:30 JST | signal=5255円 | entry=5249円 | result=WIN | final_profit_pct=0.76% | 100株損益=+3,980円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=407.40
+  topix_pct=+1.95
+  market_state=NORMAL
+  entry_allowed=True
+- 7012.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 10:35 JST | signal=3336円 | entry=3333円 | result=WIN | final_profit_pct=0.53% | 100株損益=+1,768円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=407.70
+  topix_pct=+2.03
+  market_state=NORMAL
+  entry_allowed=True
+- 6526.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 10:43 JST | signal=2036円 | entry=2025円 | result=LOSE | final_profit_pct=-0.20% | 100株損益=-405円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=407.90
+  topix_pct=+2.08
+  market_state=NORMAL
+  entry_allowed=True
+- 8058.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 10:47 JST | signal=5273円 | entry=5268円 | result=WIN | final_profit_pct=0.39% | 100株損益=+2,076円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=408.10
+  topix_pct=+2.13
+  market_state=NORMAL
+  entry_allowed=True
+- 6526.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 11:01 JST | signal=2044円 | entry=2044円 | result=WIN | final_profit_pct=0.66% | 100株損益=+1,346円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=408.10
+  topix_pct=+2.13
+  market_state=NORMAL
+  entry_allowed=True
+- 6526.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-07 11:13 JST | signal=2057円 | entry=2056円 | result=WIN | final_profit_pct=0.07% | 100株損益=+145円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=408.40
+  topix_pct=+2.20
+  market_state=NORMAL
+  entry_allowed=True
+- 6890.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-08 09:36 JST | signal=9430円 | entry=9409円 | result=WIN | final_profit_pct=1.07% | 100株損益=+10,082円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=409.40
+  topix_pct=+2.45
+  market_state=NORMAL
+  entry_allowed=True
+- 6890.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-08 09:42 JST | signal=9550円 | entry=9439円 | result=WIN | final_profit_pct=0.75% | 100株損益=+7,140円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=409.50
+  topix_pct=+2.48
+  market_state=NORMAL
+  entry_allowed=True
+- 6890.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-08 09:47 JST | signal=9620円 | entry=9580円 | result=LOSE | final_profit_pct=-0.73% | 100株損益=-6,986円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=409.50
+  topix_pct=+2.48
+  market_state=NORMAL
+  entry_allowed=True
+- 6890.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-08 10:12 JST | signal=9510円 | entry=9499円 | result=LOSE | final_profit_pct=-0.42% | 100株損益=-3,953円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=408.70
+  topix_pct=+2.28
+  market_state=WEAK
+  entry_allowed=True
+- 9412.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-08 10:04 JST | signal=3620円 | entry=3619円 | result=WIN | final_profit_pct=0.87% | 100株損益=+3,140円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=404.30
+  topix_pct=-0.83
+  market_state=WEAK
+  entry_allowed=True
+- 9412.T | pos=BASE | bucket=前場(09:30-11:30) | time_jst=2026-05-08 10:18 JST | signal=3655円 | entry=3654円 | result=LOSE | final_profit_pct=-0.10% | 100株損益=-365円 | eval=OK
+  topix_fetch_ok=True
+  topix_raw=404.40
+  topix_pct=-0.81
+  market_state=WEAK
+  entry_allowed=True

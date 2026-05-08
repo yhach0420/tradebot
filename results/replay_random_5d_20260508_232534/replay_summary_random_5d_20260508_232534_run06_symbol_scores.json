@@ -1,0 +1,37 @@
+{
+  "entry_blacklist_rules": {
+    "expectancy_lt_yen_100_shares": -5000.0,
+    "win_rate_lt_pct": 35.0,
+    "signals_gte": 3
+  },
+  "priority_rules": {
+    "expectancy_gt_yen_100_shares": 5000.0,
+    "win_rate_gt_pct": 60.0
+  },
+  "blacklist_symbols": [],
+  "priority_symbols": [],
+  "provisional_blacklist_candidates": [
+    "8058.T",
+    "6890.T",
+    "8473.T"
+  ],
+  "priority_emphasis_symbols": [
+    "9984.T"
+  ],
+  "scores_by_symbol": {
+    "7003.T": {
+      "symbol": "7003.T",
+      "signals": 1,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -22918.233237859342,
+      "avg_pnl_yen_100_shares_per_signal": -22918.233237859342,
+      "max_drawdown_pct_worst": -3.9555114321469356,
+      "max_drawdown_yen_100_shares_worst_est": -22918.233237859342,
+      "blacklisted": false,
+      "priority": false
+    }
+  },
+  "pnl_all_yen_100_shares": -22918.233237859342,
+  "pnl_after_excluding_blacklist_yen_100_shares": -22918.233237859342,
+  "improvement_yen_100_shares": 0.0
+}

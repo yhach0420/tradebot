@@ -1,0 +1,242 @@
+=== Replay結果（自動保存） ===
+- saved_at_jst: 2026-05-09 04:58:29
+- replay_range: random_5d
+- replay_speed: 1秒 = 1分
+- start_time_jst: 2026-04-23 09:04:00
+- end_time_jst: 2026-05-08 15:30:00
+- watch_symbols: 5016.T, 5803.T, 6315.T, 6501.T, 6526.T, 6857.T, 6890.T, 6920.T, 7003.T, 7011.T, 7012.T, 7013.T, 7203.T, 7974.T, 8001.T, 8002.T, 8031.T, 8058.T, 8136.T, 8306.T, 8473.T, 9412.T, 9432.T, 9434.T, 9984.T
+- replay_dates:
+  - 2026-04-23
+  - 2026-04-24
+  - 2026-04-27
+  - 2026-04-30
+  - 2026-05-01
+- replay_seed: (random)
+- enable_add: False
+
+【全体サマリー】
+総signal数(検出): 0
+総signal数(集計対象): 0
+
+【Replay整合性チェック】
+- signal数: 0
+- closed_position数: 0
+- 集計signal数: 0
+- ユニークsignal_id数: 0
+- signals.csv行数: 0
+- WARNING: signals.csv がヘッダーのみ（0行）
+- signals_csv: C:\Users\yhach\Documents\tradebotfile\results\replay_random_5d_20260509_045651\replay_summary_random_5d_20260509_045651_run03_signals.csv
+  ※このrunは signal 0件のため signals.csv はヘッダーのみです
+WIN/LOSE/HOLD: 0/0/0
+勝率: 0.0%
+平均利益率(WIN): 0.00%
+平均損失率(LOSE): 0.00%
+平均最大利益率: 0.00%
+平均最大下落率: 0.00%
+100株損益(合計): +0円
+100株損益(平均): +0円
+expectancy（100株/1signal）: +0円
+expectancy（profit%/1signal）: +0.00%
+
+【銘柄別サマリー】
+
+【銘柄スコアリング（Replay期待値ベース）】
+- ブラックリスト銘柄: (none)
+- 優先銘柄: (none)
+- 暫定ブラックリスト候補: 8058.T, 6890.T, 8473.T
+- 優先強調: 9984.T
+- 除外後損益(100株): +0円
+- 除外による改善額(100株): +0円
+
+【銘柄品質フィルタ（Replayベース）】
+- 禁止銘柄数: 0
+- 禁止銘柄: (none)
+- quality ON/OFF: signals 0/0  減少率 0.0%
+- quality ON/OFF: expectancy +0円/+0円  Δ=+0円
+- 除外後仮想損益(quality ON,100株): +0円  改善 +0円
+
+【除外シミュレーション（仮想損益）】
+- 7003.T除外なら: 損益 +0円（改善 +0円）/100株
+- 8058.T除外なら: 損益 +0円（改善 +0円）/100株
+- 8473.T除外なら: 損益 +0円（改善 +0円）/100株
+- 6890.T除外なら: 損益 +0円（改善 +0円）/100株
+- 7003.T/8058.T除外なら: 損益 +0円（改善 +0円）/100株
+- 7003.T/8058.T/8473.T/6890.T除外なら: 損益 +0円（改善 +0円）/100株
+
+【時間帯別サマリー】
+
+【BASE/ADD別サマリー】
+
+【ADD回数別サマリー（銘柄×日）】
+
+【ADDあり vs ADDなし（signal単位）】
+- ADDあり: signals=0  勝率=0.0%  100株損益=+0円  expectancy=+0円
+- ADDなし: signals=0  勝率=0.0%  100株損益=+0円  expectancy=+0円
+
+【ADD失敗銘柄ランキング（ADDポジション損益ワースト）】
+- ADDが発生していないためランキングはありません。
+
+【地合いフィルタ（ON/OFF別）】
+- signal候補数: 135
+- ENTRY禁止回数: 0
+- WEAK追加条件で除外: 0
+- [ON] signals=0 勝率=0.0% 100株損益=+0円
+- [OFF] signals=0 勝率=0.0% 100株損益=+0円
+- [BLOCKED] signals=0 勝率=0.0% 100株損益=+0円
+- 地合い回避による損失回避額(推定): +0円/100株
+
+【ADD ON/OFF 比較】
+- ADD ON時損益(100株): +0円
+- ADD OFF時損益(参考/BASEのみ,100株): +0円
+
+【事故分析（BASEのみ）】
+- 負け上位(LOSE worst10) 平均: RSI=N/A  ATR%=N/A%  VWAP乖離=N/A%  RS(TOPIX比)=N/A%
+- WIN平均RSI: N/A / LOSE平均RSI: N/A
+- WIN平均ATR%: N/A% / LOSE平均ATR%: N/A%
+
+【事故回避シミュレーション（BASEのみ）】
+- RSI>82 exclude: 損益 +0円（改善 +0円） / 除外 0件
+- ATR%>4 exclude: 損益 +0円（改善 +0円） / 除外 0件
+- RS<0 exclude: 損益 +0円（改善 +0円） / 除外 0件
+- VWAP dist>3% exclude: 損益 +0円（改善 +0円） / 除外 0件
+- Afternoon exclude: 損益 +0円（改善 +0円） / 除外 0件
+- Focus symbols exclude: 損益 +0円（改善 +0円） / 除外 0件
+
+[PIPELINE_DEBUG]
+
+market_debug_count=534
+candidate_loop_entered=363
+to_notify_count=363
+entry_calc_ok=363
+entry_calc_none=0
+ma25_ok=363
+ma25_none=0
+intraday_signal_ready=363
+intraday_signal_none=0
+crossed_check_entered=363
+crossed_true=135
+crossed_false=228
+signal_generated=0
+replay_signals_append_count=0
+
+continue_reason_counts:
+EXCEPTION_BEFORE_APPEND: 135
+
+PRE_SIGNAL_OBJECT_DEBUG:
+- symbol=6501.T time=2026-04-23 09:10 entry_price=5228.222999999999 market_state=WEAK
+- symbol=6526.T time=2026-04-23 09:10 entry_price=1961.9599999999998 market_state=WEAK
+- symbol=8002.T time=2026-04-23 09:19 entry_price=5936.931 market_state=WEAK
+- symbol=6526.T time=2026-04-23 09:23 entry_price=1982.9809999999998 market_state=WEAK
+- symbol=6526.T time=2026-04-23 09:27 entry_price=2001.4994999999997 market_state=NORMAL
+- symbol=6501.T time=2026-04-23 09:42 entry_price=5270.264999999999 market_state=NORMAL
+- symbol=7011.T time=2026-04-23 09:49 entry_price=4700.696 market_state=NORMAL
+- symbol=6890.T time=2026-04-23 09:52 entry_price=7257.249999999999 market_state=NORMAL
+- symbol=7011.T time=2026-04-23 10:25 entry_price=4701.696999999999 market_state=WEAK
+- symbol=7011.T time=2026-04-23 14:12 entry_price=4728.723999999999 market_state=WEAK
+- symbol=7011.T time=2026-04-23 14:46 entry_price=4750.745999999999 market_state=WEAK
+- symbol=6890.T time=2026-04-23 15:11 entry_price=7287.279999999999 market_state=WEAK
+- symbol=7011.T time=2026-04-23 15:09 entry_price=4761.757 market_state=WEAK
+- symbol=5803.T time=2026-04-24 09:18 entry_price=6017.0109999999995 market_state=NORMAL
+- symbol=6920.T time=2026-04-24 09:19 entry_price=45435.38999999999 market_state=NORMAL
+- symbol=7011.T time=2026-04-24 09:30 entry_price=4801.797 market_state=NORMAL
+- symbol=5803.T time=2026-04-24 09:32 entry_price=6076.07 market_state=NORMAL
+- symbol=5016.T time=2026-04-24 09:37 entry_price=4725.721 market_state=NORMAL
+- symbol=9984.T time=2026-04-24 09:53 entry_price=5908.902999999999 market_state=WEAK
+- symbol=9984.T time=2026-04-24 10:13 entry_price=5957.951999999999 market_state=WEAK
+- symbol=9412.T time=2026-04-24 10:12 entry_price=3213.2099999999996 market_state=WEAK
+- symbol=9412.T time=2026-04-24 10:19 entry_price=3228.2249999999995 market_state=WEAK
+- symbol=9984.T time=2026-04-24 10:28 entry_price=5991.985999999999 market_state=WEAK
+- symbol=6890.T time=2026-04-24 10:51 entry_price=7367.359999999999 market_state=NORMAL
+- symbol=9412.T time=2026-04-24 10:41 entry_price=3238.2349999999997 market_state=WEAK
+- symbol=6890.T time=2026-04-24 11:20 entry_price=7397.389999999999 market_state=WEAK
+- symbol=6890.T time=2026-04-24 11:23 entry_price=7447.44 market_state=NORMAL
+- symbol=6526.T time=2026-04-24 10:58 entry_price=2036.0339999999999 market_state=WEAK
+- symbol=9412.T time=2026-04-24 11:08 entry_price=3263.2599999999998 market_state=WEAK
+- symbol=6890.T time=2026-04-24 12:41 entry_price=7517.509999999999 market_state=WEAK
+- symbol=8002.T time=2026-04-24 11:17 entry_price=6002.996999999999 market_state=WEAK
+- symbol=6890.T time=2026-04-24 12:53 entry_price=7557.549999999999 market_state=WEAK
+- symbol=6526.T time=2026-04-24 12:30 entry_price=2059.057 market_state=WEAK
+- symbol=6857.T time=2026-04-24 12:33 entry_price=28118.089999999997 market_state=WEAK
+- symbol=6890.T time=2026-04-24 13:24 entry_price=7527.5199999999995 market_state=WEAK
+- symbol=6857.T time=2026-04-24 13:08 entry_price=28638.609999999997 market_state=WEAK
+- symbol=9412.T time=2026-04-24 13:30 entry_price=3278.2749999999996 market_state=WEAK
+- symbol=6890.T time=2026-04-24 14:03 entry_price=7467.459999999999 market_state=WEAK
+- symbol=9984.T time=2026-04-24 13:36 entry_price=5932.927 market_state=WEAK
+- symbol=6526.T time=2026-04-24 13:42 entry_price=2050.048 market_state=WEAK
+- symbol=6857.T time=2026-04-24 13:46 entry_price=28643.614999999998 market_state=NORMAL
+- symbol=6857.T time=2026-04-24 13:50 entry_price=28773.744999999995 market_state=NORMAL
+- symbol=6890.T time=2026-04-24 14:37 entry_price=7497.489999999999 market_state=NORMAL
+- symbol=6857.T time=2026-04-24 14:01 entry_price=28803.774999999998 market_state=NORMAL
+- symbol=6526.T time=2026-04-24 14:02 entry_price=2060.058 market_state=WEAK
+- symbol=9412.T time=2026-04-24 14:32 entry_price=3268.2649999999994 market_state=NORMAL
+- symbol=9984.T time=2026-04-24 14:14 entry_price=5955.949999999999 market_state=NORMAL
+- symbol=6857.T time=2026-04-24 14:24 entry_price=28913.885 market_state=NORMAL
+- symbol=6857.T time=2026-04-24 14:36 entry_price=29269.239999999998 market_state=NORMAL
+- symbol=9412.T time=2026-04-24 15:14 entry_price=3288.285 market_state=NORMAL
+
+CONTINUE_BEFORE_APPEND:
+- reason=EXCEPTION_BEFORE_APPEND symbol=6501.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6526.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=8002.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6526.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6526.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6501.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=7011.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6890.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=7011.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=7011.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=7011.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6890.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=7011.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=5803.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6920.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=7011.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=5803.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=5016.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9984.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9984.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9412.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9412.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9984.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6890.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9412.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6890.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6890.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6526.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9412.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6890.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=8002.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6890.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6526.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6857.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6890.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6857.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9412.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6890.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9984.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6526.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6857.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6857.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6890.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6857.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6526.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9412.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9984.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6857.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=6857.T
+- reason=EXCEPTION_BEFORE_APPEND symbol=9412.T
+
+EVAL_FILTER_DEBUG:
+- before_count: 0
+- after_count: 0
+
+【フィルタ比較】
+- signal数(仮想): ON=0 / OFF=0 / Δ=0
+- 期待値変化(OFF-ON,円/100株/signal): +0円
+- WEAK時勝率(ON,BASE): 0.0%
+- RSIフィルタOFF(参考): signals=0 expectancy=+0円
+- ATRフィルタOFF(参考): signals=0 expectancy=+0円
+
+【地合いレジーム別（ON=採用分）】
+
+【signal詳細】
