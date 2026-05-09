@@ -1,0 +1,241 @@
+=== Replay 合算サマリー ===
+debug_file: replay_summary_random_apr_20260509_214329_all_runs_debug.txt
+
+【Replay設定】
+
+config_name: replay_morning_vwap2_dd30k_rlt50
+config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2_dd30k_rlt50.json
+
+replay_range: random_apr (cli)
+replay_repeat: 3 (cli)
+replay_mode:  (cli)
+
+early_exit: True
+strict_afternoon: True
+disable_afternoon_entry: True
+topix_weak_block: True
+replay_date_pool_start: 2026-04-01 (random_apr)
+replay_date_pool_end: 2026-04-30 (random_apr)
+replay_candidate_days_count: 22 (random_apr)
+RSI filter: enabled=False threshold=75.0 (config/config)
+VWAP distance filter: enabled=True threshold=2.0 (config/config)
+ATR filter: enabled=False threshold=4.0 (config/config)
+
+- saved_at_jst: 2026-05-09 21:44:10
+- repeat_label: random_apr
+- output_folder: results/replay_random_apr_20260509_214329/
+- 実行回数: 3
+【比較指標（run合算・月別/random_60d 比較用）】
+- 平均expectancy(円/信号・run平均): +2,474円
+- 合計100株損益: +280,416円
+- 最大負けrun: -30,378円
+- プラスrun数/マイナスrun数: 2/1
+- lose_worst10_sum合算(全run): -153,248円
+- max_intraday_drawdown(最悪run): +48,999円
+- avg_daily_drawdown(run平均): +8,489円
+- daily_loss_stop_trigger_count(合算): 1
+- daily_loss_stop_skipped_entries(合算): 5
+- regime_filter_skipped_signals_count(合算): 61
+- 合計signal数: 74
+
+【その他サマリー】
+- 平均勝率: 45.3%
+- 平均100株損益: +93,472円
+- ADD ON時損益(合算,100株): +280,416円
+- ADD OFF時損益(参考/BASEのみ合算,100株): +280,416円
+- 最大勝ちrun: +294,520円
+
+[TIME_BUCKET_ANALYSIS]
+
+bucket: 09:00-09:30
+signals: 27
+winrate: 48.1%
+expectancy: +8436
+total_pnl: +227777
+lose_worst10_sum: -77258
+avg_hold_minutes: 17.4
+
+bucket: 09:30-10:00
+signals: 16
+winrate: 31.2%
+expectancy: -405
+total_pnl: -6476
+lose_worst10_sum: -16476
+avg_hold_minutes: 14.4
+
+bucket: 10:00-10:30
+signals: 8
+winrate: 50.0%
+expectancy: -1998
+total_pnl: -15985
+lose_worst10_sum: -26627
+avg_hold_minutes: 50.2
+
+bucket: 10:30-11:00
+signals: 9
+winrate: 77.8%
+expectancy: +4560
+total_pnl: +41040
+lose_worst10_sum: -7353
+avg_hold_minutes: 31.7
+
+bucket: 11:00-11:30
+signals: 14
+winrate: 50.0%
+expectancy: +2433
+total_pnl: +34061
+lose_worst10_sum: -31432
+avg_hold_minutes: 46.9
+
+[MARKET_REGIME_ANALYSIS]
+
+regime: AFTERNOON_WEAK
+signals: 5
+winrate: 40.0%
+avg_expectancy_yen_100_shares: +465
+total_pnl_100_shares: +2325
+lose_worst10_sum: -6269
+max_drawdown: +3023
+
+regime: MORNING_STRONG
+signals: 25
+winrate: 56.0%
+avg_expectancy_yen_100_shares: +8521
+total_pnl_100_shares: +213027
+lose_worst10_sum: -84713
+max_drawdown: +36564
+
+regime: MORNING_WEAK
+signals: 7
+winrate: 28.6%
+avg_expectancy_yen_100_shares: -1929
+total_pnl_100_shares: -13505
+lose_worst10_sum: -18235
+max_drawdown: +7196
+
+regime: RISING_RATIO_GE50
+signals: 74
+winrate: 48.6%
+avg_expectancy_yen_100_shares: +3789
+total_pnl_100_shares: +280416
+lose_worst10_sum: -153248
+max_drawdown: +36564
+
+regime: STATE_CRASH
+signals: 1
+winrate: 0.0%
+avg_expectancy_yen_100_shares: -847
+total_pnl_100_shares: -847
+lose_worst10_sum: -847
+max_drawdown: +847
+
+regime: STATE_NORMAL
+signals: 51
+winrate: 52.9%
+avg_expectancy_yen_100_shares: +5257
+total_pnl_100_shares: +268110
+lose_worst10_sum: -129757
+max_drawdown: +36564
+
+regime: STATE_WEAK
+signals: 22
+winrate: 40.9%
+avg_expectancy_yen_100_shares: +598
+total_pnl_100_shares: +13153
+lose_worst10_sum: -28444
+max_drawdown: +7196
+
+regime: TOPIX_CRASH
+signals: 1
+winrate: 0.0%
+avg_expectancy_yen_100_shares: -847
+total_pnl_100_shares: -847
+lose_worst10_sum: -847
+max_drawdown: +847
+
+regime: TOPIX_STRONG
+signals: 25
+winrate: 44.0%
+avg_expectancy_yen_100_shares: +200
+total_pnl_100_shares: +5004
+lose_worst10_sum: -85853
+max_drawdown: +36564
+
+regime: TOPIX_WEAK_PCT
+signals: 1
+winrate: 0.0%
+avg_expectancy_yen_100_shares: -847
+total_pnl_100_shares: -847
+lose_worst10_sum: -847
+max_drawdown: +847
+
+【各runの概要】
+- run01: seed=None  signals=22  勝率=40.9%  100株損益=-30,378円
+  replay_dates: 2026-04-10, 2026-04-15, 2026-04-23, 2026-04-24, 2026-04-27
+  config_name: replay_morning_vwap2_dd30k_rlt50
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2_dd30k_rlt50.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-75,914円
+- run02: seed=None  signals=39  勝率=56.4%  100株損益=+294,520円
+  replay_dates: 2026-04-14, 2026-04-16, 2026-04-23, 2026-04-28, 2026-04-30
+  config_name: replay_morning_vwap2_dd30k_rlt50
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2_dd30k_rlt50.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-65,901円 (vs baseline +10,013円)
+- run03: seed=None  signals=13  勝率=38.5%  100株損益=+16,275円
+  replay_dates: 2026-04-10, 2026-04-13, 2026-04-22, 2026-04-23, 2026-04-30
+  config_name: replay_morning_vwap2_dd30k_rlt50
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2_dd30k_rlt50.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-11,433円 (vs baseline +64,481円)
+
+【最大損失run】
+- run01: -36,564円 6920.T 2026-04-15 09:16 JST exit_reason=VWAP_BREAK_EARLY
+
+【後場損益（12:30以降, mode別合算）】
+- AFTERNOON_DISABLED: signals=0  100株損益=+0円  expectancy=+0円
+
+【BASE/ADD別（合算）】
+- BASE: signals=74  100株損益=+280,416円  expectancy=+3,789円
+- ADD1: signals=0  100株損益=+0円  expectancy=+0円
+- ADD2: signals=0  100株損益=+0円  expectancy=+0円
+
+【地合いフィルタ】
+- BLOCK数合計: 12
+- BLOCK理由ランキング:
+  - TOPIX_CRASH: 12
+  - rising<40%: 11
+  - high_update_low: 5
+  - afternoon_weak: 1
+  - BREADTH_WEAK: 1
+
+【銘柄別 期待値ランキング（合算）】
+- 6920.T: signals=9  expectancy=+13,309円  100株損益=+119,777円
+- 6857.T: signals=9  expectancy=+12,932円  100株損益=+116,387円
+- 6526.T: signals=5  expectancy=+4,059円  100株損益=+20,296円
+- 7012.T: signals=3  expectancy=+2,541円  100株損益=+7,623円
+- 9984.T: signals=2  expectancy=+1,758円  100株損益=+3,517円
+- 9412.T: signals=6  expectancy=+1,675円  100株損益=+10,050円
+- 6890.T: signals=4  expectancy=+1,536円  100株損益=+6,146円
+- 6315.T: signals=3  expectancy=+1,357円  100株損益=+4,071円
+- 7011.T: signals=4  expectancy=+1,129円  100株損益=+4,517円
+- 8306.T: signals=1  expectancy=+867円  100株損益=+867円
+

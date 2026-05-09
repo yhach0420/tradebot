@@ -1,0 +1,38 @@
+{
+  "name": "replay_full_day_vwap2_dd30k_rlt50_srf_strong_vwap_ge_15_only",
+  "early_exit": true,
+  "vwap_break_exit": true,
+  "recent_5m_low_break_exit": true,
+  "strict_afternoon": false,
+  "topix_weak_block": true,
+  "disable_afternoon_entry": false,
+  "entry_filters": {
+    "rsi": {
+      "enabled": false,
+      "exclude_above": 75.0
+    },
+    "vwap_distance_pct": {
+      "enabled": true,
+      "exclude_above": 2.0
+    },
+    "atr_pct": {
+      "enabled": false,
+      "exclude_above": 4.0
+    }
+  },
+  "risk_controls": {
+    "daily_loss_stop": {
+      "enabled": true,
+      "stop_yen_100_shares": 30000
+    }
+  },
+  "regime_filters": {
+    "disable_rising_ratio_lt50": true,
+    "disable_morning_weak": false,
+    "disable_topix_weak": false
+  },
+  "composite_signal_filters": {
+    "strong_risk_filter": "strong_vwap_ge_15_only",
+    "strong_vwap_ge_threshold_pct": 1.5
+  }
+}

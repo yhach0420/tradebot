@@ -1,0 +1,792 @@
+{
+  "meta": {
+    "saved_at_jst": "2026-05-10 02:13:12",
+    "repeat_label": "random_apr",
+    "repeat_runs": 3,
+    "output_folder": "replay_random_apr_20260510_021231"
+  },
+  "summary": {
+    "runs": 3,
+    "total_signals": 111,
+    "avg_win_rate_pct": 49.313194112333285,
+    "avg_pnl_yen_100_shares": 245440.09279129084,
+    "total_pnl_yen_100_shares": 736320.2783738725,
+    "avg_expectancy_yen_100_shares": 6350.343229697988,
+    "max_intraday_drawdown_yen_100_shares_worst": 48999.34595983394,
+    "avg_daily_drawdown_yen_100_shares_avg": 7665.204012005775,
+    "daily_loss_stop_trigger_count_total": 1,
+    "daily_loss_stop_skipped_entries_total": 4,
+    "regime_filter_skipped_signals_total": 63,
+    "add_on_total_pnl_yen_100_shares": 736320.2783738726,
+    "add_off_ref_total_pnl_yen_100_shares": 736320.2783738726,
+    "plus_runs": 2,
+    "minus_runs": 1,
+    "max_win_run_pnl_yen_100_shares": 400488.31852308975,
+    "max_lose_run_pnl_yen_100_shares": -27933.902277579666,
+    "sum_lose_worst10_yen_100_shares": -204893.81261416507
+  },
+  "by_position_kind": {
+    "BASE": {
+      "signals": 111,
+      "pnl_yen_100_shares": 736320.2783738726,
+      "expectancy_yen_100_shares": 6633.51602138624
+    },
+    "ADD1": {
+      "signals": 0,
+      "pnl_yen_100_shares": 0.0,
+      "expectancy_yen_100_shares": 0.0
+    },
+    "ADD2": {
+      "signals": 0,
+      "pnl_yen_100_shares": 0.0,
+      "expectancy_yen_100_shares": 0.0
+    }
+  },
+  "market_filter": {
+    "blocked_entry_total": 15,
+    "blocked_reason_ranking": [
+      {
+        "reason": "TOPIX_CRASH",
+        "count": 15
+      },
+      {
+        "reason": "rising<40%",
+        "count": 14
+      },
+      {
+        "reason": "high_update_low",
+        "count": 7
+      },
+      {
+        "reason": "BREADTH_WEAK",
+        "count": 4
+      },
+      {
+        "reason": "afternoon_weak",
+        "count": 2
+      }
+    ]
+  },
+  "by_symbol_expectancy_ranking": [
+    {
+      "symbol": "6920.T",
+      "signals": 16,
+      "pnl_yen_100_shares": 517099.6890217619,
+      "expectancy_yen_100_shares": 32318.730563860117
+    },
+    {
+      "symbol": "6857.T",
+      "signals": 13,
+      "pnl_yen_100_shares": 214829.85190259447,
+      "expectancy_yen_100_shares": 16525.373223276496
+    },
+    {
+      "symbol": "9984.T",
+      "signals": 2,
+      "pnl_yen_100_shares": 5111.370765957016,
+      "expectancy_yen_100_shares": 2555.685382978508
+    },
+    {
+      "symbol": "7012.T",
+      "signals": 8,
+      "pnl_yen_100_shares": 12954.291418831905,
+      "expectancy_yen_100_shares": 1619.286427353988
+    },
+    {
+      "symbol": "8002.T",
+      "signals": 2,
+      "pnl_yen_100_shares": 3192.6073926075383,
+      "expectancy_yen_100_shares": 1596.3036963037691
+    },
+    {
+      "symbol": "8306.T",
+      "signals": 4,
+      "pnl_yen_100_shares": 4663.799162321028,
+      "expectancy_yen_100_shares": 1165.949790580257
+    },
+    {
+      "symbol": "6315.T",
+      "signals": 9,
+      "pnl_yen_100_shares": 5508.253291130541,
+      "expectancy_yen_100_shares": 612.028143458949
+    },
+    {
+      "symbol": "9412.T",
+      "signals": 5,
+      "pnl_yen_100_shares": 2384.01457484891,
+      "expectancy_yen_100_shares": 476.80291496978197
+    },
+    {
+      "symbol": "5016.T",
+      "signals": 5,
+      "pnl_yen_100_shares": 1109.1342289200838,
+      "expectancy_yen_100_shares": 221.82684578401677
+    },
+    {
+      "symbol": "5803.T",
+      "signals": 11,
+      "pnl_yen_100_shares": 547.7493649677326,
+      "expectancy_yen_100_shares": 49.79539681524842
+    },
+    {
+      "symbol": "8473.T",
+      "signals": 1,
+      "pnl_yen_100_shares": -6.303980055169036,
+      "expectancy_yen_100_shares": -6.303980055169036
+    },
+    {
+      "symbol": "8136.T",
+      "signals": 13,
+      "pnl_yen_100_shares": -845.2617451911234,
+      "expectancy_yen_100_shares": -65.02013424547103
+    },
+    {
+      "symbol": "6526.T",
+      "signals": 2,
+      "pnl_yen_100_shares": -354.06998412230587,
+      "expectancy_yen_100_shares": -177.03499206115293
+    },
+    {
+      "symbol": "6501.T",
+      "signals": 3,
+      "pnl_yen_100_shares": -1197.1703106169934,
+      "expectancy_yen_100_shares": -399.05677020566446
+    },
+    {
+      "symbol": "7011.T",
+      "signals": 3,
+      "pnl_yen_100_shares": -1431.053120876685,
+      "expectancy_yen_100_shares": -477.01770695889496
+    },
+    {
+      "symbol": "7013.T",
+      "signals": 7,
+      "pnl_yen_100_shares": -7433.785963007177,
+      "expectancy_yen_100_shares": -1061.9694232867396
+    },
+    {
+      "symbol": "7003.T",
+      "signals": 2,
+      "pnl_yen_100_shares": -3180.7955225670694,
+      "expectancy_yen_100_shares": -1590.3977612835347
+    },
+    {
+      "symbol": "8031.T",
+      "signals": 1,
+      "pnl_yen_100_shares": -1698.9562853130587,
+      "expectancy_yen_100_shares": -1698.9562853130587
+    },
+    {
+      "symbol": "6890.T",
+      "signals": 2,
+      "pnl_yen_100_shares": -5452.0651762029265,
+      "expectancy_yen_100_shares": -2726.0325881014633
+    },
+    {
+      "symbol": "7974.T",
+      "signals": 2,
+      "pnl_yen_100_shares": -9481.02066211606,
+      "expectancy_yen_100_shares": -4740.51033105803
+    }
+  ],
+  "symbol_contribution_analysis": {
+    "ranking_method": "pnl_desc",
+    "total_pnl_yen_100_shares": 736320.2783738725,
+    "total_signals": 111,
+    "by_symbol": [
+      {
+        "symbol": "6920.T",
+        "signals": 16,
+        "pnl_yen_100_shares": 517099.6890217619,
+        "pnl_ratio_of_total": 0.7022754964235827,
+        "pnl_ratio_of_abs_total": 0.7022754964235827,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 517099.6890217619,
+        "cumulative_pnl_ratio_of_total": 0.7022754964235827
+      },
+      {
+        "symbol": "6857.T",
+        "signals": 13,
+        "pnl_yen_100_shares": 214829.85190259447,
+        "pnl_ratio_of_total": 0.2917614225932168,
+        "pnl_ratio_of_abs_total": 0.2917614225932168,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 731929.5409243563,
+        "cumulative_pnl_ratio_of_total": 0.9940369190167995
+      },
+      {
+        "symbol": "7012.T",
+        "signals": 8,
+        "pnl_yen_100_shares": 12954.291418831905,
+        "pnl_ratio_of_total": 0.01759328351983029,
+        "pnl_ratio_of_abs_total": 0.01759328351983029,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 744883.8323431882,
+        "cumulative_pnl_ratio_of_total": 1.0116302025366297
+      },
+      {
+        "symbol": "6315.T",
+        "signals": 9,
+        "pnl_yen_100_shares": 5508.253291130541,
+        "pnl_ratio_of_total": 0.007480784453329534,
+        "pnl_ratio_of_abs_total": 0.007480784453329534,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 750392.0856343188,
+        "cumulative_pnl_ratio_of_total": 1.0191109869899593
+      },
+      {
+        "symbol": "9984.T",
+        "signals": 2,
+        "pnl_yen_100_shares": 5111.370765957016,
+        "pnl_ratio_of_total": 0.006941776447126012,
+        "pnl_ratio_of_abs_total": 0.006941776447126012,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 755503.4564002758,
+        "cumulative_pnl_ratio_of_total": 1.0260527634370853
+      },
+      {
+        "symbol": "8306.T",
+        "signals": 4,
+        "pnl_yen_100_shares": 4663.799162321028,
+        "pnl_ratio_of_total": 0.006333927367341834,
+        "pnl_ratio_of_abs_total": 0.006333927367341834,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 760167.2555625968,
+        "cumulative_pnl_ratio_of_total": 1.0323866908044272
+      },
+      {
+        "symbol": "8002.T",
+        "signals": 2,
+        "pnl_yen_100_shares": 3192.6073926075383,
+        "pnl_ratio_of_total": 0.004335894971761821,
+        "pnl_ratio_of_abs_total": 0.004335894971761821,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 763359.8629552043,
+        "cumulative_pnl_ratio_of_total": 1.0367225857761888
+      },
+      {
+        "symbol": "9412.T",
+        "signals": 5,
+        "pnl_yen_100_shares": 2384.01457484891,
+        "pnl_ratio_of_total": 0.0032377412993621337,
+        "pnl_ratio_of_abs_total": 0.0032377412993621337,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 765743.8775300533,
+        "cumulative_pnl_ratio_of_total": 1.039960327075551
+      },
+      {
+        "symbol": "5016.T",
+        "signals": 5,
+        "pnl_yen_100_shares": 1109.1342289200838,
+        "pnl_ratio_of_total": 0.0015063203628854997,
+        "pnl_ratio_of_abs_total": 0.0015063203628854997,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 766853.0117589734,
+        "cumulative_pnl_ratio_of_total": 1.0414666474384366
+      },
+      {
+        "symbol": "5803.T",
+        "signals": 11,
+        "pnl_yen_100_shares": 547.7493649677326,
+        "pnl_ratio_of_total": 0.0007439009640986806,
+        "pnl_ratio_of_abs_total": 0.0007439009640986806,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 767400.761123941,
+        "cumulative_pnl_ratio_of_total": 1.0422105484025352
+      },
+      {
+        "symbol": "8473.T",
+        "signals": 1,
+        "pnl_yen_100_shares": -6.303980055169036,
+        "pnl_ratio_of_total": -8.561464678239024e-06,
+        "pnl_ratio_of_abs_total": 8.561464678239024e-06,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 767394.4571438859,
+        "cumulative_pnl_ratio_of_total": 1.042201986937857
+      },
+      {
+        "symbol": "6526.T",
+        "signals": 2,
+        "pnl_yen_100_shares": -354.06998412230587,
+        "pnl_ratio_of_total": -0.0004808640947717102,
+        "pnl_ratio_of_abs_total": 0.0004808640947717102,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 767040.3871597636,
+        "cumulative_pnl_ratio_of_total": 1.0417211228430854
+      },
+      {
+        "symbol": "8136.T",
+        "signals": 13,
+        "pnl_yen_100_shares": -845.2617451911234,
+        "pnl_ratio_of_total": -0.0011479539135576203,
+        "pnl_ratio_of_abs_total": 0.0011479539135576203,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 766195.1254145724,
+        "cumulative_pnl_ratio_of_total": 1.0405731689295277
+      },
+      {
+        "symbol": "6501.T",
+        "signals": 3,
+        "pnl_yen_100_shares": -1197.1703106169934,
+        "pnl_ratio_of_total": -0.0016258825755293414,
+        "pnl_ratio_of_abs_total": 0.0016258825755293414,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 764997.9551039555,
+        "cumulative_pnl_ratio_of_total": 1.0389472863539984
+      },
+      {
+        "symbol": "7011.T",
+        "signals": 3,
+        "pnl_yen_100_shares": -1431.053120876685,
+        "pnl_ratio_of_total": -0.001943519909620167,
+        "pnl_ratio_of_abs_total": 0.001943519909620167,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 763566.9019830788,
+        "cumulative_pnl_ratio_of_total": 1.037003766444378
+      },
+      {
+        "symbol": "8031.T",
+        "signals": 1,
+        "pnl_yen_100_shares": -1698.9562853130587,
+        "pnl_ratio_of_total": -0.0023073604451925743,
+        "pnl_ratio_of_abs_total": 0.0023073604451925743,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 761867.9456977658,
+        "cumulative_pnl_ratio_of_total": 1.0346964059991857
+      },
+      {
+        "symbol": "7003.T",
+        "signals": 2,
+        "pnl_yen_100_shares": -3180.7955225670694,
+        "pnl_ratio_of_total": -0.004319853216037593,
+        "pnl_ratio_of_abs_total": 0.004319853216037593,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 758687.1501751987,
+        "cumulative_pnl_ratio_of_total": 1.030376552783148
+      },
+      {
+        "symbol": "6890.T",
+        "signals": 2,
+        "pnl_yen_100_shares": -5452.0651762029265,
+        "pnl_ratio_of_total": -0.007404475112709848,
+        "pnl_ratio_of_abs_total": 0.007404475112709848,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 753235.0849989958,
+        "cumulative_pnl_ratio_of_total": 1.022972077670438
+      },
+      {
+        "symbol": "7013.T",
+        "signals": 7,
+        "pnl_yen_100_shares": -7433.785963007177,
+        "pnl_ratio_of_total": -0.010095859344556327,
+        "pnl_ratio_of_abs_total": 0.010095859344556327,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 745801.2990359886,
+        "cumulative_pnl_ratio_of_total": 1.012876218325882
+      },
+      {
+        "symbol": "7974.T",
+        "signals": 2,
+        "pnl_yen_100_shares": -9481.02066211606,
+        "pnl_ratio_of_total": -0.012876218325881818,
+        "pnl_ratio_of_abs_total": 0.012876218325881818,
+        "expectancy_yen_100_shares_per_signal": 0.0,
+        "cumulative_pnl_yen_100_shares": 736320.2783738726,
+        "cumulative_pnl_ratio_of_total": 1.0000000000000002
+      }
+    ],
+    "exclude_top_n_simulation": [
+      {
+        "exclude_top_n_symbols": 1,
+        "excluded_symbols": [
+          "6920.T"
+        ],
+        "total_pnl_before_yen_100_shares": 736320.2783738725,
+        "total_signals_before": 111,
+        "expectancy_before_yen_100_shares_per_signal": 6633.516021386239,
+        "total_pnl_after_yen_100_shares": 219220.58935211063,
+        "total_signals_after": 95,
+        "expectancy_after_yen_100_shares_per_signal": 2307.585151074849
+      },
+      {
+        "exclude_top_n_symbols": 2,
+        "excluded_symbols": [
+          "6920.T",
+          "6857.T"
+        ],
+        "total_pnl_before_yen_100_shares": 736320.2783738725,
+        "total_signals_before": 111,
+        "expectancy_before_yen_100_shares_per_signal": 6633.516021386239,
+        "total_pnl_after_yen_100_shares": 4390.737449516193,
+        "total_signals_after": 82,
+        "expectancy_after_yen_100_shares_per_signal": 53.5455786526365
+      },
+      {
+        "exclude_top_n_symbols": 3,
+        "excluded_symbols": [
+          "6920.T",
+          "6857.T",
+          "7012.T"
+        ],
+        "total_pnl_before_yen_100_shares": 736320.2783738725,
+        "total_signals_before": 111,
+        "expectancy_before_yen_100_shares_per_signal": 6633.516021386239,
+        "total_pnl_after_yen_100_shares": -8563.553969315719,
+        "total_signals_after": 74,
+        "expectancy_after_yen_100_shares_per_signal": -115.72370228805025
+      }
+    ]
+  },
+  "signal_feature_analysis": {
+    "gap_pct": [
+      {
+        "bucket": ">=3",
+        "signals": 42,
+        "winrate_pct": 38.095238095238095,
+        "avg_expectancy_yen_100_shares": 2540.6308558446153,
+        "total_pnl_yen_100_shares": 106706.49594547384,
+        "lose_worst10_sum_yen_100_shares": -92304.12260092636
+      },
+      {
+        "bucket": "1~3",
+        "signals": 36,
+        "winrate_pct": 72.22222222222221,
+        "avg_expectancy_yen_100_shares": 9882.377892115808,
+        "total_pnl_yen_100_shares": 355765.6041161691,
+        "lose_worst10_sum_yen_100_shares": -41957.37733062787
+      },
+      {
+        "bucket": "-1~1",
+        "signals": 30,
+        "winrate_pct": 43.333333333333336,
+        "avg_expectancy_yen_100_shares": 9277.849019258074,
+        "total_pnl_yen_100_shares": 278335.4705777422,
+        "lose_worst10_sum_yen_100_shares": -60598.117512052675
+      },
+      {
+        "bucket": "-3~-1",
+        "signals": 3,
+        "winrate_pct": 0.0,
+        "avg_expectancy_yen_100_shares": -1495.7640885042322,
+        "total_pnl_yen_100_shares": -4487.292265512697,
+        "lose_worst10_sum_yen_100_shares": -4487.292265512696
+      }
+    ],
+    "entry_vwap_distance_pct": [
+      {
+        "bucket": "0.5~1.0",
+        "signals": 72,
+        "winrate_pct": 55.55555555555556,
+        "avg_expectancy_yen_100_shares": 8211.57010498646,
+        "total_pnl_yen_100_shares": 591233.0475590251,
+        "lose_worst10_sum_yen_100_shares": -54489.78737412969
+      },
+      {
+        "bucket": "1.0~1.5",
+        "signals": 33,
+        "winrate_pct": 36.36363636363637,
+        "avg_expectancy_yen_100_shares": 5570.10474347442,
+        "total_pnl_yen_100_shares": 183813.45653465585,
+        "lose_worst10_sum_yen_100_shares": -92630.96084958485
+      },
+      {
+        "bucket": "1.5~2.0",
+        "signals": 6,
+        "winrate_pct": 50.0,
+        "avg_expectancy_yen_100_shares": -6454.370953301419,
+        "total_pnl_yen_100_shares": -38726.22571980851,
+        "lose_worst10_sum_yen_100_shares": -38726.22571980851
+      }
+    ],
+    "first_30m_volume_ratio": [
+      {
+        "bucket": "<1",
+        "signals": 111,
+        "winrate_pct": 49.549549549549546,
+        "avg_expectancy_yen_100_shares": 6633.516021386239,
+        "total_pnl_yen_100_shares": 736320.2783738725,
+        "lose_worst10_sum_yen_100_shares": -148515.77251081023
+      }
+    ],
+    "atr_pct": [
+      {
+        "bucket": "<1",
+        "signals": 94,
+        "winrate_pct": 50.0,
+        "avg_expectancy_yen_100_shares": 5202.707783360894,
+        "total_pnl_yen_100_shares": 489054.531635924,
+        "lose_worst10_sum_yen_100_shares": -148515.77251081023
+      },
+      {
+        "bucket": "1~2",
+        "signals": 11,
+        "winrate_pct": 36.36363636363637,
+        "avg_expectancy_yen_100_shares": 14885.732489305983,
+        "total_pnl_yen_100_shares": 163743.0573823658,
+        "lose_worst10_sum_yen_100_shares": 72870.80197819507
+      },
+      {
+        "bucket": "N/A",
+        "signals": 4,
+        "winrate_pct": 50.0,
+        "avg_expectancy_yen_100_shares": -387.72514040248143,
+        "total_pnl_yen_100_shares": -1550.9005616099257,
+        "lose_worst10_sum_yen_100_shares": -1550.9005616099257
+      },
+      {
+        "bucket": "2~3",
+        "signals": 2,
+        "winrate_pct": 100.0,
+        "avg_expectancy_yen_100_shares": 42536.79495859628,
+        "total_pnl_yen_100_shares": 85073.58991719256,
+        "lose_worst10_sum_yen_100_shares": 85073.58991719256
+      }
+    ]
+  },
+  "signal_composite_feature_analysis": {
+    "gap_pct_x_market_regime": [
+      {
+        "gap_pct_bucket": ">=3",
+        "market_regime": "NORMAL",
+        "signals": 32,
+        "winrate_pct": 40.625,
+        "avg_expectancy_yen_100_shares": 3460.4496525237378,
+        "total_pnl_yen_100_shares": 110734.38888075961,
+        "lose_worst10_sum_yen_100_shares": -87834.50343035422
+      },
+      {
+        "gap_pct_bucket": "1~3",
+        "market_regime": "NORMAL",
+        "signals": 27,
+        "winrate_pct": 66.66666666666666,
+        "avg_expectancy_yen_100_shares": 12372.919099343315,
+        "total_pnl_yen_100_shares": 334068.8156822695,
+        "lose_worst10_sum_yen_100_shares": -41637.00009005314
+      },
+      {
+        "gap_pct_bucket": "-1~1",
+        "market_regime": "NORMAL",
+        "signals": 26,
+        "winrate_pct": 50.0,
+        "avg_expectancy_yen_100_shares": 12167.02064939315,
+        "total_pnl_yen_100_shares": 316342.5368842219,
+        "lose_worst10_sum_yen_100_shares": -26324.08632213582
+      },
+      {
+        "gap_pct_bucket": ">=3",
+        "market_regime": "WEAK",
+        "signals": 10,
+        "winrate_pct": 30.0,
+        "avg_expectancy_yen_100_shares": -402.7892935285755,
+        "total_pnl_yen_100_shares": -4027.892935285755,
+        "lose_worst10_sum_yen_100_shares": -4027.8929352857563
+      },
+      {
+        "gap_pct_bucket": "1~3",
+        "market_regime": "WEAK",
+        "signals": 9,
+        "winrate_pct": 88.88888888888889,
+        "avg_expectancy_yen_100_shares": 2410.754270433289,
+        "total_pnl_yen_100_shares": 21696.7884338996,
+        "lose_worst10_sum_yen_100_shares": 21696.7884338996
+      },
+      {
+        "gap_pct_bucket": "-1~1",
+        "market_regime": "WEAK",
+        "signals": 4,
+        "winrate_pct": 0.0,
+        "avg_expectancy_yen_100_shares": -9501.766576619933,
+        "total_pnl_yen_100_shares": -38007.06630647973,
+        "lose_worst10_sum_yen_100_shares": -38007.06630647973
+      },
+      {
+        "gap_pct_bucket": "-3~-1",
+        "market_regime": "NORMAL",
+        "signals": 2,
+        "winrate_pct": 0.0,
+        "avg_expectancy_yen_100_shares": -2240.4941427287636,
+        "total_pnl_yen_100_shares": -4480.988285457527,
+        "lose_worst10_sum_yen_100_shares": -4480.988285457527
+      },
+      {
+        "gap_pct_bucket": "-3~-1",
+        "market_regime": "WEAK",
+        "signals": 1,
+        "winrate_pct": 0.0,
+        "avg_expectancy_yen_100_shares": -6.303980055169036,
+        "total_pnl_yen_100_shares": -6.303980055169036,
+        "lose_worst10_sum_yen_100_shares": -6.303980055169036
+      }
+    ],
+    "gap_pct_x_time_bucket": [
+      {
+        "gap_pct_bucket": ">=3",
+        "entry_time_bucket": "UNKNOWN",
+        "signals": 42,
+        "winrate_pct": 38.095238095238095,
+        "avg_expectancy_yen_100_shares": 2540.6308558446153,
+        "total_pnl_yen_100_shares": 106706.49594547384,
+        "lose_worst10_sum_yen_100_shares": -92304.12260092636
+      },
+      {
+        "gap_pct_bucket": "1~3",
+        "entry_time_bucket": "UNKNOWN",
+        "signals": 36,
+        "winrate_pct": 72.22222222222221,
+        "avg_expectancy_yen_100_shares": 9882.377892115808,
+        "total_pnl_yen_100_shares": 355765.6041161691,
+        "lose_worst10_sum_yen_100_shares": -41957.37733062787
+      },
+      {
+        "gap_pct_bucket": "-1~1",
+        "entry_time_bucket": "UNKNOWN",
+        "signals": 30,
+        "winrate_pct": 43.333333333333336,
+        "avg_expectancy_yen_100_shares": 9277.849019258074,
+        "total_pnl_yen_100_shares": 278335.4705777422,
+        "lose_worst10_sum_yen_100_shares": -60598.117512052675
+      },
+      {
+        "gap_pct_bucket": "-3~-1",
+        "entry_time_bucket": "UNKNOWN",
+        "signals": 3,
+        "winrate_pct": 0.0,
+        "avg_expectancy_yen_100_shares": -1495.7640885042322,
+        "total_pnl_yen_100_shares": -4487.292265512697,
+        "lose_worst10_sum_yen_100_shares": -4487.292265512696
+      }
+    ],
+    "entry_vwap_distance_pct_x_market_regime": [
+      {
+        "entry_vwap_distance_pct_bucket": "0.5~1.0",
+        "market_regime": "NORMAL",
+        "signals": 55,
+        "winrate_pct": 60.0,
+        "avg_expectancy_yen_100_shares": 10853.978493351602,
+        "total_pnl_yen_100_shares": 596968.8171343381,
+        "lose_worst10_sum_yen_100_shares": -43169.69243227916
+      },
+      {
+        "entry_vwap_distance_pct_bucket": "1.0~1.5",
+        "market_regime": "NORMAL",
+        "signals": 28,
+        "winrate_pct": 32.142857142857146,
+        "avg_expectancy_yen_100_shares": 6450.344773451422,
+        "total_pnl_yen_100_shares": 180609.65365663983,
+        "lose_worst10_sum_yen_100_shares": -89173.34750009124
+      },
+      {
+        "entry_vwap_distance_pct_bucket": "0.5~1.0",
+        "market_regime": "WEAK",
+        "signals": 17,
+        "winrate_pct": 41.17647058823529,
+        "avg_expectancy_yen_100_shares": -337.3982103125238,
+        "total_pnl_yen_100_shares": -5735.769575312905,
+        "lose_worst10_sum_yen_100_shares": -18694.01872256999
+      },
+      {
+        "entry_vwap_distance_pct_bucket": "1.0~1.5",
+        "market_regime": "WEAK",
+        "signals": 5,
+        "winrate_pct": 60.0,
+        "avg_expectancy_yen_100_shares": 640.7605756032038,
+        "total_pnl_yen_100_shares": 3203.8028780160193,
+        "lose_worst10_sum_yen_100_shares": 3203.8028780160193
+      },
+      {
+        "entry_vwap_distance_pct_bucket": "1.5~2.0",
+        "market_regime": "NORMAL",
+        "signals": 4,
+        "winrate_pct": 50.0,
+        "avg_expectancy_yen_100_shares": -5228.429407296086,
+        "total_pnl_yen_100_shares": -20913.717629184343,
+        "lose_worst10_sum_yen_100_shares": -20913.717629184343
+      },
+      {
+        "entry_vwap_distance_pct_bucket": "1.5~2.0",
+        "market_regime": "WEAK",
+        "signals": 2,
+        "winrate_pct": 50.0,
+        "avg_expectancy_yen_100_shares": -8906.254045312086,
+        "total_pnl_yen_100_shares": -17812.50809062417,
+        "lose_worst10_sum_yen_100_shares": -17812.50809062417
+      }
+    ],
+    "entry_vwap_distance_pct_x_time_bucket": [
+      {
+        "entry_vwap_distance_pct_bucket": "0.5~1.0",
+        "entry_time_bucket": "UNKNOWN",
+        "signals": 72,
+        "winrate_pct": 55.55555555555556,
+        "avg_expectancy_yen_100_shares": 8211.57010498646,
+        "total_pnl_yen_100_shares": 591233.0475590251,
+        "lose_worst10_sum_yen_100_shares": -54489.78737412969
+      },
+      {
+        "entry_vwap_distance_pct_bucket": "1.0~1.5",
+        "entry_time_bucket": "UNKNOWN",
+        "signals": 33,
+        "winrate_pct": 36.36363636363637,
+        "avg_expectancy_yen_100_shares": 5570.10474347442,
+        "total_pnl_yen_100_shares": 183813.45653465585,
+        "lose_worst10_sum_yen_100_shares": -92630.96084958485
+      },
+      {
+        "entry_vwap_distance_pct_bucket": "1.5~2.0",
+        "entry_time_bucket": "UNKNOWN",
+        "signals": 6,
+        "winrate_pct": 50.0,
+        "avg_expectancy_yen_100_shares": -6454.370953301419,
+        "total_pnl_yen_100_shares": -38726.22571980851,
+        "lose_worst10_sum_yen_100_shares": -38726.22571980851
+      }
+    ]
+  },
+  "runs": [
+    {
+      "run_no": 1,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_apr_20260510_021231\\replay_summary_random_apr_20260510_021231_run01.json",
+      "replay_dates": [
+        "2026-04-13",
+        "2026-04-15",
+        "2026-04-16",
+        "2026-04-23",
+        "2026-04-27"
+      ],
+      "replay_seed": null,
+      "signals": 34,
+      "win_rate_pct": 47.05882352941176,
+      "pnl_yen_100_shares": -27933.902277579666
+    },
+    {
+      "run_no": 2,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_apr_20260510_021231\\replay_summary_random_apr_20260510_021231_run02.json",
+      "replay_dates": [
+        "2026-04-10",
+        "2026-04-14",
+        "2026-04-21",
+        "2026-04-22",
+        "2026-04-28"
+      ],
+      "replay_seed": null,
+      "signals": 36,
+      "win_rate_pct": 47.22222222222222,
+      "pnl_yen_100_shares": 363765.86212836247
+    },
+    {
+      "run_no": 3,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_apr_20260510_021231\\replay_summary_random_apr_20260510_021231_run03.json",
+      "replay_dates": [
+        "2026-04-13",
+        "2026-04-14",
+        "2026-04-16",
+        "2026-04-23",
+        "2026-04-28"
+      ],
+      "replay_seed": null,
+      "signals": 41,
+      "win_rate_pct": 53.65853658536586,
+      "pnl_yen_100_shares": 400488.31852308975
+    }
+  ]
+}

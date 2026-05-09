@@ -1,0 +1,22 @@
+paper_trade_summary (poll=2026-05-10 07:55:05)
+
+signals_detected: 49
+signals_in_eval (entries): 2
+signals_excluded: 47
+skipped_signals_count regime_filters: 43
+skipped_signals_count signal_filters: 0
+skipped_signals_count strong_combo_filter: 0
+
+skip_reason_counts (merged):
+  REGIME_FILTER_RISING_LT50: 43
+
+virtual_pnl_yen_100_shares: -2077.54
+win_rate_pct: 50.00
+lose_worst10_sum_yen_100_shares: -3953.37
+max_intraday_drawdown_yen_100_shares: 3953.37
+
+regime_controls.eval_by_market_regime (expectancy / n):
+  STRONG: signals=0 avg_expectancy_yen_100_shares=+0.00
+  NORMAL: signals=0 avg_expectancy_yen_100_shares=+0.00
+  WEAK: signals=2 avg_expectancy_yen_100_shares=-1038.77
+  CRASH: signals=0 avg_expectancy_yen_100_shares=+0.00

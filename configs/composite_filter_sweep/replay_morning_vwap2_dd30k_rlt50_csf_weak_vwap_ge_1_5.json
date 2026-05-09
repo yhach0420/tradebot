@@ -1,0 +1,40 @@
+{
+  "name": "replay_morning_vwap2_dd30k_rlt50_csf_weak_vwap_ge_1_5",
+  "early_exit": true,
+  "vwap_break_exit": true,
+  "recent_5m_low_break_exit": true,
+  "strict_afternoon": true,
+  "topix_weak_block": true,
+  "disable_afternoon_entry": true,
+  "entry_filters": {
+    "rsi": {
+      "enabled": false,
+      "exclude_above": 75.0
+    },
+    "vwap_distance_pct": {
+      "enabled": true,
+      "exclude_above": 2.0
+    },
+    "atr_pct": {
+      "enabled": false,
+      "exclude_above": 4.0
+    }
+  },
+  "risk_controls": {
+    "daily_loss_stop": {
+      "enabled": true,
+      "stop_yen_100_shares": 30000
+    }
+  },
+  "regime_filters": {
+    "disable_rising_ratio_lt50": true,
+    "disable_morning_weak": false,
+    "disable_topix_weak": false
+  },
+  "composite_signal_filters": {
+    "disable_state_weak_and_vwap_ge_pct": true,
+    "state_weak_vwap_ge_threshold_pct": 1.5,
+    "disable_state_weak_and_gap_ge_pct": false,
+    "state_weak_gap_ge_threshold_pct": 3.0
+  }
+}

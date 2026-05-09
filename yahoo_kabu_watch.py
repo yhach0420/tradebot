@@ -53,6 +53,76 @@ FIXED_REPLAY_RANDOM_POOLS: dict[str, tuple[date, date]] = {
 }
 FIXED_RANDOM_REPLAY_LABELS: frozenset[str] = frozenset(FIXED_REPLAY_RANDOM_POOLS.keys())
 
+# AB / sweep: 同一データセット内でフィルタ差分比較を優先するため `random_apr` のみ使用。
+# `random_60d` のプール（例: 2/1〜4/30）は 4 月と重複が大きく、Apr と並べても独立検証になりにくい。
+SWEEP_REPLAY_RANGES: tuple[str, ...] = ("random_apr",)
+
+# Paper trade 候補の Replay config（暫定・検証済みルールのみ。フィルタ追加は当面しない）
+PAPER_TRADE_REPLAY_CONFIG_FILENAMES: tuple[str, ...] = (
+    "replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json",
+)
+
+
+def _normalize_regime_control_profiles_from_cfg(
+    regime_controls: Optional[dict[str, Any]],
+) -> tuple[bool, dict[str, dict[str, Any]]]:
+    """config の regime_controls.enabled と各 STATE 別パラメータを正規化。"""
+    if not isinstance(regime_controls, dict) or not bool(regime_controls.get("enabled", False)):
+        return False, {}
+    out: dict[str, dict[str, Any]] = {}
+    for rk in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+        raw = regime_controls.get(rk)
+        if not isinstance(raw, dict):
+            continue
+        max_gap = raw.get("max_gap_pct")
+        max_vdw = raw.get("max_vwap_distance_pct")
+        xm = raw.get("exit_mode", "normal")
+        exit_mode = str(xm).strip().lower() if xm is not None else "normal"
+        if exit_mode not in ("normal", "fast"):
+            exit_mode = "normal"
+        out[rk] = {
+            "entry_enabled": bool(raw.get("entry_enabled", True)),
+            "max_gap_pct": float(max_gap) if isinstance(max_gap, (int, float)) else None,
+            "max_vwap_distance_pct": float(max_vdw) if isinstance(max_vdw, (int, float)) else None,
+            "exit_mode": str(exit_mode),
+        }
+    return True, out
+
+
+def _regime_control_profile_for(
+    regime_control_profiles: dict[str, dict[str, Any]], market_regime: str
+) -> dict[str, Any]:
+    rk = str(market_regime or "").strip().upper()
+    if not rk:
+        rk = "NORMAL"
+    p = regime_control_profiles.get(rk)
+    if isinstance(p, dict):
+        return dict(p)
+    return {
+        "entry_enabled": True,
+        "max_gap_pct": None,
+        "max_vwap_distance_pct": None,
+        "exit_mode": "normal",
+    }
+
+
+def _replay_signal_early_exit_kw(
+    s: Any,
+    *,
+    replay_early_exit_before_stop: bool,
+    replay_early_exit_vwap: bool,
+    replay_early_exit_recent_low: bool,
+) -> tuple[bool, bool, bool]:
+    """regime_controls 由来の per-signal early exit 上書き（無ければ run 全体の既定）。"""
+    ebp = bool(replay_early_exit_before_stop)
+    ev = getattr(s, "regime_early_exit_vwap", None)
+    er = getattr(s, "regime_early_exit_recent_low", None)
+    return (
+        ebp,
+        bool(replay_early_exit_vwap) if ev is None else bool(ev),
+        bool(replay_early_exit_recent_low) if er is None else bool(er),
+    )
+
 
 def _replay_fixed_random_pool_dates(replay_range: str) -> Optional[tuple[date, date]]:
     return FIXED_REPLAY_RANDOM_POOLS.get(str(replay_range).strip())
@@ -410,6 +480,63 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
     disable_morning_weak = bool(rf.get("disable_morning_weak", False)) if isinstance(rf, dict) else False
     disable_rising_ratio_lt50 = bool(rf.get("disable_rising_ratio_lt50", False)) if isinstance(rf, dict) else False
     disable_topix_weak = bool(rf.get("disable_topix_weak", False)) if isinstance(rf, dict) else False
+    topix_weak_threshold_pct = (
+        float(rf.get("topix_weak_threshold_pct")) if isinstance(rf, dict) and isinstance(rf.get("topix_weak_threshold_pct"), (int, float)) else None
+    )
+
+    # signal filters（任意）
+    sf = cfg.get("signal_filters") if isinstance(cfg.get("signal_filters"), dict) else {}
+    disable_gap_ge_pct = bool(sf.get("disable_gap_ge_pct", False)) if isinstance(sf, dict) else False
+    gap_ge_threshold_pct = float(sf.get("gap_ge_threshold_pct", 3.0)) if isinstance(sf, dict) else 3.0
+    disable_vwap_distance_ge_pct = bool(sf.get("disable_vwap_distance_ge_pct", False)) if isinstance(sf, dict) else False
+    vwap_distance_ge_threshold_pct = float(sf.get("vwap_distance_ge_threshold_pct", 1.5)) if isinstance(sf, dict) else 1.5
+    disable_entry_after_hhmm = bool(sf.get("disable_entry_after_hhmm", False)) if isinstance(sf, dict) else False
+    entry_after_hhmm = str(sf.get("entry_after_hhmm", "10:30")) if isinstance(sf, dict) else "10:30"
+
+    # composite signal filters（WEAK時のみ gap / VWAP距離 で除外）
+    csf = cfg.get("composite_signal_filters") if isinstance(cfg.get("composite_signal_filters"), dict) else {}
+    disable_weak_vwap_ge = bool(csf.get("disable_state_weak_and_vwap_ge_pct", False)) if isinstance(csf, dict) else False
+    weak_vwap_ge_thr = float(csf.get("state_weak_vwap_ge_threshold_pct", 1.5)) if isinstance(csf, dict) else 1.5
+    disable_weak_gap_ge = bool(csf.get("disable_state_weak_and_gap_ge_pct", False)) if isinstance(csf, dict) else False
+    weak_gap_ge_thr = float(csf.get("state_weak_gap_ge_threshold_pct", 3.0)) if isinstance(csf, dict) else 3.0
+    weak_risk_filter = ""
+    strong_risk_filter = ""
+    strong_vwap_ge_thr = 1.5
+    sc_enabled = False
+    sc_conditions: list[dict[str, Any]] = []
+    sc_snap: dict[str, Any] = {}
+    if isinstance(csf, dict):
+        wrf0 = csf.get("weak_risk_filter")
+        if isinstance(wrf0, str):
+            s_wrf = wrf0.strip()
+            if s_wrf in (
+                "weak_vwap_ge_15_only",
+                "weak_gap_ge_3_only",
+                "weak_vwap_ge_15_and_gap_ge_3",
+            ):
+                weak_risk_filter = s_wrf
+        srf0 = csf.get("strong_risk_filter")
+        if isinstance(srf0, str):
+            s_srf = srf0.strip()
+            if s_srf in ("strong_vwap_ge_15_only", "strong_vwap_ge_12_only", "strong_vwap_ge_10_only"):
+                strong_risk_filter = s_srf
+        if strong_risk_filter == "strong_vwap_ge_15_only":
+            strong_vwap_ge_thr = 1.5
+        elif strong_risk_filter == "strong_vwap_ge_12_only":
+            strong_vwap_ge_thr = 1.2
+        elif strong_risk_filter == "strong_vwap_ge_10_only":
+            strong_vwap_ge_thr = 1.0
+        if isinstance(csf.get("strong_vwap_ge_threshold_pct"), (int, float)):
+            strong_vwap_ge_thr = float(csf.get("strong_vwap_ge_threshold_pct"))
+        sc_enabled, sc_conditions, sc_snap = _normalize_strong_combo_filter_from_csf(csf)
+
+    rc_root = cfg.get("regime_controls") if isinstance(cfg.get("regime_controls"), dict) else {}
+    regime_control_enabled = False
+    regime_control_profiles: dict[str, dict[str, Any]] = {}
+    regime_control_snapshot: dict[str, Any] = {}
+    if isinstance(rc_root, dict):
+        regime_control_snapshot = dict(rc_root)
+        regime_control_enabled, regime_control_profiles = _normalize_regime_control_profiles_from_cfg(rc_root)
 
     return {
         "replay_config_path": str(cfg.get("_path") or ""),
@@ -434,6 +561,248 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
         "regime_filter_disable_morning_weak": bool(disable_morning_weak),
         "regime_filter_disable_rising_ratio_lt50": bool(disable_rising_ratio_lt50),
         "regime_filter_disable_topix_weak": bool(disable_topix_weak),
+        "regime_filter_topix_weak_threshold_pct": topix_weak_threshold_pct,
+        "signal_filter_disable_gap_ge_pct": bool(disable_gap_ge_pct),
+        "signal_filter_gap_ge_threshold_pct": float(gap_ge_threshold_pct),
+        "signal_filter_disable_vwap_distance_ge_pct": bool(disable_vwap_distance_ge_pct),
+        "signal_filter_vwap_distance_ge_threshold_pct": float(vwap_distance_ge_threshold_pct),
+        "signal_filter_disable_entry_after_hhmm": bool(disable_entry_after_hhmm),
+        "signal_filter_entry_after_hhmm": str(entry_after_hhmm),
+        "composite_signal_filter_disable_weak_vwap_ge": bool(disable_weak_vwap_ge),
+        "composite_signal_filter_weak_vwap_ge_threshold_pct": float(weak_vwap_ge_thr),
+        "composite_signal_filter_disable_weak_gap_ge": bool(disable_weak_gap_ge),
+        "composite_signal_filter_weak_gap_ge_threshold_pct": float(weak_gap_ge_thr),
+        "composite_signal_filter_weak_risk_filter": str(weak_risk_filter),
+        "composite_signal_filter_strong_risk_filter": str(strong_risk_filter),
+        "composite_signal_filter_strong_vwap_ge_threshold_pct": float(strong_vwap_ge_thr),
+        "composite_signal_filter_strong_combo_enabled": bool(sc_enabled),
+        "composite_signal_filter_strong_combo_block_conditions": list(sc_conditions),
+        "composite_signal_filter_strong_combo_snapshot": dict(sc_snap),
+        "regime_control_enabled": bool(regime_control_enabled),
+        "regime_control_profiles": dict(regime_control_profiles),
+        "regime_control_snapshot": regime_control_snapshot,
+    }
+
+
+def _replay_composite_signal_filter_kwargs_from_flags(cfg_flags: dict[str, Any]) -> dict[str, Any]:
+    """run_replay へ渡す composite_signal_filters 系 kwargs。"""
+    return {
+        "composite_signal_filter_disable_weak_vwap_ge": bool(cfg_flags.get("composite_signal_filter_disable_weak_vwap_ge", False)),
+        "composite_signal_filter_weak_vwap_ge_threshold_pct": float(
+            cfg_flags.get("composite_signal_filter_weak_vwap_ge_threshold_pct", 1.5)
+        ),
+        "composite_signal_filter_disable_weak_gap_ge": bool(cfg_flags.get("composite_signal_filter_disable_weak_gap_ge", False)),
+        "composite_signal_filter_weak_gap_ge_threshold_pct": float(
+            cfg_flags.get("composite_signal_filter_weak_gap_ge_threshold_pct", 3.0)
+        ),
+        "composite_signal_filter_weak_risk_filter": str(cfg_flags.get("composite_signal_filter_weak_risk_filter") or ""),
+        "composite_signal_filter_strong_risk_filter": str(cfg_flags.get("composite_signal_filter_strong_risk_filter") or ""),
+        "composite_signal_filter_strong_vwap_ge_threshold_pct": float(
+            cfg_flags.get("composite_signal_filter_strong_vwap_ge_threshold_pct", 1.5)
+        ),
+        "composite_signal_filter_strong_combo_enabled": bool(cfg_flags.get("composite_signal_filter_strong_combo_enabled", False)),
+        "composite_signal_filter_strong_combo_block_conditions": list(
+            cfg_flags.get("composite_signal_filter_strong_combo_block_conditions") or []
+        ),
+        "composite_signal_filter_strong_combo_snapshot": dict(cfg_flags.get("composite_signal_filter_strong_combo_snapshot") or {}),
+    }
+
+
+def _composite_weak_virtual_exclude_reason(exclude_reason: str) -> bool:
+    """composite_signal_filters（WEAK/STRONG）由来の除外で仮想PnL追跡するか。"""
+    if not isinstance(exclude_reason, str):
+        return False
+    if "COMPOSITE_" in exclude_reason:
+        return True
+    for tag in ("WEAK_VWAP_GE_15", "WEAK_GAP_GE_3", "WEAK_VWAP_AND_GAP", "STRONG_VWAP_GE"):
+        if tag in exclude_reason:
+            return True
+    return False
+
+
+def _strong_combo_virtual_exclude_reason(exclude_reason: str, known_reasons: frozenset[str]) -> bool:
+    """strong_combo_filter 由来の除外で仮想PnL追跡するか（reason は設定どおり一致）。"""
+    if not isinstance(exclude_reason, str) or not known_reasons:
+        return False
+    for part in exclude_reason.split(" / "):
+        p = str(part).strip()
+        if p and p in known_reasons:
+            return True
+    return False
+
+
+def _normalize_strong_combo_filter_from_csf(csf: Any) -> tuple[bool, list[dict[str, Any]], dict[str, Any]]:
+    """
+    composite_signal_filters.strong_combo_filter を正規化。
+    returns: enabled, block_conditions, snapshot（レポート用）
+    """
+    scf = csf.get("strong_combo_filter") if isinstance(csf, dict) and isinstance(csf.get("strong_combo_filter"), dict) else {}
+    if not scf:
+        return False, [], {}
+    enabled = bool(scf.get("enabled", False))
+    block_conditions: list[dict[str, Any]] = []
+    raw_list = scf.get("block_conditions")
+    if isinstance(raw_list, list):
+        for item in raw_list:
+            if not isinstance(item, dict):
+                continue
+            mr = str(item.get("market_regime") or "").strip().upper()
+            hu_eq = item.get("high_update_count_before_entry_eq")
+            hu_le = item.get("high_update_count_before_entry_le")
+            vwap_ge = item.get("entry_vwap_distance_pct_ge")
+            reason = str(item.get("reason") or "").strip() or "STRONG_COMBO"
+            if mr not in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+                continue
+            if not isinstance(vwap_ge, (int, float)):
+                continue
+            rec: dict[str, Any] = {
+                "market_regime": mr,
+                "entry_vwap_distance_pct_ge": float(vwap_ge),
+                "reason": reason,
+            }
+            if isinstance(hu_eq, (int, float)):
+                rec["high_update_count_before_entry_eq"] = int(hu_eq)
+            elif isinstance(hu_le, (int, float)):
+                rec["high_update_count_before_entry_le"] = int(hu_le)
+            else:
+                continue
+            block_conditions.append(rec)
+    snap = {"enabled": enabled, "block_conditions": list(block_conditions)}
+    return enabled, block_conditions, snap
+
+
+def _build_combo_filter_analysis_report_payload(
+    *,
+    enabled: bool,
+    block_conditions_snapshot: list[dict[str, Any]],
+    skipped_total: int,
+    skip_reason_counts: dict[str, int],
+    virtual_pnl_sum_total: float,
+    virtual_count_total: int,
+    virtual_pnl_by_reason: dict[str, float],
+    virtual_count_by_reason: dict[str, int],
+) -> dict[str, Any]:
+    """combo_filter_analysis / composite 内 strong_combo 用の JSON。"""
+    reasons = sorted(
+        set(skip_reason_counts.keys()) | set(virtual_pnl_by_reason.keys()) | set(virtual_count_by_reason.keys())
+    )
+    by_reason: dict[str, Any] = {}
+    for r in reasons:
+        rr = str(r)
+        sk = int(skip_reason_counts.get(rr, 0))
+        vc = int(virtual_count_by_reason.get(rr, 0))
+        vp = float(virtual_pnl_by_reason.get(rr, 0.0))
+        exp = (float(vp) / float(vc)) if vc > 0 else 0.0
+        by_reason[rr] = {
+            "skipped_signals_count": int(sk),
+            "virtual_resolved_count": int(vc),
+            "total_pnl_yen_100_shares": float(vp),
+            "avg_expectancy_yen_100_shares_if_skipped": float(exp),
+            "prevented_loss_estimate_yen_100_shares": float(-vp),
+        }
+    return {
+        "enabled": bool(enabled),
+        "block_conditions": list(block_conditions_snapshot),
+        "skipped_signals_count": int(skipped_total),
+        "skip_reason_counts": dict(skip_reason_counts),
+        "virtual_pnl_analysis": {
+            "total_skipped_signals_count": int(skipped_total),
+            "total_pnl_yen_100_shares": float(virtual_pnl_sum_total),
+            "avg_expectancy_yen_100_shares_if_skipped": (
+                float(virtual_pnl_sum_total / float(virtual_count_total)) if int(virtual_count_total) > 0 else 0.0
+            ),
+            "prevented_loss_estimate_yen_100_shares": float(-float(virtual_pnl_sum_total)),
+            "by_reason": dict(by_reason),
+        },
+    }
+
+
+def _combo_filter_analysis_dict_from_report(rep: Any) -> dict[str, Any]:
+    """
+    リプレイJSONの combo_filter_analysis ブロックを返す。
+    保存形式は report 直下（正）と overall_summary 内（後方互換）の両方を受け付ける。
+    """
+    if not isinstance(rep, dict):
+        return {}
+    cfa = rep.get("combo_filter_analysis")
+    if isinstance(cfa, dict):
+        return dict(cfa)
+    ov = rep.get("overall_summary")
+    if isinstance(ov, dict):
+        cfa2 = ov.get("combo_filter_analysis")
+        if isinstance(cfa2, dict):
+            return dict(cfa2)
+    return {}
+
+
+def _aggregate_combo_filter_analysis_from_run_summaries(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """複数 run の combo_filter_analysis（strong_combo）を合算。"""
+    skipped_grand = 0
+    skip_rc: dict[str, int] = {}
+    vpn_sum = 0.0
+    vcnt_sum = 0
+    vpn_by: dict[str, float] = {}
+    vcn_by: dict[str, int] = {}
+    enabled_any = False
+    snap_cond: list[dict[str, Any]] = []
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        cf = _combo_filter_analysis_dict_from_report(rep)
+        sc = cf.get("strong_combo_filter") if isinstance(cf.get("strong_combo_filter"), dict) else {}
+        if not sc:
+            continue
+        enabled_any = enabled_any or bool(sc.get("enabled", False))
+        if isinstance(sc.get("block_conditions"), list) and sc.get("block_conditions"):
+            snap_cond = list(sc.get("block_conditions") or [])
+        skipped_grand += int(sc.get("skipped_signals_count") or 0)
+        for k, v in (sc.get("skip_reason_counts") or {}).items():
+            try:
+                kk = str(k)
+                if kk:
+                    skip_rc[kk] = int(skip_rc.get(kk, 0)) + int(v or 0)
+            except Exception:
+                continue
+        vpa = sc.get("virtual_pnl_analysis") if isinstance(sc.get("virtual_pnl_analysis"), dict) else {}
+        vpn_sum += float(vpa.get("total_pnl_yen_100_shares") or 0.0)
+        br = vpa.get("by_reason") if isinstance(vpa.get("by_reason"), dict) else {}
+        for rk, row in br.items():
+            if not isinstance(row, dict):
+                continue
+            ks = str(rk)
+            vpn_by[ks] = float(vpn_by.get(ks, 0.0)) + float(row.get("total_pnl_yen_100_shares") or 0.0)
+            vcn_by[ks] = int(vcn_by.get(ks, 0)) + int(row.get("virtual_resolved_count") or 0)
+        try:
+            vcnt_sum += int(
+                sum(int(row.get("virtual_resolved_count") or 0) for row in br.values() if isinstance(row, dict))
+            )
+        except Exception:
+            pass
+    return {
+        "strong_combo_filter": _build_combo_filter_analysis_report_payload(
+            enabled=bool(enabled_any),
+            block_conditions_snapshot=list(snap_cond),
+            skipped_total=int(skipped_grand),
+            skip_reason_counts=dict(skip_rc),
+            virtual_pnl_sum_total=float(vpn_sum),
+            virtual_count_total=int(vcnt_sum),
+            virtual_pnl_by_reason=dict(vpn_by),
+            virtual_count_by_reason=dict(vcn_by),
+        )
+    }
+
+
+def _replay_regime_control_kwargs_from_flags(cfg_flags: dict[str, Any]) -> dict[str, Any]:
+    """run_replay へ渡す regime_controls 系 kwargs（各 sweep / main で共通化）。"""
+    prof = cfg_flags.get("regime_control_profiles")
+    if not isinstance(prof, dict):
+        prof = {}
+    snap = cfg_flags.get("regime_control_snapshot")
+    if not isinstance(snap, dict):
+        snap = {}
+    return {
+        "regime_control_enabled": bool(cfg_flags.get("regime_control_enabled", False)),
+        "regime_control_profiles": dict(prof),
+        "regime_control_config_snapshot": dict(snap),
     }
 
 
@@ -1079,6 +1448,8 @@ AFTERNOON_ENTRY_STRICT_REBREAK_MULT = 1.0015          # 5分高値更新（よ�
 #   - -0.5%〜-1.5% は WEAK 扱い（CRASHではない）
 CRASH_TOPIX_CHG_PCT_MAX = -1.5          # TOPIX(代用ETF)がこれ以下ならCRASH扱い
 WEAK_TOPIX_CHG_PCT_MAX = -0.5           # TOPIXがこれ以下ならWEAK理由として採用（-0.5%未満）
+# STRONG: 弱理由が無く TOPIX が十分プラスなら（regime_controls STRONG と整合）
+STRONG_TOPIX_CHG_PCT_MIN = 0.30
 CRASH_RISING_RATIO_MAX = 0.25           # 上昇銘柄割合がこれ以下ならCRASH扱い
 CRASH_HIGH_RATIO_MAX = 0.03             # 高値付近割合がこれ以下ならCRASH扱い
 
@@ -2400,6 +2771,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--paper-trade",
+        action="store_true",
+        help=(
+            "実注文なしの paper trade（仮想signal/exit/PnLのみ）。"
+            " run_replay と同一ロジックで Yahoo Finance 1d 1分足を定期的にスナップショットし、"
+            " results/paper_trade/YYYYMMDD/paper_trade_log.csv に追記します。"
+        ),
+    )
+    p.add_argument(
+        "--paper-trade-interval",
+        type=float,
+        default=60.0,
+        help="paper_trade のスナップショット間隔（秒）。デフォルト 60",
+    )
+    p.add_argument(
         "--replay-mode",
         type=str,
         default="normal",
@@ -2518,7 +2904,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--replay-config",
         type=str,
         default="",
-        help="Replayの戦略条件をまとめたconfig JSONパス（例: configs/replay_safe.json）。",
+        help=(
+            "Replayの戦略条件をまとめたconfig JSONパス（例: configs/replay_safe.json）。"
+            " Paper trade 暫定候補: configs/replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json"
+        ),
     )
     p.add_argument(
         "--one-trade-per-symbol-per-day",
@@ -2608,7 +2997,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--vwap-distance-sweep",
         action="store_true",
         help=(
-            "VWAP distance フィルタ閾値 1.5/2.0/2.5/3.0 で replay random_apr×10 と random_60d×10 を順に実行し、"
+            "VWAP distance フィルタ閾値 1.5/2.0/2.5/3.0 で replay-range random_apr（デフォルト10回）を sweep し、"
             " expectancy（平均）順の比較表を results/vwap_sweep_summary_<時刻>.txt に保存します（config は自動生成）。"
         ),
     )
@@ -2618,7 +3007,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=(
             "daily_loss_stop のON/OFF・閾値(dd30k/dd50k/dd70k)を sweep します。"
             " 対象config: replay_morning_vwap2.json(OFF), replay_morning_vwap2_dd30k/dd50k/dd70k。"
-            " 各configについて random_apr×10 と random_60d×10 を実行し、"
+            " 各configについて --replay-range random_apr（--replay-repeat は既定または指定値）を実行し、"
             " results/daily_loss_stop_sweep_<時刻>/sweep_summary.txt に保存します。"
         ),
     )
@@ -2627,8 +3016,94 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help=(
             "market regime filter（disable_morning_weak / disable_rising_ratio_lt50 / disable_topix_weak）の組み合わせを sweep します。"
-            " random_apr×10 と random_60d×10 を実行し、results/regime_filter_sweep_<時刻>/sweep_summary.txt に保存します。"
+            " --replay-range random_apr（sweep はこの範囲のみ）で results/regime_filter_sweep_<時刻>/sweep_summary.txt に保存します。"
             " configs/regime_filter_sweep/ に比較用configを自動生成します。"
+        ),
+    )
+    p.add_argument(
+        "--topix-weak-threshold-sweep",
+        action="store_true",
+        help=(
+            "TOPIX_WEAK 判定の threshold（%%）を sweep します（-0.2/-0.3/-0.5/-0.7）。"
+            " 各thresholdで disable_topix_weak を有効化し、--replay-range random_apr で実行、"
+            " results/topix_weak_threshold_sweep_<時刻>/sweep_summary.txt に保存します。"
+            " configs/regime_filter_sweep/ に比較用configを自動生成します。"
+        ),
+    )
+    p.add_argument(
+        "--signal-filter-sweep",
+        action="store_true",
+        help=(
+            "signal_filters（gap>=1.5/2/2.5/3/4%% + baseline）を sweep します。"
+            " --replay-range random_apr×--replay-repeat のみ実行し、results/signal_filter_sweep_<時刻>/sweep_summary.txt に保存します。"
+            " configs/signal_filter_sweep/ に比較用configを自動生成します。"
+        ),
+    )
+    p.add_argument(
+        "--composite-filter-sweep",
+        action="store_true",
+        help=(
+            "composite_signal_filters（WEAK時のみ VWAP距離／ギャップしきい値）を sweep します。"
+            " --replay-range random_apr×--replay-repeat のみ実行し、"
+            " results/composite_filter_sweep_<時刻>/sweep_summary.txt に保存します。"
+            " configs/composite_filter_sweep/ に比較用configを自動生成します。"
+        ),
+    )
+    p.add_argument(
+        "--regime-control-sweep",
+        action="store_true",
+        help=(
+            "replay_morning_vwap2_dd30k_rlt50 と full-day無RC と full-day+regime_controls を "
+            "--replay-range random_apr のみで比較します（configs/replay_full_day_*.json を使用）。"
+            " results/regime_control_sweep_<時刻>/sweep_summary.txt に保存します。"
+        ),
+    )
+    p.add_argument(
+        "--weak-risk-filter-sweep",
+        action="store_true",
+        help=(
+            "WEAK地合いで VWAP距離>=1.5 / gap>=3 / 両方 のみ除外する composite_signal_filters.weak_risk_filter を比較します。"
+            " morning_baseline / full_day / 上記3モードを random_apr のみ実行し、"
+            " results/weak_risk_filter_sweep_<時刻>/sweep_summary.txt に保存します。"
+        ),
+    )
+    p.add_argument(
+        "--strong-risk-filter-sweep",
+        action="store_true",
+        help=(
+            "STRONG地合いで entry_vwap_distance_pct がしきい値以上の ENTRY を除外する composite_signal_filters.strong_risk_filter を比較します。"
+            " full_day（無フィルタ）と strong_vwap_ge_15/12/10 の4パターンを random_apr のみ実行し、"
+            " results/strong_risk_filter_sweep_<時刻>/sweep_summary.txt に保存します。"
+            " configs/strong_risk_filter_sweep/ に比較用configを自動生成します。"
+        ),
+    )
+    p.add_argument(
+        "--strong-combo-filter-sweep",
+        action="store_true",
+        help=(
+            "composite_signal_filters.strong_combo_filter（高値更新回数×VWAP距離）を比較します。"
+            " baseline / HU2_VWAP15 / HU1or2_VWAP15 を random_apr のみ実行し、"
+            " results/strong_combo_filter_sweep_<時刻>/sweep_summary.txt に保存します。"
+            " configs/strong_combo_filter_sweep/ に比較用configを自動生成します。"
+        ),
+    )
+    p.add_argument(
+        "--strong-trend-quality-sweep",
+        action="store_true",
+        help=(
+            "STRONG で VWAP乖離≥1.5%% のとき、高値更新回数による介入を比較します。"
+            " baseline と hu≤2/≤3 での skip、および HU≥6 のみ許可（それ以外skip）を random_apr のみ実行し、"
+            " results/strong_trend_quality_sweep_<時刻>/sweep_summary.txt に保存します。"
+            " configs/strong_trend_quality_sweep/ に比較用configを自動生成します。"
+        ),
+    )
+    p.add_argument(
+        "--strong-trend-quality-validation-sweep",
+        action="store_true",
+        help=(
+            "baseline と strong_vwap_ge_15_and_hu_le2_skip を random_apr / random_mar / random_60d で検証します。"
+            " 既定 replay_repeat=20、run_i の seed は replay_seed+i-1。"
+            " results/strong_trend_quality_validation_sweep_<時刻>/sweep_summary.txt に Delta vs baseline を出力します。"
         ),
     )
     return p.parse_args(argv)
@@ -3539,7 +4014,29 @@ def run_replay(
     regime_filter_disable_morning_weak: bool = False,
     regime_filter_disable_rising_ratio_lt50: bool = False,
     regime_filter_disable_topix_weak: bool = False,
+    regime_filter_topix_weak_threshold_pct: Optional[float] = None,
+    signal_filter_disable_gap_ge_pct: bool = False,
+    signal_filter_gap_ge_threshold_pct: float = 3.0,
+    signal_filter_disable_vwap_distance_ge_pct: bool = False,
+    signal_filter_vwap_distance_ge_threshold_pct: float = 1.5,
+    signal_filter_disable_entry_after_hhmm: bool = False,
+    signal_filter_entry_after_hhmm: str = "10:30",
+    composite_signal_filter_disable_weak_vwap_ge: bool = False,
+    composite_signal_filter_weak_vwap_ge_threshold_pct: float = 1.5,
+    composite_signal_filter_disable_weak_gap_ge: bool = False,
+    composite_signal_filter_weak_gap_ge_threshold_pct: float = 3.0,
+    composite_signal_filter_weak_risk_filter: str = "",
+    composite_signal_filter_strong_risk_filter: str = "",
+    composite_signal_filter_strong_vwap_ge_threshold_pct: float = 1.5,
+    composite_signal_filter_strong_combo_enabled: bool = False,
+    composite_signal_filter_strong_combo_block_conditions: Optional[list[dict[str, Any]]] = None,
+    composite_signal_filter_strong_combo_snapshot: Optional[dict[str, Any]] = None,
+    regime_control_enabled: bool = False,
+    regime_control_profiles: Optional[dict[str, dict[str, Any]]] = None,
+    regime_control_config_snapshot: Optional[dict[str, Any]] = None,
     replay_settings: Optional[dict[str, Any]] = None,
+    paper_trade_mode: bool = False,
+    paper_trade_collect: Optional[dict[str, Any]] = None,
 ) -> int:
     """
     過去データの仮想リプレイ（テストモード）。
@@ -3576,6 +4073,12 @@ def run_replay(
     # - main側で replay_batch_stamp が渡される想定だが、単体実行でも落ちないようにフォールバックする
     batch_stamp = str(replay_batch_stamp or "").strip() or datetime.now(JST).strftime("%Y%m%d_%H%M%S")
     safe_batch_stamp = str(batch_stamp or "").strip() or "replay"
+    _regime_profiles_rt: dict[str, dict[str, Any]] = (
+        dict(regime_control_profiles) if isinstance(regime_control_profiles, dict) else {}
+    )
+    _rc_snap_report: dict[str, Any] = (
+        dict(regime_control_config_snapshot) if isinstance(regime_control_config_snapshot, dict) else {}
+    )
 
     # =========================
     # Replay設定（表示/保存用）
@@ -3709,10 +4212,70 @@ def run_replay(
         rf = st.get("regime_filters") if isinstance(st.get("regime_filters"), dict) else {}
         if isinstance(rf, dict) and rf:
             out.append("【Regime filters】")
-            for k in ("disable_morning_weak", "disable_rising_ratio_lt50", "disable_topix_weak"):
+            for k in ("disable_morning_weak", "disable_rising_ratio_lt50", "disable_topix_weak", "topix_weak_threshold_pct"):
                 v = rf.get(k)
                 if isinstance(v, dict):
                     out.append(f"{k}={v.get('value')} ({v.get('source')})")
+            out.append("")
+        sf = st.get("signal_filters") if isinstance(st.get("signal_filters"), dict) else {}
+        if isinstance(sf, dict) and sf:
+            out.append("【Signal filters】")
+            for k in (
+                "disable_gap_ge_pct",
+                "gap_ge_threshold_pct",
+                "disable_vwap_distance_ge_pct",
+                "vwap_distance_ge_threshold_pct",
+                "disable_entry_after_hhmm",
+                "entry_after_hhmm",
+            ):
+                v = sf.get(k)
+                if isinstance(v, dict):
+                    out.append(f"{k}={v.get('value')} ({v.get('source')})")
+            out.append("")
+        rctl = st.get("regime_controls") if isinstance(st.get("regime_controls"), dict) else {}
+        if isinstance(rctl, dict) and rctl:
+            out.append("【Regime adaptive controls】")
+            v = rctl.get("enabled")
+            if isinstance(v, dict):
+                out.append(f"enabled={v.get('value')} ({v.get('source')})")
+            out.append("")
+        csf = st.get("composite_signal_filters") if isinstance(st.get("composite_signal_filters"), dict) else {}
+        if isinstance(csf, dict) and csf:
+            out.append("【Composite signal filters (WEAKのみ)】")
+            for k in (
+                "disable_state_weak_and_vwap_ge_pct",
+                "state_weak_vwap_ge_threshold_pct",
+                "disable_state_weak_and_gap_ge_pct",
+                "state_weak_gap_ge_threshold_pct",
+            ):
+                v = csf.get(k)
+                if isinstance(v, dict):
+                    out.append(f"{k}={v.get('value')} ({v.get('source')})")
+            out.append("")
+        scf = st.get("strong_combo_filter") if isinstance(st.get("strong_combo_filter"), dict) else {}
+        if isinstance(scf, dict) and scf:
+            out.append("【strong_combo_filter】")
+            ev = scf.get("enabled")
+            if isinstance(ev, dict):
+                out.append(f"strong_combo_filter enabled={ev.get('value')} ({ev.get('source')})")
+            mr = scf.get("market_regime")
+            if isinstance(mr, dict) and str(mr.get("value") or "").strip():
+                out.append(f"market_regime={mr.get('value')} ({mr.get('source')})")
+            vg = scf.get("entry_vwap_distance_pct_ge")
+            if isinstance(vg, dict) and isinstance(vg.get("value"), (int, float)):
+                out.append(f"vwap_distance>={vg.get('value')} ({vg.get('source')})")
+            hule = scf.get("high_update_count_before_entry_le")
+            if isinstance(hule, dict) and hule.get("value") is not None:
+                try:
+                    out.append(f"high_update_count<={int(hule.get('value'))} ({hule.get('source')})")
+                except Exception:
+                    out.append(f"high_update_count<={hule.get('value')} ({hule.get('source')})")
+            hueq = scf.get("high_update_count_before_entry_eq")
+            if isinstance(hueq, dict) and hueq.get("value") is not None:
+                try:
+                    out.append(f"high_update_count=={int(hueq.get('value'))} ({hueq.get('source')})")
+                except Exception:
+                    out.append(f"high_update_count=={hueq.get('value')} ({hueq.get('source')})")
             out.append("")
         return out
 
@@ -3731,6 +4294,10 @@ def run_replay(
     if fast_mode and not bool(replay_fast_discord):
         # fastモードは高速化優先のため、デフォルトでDiscord通知を無効化します。
         discord_enabled = False
+    if paper_trade_mode:
+        # Paper trade: 仮想検証のみ。DiscordのReplay通知・実発注系とも無関係にします。
+        discord_enabled = False
+        fast_mode = True
 
     if webhook_url:
         print(f"[{now_str()}] Discord通知: DISCORD_WEBHOOK_URL が設定されています（Webhookの送信先チャンネルに送られます）")
@@ -3808,6 +4375,67 @@ def run_replay(
     continue_reason_counts: dict[str, int] = {}
     regime_filter_skipped_signals_count = 0
     regime_filter_skip_reason_counts: dict[str, int] = {}
+    regime_filter_diag_checked_count = 0
+    regime_filter_diag_passed_count = 0
+    regime_filter_diag_skipped_count = 0
+    regime_filter_diag_sample_skipped: list[dict[str, Any]] = []
+    REGIME_FILTER_DIAG_SAMPLE_MAX = 30
+    # TOPIX_WEAK filter の仮想PnL分析（skipされたsignalを「仮想的に保有」して損益を推定）
+    regime_topix_weak_virtual_active_indices_by_symbol: dict[str, list[int]] = {}
+    regime_topix_weak_virtual_pnl_sum = 0.0
+    regime_topix_weak_virtual_win = 0
+    regime_topix_weak_virtual_lose = 0
+    regime_topix_weak_virtual_count = 0
+
+    # signal_filters virtual pnl
+    signal_filters_virtual_active_indices_by_symbol: dict[str, list[int]] = {}
+    signal_filters_virtual_pnl_sum = 0.0
+    signal_filters_virtual_win = 0
+    signal_filters_virtual_lose = 0
+    signal_filters_virtual_count = 0
+    signal_filters_skipped_signals_count = 0
+    signal_filters_skip_reason_counts: dict[str, int] = {}
+    resolved_counted_signal_filter_virtual_indices: set[int] = set()
+    # composite_signal_filters（WEAK×gap/VWAP）仮想PnL
+    composite_signal_filter_virtual_active_indices_by_symbol: dict[str, list[int]] = {}
+    composite_signal_filter_virtual_pnl_sum = 0.0
+    composite_signal_filter_virtual_win = 0
+    composite_signal_filter_virtual_lose = 0
+    composite_signal_filter_virtual_count = 0
+    composite_signal_filter_skipped_signals_count = 0
+    composite_signal_filter_skip_reason_counts: dict[str, int] = {}
+    resolved_counted_composite_signal_filter_virtual_indices: set[int] = set()
+    strong_combo_filter_virtual_active_indices_by_symbol: dict[str, list[int]] = {}
+    strong_combo_filter_virtual_pnl_sum = 0.0
+    strong_combo_filter_virtual_count = 0
+    strong_combo_filter_virtual_pnl_by_reason: dict[str, float] = {}
+    strong_combo_filter_virtual_count_by_reason: dict[str, int] = {}
+    strong_combo_filter_skipped_signals_count = 0
+    strong_combo_filter_skip_reason_counts: dict[str, int] = {}
+    resolved_counted_strong_combo_filter_virtual_indices: set[int] = set()
+    _strong_combo_conds_rt: list[dict[str, Any]] = list(composite_signal_filter_strong_combo_block_conditions or [])
+    _strong_combo_reasons_frozen = frozenset(
+        str(x.get("reason") or "").strip() for x in _strong_combo_conds_rt if str(x.get("reason") or "").strip()
+    )
+    regime_control_virtual_active_indices_by_symbol: dict[str, list[int]] = {}
+    regime_control_virtual_pnl_sum = 0.0
+    regime_control_virtual_win = 0
+    regime_control_virtual_lose = 0
+    regime_control_virtual_count = 0
+    regime_control_skipped_signals_count = 0
+    regime_control_skip_reason_counts: dict[str, int] = {}
+    resolved_counted_regime_control_virtual_indices: set[int] = set()
+    resolved_counted_regime_topix_virtual_indices: set[int] = set()
+
+    # market_regime / rising_ratio 分布（TODO-02/03 デバッグ用）
+    market_regime_counts: dict[str, int] = {}
+    rising_ratio_samples = 0
+    rising_ratio_lt50_samples = 0
+    rising_ratio_lt40_samples = 0
+    rising_ratio_ge60_samples = 0
+    rising_ratio_sum = 0.0
+    rising_ratio_min = None
+    rising_ratio_max = None
 
     # signal append 直前デバッグ（ユーザー要望）
     APPEND_SIGNAL_DEBUG_MAX_ROWS = 500
@@ -4044,7 +4672,8 @@ def run_replay(
         index_syms = [INDEX_NIKKEI_ETF, INDEX_TOPIX_ETF]
         fetch_syms = list(watch) + [s for s in index_syms if s not in watch]
 
-        print("=== TEST REPLAY MODE ===")
+        if not paper_trade_mode:
+            print("=== TEST REPLAY MODE ===")
         # 表示用の replay_range（通常の 1d/5d には影響させない）
         replay_range_label = str(replay_range)
         # --replay-range random_5d をショートカットとして扱う
@@ -4057,7 +4686,8 @@ def run_replay(
         if int(replay_random_days or 0) > 0:
             if replay_range_label not in FIXED_RANDOM_REPLAY_LABELS:
                 replay_range_label = f"random_{int(replay_random_days)}d"
-        print(f"- replay_range: {replay_range_label}")
+        if not paper_trade_mode:
+            print(f"- replay_range: {replay_range_label}")
         # リプレイ速度の見せ方を「直感的」にします。
         # interval_sec=1.0 なら「1秒 = 1分」
         # interval_sec=0.5 なら「0.5秒 = 1分」など。
@@ -4065,10 +4695,11 @@ def run_replay(
             speed_s = "1秒 = 1分"
         else:
             speed_s = f"{interval_sec:.2f}秒 = 1分"
-        print(f"- replay_speed: {speed_s}")
-        if fast_mode:
-            print("- replay_mode: fast（sleep無し・出力最小・結果集計優先）")
-        print(f"- watch: {', '.join(watch)}\n")
+        if not paper_trade_mode:
+            print(f"- replay_speed: {speed_s}")
+            if fast_mode:
+                print("- replay_mode: fast（sleep無し・出力最小・結果集計優先）")
+            print(f"- watch: {', '.join(watch)}\n")
 
         # -----------------------------
         # fetch_range（API取得用レンジ）
@@ -4292,7 +4923,23 @@ def run_replay(
             except Exception as e:
                 print(f"[{now_str()}] {sym} 過去1分足の取得に失敗（スキップ）: {e}")
 
-        if replay_dates_jst or any(int(intraday_1m_counters[k]) for k in intraday_1m_counters):
+        # paper_trade: Yahoo 1m 読み込み直後 — 未来の足を除外（replay signal 生成より前）
+        if paper_trade_mode:
+            _now_jst_pt = datetime.now(JST)
+            bars_by_symbol, _rm_future, _mx_allow = _paper_trade_filter_future_1m_bars(
+                bars_by_symbol,
+                now_jst=_now_jst_pt,
+            )
+            _cj = _now_jst_pt.strftime("%Y-%m-%d %H:%M:%S")
+            print(
+                f"[paper_trade] current_jst={_cj} "
+                f"max_allowed_candle={_mx_allow} "
+                f"filtered_future_candles={int(_rm_future)}"
+            )
+
+        if (not paper_trade_mode) and (
+            replay_dates_jst or any(int(intraday_1m_counters[k]) for k in intraday_1m_counters)
+        ):
             print("=== Replay 1分足キャッシュ ===")
             print(f"- cache_hit: {intraday_1m_counters['cache_hit']}")
             print(f"- cache_miss: {intraday_1m_counters['cache_miss']}")
@@ -4313,11 +4960,12 @@ def run_replay(
         all_bars = [b for bars in bars_by_symbol.values() for b in bars]
         start_utc = min((b.timestamp_utc for b in all_bars), default=None)
         end_utc = max((b.timestamp_utc for b in all_bars), default=None)
-        print("=== Replay対象 ===")
-        print(f"- 対象日(目安): {_fmt_dt_jst(start_utc)[:10]} ～ {_fmt_dt_jst(end_utc)[:10]}")
-        print(f"- 開始時刻(JST): {_fmt_dt_jst(start_utc)}")
-        print(f"- 終了時刻(JST): {_fmt_dt_jst(end_utc)}")
-        print(f"- 対象銘柄: {', '.join(sorted(bars_by_symbol.keys()))}\n")
+        if not paper_trade_mode:
+            print("=== Replay対象 ===")
+            print(f"- 対象日(目安): {_fmt_dt_jst(start_utc)[:10]} ～ {_fmt_dt_jst(end_utc)[:10]}")
+            print(f"- 開始時刻(JST): {_fmt_dt_jst(start_utc)}")
+            print(f"- 終了時刻(JST): {_fmt_dt_jst(end_utc)}")
+            print(f"- 対象銘柄: {', '.join(sorted(bars_by_symbol.keys()))}\n")
 
         # -----------------------------
         # Replay日付の実効日数/キャッシュcoverage（ユーザー要望）
@@ -5034,6 +5682,19 @@ def run_replay(
                                 fp = ((float(s.last_price_after) - float(s.entry_price)) / float(s.entry_price)) * 100.0
                             else:
                                 fp = float(s.final_profit_pct) if isinstance(s.final_profit_pct, (int, float)) else None
+                            # hold_minutes（exitが無い場合は None）
+                            hold_minutes = None
+                            try:
+                                et = getattr(s, "exit_time_utc", None)
+                                st = getattr(s, "signal_time_utc", None)
+                                if isinstance(et, datetime) and isinstance(st, datetime):
+                                    if et.tzinfo is None:
+                                        et = et.replace(tzinfo=timezone.utc)
+                                    if st.tzinfo is None:
+                                        st = st.replace(tzinfo=timezone.utc)
+                                    hold_minutes = float((et - st).total_seconds() / 60.0)
+                            except Exception:
+                                hold_minutes = None
                             return {
                                 "signal_id": str(getattr(s, "signal_id", "") or ""),
                                 "symbol": s.symbol,
@@ -5091,6 +5752,7 @@ def run_replay(
                                 "signal_time_jst": _fmt_dt_jst_short(s.signal_time_utc),
                                 "day_jst": day_jst,
                                 "time_bucket_jst": bucket,
+                                "entry_time_bucket": str(getattr(s, "time_bucket_jst", "") or bucket),
                                 "signal_price": float(s.signal_price),
                                 "entry_price": float(s.entry_price),
                                 "stop_price": float(s.stop_price),
@@ -5100,6 +5762,9 @@ def run_replay(
                                 "last_price_after": float(s.last_price_after),
                                 "max_profit_pct": float(s.max_profit_pct()),
                                 "max_drawdown_pct": float(s.max_drawdown_pct()),
+                                "max_profit_pct_during_trade": float(s.max_profit_pct()),
+                                "max_drawdown_pct_during_trade": float(s.max_drawdown_pct()),
+                                "hold_minutes": hold_minutes,
                                 "take_hit": bool(s.take_hit),
                                 "stop_hit": bool(s.stop_hit),
                                 "partial_take_hit": bool(s.partial_take_hit),
@@ -5122,6 +5787,41 @@ def run_replay(
                                 "vwap_distance_pct": (
                                     float(getattr(s, "vwap_distance_pct", 0.0))
                                     if isinstance(getattr(s, "vwap_distance_pct", None), (int, float))
+                                    else None
+                                ),
+                                "entry_vwap_distance_pct": (
+                                    float(getattr(s, "vwap_distance_pct", 0.0))
+                                    if isinstance(getattr(s, "vwap_distance_pct", None), (int, float))
+                                    else None
+                                ),
+                                "gap_pct": (
+                                    float(getattr(s, "gap_pct", 0.0))
+                                    if isinstance(getattr(s, "gap_pct", None), (int, float))
+                                    else None
+                                ),
+                                "open_5m_return_pct": (
+                                    float(getattr(s, "open_5m_return_pct", 0.0))
+                                    if isinstance(getattr(s, "open_5m_return_pct", None), (int, float))
+                                    else None
+                                ),
+                                "first_30m_volume_ratio": (
+                                    float(getattr(s, "first_30m_volume_ratio", 0.0))
+                                    if isinstance(getattr(s, "first_30m_volume_ratio", None), (int, float))
+                                    else None
+                                ),
+                                "rising_ratio": (
+                                    float(getattr(s, "rising_ratio", 0.0))
+                                    if isinstance(getattr(s, "rising_ratio", None), (int, float))
+                                    else None
+                                ),
+                                "high_update_count_before_entry": (
+                                    int(getattr(s, "high_update_count_before_entry", 0))
+                                    if isinstance(getattr(s, "high_update_count_before_entry", None), (int, float))
+                                    else None
+                                ),
+                                "first_30m_volume": (
+                                    float(getattr(s, "first_30m_volume", 0.0))
+                                    if isinstance(getattr(s, "first_30m_volume", None), (int, float))
                                     else None
                                 ),
                                 "relative_strength_vs_topix_pct": (
@@ -5405,6 +6105,55 @@ def run_replay(
                                 "max_drawdown_yen_100_shares_est": float(max_dd),
                             }
 
+                        rc_eval_by_market_regime: dict[str, Any] = {}
+                        for rk_mr in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+                            sub_mr = [
+                                s
+                                for s in eval_signals
+                                if str(getattr(s, "position_kind", "BASE") or "BASE") == "BASE"
+                                and str(getattr(s, "market_regime", "") or "") == rk_mr
+                            ]
+                            tm = len(sub_mr)
+                            if tm <= 0:
+                                rc_eval_by_market_regime[rk_mr] = {
+                                    "signals": 0,
+                                    "winrate_pct": 0.0,
+                                    "avg_expectancy_yen_100_shares": 0.0,
+                                    "total_pnl_yen_100_shares": 0.0,
+                                    "lose_worst10_sum_yen_100_shares": 0.0,
+                                }
+                                continue
+                            wm = sum(1 for s in sub_mr if str(getattr(s, "result", "")) == "WIN")
+                            pnl_m = float(sum(_pnl_yen_100_shares(s) for s in sub_mr))
+                            exp_m = (pnl_m / float(tm)) if tm > 0 else 0.0
+                            lose_pnls_m = sorted(
+                                [float(_pnl_yen_100_shares(s)) for s in sub_mr if str(getattr(s, "result", "")) == "LOSE"]
+                            )
+                            lw10_m = float(sum(lose_pnls_m[:10])) if lose_pnls_m else 0.0
+                            rc_eval_by_market_regime[rk_mr] = {
+                                "signals": int(tm),
+                                "winrate_pct": float((float(wm) / float(tm) * 100.0) if tm > 0 else 0.0),
+                                "avg_expectancy_yen_100_shares": float(exp_m),
+                                "total_pnl_yen_100_shares": float(pnl_m),
+                                "lose_worst10_sum_yen_100_shares": float(lw10_m),
+                            }
+
+                        _sc_snap_bc: list[dict[str, Any]] = []
+                        if isinstance(composite_signal_filter_strong_combo_snapshot, dict):
+                            _sc_snap_bc = list(composite_signal_filter_strong_combo_snapshot.get("block_conditions") or [])
+                        if not _sc_snap_bc:
+                            _sc_snap_bc = list(_strong_combo_conds_rt)
+                        _combo_filter_payload = _build_combo_filter_analysis_report_payload(
+                            enabled=bool(composite_signal_filter_strong_combo_enabled),
+                            block_conditions_snapshot=list(_sc_snap_bc),
+                            skipped_total=int(strong_combo_filter_skipped_signals_count),
+                            skip_reason_counts=dict(strong_combo_filter_skip_reason_counts),
+                            virtual_pnl_sum_total=float(strong_combo_filter_virtual_pnl_sum),
+                            virtual_count_total=int(strong_combo_filter_virtual_count),
+                            virtual_pnl_by_reason=dict(strong_combo_filter_virtual_pnl_by_reason),
+                            virtual_count_by_reason=dict(strong_combo_filter_virtual_count_by_reason),
+                        )
+
                         # json
                         report: dict[str, Any] = {
                             "meta": {
@@ -5457,6 +6206,17 @@ def run_replay(
                                 "batch_stamp": str(batch_stamp),
                                 "morning_screen_hhmm_jst": (replay_morning_screen_hhmm or "").strip(),
                                 "one_trade_per_symbol_per_day": bool(one_trade_per_symbol_per_day),
+                                "market_regime_distribution": dict(market_regime_counts),
+                                "rising_ratio_distribution": {
+                                    "samples": int(rising_ratio_samples),
+                                    "avg": float(rising_ratio_sum / float(rising_ratio_samples)) if rising_ratio_samples > 0 else 0.0,
+                                    "min": float(rising_ratio_min) if isinstance(rising_ratio_min, (int, float)) else None,
+                                    "max": float(rising_ratio_max) if isinstance(rising_ratio_max, (int, float)) else None,
+                                    "lt40_count": int(rising_ratio_lt40_samples),
+                                    "lt50_count": int(rising_ratio_lt50_samples),
+                                    "ge60_count": int(rising_ratio_ge60_samples),
+                                    "lt50_ratio": float(rising_ratio_lt50_samples / float(rising_ratio_samples)) if rising_ratio_samples > 0 else 0.0,
+                                },
                             },
                             # market_state 判定の生ログ（signal生成とは独立）
                             "market_debug": {
@@ -5566,11 +6326,258 @@ def run_replay(
                                     "disable_morning_weak": bool(regime_filter_disable_morning_weak),
                                     "disable_rising_ratio_lt50": bool(regime_filter_disable_rising_ratio_lt50),
                                     "disable_topix_weak": bool(regime_filter_disable_topix_weak),
+                                    "topix_weak_threshold_pct": float(topix_weak_thr_pct),
                                     "skipped_signals_count": int(regime_filter_skipped_signals_count),
                                     "skip_reason_counts": dict(regime_filter_skip_reason_counts),
+                                    "diag": {
+                                        "filter_name": (
+                                            f"mw={int(bool(regime_filter_disable_morning_weak))},"
+                                            f"rlt50={int(bool(regime_filter_disable_rising_ratio_lt50))},"
+                                            f"tw={int(bool(regime_filter_disable_topix_weak))},"
+                                            f"tw_thr={float(topix_weak_thr_pct):g}"
+                                        ),
+                                        "checked_count": int(regime_filter_diag_checked_count),
+                                        "skipped_count": int(regime_filter_diag_skipped_count),
+                                        "passed_count": int(regime_filter_diag_passed_count),
+                                        "skip_ratio": float(
+                                            (float(regime_filter_diag_skipped_count) / float(regime_filter_diag_checked_count))
+                                            if int(regime_filter_diag_checked_count) > 0
+                                            else 0.0
+                                        ),
+                                        "sample_skipped": list(regime_filter_diag_sample_skipped),
+                                    },
+                                    "topix_weak_virtual_analysis": {
+                                        "skipped_signals_count": int(regime_topix_weak_virtual_count),
+                                        "winrate_pct": float(
+                                            (float(regime_topix_weak_virtual_win) / float(regime_topix_weak_virtual_win + regime_topix_weak_virtual_lose) * 100.0)
+                                            if (regime_topix_weak_virtual_win + regime_topix_weak_virtual_lose) > 0
+                                            else 0.0
+                                        ),
+                                        "avg_expectancy_yen_100_shares": float(
+                                            (float(regime_topix_weak_virtual_pnl_sum) / float(regime_topix_weak_virtual_count))
+                                            if int(regime_topix_weak_virtual_count) > 0
+                                            else 0.0
+                                        ),
+                                        "total_pnl_yen_100_shares": float(regime_topix_weak_virtual_pnl_sum),
+                                        "prevented_loss_estimate_yen_100_shares": float(-float(regime_topix_weak_virtual_pnl_sum)),
+                                        "if_not_skipped_estimate": {
+                                            "total_signals": int(int(len(eval_signals)) + int(regime_topix_weak_virtual_count)),
+                                            "total_pnl_yen_100_shares": float(
+                                                float((_agg_stats(eval_signals) or {}).get("pnl_yen_100_shares") or 0.0)
+                                                + float(regime_topix_weak_virtual_pnl_sum)
+                                            ),
+                                            "avg_expectancy_yen_100_shares": float(
+                                                (
+                                                    float(
+                                                        float((_agg_stats(eval_signals) or {}).get("pnl_yen_100_shares") or 0.0)
+                                                        + float(regime_topix_weak_virtual_pnl_sum)
+                                                    )
+                                                    / float(int(len(eval_signals)) + int(regime_topix_weak_virtual_count))
+                                                )
+                                                if (int(len(eval_signals)) + int(regime_topix_weak_virtual_count)) > 0
+                                                else 0.0
+                                            ),
+                                        },
+                                    },
+                                },
+                                "signal_filters": {
+                                    "disable_gap_ge_pct": bool(signal_filter_disable_gap_ge_pct),
+                                    "gap_ge_threshold_pct": float(signal_filter_gap_ge_threshold_pct),
+                                    "disable_vwap_distance_ge_pct": bool(signal_filter_disable_vwap_distance_ge_pct),
+                                    "vwap_distance_ge_threshold_pct": float(signal_filter_vwap_distance_ge_threshold_pct),
+                                    "disable_entry_after_hhmm": bool(signal_filter_disable_entry_after_hhmm),
+                                    "entry_after_hhmm": str(signal_filter_entry_after_hhmm),
+                                    "skipped_signals_count": int(signal_filters_skipped_signals_count),
+                                    "skip_reason_counts": dict(signal_filters_skip_reason_counts),
+                                    "virtual_pnl_analysis": {
+                                        "skipped_signals_count": int(
+                                            int(signal_filters_virtual_count) + int(composite_signal_filter_virtual_count)
+                                        ),
+                                        "winrate_pct": float(
+                                            (
+                                                float(signal_filters_virtual_win + composite_signal_filter_virtual_win)
+                                                / float(
+                                                    signal_filters_virtual_win
+                                                    + signal_filters_virtual_lose
+                                                    + composite_signal_filter_virtual_win
+                                                    + composite_signal_filter_virtual_lose
+                                                )
+                                                * 100.0
+                                            )
+                                            if (
+                                                signal_filters_virtual_win
+                                                + signal_filters_virtual_lose
+                                                + composite_signal_filter_virtual_win
+                                                + composite_signal_filter_virtual_lose
+                                            )
+                                            > 0
+                                            else 0.0
+                                        ),
+                                        "avg_expectancy_yen_100_shares": float(
+                                            (
+                                                float(signal_filters_virtual_pnl_sum + composite_signal_filter_virtual_pnl_sum)
+                                                / float(
+                                                    int(signal_filters_virtual_count)
+                                                    + int(composite_signal_filter_virtual_count)
+                                                )
+                                            )
+                                            if (
+                                                int(signal_filters_virtual_count)
+                                                + int(composite_signal_filter_virtual_count)
+                                            )
+                                            > 0
+                                            else 0.0
+                                        ),
+                                        "total_pnl_yen_100_shares": float(
+                                            float(signal_filters_virtual_pnl_sum)
+                                            + float(composite_signal_filter_virtual_pnl_sum)
+                                        ),
+                                        "prevented_loss_estimate_yen_100_shares": float(
+                                            -float(signal_filters_virtual_pnl_sum + composite_signal_filter_virtual_pnl_sum)
+                                        ),
+                                        "if_not_skipped_estimate": {
+                                            "total_signals": int(
+                                                int(len(eval_signals))
+                                                + int(signal_filters_virtual_count)
+                                                + int(composite_signal_filter_virtual_count)
+                                            ),
+                                            "total_pnl_yen_100_shares": float(
+                                                float((_agg_stats(eval_signals) or {}).get("pnl_yen_100_shares") or 0.0)
+                                                + float(signal_filters_virtual_pnl_sum)
+                                                + float(composite_signal_filter_virtual_pnl_sum)
+                                            ),
+                                            "avg_expectancy_yen_100_shares": float(
+                                                (
+                                                    float(
+                                                        float((_agg_stats(eval_signals) or {}).get("pnl_yen_100_shares") or 0.0)
+                                                        + float(signal_filters_virtual_pnl_sum)
+                                                        + float(composite_signal_filter_virtual_pnl_sum)
+                                                    )
+                                                    / float(
+                                                        int(len(eval_signals))
+                                                        + int(signal_filters_virtual_count)
+                                                        + int(composite_signal_filter_virtual_count)
+                                                    )
+                                                )
+                                                if (
+                                                    int(len(eval_signals))
+                                                    + int(signal_filters_virtual_count)
+                                                    + int(composite_signal_filter_virtual_count)
+                                                )
+                                                > 0
+                                                else 0.0
+                                            ),
+                                        },
+                                    },
+                                    "composite_signal_filters": {
+                                        "weak_risk_filter": str(composite_signal_filter_weak_risk_filter or ""),
+                                        "strong_risk_filter": str(composite_signal_filter_strong_risk_filter or ""),
+                                        "strong_vwap_ge_threshold_pct": float(composite_signal_filter_strong_vwap_ge_threshold_pct),
+                                        "disable_state_weak_and_vwap_ge_pct": bool(
+                                            composite_signal_filter_disable_weak_vwap_ge
+                                        ),
+                                        "state_weak_vwap_ge_threshold_pct": float(
+                                            composite_signal_filter_weak_vwap_ge_threshold_pct
+                                        ),
+                                        "disable_state_weak_and_gap_ge_pct": bool(composite_signal_filter_disable_weak_gap_ge),
+                                        "state_weak_gap_ge_threshold_pct": float(composite_signal_filter_weak_gap_ge_threshold_pct),
+                                        "skipped_signals_count": int(composite_signal_filter_skipped_signals_count),
+                                        "skip_reason_counts": dict(composite_signal_filter_skip_reason_counts),
+                                        "virtual_pnl_analysis": {
+                                            "skipped_signals_count": int(composite_signal_filter_virtual_count),
+                                            "winrate_pct": float(
+                                                (
+                                                    float(composite_signal_filter_virtual_win)
+                                                    / float(composite_signal_filter_virtual_win + composite_signal_filter_virtual_lose)
+                                                    * 100.0
+                                                )
+                                                if (composite_signal_filter_virtual_win + composite_signal_filter_virtual_lose) > 0
+                                                else 0.0
+                                            ),
+                                            "avg_expectancy_yen_100_shares_if_skipped": float(
+                                                (
+                                                    float(composite_signal_filter_virtual_pnl_sum)
+                                                    / float(composite_signal_filter_virtual_count)
+                                                )
+                                                if int(composite_signal_filter_virtual_count) > 0
+                                                else 0.0
+                                            ),
+                                            "total_pnl_yen_100_shares": float(composite_signal_filter_virtual_pnl_sum),
+                                            "prevented_loss_estimate_yen_100_shares": float(
+                                                -float(composite_signal_filter_virtual_pnl_sum)
+                                            ),
+                                        },
+                                        "strong_combo_filter": dict(_combo_filter_payload),
+                                    },
+                                },
+                                "regime_controls": {
+                                    "enabled": bool(regime_control_enabled),
+                                    "config": dict(_rc_snap_report),
+                                    "profiles_runtime": dict(_regime_profiles_rt),
+                                    "skipped_signals_count": int(regime_control_skipped_signals_count),
+                                    "skip_reason_counts": dict(regime_control_skip_reason_counts),
+                                    "virtual_pnl_analysis": {
+                                        "skipped_signals_count": int(regime_control_virtual_count),
+                                        "winrate_pct": float(
+                                            (
+                                                float(regime_control_virtual_win)
+                                                / float(regime_control_virtual_win + regime_control_virtual_lose)
+                                                * 100.0
+                                            )
+                                            if (regime_control_virtual_win + regime_control_virtual_lose) > 0
+                                            else 0.0
+                                        ),
+                                        "avg_expectancy_yen_100_shares_if_skipped": float(
+                                            (float(regime_control_virtual_pnl_sum) / float(regime_control_virtual_count))
+                                            if int(regime_control_virtual_count) > 0
+                                            else 0.0
+                                        ),
+                                        "total_pnl_yen_100_shares": float(regime_control_virtual_pnl_sum),
+                                        "prevented_loss_estimate_yen_100_shares": float(
+                                            -float(regime_control_virtual_pnl_sum)
+                                        ),
+                                        "if_not_skipped_estimate": {
+                                            "total_signals": int(int(len(eval_signals)) + int(regime_control_virtual_count)),
+                                            "total_pnl_yen_100_shares": float(
+                                                float((_agg_stats(eval_signals) or {}).get("pnl_yen_100_shares") or 0.0)
+                                                + float(regime_control_virtual_pnl_sum)
+                                            ),
+                                            "avg_expectancy_yen_100_shares": float(
+                                                (
+                                                    float(
+                                                        float((_agg_stats(eval_signals) or {}).get("pnl_yen_100_shares") or 0.0)
+                                                        + float(regime_control_virtual_pnl_sum)
+                                                    )
+                                                    / float(int(len(eval_signals)) + int(regime_control_virtual_count))
+                                                )
+                                                if (int(len(eval_signals)) + int(regime_control_virtual_count)) > 0
+                                                else 0.0
+                                            ),
+                                        },
+                                    },
+                                    "eval_by_market_regime": dict(rc_eval_by_market_regime),
                                 },
                             },
                             "by_symbol_summary": {sym: _agg_stats(xs) for sym, xs in by_symbol.items()},
+                            "symbol_contribution_analysis": _build_symbol_contribution_analysis(
+                                by_symbol_summary={sym: _agg_stats(xs) for sym, xs in by_symbol.items()},
+                                total_pnl_yen_100_shares=float((_agg_stats(eval_signals) or {}).get("pnl_yen_100_shares") or 0.0),
+                                total_signals=int(len(eval_signals)),
+                                exclude_top_n_symbols_list=(1, 2, 3),
+                            ),
+                            "signal_feature_analysis": _build_signal_feature_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "signal_composite_feature_analysis": _build_composite_signal_feature_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "combo_filter_analysis": {"strong_combo_filter": dict(_combo_filter_payload)},
+                            "strong_loser_analysis": _build_strong_loser_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "signal_state_cross_analysis": _build_signal_state_cross_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
                             "by_time_bucket_summary": {b: _agg_stats(by_bucket.get(b) or []) for b in bucket_order if (by_bucket.get(b) or [])},
                             "time_bucket_analysis": dict(time_bucket_analysis),
                             "market_regime_analysis": dict(market_regime_analysis),
@@ -6068,64 +7075,67 @@ def run_replay(
                             r = str(getattr(s, "exit_reason", "") or "")
                             return bool(r)
 
-                        with open(signals_csv_path, "w", encoding="utf-8", newline="") as fcsv:
-                            wcsv = csv.writer(fcsv)
-                            wcsv.writerow(
-                                [
-                                    "signal_id",
-                                    "symbol",
-                                    "entry_time_utc",
-                                    "topix_chg_pct_raw",
-                                    "topix_chg_pct",
-                                    "market_state",
-                                    "blocked_reason",
-                                    "entry_allowed",
-                                    "exit_time_utc",
-                                    "entry_price",
-                                    "exit_price",
-                                    "profit_pct",
-                                    "pnl_yen_100_shares",
-                                    "exit_reason",
-                                    "position_closed",
-                                    "excluded_from_eval",
-                                    "excluded_reason",
-                                ]
-                            )
-                            csv_rows_written = 0
-                            for i, s in enumerate(replay_signals):
-                                sid = str(getattr(s, "signal_id", "") or f"{safe_batch_stamp}_idx{i:05d}")
-                                profit_pct = float(_profit_pct_for_summary(s))
-                                pnl100 = float(_pnl_yen_100_shares(s))
+                        if not paper_trade_mode:
+                            with open(signals_csv_path, "w", encoding="utf-8", newline="") as fcsv:
+                                wcsv = csv.writer(fcsv)
                                 wcsv.writerow(
                                     [
-                                        sid,
-                                        str(s.symbol),
-                                        _as_iso_any(getattr(s, "signal_time_utc", None)),
-                                        (
-                                            float(getattr(s, "topix_chg_pct_raw", 0.0))
-                                            if isinstance(getattr(s, "topix_chg_pct_raw", None), (int, float))
-                                            else ""
-                                        ),
-                                        (
-                                            float(getattr(s, "topix_chg_pct", 0.0))
-                                            if isinstance(getattr(s, "topix_chg_pct", None), (int, float))
-                                            else ""
-                                        ),
-                                        str(getattr(s, "market_state", "") or getattr(s, "market_regime", "") or ""),
-                                        str(getattr(s, "blocked_reason", "") or ""),
-                                        bool(getattr(s, "entry_allowed", True)),
-                                        _as_iso_any(getattr(s, "exit_time_utc", None)),
-                                        float(getattr(s, "entry_price", 0.0) or 0.0),
-                                        (float(getattr(s, "exit_price", 0.0)) if isinstance(getattr(s, "exit_price", None), (int, float)) else ""),
-                                        profit_pct,
-                                        pnl100,
-                                        str(getattr(s, "exit_reason", "") or ""),
-                                        bool(_signal_closed(s)),
-                                        bool(getattr(s, "excluded_from_eval", False)),
-                                        str(getattr(s, "excluded_reason", "") or ""),
+                                        "signal_id",
+                                        "symbol",
+                                        "entry_time_utc",
+                                        "topix_chg_pct_raw",
+                                        "topix_chg_pct",
+                                        "market_state",
+                                        "blocked_reason",
+                                        "entry_allowed",
+                                        "exit_time_utc",
+                                        "entry_price",
+                                        "exit_price",
+                                        "profit_pct",
+                                        "pnl_yen_100_shares",
+                                        "exit_reason",
+                                        "position_closed",
+                                        "excluded_from_eval",
+                                        "excluded_reason",
                                     ]
                                 )
-                                csv_rows_written += 1
+                                csv_rows_written = 0
+                                for i, s in enumerate(replay_signals):
+                                    sid = str(getattr(s, "signal_id", "") or f"{safe_batch_stamp}_idx{i:05d}")
+                                    profit_pct = float(_profit_pct_for_summary(s))
+                                    pnl100 = float(_pnl_yen_100_shares(s))
+                                    wcsv.writerow(
+                                        [
+                                            sid,
+                                            str(s.symbol),
+                                            _as_iso_any(getattr(s, "signal_time_utc", None)),
+                                            (
+                                                float(getattr(s, "topix_chg_pct_raw", 0.0))
+                                                if isinstance(getattr(s, "topix_chg_pct_raw", None), (int, float))
+                                                else ""
+                                            ),
+                                            (
+                                                float(getattr(s, "topix_chg_pct", 0.0))
+                                                if isinstance(getattr(s, "topix_chg_pct", None), (int, float))
+                                                else ""
+                                            ),
+                                            str(getattr(s, "market_state", "") or getattr(s, "market_regime", "") or ""),
+                                            str(getattr(s, "blocked_reason", "") or ""),
+                                            bool(getattr(s, "entry_allowed", True)),
+                                            _as_iso_any(getattr(s, "exit_time_utc", None)),
+                                            float(getattr(s, "entry_price", 0.0) or 0.0),
+                                            (float(getattr(s, "exit_price", 0.0)) if isinstance(getattr(s, "exit_price", None), (int, float)) else ""),
+                                            profit_pct,
+                                            pnl100,
+                                            str(getattr(s, "exit_reason", "") or ""),
+                                            bool(_signal_closed(s)),
+                                            bool(getattr(s, "excluded_from_eval", False)),
+                                            str(getattr(s, "excluded_reason", "") or ""),
+                                        ]
+                                    )
+                                    csv_rows_written += 1
+                        else:
+                            csv_rows_written = int(len(replay_signals))
 
                         # 整合性チェック（差異があればWARNING）
                         unique_ids = [str(getattr(s, "signal_id", "") or "") for s in replay_signals]
@@ -6158,6 +7168,19 @@ def run_replay(
                         # signal 0件の明記（ユーザー向けに「出力ミス」と区別しやすくする）
                         if int(len(replay_signals)) == 0:
                             report["integrity_check"]["note"] = "このrunは signal 0件のため signals.csv はヘッダーのみです"
+
+                        if isinstance(paper_trade_collect, dict):
+                            try:
+                                paper_trade_collect.clear()
+                                paper_trade_collect["report"] = report
+                                paper_trade_collect["replay_signals"] = list(replay_signals)
+                            except Exception:
+                                pass
+
+                        # Paper trade: Replay と同一ロジックの集計（report）は取得済み。
+                        # results/replay_* への既定出力は行わず、上位の paper_trade ループ側でCSV/Summaryへ記録します。
+                        if paper_trade_mode:
+                            return 0
 
                         json_path = os.path.join(results_dir, f"{name_base}.json")
                         with open(json_path, "w", encoding="utf-8") as f:
@@ -7104,7 +8127,9 @@ def run_replay(
                     if pct > 100:
                         pct = 100
                 # 例: [15:23:00][Replay 72%] replay_time_jst=2026-05-01 15:23:00
-                if (not fast_mode) or bool(replay_fast_verbose) or (pct % 10 == 0):
+                if (not paper_trade_mode) and (
+                    (not fast_mode) or bool(replay_fast_verbose) or (pct % 10 == 0)
+                ):
                     print(f"[{now_str()}][Replay {pct}%] replay_time_jst={replay_t_jst}")
 
                 # -----------------------------
@@ -7130,14 +8155,20 @@ def run_replay(
                             recent_5m_low = float(min(lows_window))
                     for idx in list(idxs):
                         s = replay_signals[idx]
+                        _eb, _ev, _er = _replay_signal_early_exit_kw(
+                            s,
+                            replay_early_exit_before_stop=bool(replay_early_exit_before_stop),
+                            replay_early_exit_vwap=bool(replay_early_exit_vwap),
+                            replay_early_exit_recent_low=bool(replay_early_exit_recent_low),
+                        )
                         s.update_with_price(
                             time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
                             price=float(q.price),
                             vwap=vwap_now,
                             recent_5m_low=recent_5m_low,
-                            early_exit_before_partial_take=bool(replay_early_exit_before_stop),
-                            early_exit_vwap=bool(replay_early_exit_vwap),
-                            early_exit_recent_low=bool(replay_early_exit_recent_low),
+                            early_exit_before_partial_take=bool(_eb),
+                            early_exit_vwap=bool(_ev),
+                            early_exit_recent_low=bool(_er),
                         )
                         if s.resolved:
                             # 解決済みは active から外す（次ループ以降の更新を省略）
@@ -7239,6 +8270,177 @@ def run_replay(
                         daily_loss_stop_virtual_active_indices_by_symbol[q.symbol] = vidxs
                     else:
                         daily_loss_stop_virtual_active_indices_by_symbol.pop(q.symbol, None)
+
+                    # regime TOPIX_WEAK で除外された“仮想signal”も更新（損益推定に使う）
+                    rvidxs = regime_topix_weak_virtual_active_indices_by_symbol.get(q.symbol) or []
+                    for idx in list(rvidxs):
+                        s = replay_signals[idx]
+                        s.update_with_price(
+                            time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
+                            price=float(q.price),
+                            vwap=vwap_now,
+                            recent_5m_low=recent_5m_low,
+                            early_exit_before_partial_take=bool(replay_early_exit_before_stop),
+                            early_exit_vwap=bool(replay_early_exit_vwap),
+                            early_exit_recent_low=bool(replay_early_exit_recent_low),
+                        )
+                        if s.resolved:
+                            try:
+                                rvidxs.remove(idx)
+                            except Exception:
+                                pass
+                            if idx not in resolved_counted_regime_topix_virtual_indices:
+                                resolved_counted_regime_topix_virtual_indices.add(idx)
+                                pnl_v = float(_pnl_yen_100_shares_replay(s))
+                                regime_topix_weak_virtual_pnl_sum += pnl_v
+                                if str(s.result) == "WIN":
+                                    regime_topix_weak_virtual_win += 1
+                                elif str(s.result) == "LOSE":
+                                    regime_topix_weak_virtual_lose += 1
+                    if rvidxs:
+                        regime_topix_weak_virtual_active_indices_by_symbol[q.symbol] = rvidxs
+                    else:
+                        regime_topix_weak_virtual_active_indices_by_symbol.pop(q.symbol, None)
+
+                    # signal_filters で除外された“仮想signal”も更新（損益推定に使う）
+                    sfvidxs = signal_filters_virtual_active_indices_by_symbol.get(q.symbol) or []
+                    for idx in list(sfvidxs):
+                        s = replay_signals[idx]
+                        s.update_with_price(
+                            time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
+                            price=float(q.price),
+                            vwap=vwap_now,
+                            recent_5m_low=recent_5m_low,
+                            early_exit_before_partial_take=bool(replay_early_exit_before_stop),
+                            early_exit_vwap=bool(replay_early_exit_vwap),
+                            early_exit_recent_low=bool(replay_early_exit_recent_low),
+                        )
+                        if s.resolved:
+                            try:
+                                sfvidxs.remove(idx)
+                            except Exception:
+                                pass
+                            if idx not in resolved_counted_signal_filter_virtual_indices:
+                                resolved_counted_signal_filter_virtual_indices.add(idx)
+                                pnl_v = float(_pnl_yen_100_shares_replay(s))
+                                signal_filters_virtual_pnl_sum += pnl_v
+                                if str(s.result) == "WIN":
+                                    signal_filters_virtual_win += 1
+                                elif str(s.result) == "LOSE":
+                                    signal_filters_virtual_lose += 1
+                    if sfvidxs:
+                        signal_filters_virtual_active_indices_by_symbol[q.symbol] = sfvidxs
+                    else:
+                        signal_filters_virtual_active_indices_by_symbol.pop(q.symbol, None)
+
+                    # composite_signal_filters で除外された“仮想signal”も更新
+                    cfvidxs = composite_signal_filter_virtual_active_indices_by_symbol.get(q.symbol) or []
+                    for idx in list(cfvidxs):
+                        s = replay_signals[idx]
+                        s.update_with_price(
+                            time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
+                            price=float(q.price),
+                            vwap=vwap_now,
+                            recent_5m_low=recent_5m_low,
+                            early_exit_before_partial_take=bool(replay_early_exit_before_stop),
+                            early_exit_vwap=bool(replay_early_exit_vwap),
+                            early_exit_recent_low=bool(replay_early_exit_recent_low),
+                        )
+                        if s.resolved:
+                            try:
+                                cfvidxs.remove(idx)
+                            except Exception:
+                                pass
+                            if idx not in resolved_counted_composite_signal_filter_virtual_indices:
+                                resolved_counted_composite_signal_filter_virtual_indices.add(idx)
+                                pnl_v = float(_pnl_yen_100_shares_replay(s))
+                                composite_signal_filter_virtual_pnl_sum += pnl_v
+                                if str(s.result) == "WIN":
+                                    composite_signal_filter_virtual_win += 1
+                                elif str(s.result) == "LOSE":
+                                    composite_signal_filter_virtual_lose += 1
+                    if cfvidxs:
+                        composite_signal_filter_virtual_active_indices_by_symbol[q.symbol] = cfvidxs
+                    else:
+                        composite_signal_filter_virtual_active_indices_by_symbol.pop(q.symbol, None)
+
+                    # strong_combo_filter で除外された“仮想signal”
+                    scfvidxs = strong_combo_filter_virtual_active_indices_by_symbol.get(q.symbol) or []
+                    for idx in list(scfvidxs):
+                        s = replay_signals[idx]
+                        s.update_with_price(
+                            time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
+                            price=float(q.price),
+                            vwap=vwap_now,
+                            recent_5m_low=recent_5m_low,
+                            early_exit_before_partial_take=bool(replay_early_exit_before_stop),
+                            early_exit_vwap=bool(replay_early_exit_vwap),
+                            early_exit_recent_low=bool(replay_early_exit_recent_low),
+                        )
+                        if s.resolved:
+                            try:
+                                scfvidxs.remove(idx)
+                            except Exception:
+                                pass
+                            if idx not in resolved_counted_strong_combo_filter_virtual_indices:
+                                resolved_counted_strong_combo_filter_virtual_indices.add(idx)
+                                pnl_v = float(_pnl_yen_100_shares_replay(s))
+                                strong_combo_filter_virtual_pnl_sum += pnl_v
+                                rk_sc = None
+                                er_s = str(getattr(s, "excluded_reason", "") or "")
+                                for part in er_s.split(" / "):
+                                    ps = str(part).strip()
+                                    if ps and ps in _strong_combo_reasons_frozen:
+                                        rk_sc = ps
+                                        break
+                                if rk_sc:
+                                    strong_combo_filter_virtual_pnl_by_reason[rk_sc] = float(
+                                        strong_combo_filter_virtual_pnl_by_reason.get(rk_sc, 0.0)
+                                    ) + float(pnl_v)
+                                    strong_combo_filter_virtual_count_by_reason[rk_sc] = int(
+                                        strong_combo_filter_virtual_count_by_reason.get(rk_sc, 0)
+                                    ) + 1
+                    if scfvidxs:
+                        strong_combo_filter_virtual_active_indices_by_symbol[q.symbol] = scfvidxs
+                    else:
+                        strong_combo_filter_virtual_active_indices_by_symbol.pop(q.symbol, None)
+
+                    # regime_controls で除外された“仮想signal”（exit_mode は per-signal に反映済み）
+                    rcfvidxs = regime_control_virtual_active_indices_by_symbol.get(q.symbol) or []
+                    for idx in list(rcfvidxs):
+                        s = replay_signals[idx]
+                        _eb_rc, _ev_rc, _er_rc = _replay_signal_early_exit_kw(
+                            s,
+                            replay_early_exit_before_stop=bool(replay_early_exit_before_stop),
+                            replay_early_exit_vwap=bool(replay_early_exit_vwap),
+                            replay_early_exit_recent_low=bool(replay_early_exit_recent_low),
+                        )
+                        s.update_with_price(
+                            time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
+                            price=float(q.price),
+                            vwap=vwap_now,
+                            recent_5m_low=recent_5m_low,
+                            early_exit_before_partial_take=bool(_eb_rc),
+                            early_exit_vwap=bool(_ev_rc),
+                            early_exit_recent_low=bool(_er_rc),
+                        )
+                        if s.resolved:
+                            try:
+                                rcfvidxs.remove(idx)
+                            except Exception:
+                                pass
+                            if idx not in resolved_counted_regime_control_virtual_indices:
+                                resolved_counted_regime_control_virtual_indices.add(idx)
+                                pnl_v = float(_pnl_yen_100_shares_replay(s))
+                                regime_control_virtual_pnl_sum += pnl_v
+                                if str(s.result) == "WIN":
+                                    regime_control_virtual_win += 1
+                                elif str(s.result) == "LOSE":
+                                    regime_control_virtual_lose += 1
+                    if rcfvidxs:
+                        regime_control_virtual_active_indices_by_symbol[q.symbol] = rcfvidxs
+                    else:
+                        regime_control_virtual_active_indices_by_symbol.pop(q.symbol, None)
 
                 # -----------------------------
                 # ここから下は「通常の判定ロジック」と同じ流れ
@@ -7629,7 +8831,7 @@ def run_replay(
 
                 candidate_symbols = {q.symbol for q in candidates}
                 should_print = (not only_changes) or (candidate_symbols != last_candidates)
-                if should_print:
+                if should_print and (not paper_trade_mode):
                     # ここは「候補が何件か」だけを短く表示（時刻/進行率は上で毎回表示済み）
                     print(f"[{now_str()}] 条件一致: {len(candidates)} 銘柄")
                 last_candidates = candidate_symbols
@@ -7679,6 +8881,11 @@ def run_replay(
                 brk_ratio = 0.0
                 below_ratio = 0.0
                 hm_now = 0
+                topix_weak_thr_pct = (
+                    float(regime_filter_topix_weak_threshold_pct)
+                    if isinstance(regime_filter_topix_weak_threshold_pct, (int, float))
+                    else float(WEAK_TOPIX_CHG_PCT_MAX)
+                )
                 try:
                     # 時刻（JST）
                     rt = replay_t
@@ -7853,8 +9060,8 @@ def run_replay(
                         # CRASH: TOPIX <= -1.5%
                         crash = True
                         market_reasons.append("TOPIX_CRASH")
-                    elif topix_chg_ok and (float(CRASH_TOPIX_CHG_PCT_MAX) < float(topix_chg) <= float(WEAK_TOPIX_CHG_PCT_MAX)):
-                        # WEAK: -1.5% < TOPIX <= -0.5%
+                    elif topix_chg_ok and (float(CRASH_TOPIX_CHG_PCT_MAX) < float(topix_chg) <= float(topix_weak_thr_pct)):
+                        # WEAK: -1.5% < TOPIX <= threshold
                         market_reasons.append("TOPIX_WEAK")
                     if (tot > 0 and rising_ratio <= float(CRASH_RISING_RATIO_MAX)) and (tot2 > 0 and high_ratio <= float(CRASH_HIGH_RATIO_MAX)):
                         market_reasons.append("BREADTH_WEAK")
@@ -7863,12 +9070,35 @@ def run_replay(
                         market_regime = "CRASH"
                     elif market_reasons:
                         market_regime = "WEAK"
+                    elif (
+                        (not bool(fallback_used))
+                        and bool(topix_chg_ok)
+                        and (topix_chg is not None)
+                        and float(topix_chg) >= float(STRONG_TOPIX_CHG_PCT_MIN)
+                    ):
+                        market_regime = "STRONG"
                     else:
                         market_regime = "NORMAL"
                 except Exception:
                     market_regime = "NORMAL"
                     market_reasons = []
                 market_regime_last = str(market_regime)
+                # 分布カウント（デバッグ用）
+                try:
+                    market_regime_counts[market_regime_last] = int(market_regime_counts.get(market_regime_last, 0)) + 1
+                    rr0 = float(rising_ratio) if isinstance(rising_ratio, (int, float)) else 0.0
+                    rising_ratio_samples += 1
+                    rising_ratio_sum += rr0
+                    rising_ratio_min = rr0 if rising_ratio_min is None else float(min(float(rising_ratio_min), rr0))
+                    rising_ratio_max = rr0 if rising_ratio_max is None else float(max(float(rising_ratio_max), rr0))
+                    if rr0 < 0.5:
+                        rising_ratio_lt50_samples += 1
+                    if rr0 < 0.4:
+                        rising_ratio_lt40_samples += 1
+                    if rr0 >= 0.6:
+                        rising_ratio_ge60_samples += 1
+                except Exception:
+                    pass
 
                 # -----------------------------
                 # MARKET_DEBUG（ユーザー要望）
@@ -8204,13 +9434,14 @@ def run_replay(
                                     rej.append("rs<0")
 
                                 if str(regime) == "WEAK":
-                                    # 後場制限（WEAK時のみ）
-                                    ttmp2 = q.market_time_utc or datetime.now(tz=timezone.utc)
-                                    if ttmp2.tzinfo is None:
-                                        ttmp2 = ttmp2.replace(tzinfo=timezone.utc)
-                                    hm2 = ttmp2.astimezone(JST).hour * 60 + ttmp2.astimezone(JST).minute
-                                    if hm2 >= (11 * 60 + 30):
-                                        rej.append("weak_not_morning")
+                                    # 後場制限（WEAK時のみ）: regime_controls 有効時は時間帯前提を外す
+                                    if not bool(regime_control_enabled):
+                                        ttmp2 = q.market_time_utc or datetime.now(tz=timezone.utc)
+                                        if ttmp2.tzinfo is None:
+                                            ttmp2 = ttmp2.replace(tzinfo=timezone.utc)
+                                        hm2 = ttmp2.astimezone(JST).hour * 60 + ttmp2.astimezone(JST).minute
+                                        if hm2 >= (11 * 60 + 30):
+                                            rej.append("weak_not_morning")
 
                                     if rsi14 is not None and float(rsi14) > float(WEAK_SIGNAL_FILTER_RSI_BLOCK_GT):
                                         rej.append(f"rsi>{int(WEAK_SIGNAL_FILTER_RSI_BLOCK_GT)}")
@@ -8277,15 +9508,40 @@ def run_replay(
 
                             # regime filter AB test（ENTRY前に skip）
                             if not exclude:
+                                regime_filter_diag_checked_count += 1
                                 rf_reasons: list[str] = []
                                 if bool(regime_filter_disable_morning_weak):
-                                    if int(hm_now) < (11 * 60 + 30) and str(market_regime) in ("WEAK", "CRASH"):
+                                    # 「前場弱い」を market_regime != NORMAL のように広げすぎない
+                                    # - CRASH は無条件で弱い
+                                    # - WEAK は「TOPIX/BREADTH/rising 等の明確な弱材料」があるときだけ弱い
+                                    rs2 = set([str(x) for x in (market_reasons or [])])
+                                    morning_weak_hit = False
+                                    if int(hm_now) < (11 * 60 + 30):
+                                        if str(market_regime) == "CRASH":
+                                            morning_weak_hit = True
+                                        elif (
+                                            ("TOPIX_CRASH" in rs2)
+                                            or ("TOPIX_WEAK" in rs2)
+                                            or ("BREADTH_WEAK" in rs2)
+                                            or ("NIKKEI<VWAP" in rs2)
+                                            or ("fail30m>60%" in rs2)
+                                            or any(str(x).startswith("rising<") for x in rs2)
+                                        ):
+                                            morning_weak_hit = True
+                                    if morning_weak_hit:
                                         rf_reasons.append("REGIME_FILTER_MORNING_WEAK")
                                 if bool(regime_filter_disable_rising_ratio_lt50):
-                                    if isinstance(rising_ratio, (int, float)) and float(rising_ratio) < 0.5:
+                                    # rising_ratio は 0..1 を想定。0..100 で来た場合も吸収。
+                                    rr = rising_ratio
+                                    rr2 = None
+                                    if isinstance(rr, (int, float)):
+                                        rr2 = float(rr)
+                                        if rr2 > 1.0 and rr2 <= 100.0:
+                                            rr2 = rr2 / 100.0
+                                    if rr2 is not None and rr2 < 0.5:
                                         rf_reasons.append("REGIME_FILTER_RISING_LT50")
                                 if bool(regime_filter_disable_topix_weak):
-                                    if isinstance(topix_chg, (int, float)) and float(topix_chg) <= float(WEAK_TOPIX_CHG_PCT_MAX):
+                                    if isinstance(topix_chg, (int, float)) and float(topix_chg) <= float(topix_weak_thr_pct):
                                         rf_reasons.append("REGIME_FILTER_TOPIX_WEAK")
                                     elif isinstance(market_reasons, list) and ("TOPIX_WEAK" in market_reasons):
                                         rf_reasons.append("REGIME_FILTER_TOPIX_WEAK")
@@ -8294,9 +9550,21 @@ def run_replay(
                                     exclude = True
                                     exclude_reason = " / ".join(rf_reasons)
                                     regime_filter_skipped_signals_count += 1
+                                    regime_filter_diag_skipped_count += 1
                                     for rr in rf_reasons:
                                         continue_reason_counts[rr] = int(continue_reason_counts.get(rr, 0)) + 1
                                         regime_filter_skip_reason_counts[rr] = int(regime_filter_skip_reason_counts.get(rr, 0)) + 1
+                                    if len(regime_filter_diag_sample_skipped) < int(REGIME_FILTER_DIAG_SAMPLE_MAX):
+                                        regime_filter_diag_sample_skipped.append(
+                                            {
+                                                "symbol": str(q.symbol),
+                                                "time_jst": sig_time.astimezone(JST).strftime("%Y-%m-%d %H:%M"),
+                                                "market_regime": str(market_regime),
+                                                "rising_ratio": float(rising_ratio) if isinstance(rising_ratio, (int, float)) else None,
+                                                "topix_pct": float(topix_chg) if isinstance(topix_chg, (int, float)) else None,
+                                                "reason": str(exclude_reason),
+                                            }
+                                        )
                                     if len(continue_before_append_rows) < 500:
                                         continue_before_append_rows.append(
                                             {
@@ -8311,6 +9579,285 @@ def run_replay(
                                                 "exclude_reason": str(exclude_reason),
                                             }
                                         )
+                                else:
+                                    regime_filter_diag_passed_count += 1
+
+                            # signal feature based filters（ENTRY前に skip）
+                            if not exclude:
+                                sf_reasons: list[str] = []
+
+                                # entry after HH:MM
+                                if bool(signal_filter_disable_entry_after_hhmm):
+                                    try:
+                                        t0 = sig_time
+                                        if t0.tzinfo is None:
+                                            t0 = t0.replace(tzinfo=timezone.utc)
+                                        j = t0.astimezone(JST)
+                                        hhmm = str(signal_filter_entry_after_hhmm or "").strip()
+                                        hh = 0
+                                        mm = 0
+                                        if ":" in hhmm:
+                                            a, b = hhmm.split(":", 1)
+                                            hh = int(a)
+                                            mm = int(b)
+                                        else:
+                                            hh = int(hhmm[:2])
+                                            mm = int(hhmm[2:]) if len(hhmm) >= 4 else 0
+                                        if (j.hour * 60 + j.minute) >= (hh * 60 + mm):
+                                            sf_reasons.append("SIGNAL_FILTER_ENTRY_AFTER_HHMM")
+                                    except Exception:
+                                        pass
+
+                                # gap_pct
+                                gap_pct0 = None
+                                if bool(signal_filter_disable_gap_ge_pct):
+                                    try:
+                                        sym0 = str(q.symbol)
+                                        dk = day_jst
+                                        pc0 = prev_close_by_day.get(f"{sym0}::{dk}")
+                                        if pc0 is None:
+                                            pc0 = prev_close_by_day.get(f"{sym0}::INIT")
+                                        bars0 = bars_by_symbol.get(sym0) or []
+                                        day_bars0: list[ReplayBar] = []
+                                        for bb in bars0:
+                                            bt = bb.timestamp_utc
+                                            if bt.tzinfo is None:
+                                                bt = bt.replace(tzinfo=timezone.utc)
+                                            if bt.astimezone(JST).strftime("%Y-%m-%d") != dk:
+                                                continue
+                                            day_bars0.append(bb)
+                                        if day_bars0:
+                                            day_bars0 = sorted(day_bars0, key=lambda x: x.timestamp_utc)
+                                            day_open = float(day_bars0[0].open)
+                                            if isinstance(pc0, (int, float)) and float(pc0) > 0:
+                                                gap_pct0 = float((day_open - float(pc0)) / float(pc0) * 100.0)
+                                                if float(gap_pct0) >= float(signal_filter_gap_ge_threshold_pct):
+                                                    sf_reasons.append("SIGNAL_FILTER_GAP_GE")
+                                    except Exception:
+                                        pass
+
+                                # vwap distance
+                                if bool(signal_filter_disable_vwap_distance_ge_pct):
+                                    try:
+                                        if isinstance(vwap_dist_pct, (int, float)) and float(vwap_dist_pct) >= float(
+                                            signal_filter_vwap_distance_ge_threshold_pct
+                                        ):
+                                            sf_reasons.append("SIGNAL_FILTER_VWAP_DIST_GE")
+                                    except Exception:
+                                        pass
+
+                                if sf_reasons:
+                                    exclude = True
+                                    exclude_reason = " / ".join(sf_reasons)
+                                    signal_filters_skipped_signals_count += 1
+                                    for rr in sf_reasons:
+                                        continue_reason_counts[rr] = int(continue_reason_counts.get(rr, 0)) + 1
+                                        signal_filters_skip_reason_counts[rr] = int(signal_filters_skip_reason_counts.get(rr, 0)) + 1
+
+                                # composite signal filters（market_regime==WEAK のときのみ gap / VWAP距離 で除外）
+                                if not exclude and str(market_regime) == "WEAK":
+                                    csf_reasons: list[str] = []
+                                    gap_pct_weak = gap_pct0
+                                    if gap_pct_weak is None:
+                                        try:
+                                            sym_w = str(q.symbol)
+                                            dk_w = day_jst
+                                            pc_w = prev_close_by_day.get(f"{sym_w}::{dk_w}")
+                                            if pc_w is None:
+                                                pc_w = prev_close_by_day.get(f"{sym_w}::INIT")
+                                            bars_w = bars_by_symbol.get(sym_w) or []
+                                            day_bars_w: list[ReplayBar] = []
+                                            for bb in bars_w:
+                                                bt = bb.timestamp_utc
+                                                if bt.tzinfo is None:
+                                                    bt = bt.replace(tzinfo=timezone.utc)
+                                                if bt.astimezone(JST).strftime("%Y-%m-%d") != dk_w:
+                                                    continue
+                                                day_bars_w.append(bb)
+                                            if day_bars_w:
+                                                day_bars_w = sorted(day_bars_w, key=lambda x: x.timestamp_utc)
+                                                day_open_w = float(day_bars_w[0].open)
+                                                if isinstance(pc_w, (int, float)) and float(pc_w) > 0:
+                                                    gap_pct_weak = float((day_open_w - float(pc_w)) / float(pc_w) * 100.0)
+                                        except Exception:
+                                            pass
+
+                                    wrf_mode = str(composite_signal_filter_weak_risk_filter or "").strip()
+                                    if wrf_mode:
+                                        thr_v = float(composite_signal_filter_weak_vwap_ge_threshold_pct)
+                                        thr_g = float(composite_signal_filter_weak_gap_ge_threshold_pct)
+                                        hit_v = isinstance(vwap_dist_pct, (int, float)) and float(vwap_dist_pct) >= thr_v
+                                        hit_g = gap_pct_weak is not None and float(gap_pct_weak) >= thr_g
+                                        try:
+                                            if wrf_mode == "weak_vwap_ge_15_only":
+                                                if hit_v:
+                                                    csf_reasons.append("WEAK_VWAP_GE_15")
+                                            elif wrf_mode == "weak_gap_ge_3_only":
+                                                if hit_g:
+                                                    csf_reasons.append("WEAK_GAP_GE_3")
+                                            elif wrf_mode == "weak_vwap_ge_15_and_gap_ge_3":
+                                                if hit_v and hit_g:
+                                                    csf_reasons.append("WEAK_VWAP_AND_GAP")
+                                        except Exception:
+                                            pass
+                                    else:
+                                        try:
+                                            if bool(composite_signal_filter_disable_weak_gap_ge):
+                                                if gap_pct_weak is not None and float(gap_pct_weak) >= float(
+                                                    composite_signal_filter_weak_gap_ge_threshold_pct
+                                                ):
+                                                    csf_reasons.append("COMPOSITE_WEAK_GAP_GE")
+                                        except Exception:
+                                            pass
+
+                                        try:
+                                            if bool(composite_signal_filter_disable_weak_vwap_ge):
+                                                if isinstance(vwap_dist_pct, (int, float)) and float(vwap_dist_pct) >= float(
+                                                    composite_signal_filter_weak_vwap_ge_threshold_pct
+                                                ):
+                                                    csf_reasons.append("COMPOSITE_WEAK_VWAP_GE")
+                                        except Exception:
+                                            pass
+
+                                    if csf_reasons:
+                                        exclude = True
+                                        exclude_reason = " / ".join(csf_reasons)
+                                        composite_signal_filter_skipped_signals_count += 1
+                                        signal_filters_skipped_signals_count += 1
+                                        for rr in csf_reasons:
+                                            continue_reason_counts[rr] = int(continue_reason_counts.get(rr, 0)) + 1
+                                            signal_filters_skip_reason_counts[rr] = int(
+                                                signal_filters_skip_reason_counts.get(rr, 0)
+                                            ) + 1
+                                            composite_signal_filter_skip_reason_counts[rr] = int(
+                                                composite_signal_filter_skip_reason_counts.get(rr, 0)
+                                            ) + 1
+
+                                # composite signal filters（market_regime==STRONG かつ VWAP距離>=しきい値で除外）
+                                if not exclude and str(market_regime) == "STRONG":
+                                    srf_mode = str(composite_signal_filter_strong_risk_filter or "").strip()
+                                    if srf_mode:
+                                        thr_s = float(composite_signal_filter_strong_vwap_ge_threshold_pct)
+                                        hit_s = isinstance(vwap_dist_pct, (int, float)) and float(vwap_dist_pct) >= thr_s
+                                        csf_reasons_s: list[str] = []
+                                        if hit_s:
+                                            if srf_mode == "strong_vwap_ge_15_only":
+                                                csf_reasons_s.append("STRONG_VWAP_GE_15")
+                                            elif srf_mode == "strong_vwap_ge_12_only":
+                                                csf_reasons_s.append("STRONG_VWAP_GE_12")
+                                            elif srf_mode == "strong_vwap_ge_10_only":
+                                                csf_reasons_s.append("STRONG_VWAP_GE_10")
+                                        if csf_reasons_s:
+                                            exclude = True
+                                            exclude_reason = " / ".join(csf_reasons_s)
+                                            composite_signal_filter_skipped_signals_count += 1
+                                            signal_filters_skipped_signals_count += 1
+                                            for rr in csf_reasons_s:
+                                                continue_reason_counts[rr] = int(continue_reason_counts.get(rr, 0)) + 1
+                                                signal_filters_skip_reason_counts[rr] = int(
+                                                    signal_filters_skip_reason_counts.get(rr, 0)
+                                                ) + 1
+                                                composite_signal_filter_skip_reason_counts[rr] = int(
+                                                    composite_signal_filter_skip_reason_counts.get(rr, 0)
+                                                ) + 1
+
+                                # composite strong_combo_filter（高値更新回数 × VWAP距離）
+                                if (
+                                    not exclude
+                                    and bool(composite_signal_filter_strong_combo_enabled)
+                                    and _strong_combo_conds_rt
+                                ):
+                                    hu_now = int(near_high) if isinstance(near_high, (int, float)) else None
+                                    hit_reason_sc: Optional[str] = None
+                                    for cond in _strong_combo_conds_rt:
+                                        try:
+                                            if str(market_regime) != str(cond.get("market_regime")):
+                                                continue
+                                            thr_vc = float(cond.get("entry_vwap_distance_pct_ge") or 999.0)
+                                            if hu_now is None:
+                                                continue
+                                            need_eq = cond.get("high_update_count_before_entry_eq")
+                                            need_le = cond.get("high_update_count_before_entry_le")
+                                            if need_eq is not None:
+                                                if int(hu_now) != int(need_eq):
+                                                    continue
+                                            elif need_le is not None:
+                                                if int(hu_now) > int(need_le):
+                                                    continue
+                                            else:
+                                                continue
+                                            if not (
+                                                isinstance(vwap_dist_pct, (int, float))
+                                                and float(vwap_dist_pct) >= float(thr_vc)
+                                            ):
+                                                continue
+                                            hit_reason_sc = str(cond.get("reason") or "").strip() or "STRONG_COMBO"
+                                            break
+                                        except Exception:
+                                            continue
+                                    if hit_reason_sc:
+                                        exclude = True
+                                        exclude_reason = hit_reason_sc
+                                        strong_combo_filter_skipped_signals_count += 1
+                                        signal_filters_skipped_signals_count += 1
+                                        strong_combo_filter_skip_reason_counts[hit_reason_sc] = int(
+                                            strong_combo_filter_skip_reason_counts.get(hit_reason_sc, 0)
+                                        ) + 1
+                                        continue_reason_counts[hit_reason_sc] = int(
+                                            continue_reason_counts.get(hit_reason_sc, 0)
+                                        ) + 1
+                                        signal_filters_skip_reason_counts[hit_reason_sc] = int(
+                                            signal_filters_skip_reason_counts.get(hit_reason_sc, 0)
+                                        ) + 1
+
+                                # regime_controls（地合い適応 ENTRY: 許可フラグ・gap/VWAP 上限／時間帯禁止に依存しない）
+                                if not exclude and bool(regime_control_enabled):
+                                    rprof = _regime_control_profile_for(_regime_profiles_rt, str(market_regime))
+                                    rc_reasons: list[str] = []
+                                    if not bool(rprof.get("entry_enabled", True)):
+                                        rc_reasons.append("REGIME_CONTROL_ENTRY_DISABLED")
+                                    max_g = rprof.get("max_gap_pct")
+                                    if isinstance(max_g, (int, float)):
+                                        g_use = gap_pct0
+                                        if g_use is None:
+                                            try:
+                                                sym_r = str(q.symbol)
+                                                dk_r = day_jst
+                                                pc_r = prev_close_by_day.get(f"{sym_r}::{dk_r}")
+                                                if pc_r is None:
+                                                    pc_r = prev_close_by_day.get(f"{sym_r}::INIT")
+                                                bars_r = bars_by_symbol.get(sym_r) or []
+                                                day_bars_r: list[ReplayBar] = []
+                                                for bb in bars_r:
+                                                    bt = bb.timestamp_utc
+                                                    if bt.tzinfo is None:
+                                                        bt = bt.replace(tzinfo=timezone.utc)
+                                                    if bt.astimezone(JST).strftime("%Y-%m-%d") != dk_r:
+                                                        continue
+                                                    day_bars_r.append(bb)
+                                                if day_bars_r:
+                                                    day_bars_r = sorted(day_bars_r, key=lambda x: x.timestamp_utc)
+                                                    dor = float(day_bars_r[0].open)
+                                                    if isinstance(pc_r, (int, float)) and float(pc_r) > 0:
+                                                        g_use = float((dor - float(pc_r)) / float(pc_r) * 100.0)
+                                            except Exception:
+                                                pass
+                                        if g_use is not None and float(g_use) > float(max_g):
+                                            rc_reasons.append("REGIME_CONTROL_GAP_GT")
+                                    max_v = rprof.get("max_vwap_distance_pct")
+                                    if isinstance(max_v, (int, float)):
+                                        if isinstance(vwap_dist_pct, (int, float)) and float(vwap_dist_pct) > float(max_v):
+                                            rc_reasons.append("REGIME_CONTROL_VWAP_DIST_GT")
+
+                                    if rc_reasons:
+                                        exclude = True
+                                        exclude_reason = " / ".join(rc_reasons)
+                                        regime_control_skipped_signals_count += 1
+                                        for rr in rc_reasons:
+                                            continue_reason_counts[rr] = int(continue_reason_counts.get(rr, 0)) + 1
+                                            regime_control_skip_reason_counts[rr] = int(
+                                                regime_control_skip_reason_counts.get(rr, 0)
+                                            ) + 1
 
                             # ENTRY filters（config / 集計対象外）
                             if not exclude:
@@ -8455,6 +10002,29 @@ def run_replay(
                                 if bool(excluded_by_daily_loss_stop):
                                     idx = len(replay_signals) - 1
                                     daily_loss_stop_virtual_active_indices_by_symbol.setdefault(q.symbol, []).append(idx)
+                                # regime TOPIX_WEAK で除外された signal も「仮想PnL」を計算する
+                                if isinstance(exclude_reason, str) and ("REGIME_FILTER_TOPIX_WEAK" in exclude_reason):
+                                    idx = len(replay_signals) - 1
+                                    regime_topix_weak_virtual_active_indices_by_symbol.setdefault(q.symbol, []).append(idx)
+                                    regime_topix_weak_virtual_count += 1
+                                # signal filters で除外された signal も「仮想PnL」を計算する
+                                if isinstance(exclude_reason, str) and ("SIGNAL_FILTER_" in exclude_reason):
+                                    idx = len(replay_signals) - 1
+                                    signal_filters_virtual_active_indices_by_symbol.setdefault(q.symbol, []).append(idx)
+                                    signal_filters_virtual_count += 1
+                                # WEAK複合フィルタで除外
+                                if _composite_weak_virtual_exclude_reason(str(exclude_reason)):
+                                    idx = len(replay_signals) - 1
+                                    composite_signal_filter_virtual_active_indices_by_symbol.setdefault(q.symbol, []).append(idx)
+                                    composite_signal_filter_virtual_count += 1
+                                if isinstance(exclude_reason, str) and ("REGIME_CONTROL_" in exclude_reason):
+                                    idx = len(replay_signals) - 1
+                                    regime_control_virtual_active_indices_by_symbol.setdefault(q.symbol, []).append(idx)
+                                    regime_control_virtual_count += 1
+                                if _strong_combo_virtual_exclude_reason(str(exclude_reason), _strong_combo_reasons_frozen):
+                                    idx = len(replay_signals) - 1
+                                    strong_combo_filter_virtual_active_indices_by_symbol.setdefault(q.symbol, []).append(idx)
+                                    strong_combo_filter_virtual_count += 1
 
                             # 補助属性（失敗しても継続）
                             try:
@@ -8470,12 +10040,13 @@ def run_replay(
                                 setattr(s, "topix_chg_pct", float(topix_chg) if isinstance(topix_chg, (int, float)) else None)
                                 setattr(s, "topix_chg_ok", bool(topix_chg_ok))
                                 setattr(s, "topix_crash_threshold", float(CRASH_TOPIX_CHG_PCT_MAX))
-                                setattr(s, "topix_weak_threshold", float(WEAK_TOPIX_CHG_PCT_MAX))
+                                setattr(s, "topix_weak_threshold", float(topix_weak_thr_pct))
                                 setattr(s, "market_state", str(market_regime))
                                 setattr(s, "crash_blocked", bool(crash_blocked))
                                 setattr(s, "market_reasons", ",".join([str(x) for x in (market_reasons or [])]))
                                 setattr(s, "rising_ratio", float(rising_ratio))
                                 setattr(s, "high_ratio", float(high_ratio))
+                                setattr(s, "high_update_count_before_entry", int(near_high) if isinstance(near_high, (int, float)) else None)
                                 setattr(s, "fail_rate30", float(fail_rate30))
                                 setattr(s, "brk_ratio", float(brk_ratio))
                                 setattr(s, "below_ratio", float(below_ratio))
@@ -8484,12 +10055,64 @@ def run_replay(
                                 setattr(s, "blocked_reason", (",".join([str(x) for x in (market_reasons or [])]) if crash_blocked else ""))
                                 setattr(s, "entry_allowed_by_market", bool(not crash_blocked))
                                 setattr(s, "entry_allowed", bool((not crash_blocked) and (not exclude)))
+                                # regime_controls exit_mode → 保有中の early exit を地合いで上書き
+                                if bool(regime_control_enabled):
+                                    try:
+                                        rpx_sc = _regime_control_profile_for(_regime_profiles_rt, str(market_regime))
+                                        em_sc = str(rpx_sc.get("exit_mode", "normal")).lower()
+                                        if bool(replay_early_exit_before_stop) and em_sc == "fast":
+                                            setattr(s, "regime_early_exit_vwap", True)
+                                            setattr(s, "regime_early_exit_recent_low", True)
+                                        else:
+                                            setattr(s, "regime_early_exit_vwap", bool(replay_early_exit_vwap))
+                                            setattr(s, "regime_early_exit_recent_low", bool(replay_early_exit_recent_low))
+                                    except Exception:
+                                        setattr(s, "regime_early_exit_vwap", bool(replay_early_exit_vwap))
+                                        setattr(s, "regime_early_exit_recent_low", bool(replay_early_exit_recent_low))
                                 setattr(s, "rsi14", rsi14)
                                 setattr(s, "atr14", atr14)
                                 setattr(s, "atr_pct", atr_pct)
                                 setattr(s, "vwap_distance_pct", vwap_dist_pct)
                                 setattr(s, "relative_strength_vs_topix_pct", rs_vs_topix)
                                 setattr(s, "vol_spike_ratio", vol_spike_ratio_by_symbol.get(q.symbol))
+                                # gap/open_5m/first30m（可能な範囲で計算）
+                                try:
+                                    sym0 = str(getattr(s, "symbol", "") or "")
+                                    dt0 = sig_time
+                                    if dt0.tzinfo is None:
+                                        dt0 = dt0.replace(tzinfo=timezone.utc)
+                                    day_key = dt0.astimezone(JST).strftime("%Y-%m-%d")
+                                    prev_close0 = prev_close_by_day.get(f"{sym0}::{day_key}")
+                                    if prev_close0 is None:
+                                        prev_close0 = prev_close_by_day.get(f"{sym0}::INIT")
+                                    bars0 = bars_by_symbol.get(sym0) or []
+                                    # 当日バー抽出
+                                    day_bars0: list[ReplayBar] = []
+                                    for bb in bars0:
+                                        bt = bb.timestamp_utc
+                                        if bt.tzinfo is None:
+                                            bt = bt.replace(tzinfo=timezone.utc)
+                                        if bt.astimezone(JST).strftime("%Y-%m-%d") != day_key:
+                                            continue
+                                        day_bars0.append(bb)
+                                    if day_bars0:
+                                        day_bars0 = sorted(day_bars0, key=lambda x: x.timestamp_utc)
+                                        day_open = float(day_bars0[0].open)
+                                        if isinstance(prev_close0, (int, float)) and float(prev_close0) > 0:
+                                            setattr(s, "gap_pct", float((day_open - float(prev_close0)) / float(prev_close0) * 100.0))
+                                        # open_5m_return_pct（最初の5本があれば）
+                                        if len(day_bars0) >= 5 and float(day_open) > 0:
+                                            c5 = float(day_bars0[4].close)
+                                            setattr(s, "open_5m_return_pct", float((c5 - day_open) / day_open * 100.0))
+                                        # first 30m volume（最初の30本=30分）
+                                        first30 = day_bars0[:30]
+                                        v30 = float(sum(float(x.volume) for x in first30))
+                                        setattr(s, "first_30m_volume", float(v30))
+                                        avg5 = avg5_by_symbol.get(sym0)
+                                        if isinstance(avg5, (int, float)) and float(avg5) > 0:
+                                            setattr(s, "first_30m_volume_ratio", float(v30 / float(avg5)))
+                                except Exception:
+                                    pass
                                 # time_bucket は fallback 付き
                                 try:
                                     tb = _signal_time_bucket_jst(sig_time)
@@ -8676,6 +10299,385 @@ def run_replay(
             return 0
 
 
+def _paper_trade_filter_future_1m_bars(
+    bars_by_symbol: dict[str, list[ReplayBar]],
+    *,
+    now_jst: datetime,
+) -> tuple[dict[str, list[ReplayBar]], int, str]:
+    """
+    paper_trade 用: 1分足は [open, open+1m) で完了するものとみなし、
+    終了時刻が現在時刻より後の足（未来の足）は除外する。
+    Returns:
+      - 銘柄ごとのフィルタ後バー
+      - 除外した本数の合計
+      - max_allowed_candle: 採用した足のうち最も新しい「始値時刻」(JST) を表示用に整形した文字列（無ければ N/A）
+    """
+    if now_jst.tzinfo is None:
+        now_jst = now_jst.replace(tzinfo=JST)
+    now_utc = now_jst.astimezone(timezone.utc)
+    out: dict[str, list[ReplayBar]] = {}
+    removed = 0
+    latest_open_jst: Optional[datetime] = None
+    for sym, bars in bars_by_symbol.items():
+        kept: list[ReplayBar] = []
+        for b in bars:
+            t = b.timestamp_utc
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            bar_end = t + timedelta(minutes=1)
+            if bar_end <= now_utc:
+                kept.append(b)
+                oj = t.astimezone(JST)
+                if latest_open_jst is None or oj > latest_open_jst:
+                    latest_open_jst = oj
+            else:
+                removed += 1
+        out[sym] = kept
+    max_allowed = latest_open_jst.strftime("%Y-%m-%d %H:%M:%S") if latest_open_jst else "N/A"
+    return out, removed, max_allowed
+
+
+def _paper_trade_signal_event_time_jst(s: ReplaySignalEval) -> str:
+    et = getattr(s, "exit_time_utc", None)
+    if bool(getattr(s, "resolved", False)) and isinstance(et, datetime):
+        t = et if et.tzinfo is not None else et.replace(tzinfo=timezone.utc)
+        return t.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S")
+    st = getattr(s, "signal_time_utc", None)
+    if isinstance(st, datetime):
+        t = st if st.tzinfo is not None else st.replace(tzinfo=timezone.utc)
+        return t.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S")
+    return ""
+
+
+def _paper_trade_pnl_yen_100_shares(s: ReplaySignalEval) -> Optional[float]:
+    """
+    run_replay 内 `_pnl_yen_100_shares` と同一の100株損益（円）。
+    未確定・HOLD 等で replay 集計と同様に数値化できない場合は None（CSV は空欄）。
+    """
+    try:
+        if isinstance(getattr(s, "final_profit_pct", None), (int, float)):
+            sp = float(getattr(s, "signal_price", 0.0) or 0.0)
+            return sp * 100.0 * (float(s.final_profit_pct) / 100.0)
+        res = str(getattr(s, "result", "") or "")
+        ep = float(getattr(s, "entry_price", 0.0) or 0.0)
+        if res == "WIN":
+            return (float(getattr(s, "take_price", 0.0) or 0.0) - ep) * 100.0
+        if res == "LOSE":
+            return (float(getattr(s, "stop_price", 0.0) or 0.0) - ep) * 100.0
+        return None
+    except Exception:
+        return None
+
+
+def _paper_trade_row_dict(s: ReplaySignalEval) -> dict[str, str]:
+    skipped = bool(getattr(s, "excluded_from_eval", False)) or (not bool(getattr(s, "entry_allowed", True)))
+    p1 = str(getattr(s, "excluded_reason", "") or "").strip()
+    p2 = str(getattr(s, "blocked_reason", "") or "").strip()
+    skip_reason = " / ".join([x for x in (p1, p2) if x])
+    tp = getattr(s, "topix_pct", None)
+    rr = getattr(s, "rising_ratio", None)
+    evw = getattr(s, "vwap_distance_pct", None)
+    hu = getattr(s, "high_update_count_before_entry", None)
+    ep = float(getattr(s, "entry_price", 0.0) or 0.0)
+    xp: Optional[float] = None
+    raw_xp = getattr(s, "exit_price", None)
+    if isinstance(raw_xp, (int, float)):
+        xp = float(raw_xp)
+    else:
+        te = getattr(s, "trailing_exit_price", None)
+        if isinstance(te, (int, float)):
+            xp = float(te)
+        else:
+            lp = getattr(s, "last_price_after", None)
+            if isinstance(lp, (int, float)):
+                xp = float(lp)
+    pnl_opt = _paper_trade_pnl_yen_100_shares(s)
+    pnl_cell = f"{float(pnl_opt):.2f}" if isinstance(pnl_opt, float) else ""
+    return {
+        "datetime_jst": _paper_trade_signal_event_time_jst(s),
+        "symbol": str(s.symbol),
+        "signal_type": str(getattr(s, "position_kind", "BASE") or "BASE"),
+        "entry_price": f"{ep:.4f}",
+        "exit_price": f"{float(xp):.4f}" if isinstance(xp, float) else "",
+        "exit_reason": str(getattr(s, "exit_reason", "") or ""),
+        "pnl_yen_100_shares": pnl_cell,
+        "market_regime": str(getattr(s, "market_regime", "") or getattr(s, "market_state", "") or ""),
+        "rising_ratio": f"{float(rr):.6f}" if isinstance(rr, (int, float)) else "",
+        "topix_pct": f"{float(tp):.6f}" if isinstance(tp, (int, float)) else "",
+        "entry_vwap_distance_pct": f"{float(evw):.6f}" if isinstance(evw, (int, float)) else "",
+        "high_update_count_before_entry": str(int(hu)) if isinstance(hu, (int, float)) else "",
+        "skipped": "true" if skipped else "false",
+        "skip_reason": skip_reason,
+    }
+
+
+def _paper_trade_merge_skip_reason_counts(rep: dict[str, Any]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    ov = rep.get("overall_summary") if isinstance(rep.get("overall_summary"), dict) else {}
+    for key in ("regime_filters", "signal_filters"):
+        sub = ov.get(key)
+        if not isinstance(sub, dict):
+            continue
+        rc = sub.get("skip_reason_counts")
+        if isinstance(rc, dict):
+            for k, v in rc.items():
+                kk = str(k)
+                out[kk] = int(out.get(kk, 0)) + int(v or 0)
+    combo_root = rep.get("combo_filter_analysis") if isinstance(rep.get("combo_filter_analysis"), dict) else {}
+    sc = combo_root.get("strong_combo_filter") if isinstance(combo_root.get("strong_combo_filter"), dict) else {}
+    if isinstance(sc, dict):
+        rc2 = sc.get("skip_reason_counts")
+        if isinstance(rc2, dict):
+            for k, v in rc2.items():
+                kk = str(k)
+                out[kk] = int(out.get(kk, 0)) + int(v or 0)
+        br = ((sc.get("virtual_pnl_analysis") or {}) if isinstance(sc.get("virtual_pnl_analysis"), dict) else {}).get("by_reason")
+        if isinstance(br, dict):
+            for k, v in br.items():
+                if isinstance(v, dict) and "skipped_signals_count" in v:
+                    kk = str(k)
+                    out[kk] = int(out.get(kk, 0)) + int(v.get("skipped_signals_count") or 0)
+    return out
+
+
+def _paper_trade_write_summary_txt(*, path: str, report: dict[str, Any], poll_ts_jst: str) -> None:
+    ov = report.get("overall_summary") if isinstance(report.get("overall_summary"), dict) else {}
+    stats = ov.get("stats") if isinstance(ov.get("stats"), dict) else {}
+    rc_risk = ov.get("risk_controls") if isinstance(ov.get("risk_controls"), dict) else {}
+    aa = report.get("accident_analysis") if isinstance(report.get("accident_analysis"), dict) else {}
+    lw10 = aa.get("lose_worst10") if isinstance(aa.get("lose_worst10"), list) else []
+    lw_sum = 0.0
+    for it in lw10:
+        if isinstance(it, dict):
+            try:
+                lw_sum += float(it.get("pnl_yen_100_shares") or 0.0)
+            except Exception:
+                pass
+    rc_ctrl = ov.get("regime_controls") if isinstance(ov.get("regime_controls"), dict) else {}
+    ev_mr = rc_ctrl.get("eval_by_market_regime") if isinstance(rc_ctrl.get("eval_by_market_regime"), dict) else {}
+
+    rf_s = ov.get("regime_filters") if isinstance(ov.get("regime_filters"), dict) else {}
+    sf_s = ov.get("signal_filters") if isinstance(ov.get("signal_filters"), dict) else {}
+    cfa_s = report.get("combo_filter_analysis") if isinstance(report.get("combo_filter_analysis"), dict) else {}
+    sc_s = cfa_s.get("strong_combo_filter") if isinstance(cfa_s.get("strong_combo_filter"), dict) else {}
+
+    lines = [
+        f"paper_trade_summary (poll={poll_ts_jst})",
+        "",
+        f"signals_detected: {int(ov.get('all_signals_detected') or 0)}",
+        f"signals_in_eval (entries): {int(ov.get('signals_in_eval') or 0)}",
+        f"signals_excluded: {int(ov.get('signals_excluded') or 0)}",
+        f"skipped_signals_count regime_filters: {int(rf_s.get('skipped_signals_count') or 0)}",
+        f"skipped_signals_count signal_filters: {int(sf_s.get('skipped_signals_count') or 0)}",
+        f"skipped_signals_count strong_combo_filter: {int(sc_s.get('skipped_signals_count') or 0)}",
+        "",
+        "skip_reason_counts (merged):",
+    ]
+    sk = _paper_trade_merge_skip_reason_counts(report)
+    if not sk:
+        lines.append("  (none)")
+    else:
+        for k in sorted(sk.keys()):
+            lines.append(f"  {k}: {sk[k]}")
+    lines.extend(
+        [
+            "",
+            f"virtual_pnl_yen_100_shares: {float(stats.get('pnl_yen_100_shares') or 0.0):+.2f}",
+            f"win_rate_pct: {float(stats.get('win_rate_pct') or 0.0):.2f}",
+            f"lose_worst10_sum_yen_100_shares: {float(lw_sum):+.2f}",
+            f"max_intraday_drawdown_yen_100_shares: {float(rc_risk.get('max_intraday_drawdown_yen_100_shares') or 0.0):.2f}",
+            "",
+            "regime_controls.eval_by_market_regime (expectancy / n):",
+        ]
+    )
+    if not ev_mr:
+        lines.append("  (empty or regime_controls disabled)")
+    else:
+        for rk in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+            row = ev_mr.get(rk)
+            if not isinstance(row, dict):
+                continue
+            n = int(row.get("signals") or 0)
+            exp = float(row.get("avg_expectancy_yen_100_shares") or 0.0)
+            lines.append(f"  {rk}: signals={n} avg_expectancy_yen_100_shares={exp:+.2f}")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _paper_trade_should_emit_row(s: ReplaySignalEval) -> bool:
+    if bool(getattr(s, "excluded_from_eval", False)):
+        return True
+    if not bool(getattr(s, "entry_allowed", True)):
+        return True
+    if bool(getattr(s, "resolved", False)):
+        return True
+    return False
+
+
+def _paper_trade_signal_stable_id(s: ReplaySignalEval, *, fallback: str) -> str:
+    sid = str(getattr(s, "signal_id", "") or "").strip()
+    if sid:
+        return sid
+    st = getattr(s, "signal_time_utc", None)
+    if isinstance(st, datetime):
+        iso = st.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        return f"{s.symbol}|{iso}|{fallback}"
+    return f"{s.symbol}|{fallback}"
+
+
+def run_paper_trade(*, paper_trade_interval_sec: float, run_replay_kw: dict[str, Any]) -> int:
+    """
+    Yahoo 1d 1分足を一定間隔で取り直し、run_replay と同一ロジックで仮想signal/exit/PnLのみ記録します。
+    実証券API・発注処理には接続しません。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    seen_ids: set[str] = set()
+    csv_header = [
+        "datetime_jst",
+        "symbol",
+        "signal_type",
+        "entry_price",
+        "exit_price",
+        "exit_reason",
+        "pnl_yen_100_shares",
+        "market_regime",
+        "rising_ratio",
+        "topix_pct",
+        "entry_vwap_distance_pct",
+        "high_update_count_before_entry",
+        "skipped",
+        "skip_reason",
+    ]
+    print(f"[{now_str()}] paper_trade: poll_interval={float(paper_trade_interval_sec):g}s（実注文なし） Ctrl+C で終了")
+    # 現物寄り前後の扱い: 09:00 未満は run_replay しない / 15:30 以降は当日1回だけ EOD summary の後は idle
+    _HM_OPEN_MIN = 9 * 60
+    _HM_CLOSE_MIN = 15 * 60 + 30
+    eod_summary_day: Optional[str] = None
+    try:
+        n_poll = 0
+        while True:
+            now_loop_jst = datetime.now(JST)
+            day_key = now_loop_jst.strftime("%Y%m%d")
+            hm = now_loop_jst.hour * 60 + now_loop_jst.minute
+
+            if hm < _HM_OPEN_MIN:
+                print(
+                    f"[{now_str()}] [paper_trade] market not open — sleeping "
+                    f"{float(paper_trade_interval_sec):g}s"
+                )
+                time.sleep(max(0.5, float(paper_trade_interval_sec)))
+                continue
+
+            if hm >= _HM_CLOSE_MIN and eod_summary_day == day_key:
+                print(f"[{now_str()}] [paper_trade] market closed — idle (no new signals)")
+                time.sleep(max(0.5, float(paper_trade_interval_sec)))
+                continue
+
+            n_poll += 1
+            is_eod_summary_only = hm >= _HM_CLOSE_MIN and eod_summary_day != day_key
+
+            out_dir = os.path.join(script_dir, "results", "paper_trade", day_key)
+            os.makedirs(out_dir, exist_ok=True)
+            state_path = os.path.join(out_dir, "paper_trade_seen_ids.json")
+            try:
+                if os.path.isfile(state_path):
+                    with open(state_path, "r", encoding="utf-8") as sf:
+                        sj = json.load(sf)
+                    xs = sj.get("seen_ids") if isinstance(sj, dict) else None
+                    if isinstance(xs, list):
+                        seen_ids = set(str(x) for x in xs if str(x))
+            except Exception:
+                pass
+
+            coll: dict[str, Any] = {}
+            kw = dict(run_replay_kw)
+            kw["paper_trade_mode"] = True
+            kw["paper_trade_collect"] = coll
+            code = run_replay(**kw)
+            if int(code) != 0:
+                print(f"[{now_str()}] paper_trade: run_replay が失敗しました（exit={int(code)}）")
+                return int(code)
+            rep = coll.get("report")
+            rs_list = coll.get("replay_signals")
+            if not isinstance(rep, dict) or not isinstance(rs_list, list):
+                print(f"[{now_str()}] paper_trade: 内部エラー（report/signals が取得できません）")
+                return 2
+
+            if is_eod_summary_only:
+                eod_summary_day = day_key
+
+            poll_ts = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
+            log_path = os.path.join(out_dir, "paper_trade_log.csv")
+            summary_path = os.path.join(out_dir, "paper_trade_summary.txt")
+
+            new_rows: list[dict[str, str]] = []
+            if not is_eod_summary_only:
+                for i, s in enumerate(rs_list):
+                    if not isinstance(s, ReplaySignalEval):
+                        continue
+                    if not _paper_trade_should_emit_row(s):
+                        continue
+                    sid = _paper_trade_signal_stable_id(s, fallback=f"idx{i:05d}")
+                    if sid in seen_ids:
+                        continue
+                    seen_ids.add(sid)
+                    new_rows.append(_paper_trade_row_dict(s))
+
+            if new_rows:
+                write_header = not os.path.isfile(log_path)
+                with open(log_path, "a", encoding="utf-8", newline="") as fcsv:
+                    w = csv.DictWriter(fcsv, fieldnames=csv_header)
+                    if write_header:
+                        w.writeheader()
+                    for row in new_rows:
+                        w.writerow(row)
+                try:
+                    with open(state_path, "w", encoding="utf-8") as sf:
+                        json.dump({"seen_ids": sorted(seen_ids)}, sf, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+
+            _paper_trade_write_summary_txt(path=summary_path, report=rep, poll_ts_jst=poll_ts)
+
+            try:
+                webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+                alert_channel_id = _parse_channel_id(os.getenv("ALERT_CHANNEL_ID", ""))
+                bot_token = _get_discord_token_with_compat_warning()
+                if (alert_channel_id is not None and bot_token) or webhook_url:
+                    ov = rep.get("overall_summary") if isinstance(rep.get("overall_summary"), dict) else {}
+                    st = ov.get("stats") if isinstance(ov.get("stats"), dict) else {}
+                    n_sig = int(ov.get("all_signals_detected") or 0)
+                    n_ev = int(ov.get("signals_in_eval") or 0)
+                    pnl = float(st.get("pnl_yen_100_shares") or 0.0)
+                    wr = float(st.get("win_rate_pct") or 0.0)
+                    tag = "eod_summary" if is_eod_summary_only else "poll"
+                    msg = {
+                        "content": (
+                            f"[paper_trade] {tag} #{n_poll} {poll_ts} JST\n"
+                            f"signals={n_sig} eval={n_ev} pnl_100sh={pnl:+.0f}円 win_rate={wr:.1f}%\n"
+                            f"+csv rows: {len(new_rows)}"
+                        )
+                    }
+                    discord_notify(
+                        msg,
+                        webhook_url=webhook_url,
+                        alert_channel_id=alert_channel_id,
+                        bot_token=bot_token,
+                    )
+            except Exception:
+                pass
+
+            _suffix = " eod_summary" if is_eod_summary_only else ""
+            print(
+                f"[{now_str()}] paper_trade: poll#{n_poll} OK{_suffix} "
+                f"(new_rows={len(new_rows)} signals_eval={int((rep.get('overall_summary') or {}).get('signals_in_eval') or 0)})"
+            )
+            time.sleep(max(0.5, float(paper_trade_interval_sec)))
+    except KeyboardInterrupt:
+        print("\nCtrl+C を検知しました。paper_trade を終了します。")
+        return 0
+
+
 def _aggregate_replay_repeat_run_summaries(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
     """
     repeat 実行で得た runXX.json レポートのリストから、main と同様の集計 summary を返します。
@@ -8746,6 +10748,71 @@ def _aggregate_replay_repeat_run_summaries(run_summaries: list[dict[str, Any]]) 
     }
 
 
+def _aggregate_regime_control_sweep_summaries(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    base = _aggregate_replay_repeat_run_summaries(run_summaries)
+    sk = 0
+    sr: dict[str, int] = {}
+    vcnt = 0
+    vpnl_sum = 0.0
+    mr_acc: dict[str, dict[str, float]] = {
+        rk: {"signals": 0.0, "pnl_sum": 0.0, "lw10_sum": 0.0} for rk in ("STRONG", "NORMAL", "WEAK", "CRASH")
+    }
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        ov = rep.get("overall_summary") or {}
+        rc = ov.get("regime_controls") if isinstance(ov.get("regime_controls"), dict) else {}
+        if not rc:
+            continue
+        sk += int(rc.get("skipped_signals_count") or 0)
+        for k0, v0 in (rc.get("skip_reason_counts") or {}).items():
+            try:
+                kk = str(k0)
+                if kk:
+                    sr[kk] = int(sr.get(kk, 0)) + int(v0 or 0)
+            except Exception:
+                continue
+        vpa = rc.get("virtual_pnl_analysis") if isinstance(rc.get("virtual_pnl_analysis"), dict) else {}
+        if vpa:
+            vcnt += int(vpa.get("skipped_signals_count") or 0)
+            vpnl_sum += float(vpa.get("total_pnl_yen_100_shares") or 0.0)
+        evmr = rc.get("eval_by_market_regime") if isinstance(rc.get("eval_by_market_regime"), dict) else {}
+        if evmr:
+            for rk in mr_acc:
+                row = evmr.get(rk)
+                if not isinstance(row, dict):
+                    continue
+                mr_acc[rk]["signals"] += float(row.get("signals") or 0)
+                mr_acc[rk]["pnl_sum"] += float(row.get("total_pnl_yen_100_shares") or 0.0)
+                mr_acc[rk]["lw10_sum"] += float(row.get("lose_worst10_sum_yen_100_shares") or 0.0)
+
+    mr_out: dict[str, dict[str, Any]] = {}
+    for rk, acc in mr_acc.items():
+        n_sig = int(acc["signals"])
+        pnl_tot = float(acc["pnl_sum"])
+        mr_out[rk] = {
+            "signals": int(n_sig),
+            "total_pnl_yen_100_shares": float(pnl_tot),
+            "avg_expectancy_yen_100_shares": float(pnl_tot / float(n_sig)) if n_sig > 0 else 0.0,
+            "lose_worst10_sum_yen_100_shares": float(acc["lw10_sum"]),
+        }
+
+    out = dict(base)
+    out["regime_controls_cell_aggregate"] = {
+        "skipped_signals_count_total": int(sk),
+        "skip_reason_counts": dict(sr),
+        "virtual_pnl_aggregate": {
+            "skipped_signals_count_total": int(vcnt),
+            "total_pnl_yen_100_shares_sum": float(vpnl_sum),
+            "avg_expectancy_yen_100_shares_if_skipped": (
+                float(vpnl_sum / float(vcnt)) if int(vcnt) > 0 else 0.0
+            ),
+            "prevented_loss_estimate_yen_100_shares_sum": float(-vpnl_sum),
+        },
+        "eval_by_market_regime_summed_over_runs": dict(mr_out),
+    }
+    return out
+
+
 def _vwap_sweep_thr_slug(threshold: float) -> str:
     return f"thr{int(round(float(threshold) * 10)):03d}"
 
@@ -8793,11 +10860,11 @@ def run_vwap_distance_sweep(
     n_repeat: int,
 ) -> int:
     """
-    VWAP distance exclude_above を複数値でスイープし、random_apr / random_60d を各 n_repeat 回実行して比較表を保存します。
+    VWAP distance exclude_above を複数値でスイープし、SWEEP_REPLAY_RANGES（random_apr のみ）を各 n_repeat 回実行して比較表を保存します。
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     thresholds = [1.5, 2.0, 2.5, 3.0]
-    ranges = ["random_apr", "random_60d"]
+    ranges = list(SWEEP_REPLAY_RANGES)
     sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
 
     print(f"[{now_str()}] VWAP distance sweep: thresholds={thresholds} ranges={ranges} repeat={n_repeat}")
@@ -8806,6 +10873,7 @@ def run_vwap_distance_sweep(
         print(f"[{now_str()}] 生成 config: vwap_exclude={t:g}% -> {p}")
 
     rows: list[dict[str, Any]] = []
+    collect_debug_rows: list[dict[str, Any]] = []
 
     for thr in thresholds:
         cfg_path = cfg_paths[thr]
@@ -8870,6 +10938,7 @@ def run_vwap_distance_sweep(
                     regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    **_replay_regime_control_kwargs_from_flags(f),
                     replay_settings=None,
                 )
                 if int(code) != 0:
@@ -8881,7 +10950,10 @@ def run_vwap_distance_sweep(
                     candidates = [
                         fn
                         for fn in os.listdir(results_dir)
-                        if fn.endswith(".json") and fn.endswith(f"{run_tag}.json")
+                        if fn.endswith(".json")
+                        and ("replay_summary_" in fn)
+                        and (not fn.endswith("_symbol_scores.json"))
+                        and fn.endswith(f"{run_tag}.json")
                     ]
                     candidates_sorted = sorted(
                         candidates,
@@ -8893,6 +10965,15 @@ def run_vwap_distance_sweep(
                         with open(p, "r", encoding="utf-8") as fp:
                             rep = json.load(fp)
                         run_summaries.append({"run_no": i, "json_path": p, "report": rep})
+                    collect_debug_rows.append(
+                        {
+                            "cell_folder": str(output_subdir),
+                            "run_no": int(i),
+                            "found_json_count": int(len(candidates_sorted)),
+                            "found_json_paths": [os.path.join(results_dir, x) for x in candidates_sorted[:10]],
+                            "loaded_runs_count": int(len(run_summaries)),
+                        }
+                    )
                 except Exception:
                     pass
 
@@ -8927,6 +11008,21 @@ def run_vwap_distance_sweep(
         out_lines.append(f"  - {t:g}% -> {cfg_paths[t]}")
     out_lines.append("")
     out_lines.append("ソート: avg_expectancy_yen_100_shares（降順）")
+    out_lines.append("")
+    out_lines.append("[SWEEP_COLLECT_DEBUG]")
+    out_lines.append("")
+    for it in collect_debug_rows[:200]:
+        try:
+            out_lines.append(
+                f"cell_folder: {it.get('cell_folder')} run_no={int(it.get('run_no') or 0)} "
+                f"found_json_count={int(it.get('found_json_count') or 0)} loaded_runs_count={int(it.get('loaded_runs_count') or 0)}"
+            )
+            fps = it.get("found_json_paths") or []
+            if isinstance(fps, list) and fps:
+                for p in fps:
+                    out_lines.append(f"  - {p}")
+        except Exception:
+            continue
     out_lines.append("")
     hdr = (
         "rank\tvwap_exclude_%\treplay_range\tavg_expectancy_yen\ttotal_pnl_100_shares\t"
@@ -9096,6 +11192,7 @@ def _aggregate_replay_repeat_run_summaries_for_regime_filter(run_summaries: list
     return {
         "runs": int(total_runs),
         "total_signals": int(total_signals),
+        "passed_signals_count": int(total_signals),
         "avg_expectancy_yen_100_shares": float(avg_exp),
         "total_pnl_yen_100_shares": float(total_pnl),
         "plus_runs": int(plus_runs),
@@ -9104,7 +11201,3275 @@ def _aggregate_replay_repeat_run_summaries_for_regime_filter(run_summaries: list
         "sum_lose_worst10_yen_100_shares": float(sum_lose_worst10_yen),
         "max_intraday_drawdown_yen_100_shares": float(max_intraday_dd_worst),
         "skipped_signals_count": int(skipped_signals_total),
+        "skip_ratio": float(
+            (float(skipped_signals_total) / float(int(total_signals) + int(skipped_signals_total)))
+            if (int(total_signals) + int(skipped_signals_total)) > 0
+            else 0.0
+        ),
     }
+
+
+def _build_symbol_contribution_analysis(
+    *,
+    by_symbol_summary: dict[str, Any],
+    total_pnl_yen_100_shares: float,
+    total_signals: int,
+    exclude_top_n_symbols_list: list[int] | tuple[int, ...] = (1, 2, 3),
+) -> dict[str, Any]:
+    """
+    銘柄依存（symbol contribution）分析。
+    - by_symbol_summary: runXX.json の "by_symbol_summary" 形式（sym -> {signals, pnl_yen_100_shares, ...}）
+    - total_pnl_yen_100_shares / total_signals: 全体の統計（eval対象のみ）
+    """
+    rows: list[dict[str, Any]] = []
+    for sym, s0 in (by_symbol_summary or {}).items():
+        if not sym:
+            continue
+        s = s0 if isinstance(s0, dict) else {}
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        sigs = int(s.get("signals") or 0)
+        exp = float(s.get("expectancy_yen_100_shares_per_signal") or 0.0)
+        ratio_total = float(pnl / float(total_pnl_yen_100_shares)) if float(total_pnl_yen_100_shares) != 0.0 else 0.0
+        ratio_abs_total = (
+            float(abs(pnl) / float(abs(total_pnl_yen_100_shares))) if float(total_pnl_yen_100_shares) != 0.0 else 0.0
+        )
+        rows.append(
+            {
+                "symbol": str(sym),
+                "signals": int(sigs),
+                "pnl_yen_100_shares": float(pnl),
+                "pnl_ratio_of_total": float(ratio_total),
+                "pnl_ratio_of_abs_total": float(ratio_abs_total),
+                "expectancy_yen_100_shares_per_signal": float(exp),
+            }
+        )
+
+    rows_sorted = sorted(rows, key=lambda x: float(x.get("pnl_yen_100_shares") or 0.0), reverse=True)
+    cum = 0.0
+    for r in rows_sorted:
+        cum += float(r.get("pnl_yen_100_shares") or 0.0)
+        r["cumulative_pnl_yen_100_shares"] = float(cum)
+        r["cumulative_pnl_ratio_of_total"] = (
+            float(cum / float(total_pnl_yen_100_shares)) if float(total_pnl_yen_100_shares) != 0.0 else 0.0
+        )
+
+    # 上位銘柄除外シミュレーション（pnl上位順）
+    sims: list[dict[str, Any]] = []
+    for n0 in list(exclude_top_n_symbols_list):
+        try:
+            n = int(n0)
+        except Exception:
+            continue
+        if n <= 0:
+            continue
+        excluded = rows_sorted[:n]
+        excluded_symbols = [str(x.get("symbol") or "") for x in excluded if str(x.get("symbol") or "")]
+        excl_pnl = sum(float(x.get("pnl_yen_100_shares") or 0.0) for x in excluded)
+        excl_sigs = sum(int(x.get("signals") or 0) for x in excluded)
+        pnl_after = float(total_pnl_yen_100_shares) - float(excl_pnl)
+        sig_after = int(total_signals) - int(excl_sigs)
+        exp_after = float(pnl_after / float(sig_after)) if int(sig_after) > 0 else 0.0
+        sims.append(
+            {
+                "exclude_top_n_symbols": int(n),
+                "excluded_symbols": excluded_symbols,
+                "total_pnl_before_yen_100_shares": float(total_pnl_yen_100_shares),
+                "total_signals_before": int(total_signals),
+                "expectancy_before_yen_100_shares_per_signal": float(
+                    (float(total_pnl_yen_100_shares) / float(total_signals)) if int(total_signals) > 0 else 0.0
+                ),
+                "total_pnl_after_yen_100_shares": float(pnl_after),
+                "total_signals_after": int(sig_after),
+                "expectancy_after_yen_100_shares_per_signal": float(exp_after),
+            }
+        )
+
+    return {
+        "ranking_method": "pnl_desc",
+        "total_pnl_yen_100_shares": float(total_pnl_yen_100_shares),
+        "total_signals": int(total_signals),
+        "by_symbol": rows_sorted,
+        "exclude_top_n_simulation": sims,
+    }
+
+
+def _lose_worst10_sum_yen_100_shares_from_pnls(pnls: list[float]) -> float:
+    try:
+        xs = [float(x) for x in pnls if isinstance(x, (int, float)) and math.isfinite(float(x))]
+        if not xs:
+            return 0.0
+        xs_sorted = sorted(xs)
+        return float(sum(xs_sorted[:10]))
+    except Exception:
+        return 0.0
+
+
+def _parse_hhmm_to_minutes(hhmm: str) -> Optional[int]:
+    try:
+        s = str(hhmm or "").strip()
+        if not s:
+            return None
+        if ":" in s:
+            a, b = s.split(":", 1)
+            hh = int(a)
+            mm = int(b)
+            return int(hh * 60 + mm)
+        # e.g. "1030"
+        if len(s) >= 4:
+            hh = int(s[:2])
+            mm = int(s[2:4])
+            return int(hh * 60 + mm)
+        return None
+    except Exception:
+        return None
+
+
+def _write_signal_filter_sweep_configs(script_dir: str) -> list[str]:
+    """
+    “signal_filters” ABテスト用configを configs/signal_filter_sweep/ に作成します。
+    ベースは replay_morning_vwap2_dd30k_rlt50（無ければ replay_morning_vwap2_dd30k）を優先。
+    """
+    base_candidates = [
+        os.path.join("configs", "replay_morning_vwap2_dd30k_rlt50.json"),
+        os.path.join("configs", "replay_morning_vwap2_dd30k.json"),
+        os.path.join("configs", "replay_morning_vwap2.json"),
+    ]
+    base_cfg: dict[str, Any] = {}
+    base_path = None
+    for rel in base_candidates:
+        p = _resolve_replay_config_path(rel)
+        if p:
+            base_path = p
+            base_cfg = _load_replay_config(p) or {}
+            if base_cfg:
+                break
+    if not base_cfg:
+        return []
+
+    sweep_dir = os.path.join(script_dir, "configs", "signal_filter_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+
+    cases: list[tuple[str, dict[str, Any]]] = [
+        ("baseline_off", {}),
+        ("gap_ge_1_5", {"disable_gap_ge_pct": True, "gap_ge_threshold_pct": 1.5}),
+        ("gap_ge_2", {"disable_gap_ge_pct": True, "gap_ge_threshold_pct": 2.0}),
+        ("gap_ge_2_5", {"disable_gap_ge_pct": True, "gap_ge_threshold_pct": 2.5}),
+        ("gap_ge_3", {"disable_gap_ge_pct": True, "gap_ge_threshold_pct": 3.0}),
+        ("gap_ge_4", {"disable_gap_ge_pct": True, "gap_ge_threshold_pct": 4.0}),
+    ]
+
+    out_paths: list[str] = []
+    for slug, flags in cases:
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        base_name = str(cfg.get("name") or "replay_cfg")
+        cfg["name"] = f"{base_name}_sigf_{slug}"
+        if flags:
+            cfg["signal_filters"] = dict(flags)
+        else:
+            cfg.pop("signal_filters", None)
+        fn = f"{base_name}_sigf_{slug}.json"
+        path = os.path.join(sweep_dir, fn)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        out_paths.append(os.path.abspath(path))
+    return out_paths
+
+
+def _aggregate_replay_repeat_run_summaries_for_signal_filter_sweep(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    # 基本は既存の sweep と同じ指標を抜く
+    run_rows: list[dict[str, Any]] = []
+    sum_lose_worst10 = 0.0
+    max_intraday_dd_worst = 0.0
+    skipped_total = 0
+    total_signals = 0
+    total_pnl = 0.0
+    plus_runs = 0
+    minus_runs = 0
+    max_lose_run = {"pnl": 0.0}
+    # gap filter virtual（run合算）
+    vf_skipped = 0
+    vf_pnl = 0.0
+    vf_prevented = 0.0
+    vf_wr_weighted_num = 0.0
+
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        stats = (((rep.get("overall_summary") or {}).get("stats")) or {})
+        pnl = float(stats.get("pnl_yen_100_shares") or 0.0)
+        sigs = int(stats.get("signals") or 0)
+        exp = float(stats.get("expectancy_yen_100_shares_per_signal") or 0.0)
+        rc = ((rep.get("overall_summary") or {}).get("risk_controls")) or {}
+        sf = ((rep.get("overall_summary") or {}).get("signal_filters")) or {}
+        skipped_total += int(sf.get("skipped_signals_count") or 0) if isinstance(sf, dict) else 0
+        if isinstance(sf, dict):
+            vpa = sf.get("virtual_pnl_analysis") or {}
+            if isinstance(vpa, dict):
+                n = int(vpa.get("skipped_signals_count") or 0)
+                vf_skipped += n
+                vf_pnl += float(vpa.get("total_pnl_yen_100_shares") or 0.0)
+                vf_prevented += float(vpa.get("prevented_loss_estimate_yen_100_shares") or 0.0)
+                wrp = float(vpa.get("winrate_pct") or 0.0)
+                if n > 0:
+                    vf_wr_weighted_num += wrp * float(n)
+        max_intraday_dd_worst = max(max_intraday_dd_worst, float(rc.get("max_intraday_drawdown_yen_100_shares") or 0.0)) if isinstance(rc, dict) else max_intraday_dd_worst
+
+        run_rows.append({"pnl": pnl, "signals": sigs, "exp": exp})
+        total_signals += sigs
+        total_pnl += pnl
+        if pnl > 0:
+            plus_runs += 1
+        if pnl < 0:
+            minus_runs += 1
+        if (not run_rows) or pnl < float(max_lose_run.get("pnl") or 0.0):
+            max_lose_run = {"pnl": pnl}
+
+        aa = rep.get("accident_analysis") or {}
+        lw = aa.get("lose_worst10") or []
+        if isinstance(lw, list):
+            for it in lw:
+                try:
+                    sum_lose_worst10 += float(it.get("pnl_yen_100_shares") or 0.0)
+                except Exception:
+                    continue
+
+    runs = len(run_rows)
+    avg_exp = (sum(float(x.get("exp") or 0.0) for x in run_rows) / float(runs)) if runs > 0 else 0.0
+    vf_wr_pct = float(vf_wr_weighted_num / float(vf_skipped)) if int(vf_skipped) > 0 else 0.0
+    vf_avg_exp = float(vf_pnl / float(vf_skipped)) if int(vf_skipped) > 0 else 0.0
+    return {
+        "runs": int(runs),
+        "total_signals": int(total_signals),
+        "avg_expectancy_yen_100_shares": float(avg_exp),
+        "total_pnl_yen_100_shares": float(total_pnl),
+        "plus_runs": int(plus_runs),
+        "minus_runs": int(minus_runs),
+        "max_lose_run_pnl_yen_100_shares": float(max_lose_run.get("pnl") or 0.0),
+        "sum_lose_worst10_yen_100_shares": float(sum_lose_worst10),
+        "max_intraday_drawdown_yen_100_shares": float(max_intraday_dd_worst),
+        "skipped_signals_count": int(skipped_total),
+        "gap_virtual_pnl_analysis_aggregate": {
+            "skipped_signals_count_total": int(vf_skipped),
+            "total_pnl_yen_100_shares_sum": float(vf_pnl),
+            "avg_expectancy_yen_100_shares": float(vf_avg_exp),
+            "winrate_pct_weighted": float(vf_wr_pct),
+            "prevented_loss_estimate_yen_100_shares_sum": float(vf_prevented),
+        },
+    }
+
+
+def run_signal_filter_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    signal_filters の AB test sweep。
+    - baseline + gap_ge 閾値 1.5 / 2 / 2.5 / 3 / 4（disable_gap_ge_pct）
+    - SWEEP_REPLAY_RANGES（random_apr）×n_repeat のみ（デフォルト n_repeat は main 側で10）
+    - 出力: results/signal_filter_sweep_<stamp>/sweep_summary.txt（本指標 + gap virtual 合算）
+    - config生成: configs/signal_filter_sweep/
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges = list(SWEEP_REPLAY_RANGES)
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+
+    cfg_paths = _write_signal_filter_sweep_configs(script_dir)
+    if not cfg_paths:
+        print(f"[{now_str()}] signal_filter sweep: config生成に失敗しました。")
+        return 2
+
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"signal_filter_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    print(f"[{now_str()}] signal_filter sweep: configs={len(cfg_paths)} ranges={ranges} repeat={n_repeat}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] config_root: {os.path.join(script_dir, 'configs', 'signal_filter_sweep')}")
+    for p in cfg_paths:
+        print(f"[{now_str()}] 生成 config: {p}")
+
+    rows: list[dict[str, Any]] = []
+    collect_debug_rows: list[dict[str, Any]] = []
+    for cfg_path in cfg_paths:
+        cfg_raw = _load_replay_config(cfg_path)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_path))
+        cfg_slug = os.path.basename(cfg_path).replace(".json", "")
+        # Windowsパス長対策: output_subdir / batch_stamp / json名が長すぎると保存に失敗して「空フォルダ」になる
+        cfg_slug_short = "cfg"
+        try:
+            sfn = os.path.basename(str(cfg_path or "")).replace(".json", "")
+            if sfn.endswith("_sigf_baseline_off"):
+                cfg_slug_short = "base"
+            elif sfn.endswith("_sigf_gap_ge_2_5"):
+                cfg_slug_short = "g25"
+            elif sfn.endswith("_sigf_gap_ge_1_5"):
+                cfg_slug_short = "g15"
+            elif sfn.endswith("_sigf_gap_ge_2"):
+                cfg_slug_short = "g20"
+            elif sfn.endswith("_sigf_gap_ge_3"):
+                cfg_slug_short = "g30"
+            elif sfn.endswith("_sigf_gap_ge_4"):
+                cfg_slug_short = "g40"
+            else:
+                # 予備: 末尾だけ短く残す
+                cfg_slug_short = (sfn[-16:] if len(sfn) > 16 else sfn) or "cfg"
+        except Exception:
+            cfg_slug_short = "cfg"
+
+        for rng in ranges:
+            replay_random_days = 5
+            # ここも短縮（path length）
+            batch_stamp = f"{sweep_stamp}_{cfg_slug_short}_{rng}"
+            output_subdir = os.path.join(f"signal_filter_sweep_{sweep_stamp}", f"{cfg_slug_short}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {cfg_slug_short}  {rng}  ({n_repeat} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_path),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    if int(n_repeat) <= 1:
+                        candidates = [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    else:
+                        candidates = [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        p = os.path.join(results_dir, candidates_sorted[0])
+                        with open(p, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": p, "report": rep})
+                    collect_debug_rows.append(
+                        {
+                            "cell_folder": str(output_subdir),
+                            "run_no": int(i),
+                            "found_json_count": int(len(candidates_sorted)),
+                            "found_json_paths": [os.path.join(results_dir, x) for x in candidates_sorted[:10]],
+                            "loaded_runs_count": int(len(run_summaries)),
+                        }
+                    )
+                except Exception:
+                    pass
+
+            summ = _aggregate_replay_repeat_run_summaries_for_signal_filter_sweep(run_summaries)
+            rows.append(
+                {
+                    "config_name": cfg_name,
+                    "config_path": str(cfg_path),
+                    "config_slug": cfg_slug,
+                    "config_slug_short": str(cfg_slug_short),
+                    "replay_range": str(rng),
+                    "output_subdir": str(output_subdir),
+                    "batch_stamp": str(batch_stamp),
+                    "summary": summ,
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float(((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== signal_filter sweep ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_mode: {replay_mode}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    out_lines.append("configs:")
+    for p in cfg_paths:
+        out_lines.append(f"  - {p}")
+    out_lines.append("")
+    out_lines.append("ソート: avg_expectancy_yen_100_shares（降順）")
+    out_lines.append("")
+    out_lines.append("[SWEEP_COLLECT_DEBUG]")
+    out_lines.append("")
+    for it in collect_debug_rows[:200]:
+        try:
+            out_lines.append(
+                f"cell_folder: {it.get('cell_folder')} run_no={int(it.get('run_no') or 0)} "
+                f"found_json_count={int(it.get('found_json_count') or 0)} loaded_runs_count={int(it.get('loaded_runs_count') or 0)}"
+            )
+            fps = it.get("found_json_paths") or []
+            if isinstance(fps, list) and fps:
+                for p in fps:
+                    out_lines.append(f"  - {p}")
+        except Exception:
+            continue
+    out_lines.append("")
+
+    hdr = (
+        "rank\tconfig_name\treplay_range\tavg_expectancy_yen\ttotal_pnl\tmax_lose_run\tlose_worst10_sum\t"
+        "plus_runs\tminus_runs\tskipped_signals_count\ttotal_signals\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('config_name')}\t{r.get('replay_range')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{int(s.get('skipped_signals_count') or 0)}\t"
+            f"{int(s.get('total_signals') or 0)}\t"
+            f"results/{r.get('output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append("[GAP_VIRTUAL_PNL_ANALYSIS]  ※skipしたsignalの仮想PnLを全run合算（overall_summary.signal_filters.virtual_pnl_analysis）")
+    hdr2 = (
+        "rank\tconfig_name\treplay_range\tvirt_skipped_total\tvirt_total_pnl\tvirt_avg_expectancy_yen\t"
+        "virt_winrate_pct_weighted\tvirt_prevented_loss_estimate_sum"
+    )
+    out_lines.append(hdr2)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        gvf = (s.get("gap_virtual_pnl_analysis_aggregate") or {}) if isinstance(s, dict) else {}
+        out_lines.append(
+            f"{idx}\t{r.get('config_name')}\t{r.get('replay_range')}\t"
+            f"{int(gvf.get('skipped_signals_count_total') or 0)}\t"
+            f"{float(gvf.get('total_pnl_yen_100_shares_sum') or 0.0):+.2f}\t"
+            f"{float(gvf.get('avg_expectancy_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(gvf.get('winrate_pct_weighted') or 0.0):.2f}\t"
+            f"{float(gvf.get('prevented_loss_estimate_yen_100_shares_sum') or 0.0):+.2f}"
+        )
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] signal_filter sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def _write_composite_filter_sweep_configs(script_dir: str) -> list[str]:
+    """
+    composite_signal_filters（WEAKのみ）比較用configを configs/composite_filter_sweep/ に作成します。
+    ベースは replay_morning_vwap2_dd30k_rlt50 を優先（無ければ dd30k / vwap2）。
+    """
+    base_candidates = [
+        os.path.join("configs", "replay_morning_vwap2_dd30k_rlt50.json"),
+        os.path.join("configs", "replay_morning_vwap2_dd30k.json"),
+        os.path.join("configs", "replay_morning_vwap2.json"),
+    ]
+    base_cfg: dict[str, Any] = {}
+    for rel in base_candidates:
+        p = _resolve_replay_config_path(rel)
+        if p:
+            base_cfg = _load_replay_config(p) or {}
+            if base_cfg:
+                break
+    if not base_cfg:
+        return []
+
+    sweep_dir = os.path.join(script_dir, "configs", "composite_filter_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+
+    # baseline: composite セクション無し。その他は WEAK のみ該当条件を明示OFFしつつ1軸だけON
+    cases: list[tuple[str, Optional[dict[str, Any]]]] = [
+        ("baseline_off", None),
+        (
+            "weak_vwap_ge_1_5",
+            {
+                "disable_state_weak_and_vwap_ge_pct": True,
+                "state_weak_vwap_ge_threshold_pct": 1.5,
+                "disable_state_weak_and_gap_ge_pct": False,
+                "state_weak_gap_ge_threshold_pct": 3.0,
+            },
+        ),
+        (
+            "weak_vwap_ge_1_0",
+            {
+                "disable_state_weak_and_vwap_ge_pct": True,
+                "state_weak_vwap_ge_threshold_pct": 1.0,
+                "disable_state_weak_and_gap_ge_pct": False,
+                "state_weak_gap_ge_threshold_pct": 3.0,
+            },
+        ),
+        (
+            "weak_gap_ge_3",
+            {
+                "disable_state_weak_and_vwap_ge_pct": False,
+                "state_weak_vwap_ge_threshold_pct": 1.5,
+                "disable_state_weak_and_gap_ge_pct": True,
+                "state_weak_gap_ge_threshold_pct": 3.0,
+            },
+        ),
+        (
+            "weak_gap_ge_2",
+            {
+                "disable_state_weak_and_vwap_ge_pct": False,
+                "state_weak_vwap_ge_threshold_pct": 1.5,
+                "disable_state_weak_and_gap_ge_pct": True,
+                "state_weak_gap_ge_threshold_pct": 2.0,
+            },
+        ),
+    ]
+
+    out_paths: list[str] = []
+    for slug, cflags in cases:
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        base_name = str(cfg.get("name") or "replay_cfg")
+        cfg["name"] = f"{base_name}_csf_{slug}"
+        if cflags is None:
+            cfg.pop("composite_signal_filters", None)
+        else:
+            cfg["composite_signal_filters"] = dict(cflags)
+        fn = f"{base_name}_csf_{slug}.json"
+        path = os.path.join(sweep_dir, fn)
+        with open(path, "w", encoding="utf-8") as fw:
+            json.dump(cfg, fw, ensure_ascii=False, indent=2)
+        out_paths.append(os.path.abspath(path))
+    return out_paths
+
+
+def _aggregate_replay_repeat_run_summaries_for_composite_filter_sweep(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    base = _aggregate_replay_repeat_run_summaries_for_signal_filter_sweep(run_summaries)
+    comp_skipped_entries = 0
+    cs_skipped_virt = 0
+    cs_pnl = 0.0
+    cs_prevented = 0.0
+    cs_wr_weighted = 0.0
+
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        sf = ((rep.get("overall_summary") or {}).get("signal_filters")) or {}
+        if not isinstance(sf, dict):
+            continue
+        csf = sf.get("composite_signal_filters") or {}
+        if isinstance(csf, dict):
+            comp_skipped_entries += int(csf.get("skipped_signals_count") or 0)
+            cvpa = csf.get("virtual_pnl_analysis") or {}
+            if isinstance(cvpa, dict):
+                n2 = int(cvpa.get("skipped_signals_count") or 0)
+                cs_skipped_virt += n2
+                cs_pnl += float(cvpa.get("total_pnl_yen_100_shares") or 0.0)
+                cs_prevented += float(cvpa.get("prevented_loss_estimate_yen_100_shares") or 0.0)
+                wr2 = float(cvpa.get("winrate_pct") or 0.0)
+                if n2 > 0:
+                    cs_wr_weighted += wr2 * float(n2)
+
+    cs_avg_exp = float(cs_pnl / float(cs_skipped_virt)) if int(cs_skipped_virt) > 0 else 0.0
+    cs_wr_pct = float(cs_wr_weighted / float(cs_skipped_virt)) if int(cs_skipped_virt) > 0 else 0.0
+    out = dict(base)
+    out["composite_skipped_entry_signals_count"] = int(comp_skipped_entries)
+    out["composite_only_virtual_aggregate"] = {
+        "skipped_signals_count_total": int(cs_skipped_virt),
+        "total_pnl_yen_100_shares_sum": float(cs_pnl),
+        "avg_expectancy_yen_100_shares": float(cs_avg_exp),
+        "winrate_pct_weighted": float(cs_wr_pct),
+        "prevented_loss_estimate_yen_100_shares_sum": float(cs_prevented),
+    }
+    return out
+
+
+def run_composite_filter_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    composite_signal_filters（WEAK×VWAP距離 / WEAK×ギャップ）の sweep。
+    - baseline + weak_vwap_ge_1_5 / 1_0 + weak_gap_ge_3 / 2
+    - SWEEP_REPLAY_RANGES（random_apr）×n_repeat のみ
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges = list(SWEEP_REPLAY_RANGES)
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+
+    cfg_paths = _write_composite_filter_sweep_configs(script_dir)
+    if not cfg_paths:
+        print(f"[{now_str()}] composite_filter sweep: config生成に失敗しました。")
+        return 2
+
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"composite_filter_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    print(f"[{now_str()}] composite_filter sweep: configs={len(cfg_paths)} ranges={ranges} repeat={n_repeat}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] config_root: {os.path.join(script_dir, 'configs', 'composite_filter_sweep')}")
+    for p in cfg_paths:
+        print(f"[{now_str()}] 生成 config: {p}")
+
+    rows: list[dict[str, Any]] = []
+    collect_debug_rows: list[dict[str, Any]] = []
+    for cfg_path in cfg_paths:
+        cfg_raw = _load_replay_config(cfg_path)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_path))
+        cfg_slug = os.path.basename(cfg_path).replace(".json", "")
+        cfg_slug_short = "cfg"
+        try:
+            sfn = os.path.basename(str(cfg_path or "")).replace(".json", "")
+            if sfn.endswith("_csf_baseline_off"):
+                cfg_slug_short = "base"
+            elif sfn.endswith("_csf_weak_vwap_ge_1_5"):
+                cfg_slug_short = "wv15"
+            elif sfn.endswith("_csf_weak_vwap_ge_1_0"):
+                cfg_slug_short = "wv10"
+            elif sfn.endswith("_csf_weak_gap_ge_3"):
+                cfg_slug_short = "wg3"
+            elif sfn.endswith("_csf_weak_gap_ge_2"):
+                cfg_slug_short = "wg20"
+            else:
+                cfg_slug_short = (sfn[-16:] if len(sfn) > 16 else sfn) or "cfg"
+        except Exception:
+            cfg_slug_short = "cfg"
+
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{cfg_slug_short}_{rng}"
+            output_subdir = os.path.join(f"composite_filter_sweep_{sweep_stamp}", f"{cfg_slug_short}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {cfg_slug_short}  {rng}  ({n_repeat} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_path),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    if int(n_repeat) <= 1:
+                        candidates = [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    else:
+                        candidates = [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        p = os.path.join(results_dir, candidates_sorted[0])
+                        with open(p, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": p, "report": rep})
+                    collect_debug_rows.append(
+                        {
+                            "cell_folder": str(output_subdir),
+                            "run_no": int(i),
+                            "found_json_count": int(len(candidates_sorted)),
+                            "found_json_paths": [os.path.join(results_dir, x) for x in candidates_sorted[:10]],
+                            "loaded_runs_count": int(len(run_summaries)),
+                        }
+                    )
+                except Exception:
+                    pass
+
+            summ = _aggregate_replay_repeat_run_summaries_for_composite_filter_sweep(run_summaries)
+            rows.append(
+                {
+                    "config_name": cfg_name,
+                    "config_path": str(cfg_path),
+                    "config_slug": cfg_slug,
+                    "config_slug_short": str(cfg_slug_short),
+                    "replay_range": str(rng),
+                    "output_subdir": str(output_subdir),
+                    "batch_stamp": str(batch_stamp),
+                    "summary": summ,
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float(((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== composite_filter sweep (market_regime==WEAK のみ) ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_mode: {replay_mode}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    out_lines.append("configs:")
+    for p in cfg_paths:
+        out_lines.append(f"  - {p}")
+    out_lines.append("")
+    out_lines.append("ソート: avg_expectancy_yen_100_shares（降順）")
+    out_lines.append("")
+    out_lines.append("[SWEEP_COLLECT_DEBUG]")
+    out_lines.append("")
+    for it in collect_debug_rows[:200]:
+        try:
+            out_lines.append(
+                f"cell_folder: {it.get('cell_folder')} run_no={int(it.get('run_no') or 0)} "
+                f"found_json_count={int(it.get('found_json_count') or 0)} loaded_runs_count={int(it.get('loaded_runs_count') or 0)}"
+            )
+            fps = it.get("found_json_paths") or []
+            if isinstance(fps, list) and fps:
+                for pth in fps:
+                    out_lines.append(f"  - {pth}")
+        except Exception:
+            continue
+    out_lines.append("")
+
+    hdr = (
+        "rank\tconfig_name\treplay_range\tavg_expectancy_yen\ttotal_pnl\tmax_lose_run\tlose_worst10_sum\t"
+        "plus_runs\tminus_runs\tskipped_signals_sigf_any\ttotal_signals\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('config_name')}\t{r.get('replay_range')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{int(s.get('skipped_signals_count') or 0)}\t"
+            f"{int(s.get('total_signals') or 0)}\t"
+            f"results/{r.get('output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append(
+        "[ALL_FILTERS_VIRTUAL_PNL]  ※simple+composite 合算（overall_summary.signal_filters.virtual_pnl_analysis）"
+    )
+    hdr2 = (
+        "rank\tconfig_name\treplay_range\tvirt_skipped_total\tvirt_total_pnl\tvirt_avg_expectancy_yen\t"
+        "virt_winrate_pct_weighted\tvirt_prevented_loss_estimate_sum"
+    )
+    out_lines.append(hdr2)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        gvf = (s.get("gap_virtual_pnl_analysis_aggregate") or {}) if isinstance(s, dict) else {}
+        out_lines.append(
+            f"{idx}\t{r.get('config_name')}\t{r.get('replay_range')}\t"
+            f"{int(gvf.get('skipped_signals_count_total') or 0)}\t"
+            f"{float(gvf.get('total_pnl_yen_100_shares_sum') or 0.0):+.2f}\t"
+            f"{float(gvf.get('avg_expectancy_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(gvf.get('winrate_pct_weighted') or 0.0):.2f}\t"
+            f"{float(gvf.get('prevented_loss_estimate_yen_100_shares_sum') or 0.0):+.2f}"
+        )
+
+    out_lines.append("")
+    out_lines.append(
+        "[COMPOSITE_WEAK_ONLY_VIRTUAL_PNL]  ※(signal_filters.composite_signal_filters.virtual_pnl_analysis) WEAK複合のみ"
+    )
+    hdr3 = (
+        "rank\tconfig_name\treplay_range\tcomp_skipped_entry\tcomp_virt_skipped\tcomp_virt_total_pnl\t"
+        "comp_virt_avg_exp_yen\tcomp_virt_winrate_pct_w\tcomp_prevented_est"
+    )
+    out_lines.append(hdr3)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        cvf = (s.get("composite_only_virtual_aggregate") or {}) if isinstance(s, dict) else {}
+        out_lines.append(
+            f"{idx}\t{r.get('config_name')}\t{r.get('replay_range')}\t"
+            f"{int(s.get('composite_skipped_entry_signals_count') or 0)}\t"
+            f"{int(cvf.get('skipped_signals_count_total') or 0)}\t"
+            f"{float(cvf.get('total_pnl_yen_100_shares_sum') or 0.0):+.2f}\t"
+            f"{float(cvf.get('avg_expectancy_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(cvf.get('winrate_pct_weighted') or 0.0):.2f}\t"
+            f"{float(cvf.get('prevented_loss_estimate_yen_100_shares_sum') or 0.0):+.2f}"
+        )
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] composite_filter sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def run_regime_control_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    比較（random_apr のみ）:
+    - morning_baseline: replay_morning_vwap2_dd30k_rlt50
+    - full_day_no_regime_control: replay_full_day_vwap2_dd30k_rlt50（時間帯ENTRY禁止を外す）
+    - full_day_regime_control: full-day + regime_controls（地合い適応）
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges = list(SWEEP_REPLAY_RANGES)
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"regime_control_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    cells: list[tuple[str, str, str]] = [
+        ("mb", "morning_baseline", os.path.join("configs", "replay_morning_vwap2_dd30k_rlt50.json")),
+        ("fd", "full_day_no_regime_control", os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json")),
+        ("fdrc", "full_day_regime_control", os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50_regime_controls.json")),
+    ]
+    resolved: list[tuple[str, str, str]] = []
+    for slug, label, rel in cells:
+        ap = _resolve_replay_config_path(rel)
+        if not ap:
+            print(f"[{now_str()}] regime_control sweep: missing config: {rel}")
+            return 2
+        resolved.append((slug, label, ap))
+
+    print(f"[{now_str()}] regime_control sweep: cells={len(resolved)} ranges={ranges} repeat={n_repeat}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    for _s, _lb, _pa in resolved:
+        print(f"[{now_str()}]   - {_lb}: {_pa}")
+
+    rows: list[dict[str, Any]] = []
+    collect_debug_rows: list[dict[str, Any]] = []
+
+    for slug, label, cfg_abs in resolved:
+        cfg_raw = _load_replay_config(cfg_abs)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{slug}_{rng}"
+            output_subdir = os.path.join(f"regime_control_sweep_{sweep_stamp}", f"{slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {label} ({slug})  {rng}  ({n_repeat} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_abs),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = (
+                        [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                        if int(n_repeat) > 1
+                        else [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    )
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        p = os.path.join(results_dir, candidates_sorted[0])
+                        with open(p, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": p, "report": rep})
+                    collect_debug_rows.append(
+                        {
+                            "cell": str(label),
+                            "run_no": int(i),
+                            "found_json_count": int(len(candidates_sorted)),
+                            "loaded_runs_count": int(len(run_summaries)),
+                        }
+                    )
+                except Exception:
+                    pass
+
+            summ = _aggregate_regime_control_sweep_summaries(run_summaries)
+            rca = (summ.get("regime_controls_cell_aggregate") or {}) if isinstance(summ, dict) else {}
+            vpnl_agg = (
+                (((rca.get("virtual_pnl_aggregate") or {}).get("total_pnl_yen_100_shares_sum")))
+                if isinstance(rca.get("virtual_pnl_aggregate"), dict)
+                else None
+            )
+            rows.append(
+                {
+                    "cell_slug": str(slug),
+                    "cell_label": str(label),
+                    "config_name": str(cfg_name),
+                    "replay_range": str(rng),
+                    "replay_output_subdir": str(output_subdir),
+                    "summary": summ,
+                    "disable_afternoon": bool(f["replay_disable_afternoon_entry"]),
+                    "strict_afternoon": bool(f["replay_strict_afternoon_entry"]),
+                    "regime_control_enabled": bool(f.get("regime_control_enabled", False)),
+                    "rc_skipped_signals_total": int(rca.get("skipped_signals_count_total") or 0),
+                    "rc_virt_pnl_total": float(vpnl_agg) if isinstance(vpnl_agg, (int, float)) else 0.0,
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float((((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0)),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== regime_control sweep: morning baseline vs full-day vs full-day+RC ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    out_lines.append("[SWEEP_COLLECT_DEBUG]")
+    for it in collect_debug_rows[:250]:
+        out_lines.append(
+            f"{it.get('cell')} run_no={int(it.get('run_no') or 0)} found={int(it.get('found_json_count') or 0)} "
+            f"loaded_runs_count={int(it.get('loaded_runs_count') or 0)}"
+        )
+    out_lines.append("")
+    out_lines.append("ソートキー: summary.avg_expectancy_yen_100_shares（同一random_aprセット内での相対順位）")
+    out_lines.append("")
+    hdr = (
+        "rank\tcell_label\tconfig_name\treplay_range\tavg_expectancy\ttotal_pnl\tmax_lose_run\tlose_w10_sum\tplus_runs\tminus_runs\t"
+        "rc_skipped_signals\trc_virt_pnl_sum\tdisable_afternoon_entry\tstrict_afternoon\tregime_control_enabled\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('cell_label')}\t{r.get('config_name')}\t{r.get('replay_range')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{int(r.get('rc_skipped_signals_total') or 0)}\t{float(r.get('rc_virt_pnl_total') or 0.0):+.2f}\t"
+            f"{bool(r.get('disable_afternoon'))}\t{bool(r.get('strict_afternoon'))}\t{bool(r.get('regime_control_enabled'))}\t"
+            f"results/{r.get('replay_output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append("[REGIME_CONTROL / per-cell run合算詳細]")
+    for r in rows_sorted:
+        s = r.get("summary") or {}
+        agg = s.get("regime_controls_cell_aggregate") if isinstance(s.get("regime_controls_cell_aggregate"), dict) else {}
+        out_lines.append(f"cell={r.get('cell_label')}")
+        if not agg:
+            out_lines.append("  (no regime_controls summaries in loaded reports)")
+            out_lines.append("")
+            continue
+        out_lines.append(f"  skipped_signals_count_total={int(agg.get('skipped_signals_count_total') or 0)}")
+        src = agg.get("skip_reason_counts") or {}
+        if isinstance(src, dict) and src:
+            out_lines.append("  skip_reason_counts:")
+            for k, v in sorted(src.items(), key=lambda kv: int(kv[1]), reverse=True):
+                out_lines.append(f"    - {k}: {int(v)}")
+        vap = agg.get("virtual_pnl_aggregate") if isinstance(agg.get("virtual_pnl_aggregate"), dict) else {}
+        if vap:
+            out_lines.append(f"  virtual.skipped_signals={int(vap.get('skipped_signals_count_total') or 0)}")
+            out_lines.append(f"  virtual.total_pnl_yen={float(vap.get('total_pnl_yen_100_shares_sum') or 0.0):+,.2f}")
+        emr_sum = agg.get("eval_by_market_regime_summed_over_runs") or {}
+        if isinstance(emr_sum, dict):
+            out_lines.append("  eval_by_market_regime (BASE採用信号・複数runの値を合算した参考集計）:")
+            for rk in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+                rr2 = emr_sum.get(rk)
+                if not isinstance(rr2, dict):
+                    continue
+                sig_n = int(rr2.get("signals") or 0)
+                pnl_tt = float(rr2.get("total_pnl_yen_100_shares") or 0.0)
+                exp_aa = float(rr2.get("avg_expectancy_yen_100_shares") or 0.0)
+                lw10_tt = float(rr2.get("lose_worst10_sum_yen_100_shares") or 0.0)
+                out_lines.append(
+                    f"    - {rk}: signals={sig_n} expectancy(ref)={exp_aa:+,.2f} total_pnl={pnl_tt:+,.2f} lose_w10_sum={lw10_tt:+,.2f}"
+                )
+        out_lines.append("")
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] regime_control sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def _aggregate_weak_risk_filter_sweep_summaries(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    weak-risk-filter sweep 用: composite（WEAK）skip/virtual と eval_by_market_regime を run 合算。
+    """
+    base = _aggregate_replay_repeat_run_summaries(run_summaries)
+    comp_skip = 0
+    comp_virt_skipped = 0
+    comp_virt_pnl = 0.0
+    mr_acc: dict[str, dict[str, float]] = {
+        rk: {"signals": 0.0, "pnl_sum": 0.0, "lw10_sum": 0.0} for rk in ("STRONG", "NORMAL", "WEAK", "CRASH")
+    }
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        ov = rep.get("overall_summary") or {}
+        sf = ov.get("signal_filters") if isinstance(ov.get("signal_filters"), dict) else {}
+        csf = sf.get("composite_signal_filters") if isinstance(sf.get("composite_signal_filters"), dict) else {}
+        comp_skip += int(csf.get("skipped_signals_count") or 0)
+        cvpa = csf.get("virtual_pnl_analysis") if isinstance(csf.get("virtual_pnl_analysis"), dict) else {}
+        if cvpa:
+            comp_virt_skipped += int(cvpa.get("skipped_signals_count") or 0)
+            comp_virt_pnl += float(cvpa.get("total_pnl_yen_100_shares") or 0.0)
+        rc = ov.get("regime_controls") if isinstance(ov.get("regime_controls"), dict) else {}
+        evmr = rc.get("eval_by_market_regime") if isinstance(rc.get("eval_by_market_regime"), dict) else {}
+        if evmr:
+            for rk in mr_acc:
+                row = evmr.get(rk)
+                if not isinstance(row, dict):
+                    continue
+                mr_acc[rk]["signals"] += float(row.get("signals") or 0)
+                mr_acc[rk]["pnl_sum"] += float(row.get("total_pnl_yen_100_shares") or 0.0)
+                mr_acc[rk]["lw10_sum"] += float(row.get("lose_worst10_sum_yen_100_shares") or 0.0)
+
+    mr_out: dict[str, dict[str, Any]] = {}
+    for rk, acc in mr_acc.items():
+        n_sig = int(acc["signals"])
+        pnl_tot = float(acc["pnl_sum"])
+        mr_out[rk] = {
+            "signals": int(n_sig),
+            "total_pnl_yen_100_shares": float(pnl_tot),
+            "avg_expectancy_yen_100_shares": float(pnl_tot / float(n_sig)) if n_sig > 0 else 0.0,
+            "lose_worst10_sum_yen_100_shares": float(acc["lw10_sum"]),
+        }
+
+    out = dict(base)
+    out["weak_risk_filter_cell_aggregate"] = {
+        "composite_skipped_signals_total": int(comp_skip),
+        "composite_virtual_skipped_count_total": int(comp_virt_skipped),
+        "composite_virtual_pnl_sum": float(comp_virt_pnl),
+        "composite_virtual_avg_expectancy_if_skipped": (
+            float(comp_virt_pnl / float(comp_virt_skipped)) if int(comp_virt_skipped) > 0 else 0.0
+        ),
+        "eval_by_market_regime_summed_over_runs": dict(mr_out),
+    }
+    return out
+
+
+def _write_weak_risk_filter_sweep_configs(script_dir: str) -> dict[str, str]:
+    """
+    full_day ベースに weak_risk_filter の3モード用 JSON を configs/weak_risk_filter_sweep/ に生成。
+    """
+    base_rel = os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json")
+    base_path = _resolve_replay_config_path(base_rel)
+    base_cfg = _load_replay_config(base_path) if base_path else {}
+    if not base_cfg:
+        return {}
+    sweep_dir = os.path.join(script_dir, "configs", "weak_risk_filter_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+    modes = (
+        "weak_vwap_ge_15_only",
+        "weak_gap_ge_3_only",
+        "weak_vwap_ge_15_and_gap_ge_3",
+    )
+    out_paths: dict[str, str] = {}
+    for m in modes:
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        bn = str(cfg.get("name") or "replay_full_day_vwap2_dd30k_rlt50")
+        cfg["name"] = f"{bn}_wrf_{m}"
+        cfg["composite_signal_filters"] = {
+            "disable_state_weak_and_vwap_ge_pct": False,
+            "disable_state_weak_and_gap_ge_pct": False,
+            "state_weak_vwap_ge_threshold_pct": 1.5,
+            "state_weak_gap_ge_threshold_pct": 3.0,
+            "weak_risk_filter": str(m),
+        }
+        safe_m = m.replace(".", "_")
+        fn = f"{bn}_wrf_{safe_m}.json"
+        path = os.path.join(sweep_dir, fn)
+        with open(path, "w", encoding="utf-8") as fw:
+            json.dump(cfg, fw, ensure_ascii=False, indent=2)
+        out_paths[str(m)] = os.path.abspath(path)
+    return out_paths
+
+
+def run_weak_risk_filter_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    WEAK×危険特徴量のみ除外の AB（random_apr のみ）。
+    cells: morning_baseline, full_day_no_regime_control, 3× weak_risk_filter モード。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges = list(SWEEP_REPLAY_RANGES)
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"weak_risk_filter_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    p_morning = _resolve_replay_config_path(os.path.join("configs", "replay_morning_vwap2_dd30k_rlt50.json"))
+    p_full = _resolve_replay_config_path(os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json"))
+    mode_paths = _write_weak_risk_filter_sweep_configs(script_dir)
+    if not p_morning or not p_full or len(mode_paths) < 3:
+        print(f"[{now_str()}] weak_risk_filter sweep: 必要なconfigが見つかりません。")
+        return 2
+
+    cells: list[tuple[str, str, str]] = [
+        ("mb", "morning_baseline", str(p_morning)),
+        ("fd", "full_day_no_regime_control", str(p_full)),
+    ]
+    slug_for_mode = {
+        "weak_vwap_ge_15_only": "wv15",
+        "weak_gap_ge_3_only": "wg3",
+        "weak_vwap_ge_15_and_gap_ge_3": "wand",
+    }
+    for mk in ("weak_vwap_ge_15_only", "weak_gap_ge_3_only", "weak_vwap_ge_15_and_gap_ge_3"):
+        cells.append((slug_for_mode[mk], mk, str(mode_paths[mk])))
+
+    print(f"[{now_str()}] weak_risk_filter sweep: cells={len(cells)} ranges={ranges} repeat={n_repeat}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] generated configs: {list(mode_paths.values())}")
+
+    rows: list[dict[str, Any]] = []
+    for slug, label, cfg_abs in cells:
+        cfg_raw = _load_replay_config(cfg_abs)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{slug}_{rng}"
+            output_subdir = os.path.join(f"weak_risk_filter_sweep_{sweep_stamp}", f"{slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {label} ({slug})  {rng}  ({n_repeat} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_abs),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = (
+                        [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                        if int(n_repeat) > 1
+                        else [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    )
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        pjson = os.path.join(results_dir, candidates_sorted[0])
+                        with open(pjson, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": pjson, "report": rep})
+                except Exception:
+                    pass
+
+            summ = _aggregate_weak_risk_filter_sweep_summaries(run_summaries)
+            wagg = summ.get("weak_risk_filter_cell_aggregate") if isinstance(summ.get("weak_risk_filter_cell_aggregate"), dict) else {}
+            rows.append(
+                {
+                    "cell_slug": str(slug),
+                    "cell_label": str(label),
+                    "config_name": str(cfg_name),
+                    "replay_range": str(rng),
+                    "replay_output_subdir": str(output_subdir),
+                    "summary": summ,
+                    "weak_risk_skipped": int(wagg.get("composite_skipped_signals_total") or 0),
+                    "weak_risk_virt_pnl": float(wagg.get("composite_virtual_pnl_sum") or 0.0),
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float((((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0)),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== weak_risk_filter sweep (WEAK×危険特徴量のみ除外) ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    hdr = (
+        "rank\tcell_label\tavg_expectancy_yen\ttotal_pnl_yen\tlose_worst10_sum\tplus_runs\tminus_runs\t"
+        "skipped_signals(composite)\tvirtual_skipped_pnl(composite)\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('cell_label')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.4f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{int(r.get('weak_risk_skipped') or 0)}\t{float(r.get('weak_risk_virt_pnl') or 0.0):+.2f}\t"
+            f"results/{r.get('replay_output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append("[EVAL_BY_MARKET_REGIME] ※各cell・複数runの eval を単純合算（参考）")
+    for r in rows_sorted:
+        s = r.get("summary") or {}
+        agg = s.get("weak_risk_filter_cell_aggregate") if isinstance(s.get("weak_risk_filter_cell_aggregate"), dict) else {}
+        emr = agg.get("eval_by_market_regime_summed_over_runs") if isinstance(agg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        out_lines.append(f"cell={r.get('cell_label')}")
+        if not emr:
+            out_lines.append("  (empty)")
+            out_lines.append("")
+            continue
+        for rk in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+            row = emr.get(rk)
+            if not isinstance(row, dict):
+                continue
+            out_lines.append(
+                f"  {rk}: signals={int(row.get('signals') or 0)} "
+                f"exp={float(row.get('avg_expectancy_yen_100_shares') or 0.0):+.4f} "
+                f"total_pnl={float(row.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                f"lose_w10_sum={float(row.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+            )
+        out_lines.append("")
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] weak_risk_filter sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def _aggregate_strong_risk_filter_sweep_summaries(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    strong-risk-filter sweep 用: composite（STRONG×VWAP）skip/virtual と eval_by_market_regime を run 合算。
+    """
+    base = _aggregate_replay_repeat_run_summaries(run_summaries)
+    comp_skip = 0
+    comp_virt_skipped = 0
+    comp_virt_pnl = 0.0
+    mr_acc: dict[str, dict[str, float]] = {
+        rk: {"signals": 0.0, "pnl_sum": 0.0, "lw10_sum": 0.0} for rk in ("STRONG", "NORMAL", "WEAK", "CRASH")
+    }
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        ov = rep.get("overall_summary") or {}
+        sf = ov.get("signal_filters") if isinstance(ov.get("signal_filters"), dict) else {}
+        csf = sf.get("composite_signal_filters") if isinstance(sf.get("composite_signal_filters"), dict) else {}
+        comp_skip += int(csf.get("skipped_signals_count") or 0)
+        cvpa = csf.get("virtual_pnl_analysis") if isinstance(csf.get("virtual_pnl_analysis"), dict) else {}
+        if cvpa:
+            comp_virt_skipped += int(cvpa.get("skipped_signals_count") or 0)
+            comp_virt_pnl += float(cvpa.get("total_pnl_yen_100_shares") or 0.0)
+        rc = ov.get("regime_controls") if isinstance(ov.get("regime_controls"), dict) else {}
+        evmr = rc.get("eval_by_market_regime") if isinstance(rc.get("eval_by_market_regime"), dict) else {}
+        if evmr:
+            for rk in mr_acc:
+                row = evmr.get(rk)
+                if not isinstance(row, dict):
+                    continue
+                mr_acc[rk]["signals"] += float(row.get("signals") or 0)
+                mr_acc[rk]["pnl_sum"] += float(row.get("total_pnl_yen_100_shares") or 0.0)
+                mr_acc[rk]["lw10_sum"] += float(row.get("lose_worst10_sum_yen_100_shares") or 0.0)
+
+    mr_out: dict[str, dict[str, Any]] = {}
+    for rk, acc in mr_acc.items():
+        n_sig = int(acc["signals"])
+        pnl_tot = float(acc["pnl_sum"])
+        mr_out[rk] = {
+            "signals": int(n_sig),
+            "total_pnl_yen_100_shares": float(pnl_tot),
+            "avg_expectancy_yen_100_shares": float(pnl_tot / float(n_sig)) if n_sig > 0 else 0.0,
+            "lose_worst10_sum_yen_100_shares": float(acc["lw10_sum"]),
+        }
+
+    out = dict(base)
+    out["strong_risk_filter_cell_aggregate"] = {
+        "composite_skipped_signals_total": int(comp_skip),
+        "composite_virtual_skipped_count_total": int(comp_virt_skipped),
+        "composite_virtual_pnl_sum": float(comp_virt_pnl),
+        "composite_virtual_avg_expectancy_if_skipped": (
+            float(comp_virt_pnl / float(comp_virt_skipped)) if int(comp_virt_skipped) > 0 else 0.0
+        ),
+        "eval_by_market_regime_summed_over_runs": dict(mr_out),
+    }
+    return out
+
+
+def _write_strong_risk_filter_sweep_configs(script_dir: str) -> dict[str, str]:
+    """
+    full_day ベースに strong_risk_filter 用 JSON を configs/strong_risk_filter_sweep/ に生成。
+    """
+    base_rel = os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json")
+    base_path = _resolve_replay_config_path(base_rel)
+    base_cfg = _load_replay_config(base_path) if base_path else {}
+    if not base_cfg:
+        return {}
+    sweep_dir = os.path.join(script_dir, "configs", "strong_risk_filter_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+    modes_thr: tuple[tuple[str, float], ...] = (
+        ("strong_vwap_ge_15_only", 1.5),
+        ("strong_vwap_ge_12_only", 1.2),
+        ("strong_vwap_ge_10_only", 1.0),
+    )
+    out_paths: dict[str, str] = {}
+    for m, thr in modes_thr:
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        bn = str(cfg.get("name") or "replay_full_day_vwap2_dd30k_rlt50")
+        cfg["name"] = f"{bn}_srf_{m}"
+        cfg["composite_signal_filters"] = {
+            "strong_risk_filter": str(m),
+            "strong_vwap_ge_threshold_pct": float(thr),
+        }
+        safe_m = m.replace(".", "_")
+        fn = f"{bn}_srf_{safe_m}.json"
+        path = os.path.join(sweep_dir, fn)
+        with open(path, "w", encoding="utf-8") as fw:
+            json.dump(cfg, fw, ensure_ascii=False, indent=2)
+        out_paths[str(m)] = os.path.abspath(path)
+    return out_paths
+
+
+def run_strong_risk_filter_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    STRONG×VWAP距離 の composite_signal_filters.strong_risk_filter を AB（random_apr のみ）。
+    cells: full_day_no_regime_control, strong_vwap_ge_15_only / _12_only / _10_only。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges: tuple[str, ...] = ("random_apr",)
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"strong_risk_filter_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    p_full = _resolve_replay_config_path(os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json"))
+    mode_paths = _write_strong_risk_filter_sweep_configs(script_dir)
+    if not p_full or len(mode_paths) < 3:
+        print(f"[{now_str()}] strong_risk_filter sweep: 必要なconfigが見つかりません。")
+        return 2
+
+    slug_for_mode = {
+        "strong_vwap_ge_15_only": "sv15",
+        "strong_vwap_ge_12_only": "sv12",
+        "strong_vwap_ge_10_only": "sv10",
+    }
+    cells: list[tuple[str, str, str]] = [
+        ("fd", "full_day_no_regime_control", str(p_full)),
+    ]
+    for mk in ("strong_vwap_ge_15_only", "strong_vwap_ge_12_only", "strong_vwap_ge_10_only"):
+        cells.append((slug_for_mode[mk], mk, str(mode_paths[mk])))
+
+    print(f"[{now_str()}] strong_risk_filter sweep: cells={len(cells)} ranges={ranges} repeat={n_repeat}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] generated configs: {list(mode_paths.values())}")
+
+    rows: list[dict[str, Any]] = []
+    for slug, label, cfg_abs in cells:
+        cfg_raw = _load_replay_config(cfg_abs)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{slug}_{rng}"
+            output_subdir = os.path.join(f"strong_risk_filter_sweep_{sweep_stamp}", f"{slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {label} ({slug})  {rng}  ({n_repeat} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_abs),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = (
+                        [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                        if int(n_repeat) > 1
+                        else [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    )
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        pjson = os.path.join(results_dir, candidates_sorted[0])
+                        with open(pjson, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": pjson, "report": rep})
+                except Exception:
+                    pass
+
+            summ = _aggregate_strong_risk_filter_sweep_summaries(run_summaries)
+            sagg = summ.get("strong_risk_filter_cell_aggregate") if isinstance(summ.get("strong_risk_filter_cell_aggregate"), dict) else {}
+            rows.append(
+                {
+                    "cell_slug": str(slug),
+                    "cell_label": str(label),
+                    "config_name": str(cfg_name),
+                    "replay_range": str(rng),
+                    "replay_output_subdir": str(output_subdir),
+                    "summary": summ,
+                    "strong_risk_skipped": int(sagg.get("composite_skipped_signals_total") or 0),
+                    "strong_risk_virt_pnl": float(sagg.get("composite_virtual_pnl_sum") or 0.0),
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float((((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0)),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== strong_risk_filter sweep (STRONG×VWAP距離>=しきい値でENTRY除外) ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    hdr = (
+        "rank\tcell_label\tavg_expectancy_yen\ttotal_pnl_yen\tlose_worst10_sum\tmax_lose_run_yen\t"
+        "plus_runs\tminus_runs\tskipped_signals(composite)\tvirtual_skipped_pnl(composite)\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('cell_label')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.4f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{int(r.get('strong_risk_skipped') or 0)}\t{float(r.get('strong_risk_virt_pnl') or 0.0):+.2f}\t"
+            f"results/{r.get('replay_output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append("[EVAL_BY_MARKET_REGIME] ※各cell・複数runの eval を単純合算（参考）")
+    for r in rows_sorted:
+        s = r.get("summary") or {}
+        agg = s.get("strong_risk_filter_cell_aggregate") if isinstance(s.get("strong_risk_filter_cell_aggregate"), dict) else {}
+        emr = agg.get("eval_by_market_regime_summed_over_runs") if isinstance(agg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        out_lines.append(f"cell={r.get('cell_label')}")
+        if not emr:
+            out_lines.append("  (empty)")
+            out_lines.append("")
+            continue
+        for rk in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+            row = emr.get(rk)
+            if not isinstance(row, dict):
+                continue
+            out_lines.append(
+                f"  {rk}: signals={int(row.get('signals') or 0)} "
+                f"exp={float(row.get('avg_expectancy_yen_100_shares') or 0.0):+.4f} "
+                f"total_pnl={float(row.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                f"lose_w10_sum={float(row.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+            )
+        out_lines.append("")
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] strong_risk_filter sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def _aggregate_strong_combo_filter_sweep_summaries(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    strong-combo-filter sweep 用: strong_combo skip/virtual と eval_by_market_regime を run 合算。
+    """
+    base = _aggregate_replay_repeat_run_summaries(run_summaries)
+    combo_skip = 0
+    combo_virt_pnl = 0.0
+    combo_virt_resolved = 0
+    mr_acc: dict[str, dict[str, float]] = {
+        rk: {"signals": 0.0, "pnl_sum": 0.0, "lw10_sum": 0.0} for rk in ("STRONG", "NORMAL", "WEAK", "CRASH")
+    }
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        cf = _combo_filter_analysis_dict_from_report(rep)
+        sc = cf.get("strong_combo_filter") if isinstance(cf.get("strong_combo_filter"), dict) else {}
+        combo_skip += int(sc.get("skipped_signals_count") or 0)
+        vpa = sc.get("virtual_pnl_analysis") if isinstance(sc.get("virtual_pnl_analysis"), dict) else {}
+        combo_virt_pnl += float(vpa.get("total_pnl_yen_100_shares") or 0.0)
+        br = vpa.get("by_reason") if isinstance(vpa.get("by_reason"), dict) else {}
+        for row in br.values():
+            if isinstance(row, dict):
+                combo_virt_resolved += int(row.get("virtual_resolved_count") or 0)
+        ov = rep.get("overall_summary") or {}
+        rc = ov.get("regime_controls") if isinstance(ov.get("regime_controls"), dict) else {}
+        evmr = rc.get("eval_by_market_regime") if isinstance(rc.get("eval_by_market_regime"), dict) else {}
+        if evmr:
+            for rk in mr_acc:
+                row = evmr.get(rk)
+                if not isinstance(row, dict):
+                    continue
+                mr_acc[rk]["signals"] += float(row.get("signals") or 0)
+                mr_acc[rk]["pnl_sum"] += float(row.get("total_pnl_yen_100_shares") or 0.0)
+                mr_acc[rk]["lw10_sum"] += float(row.get("lose_worst10_sum_yen_100_shares") or 0.0)
+
+    mr_out: dict[str, dict[str, Any]] = {}
+    for rk, acc in mr_acc.items():
+        n_sig = int(acc["signals"])
+        pnl_tot = float(acc["pnl_sum"])
+        mr_out[rk] = {
+            "signals": int(n_sig),
+            "total_pnl_yen_100_shares": float(pnl_tot),
+            "avg_expectancy_yen_100_shares": float(pnl_tot / float(n_sig)) if n_sig > 0 else 0.0,
+            "lose_worst10_sum_yen_100_shares": float(acc["lw10_sum"]),
+        }
+
+    out = dict(base)
+    out["strong_combo_filter_cell_aggregate"] = {
+        "combo_skipped_signals_total": int(combo_skip),
+        "combo_virtual_resolved_total": int(combo_virt_resolved),
+        "combo_virtual_pnl_sum": float(combo_virt_pnl),
+        "combo_virtual_avg_expectancy_if_skipped": (
+            float(combo_virt_pnl / float(combo_virt_resolved)) if int(combo_virt_resolved) > 0 else 0.0
+        ),
+        "eval_by_market_regime_summed_over_runs": dict(mr_out),
+    }
+    return out
+
+
+def _write_strong_combo_filter_sweep_configs(script_dir: str) -> dict[str, str]:
+    """
+    configs/strong_combo_filter_sweep/ に HU2 / HU1or2 の strong_combo_filter を書き出す。
+    """
+    base_rel = os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json")
+    base_path = _resolve_replay_config_path(base_rel)
+    base_cfg = _load_replay_config(base_path) if base_path else {}
+    if not base_cfg:
+        return {}
+    sweep_dir = os.path.join(script_dir, "configs", "strong_combo_filter_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+    variants: dict[str, dict[str, Any]] = {
+        "hu2_vwap15": {
+            "enabled": True,
+            "block_conditions": [
+                {
+                    "market_regime": "STRONG",
+                    "high_update_count_before_entry_eq": 2,
+                    "entry_vwap_distance_pct_ge": 1.5,
+                    "reason": "STRONG_HU2_VWAP15",
+                }
+            ],
+        },
+        "hu1or2_vwap15": {
+            "enabled": True,
+            "block_conditions": [
+                {
+                    "market_regime": "STRONG",
+                    "high_update_count_before_entry_eq": 2,
+                    "entry_vwap_distance_pct_ge": 1.5,
+                    "reason": "STRONG_HU2_VWAP15",
+                },
+                {
+                    "market_regime": "STRONG",
+                    "high_update_count_before_entry_eq": 1,
+                    "entry_vwap_distance_pct_ge": 1.5,
+                    "reason": "STRONG_HU1_VWAP15",
+                },
+            ],
+        },
+    }
+    out_paths: dict[str, str] = {}
+    for slug, sc_body in variants.items():
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        bn = str(cfg.get("name") or "replay_full_day_vwap2_dd30k_rlt50")
+        cfg["name"] = f"{bn}_scf_{slug}"
+        csf0 = cfg.get("composite_signal_filters") if isinstance(cfg.get("composite_signal_filters"), dict) else {}
+        csf_m = dict(csf0)
+        csf_m["strong_combo_filter"] = dict(sc_body)
+        cfg["composite_signal_filters"] = csf_m
+        fn = f"{bn}_scf_{slug}.json"
+        path = os.path.join(sweep_dir, fn)
+        with open(path, "w", encoding="utf-8") as fw:
+            json.dump(cfg, fw, ensure_ascii=False, indent=2)
+        out_paths[str(slug)] = os.path.abspath(path)
+    return out_paths
+
+
+def run_strong_combo_filter_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    strong_combo_filter（高値更新×VWAP）の AB（random_apr のみ）。
+    cells: baseline, HU2_VWAP15, HU1or2_VWAP15。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges: tuple[str, ...] = ("random_apr",)
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"strong_combo_filter_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    p_full = _resolve_replay_config_path(os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json"))
+    mode_paths = _write_strong_combo_filter_sweep_configs(script_dir)
+    if not p_full or len(mode_paths) < 2:
+        print(f"[{now_str()}] strong_combo_filter sweep: 必要なconfigが見つかりません。")
+        return 2
+
+    cells: list[tuple[str, str, str]] = [
+        ("fd", "baseline", str(p_full)),
+        ("hu2", "HU2_VWAP15", str(mode_paths.get("hu2_vwap15") or "")),
+        ("hu12", "HU1or2_VWAP15", str(mode_paths.get("hu1or2_vwap15") or "")),
+    ]
+
+    print(f"[{now_str()}] strong_combo_filter sweep: cells={len(cells)} ranges={ranges} repeat={n_repeat}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] generated configs: {list(mode_paths.values())}")
+
+    rows: list[dict[str, Any]] = []
+    for slug, label, cfg_abs in cells:
+        if not cfg_abs:
+            continue
+        cfg_raw = _load_replay_config(cfg_abs)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{slug}_{rng}"
+            output_subdir = os.path.join(f"strong_combo_filter_sweep_{sweep_stamp}", f"{slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {label} ({slug})  {rng}  ({n_repeat} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_abs),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = (
+                        [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                        if int(n_repeat) > 1
+                        else [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    )
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        pjson = os.path.join(results_dir, candidates_sorted[0])
+                        with open(pjson, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": pjson, "report": rep})
+                except Exception:
+                    pass
+
+            summ = _aggregate_strong_combo_filter_sweep_summaries(run_summaries)
+            cagg = summ.get("strong_combo_filter_cell_aggregate") if isinstance(summ.get("strong_combo_filter_cell_aggregate"), dict) else {}
+            rows.append(
+                {
+                    "cell_slug": str(slug),
+                    "cell_label": str(label),
+                    "config_name": str(cfg_name),
+                    "replay_range": str(rng),
+                    "replay_output_subdir": str(output_subdir),
+                    "summary": summ,
+                    "combo_skipped": int(cagg.get("combo_skipped_signals_total") or 0),
+                    "combo_virt_pnl": float(cagg.get("combo_virtual_pnl_sum") or 0.0),
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float((((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0)),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== strong_combo_filter sweep（STRONG×高値更新回数×VWAP距離） ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    hdr = (
+        "rank\tcell_label\tavg_expectancy_yen\ttotal_pnl_yen\tlose_worst10_sum\tmax_lose_run_yen\t"
+        "plus_runs\tminus_runs\tskipped_signals(combo)\tvirtual_skipped_pnl(combo)\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('cell_label')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.4f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{int(r.get('combo_skipped') or 0)}\t{float(r.get('combo_virt_pnl') or 0.0):+.2f}\t"
+            f"results/{r.get('replay_output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append("[EVAL_BY_MARKET_REGIME] ※各cell・複数runの eval を単純合算（参考）")
+    for r in rows_sorted:
+        s = r.get("summary") or {}
+        agg = s.get("strong_combo_filter_cell_aggregate") if isinstance(s.get("strong_combo_filter_cell_aggregate"), dict) else {}
+        emr = agg.get("eval_by_market_regime_summed_over_runs") if isinstance(agg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        out_lines.append(f"cell={r.get('cell_label')}")
+        if not emr:
+            out_lines.append("  (empty)")
+            out_lines.append("")
+            continue
+        for rk in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+            row = emr.get(rk)
+            if not isinstance(row, dict):
+                continue
+            out_lines.append(
+                f"  {rk}: signals={int(row.get('signals') or 0)} "
+                f"exp={float(row.get('avg_expectancy_yen_100_shares') or 0.0):+.4f} "
+                f"total_pnl={float(row.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                f"lose_w10_sum={float(row.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+            )
+        out_lines.append("")
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] strong_combo_filter sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def _write_strong_trend_quality_sweep_configs(script_dir: str) -> dict[str, str]:
+    """
+    configs/strong_trend_quality_sweep/ に STRONG×VWAP≥1.5×高値更新（le / ge6のみ許可）用 strong_combo_filter を書き出す。
+    """
+    base_rel = os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json")
+    base_path = _resolve_replay_config_path(base_rel)
+    base_cfg = _load_replay_config(base_path) if base_path else {}
+    if not base_cfg:
+        return {}
+    sweep_dir = os.path.join(script_dir, "configs", "strong_trend_quality_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+    variants: dict[str, dict[str, Any]] = {
+        "hu_le2": {
+            "enabled": True,
+            "block_conditions": [
+                {
+                    "market_regime": "STRONG",
+                    "entry_vwap_distance_pct_ge": 1.5,
+                    "high_update_count_before_entry_le": 2,
+                    "reason": "STRONG_VWAP15_HU_LE2_SKIP",
+                }
+            ],
+        },
+        "hu_le3": {
+            "enabled": True,
+            "block_conditions": [
+                {
+                    "market_regime": "STRONG",
+                    "entry_vwap_distance_pct_ge": 1.5,
+                    "high_update_count_before_entry_le": 3,
+                    "reason": "STRONG_VWAP15_HU_LE3_SKIP",
+                }
+            ],
+        },
+        "hu_ge6_allow": {
+            "enabled": True,
+            "block_conditions": [
+                {
+                    "market_regime": "STRONG",
+                    "entry_vwap_distance_pct_ge": 1.5,
+                    "high_update_count_before_entry_le": 5,
+                    "reason": "STRONG_VWAP15_HU_LT6_SKIP_GE6_ONLY_ALLOW",
+                }
+            ],
+        },
+    }
+    out_paths: dict[str, str] = {}
+    for slug, sc_body in variants.items():
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        bn = str(cfg.get("name") or "replay_full_day_vwap2_dd30k_rlt50")
+        cfg["name"] = f"{bn}_stq_{slug}"
+        csf0 = cfg.get("composite_signal_filters") if isinstance(cfg.get("composite_signal_filters"), dict) else {}
+        csf_m = dict(csf0)
+        csf_m["strong_combo_filter"] = dict(sc_body)
+        cfg["composite_signal_filters"] = csf_m
+        fn = f"{bn}_stq_{slug}.json"
+        path = os.path.join(sweep_dir, fn)
+        with open(path, "w", encoding="utf-8") as fw:
+            json.dump(cfg, fw, ensure_ascii=False, indent=2)
+        out_paths[str(slug)] = os.path.abspath(path)
+    return out_paths
+
+
+def run_strong_trend_quality_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    strong_combo_filter を使い、STRONG で VWAP 乖離が大きいときの「高値更新の質」を比較する sweep。
+    cells: baseline, hu_le2_skip, hu_le3_skip, hu_ge6_only_allow。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges: tuple[str, ...] = ("random_apr",)
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"strong_trend_quality_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    p_full = _resolve_replay_config_path(os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json"))
+    mode_paths = _write_strong_trend_quality_sweep_configs(script_dir)
+    if not p_full or len(mode_paths) < 3:
+        print(f"[{now_str()}] strong_trend_quality sweep: 必要なconfigが見つかりません。")
+        return 2
+
+    cells: list[tuple[str, str, str]] = [
+        ("fd", "baseline", str(p_full)),
+        ("le2", "strong_vwap_ge_15_and_hu_le2_skip", str(mode_paths.get("hu_le2") or "")),
+        ("le3", "strong_vwap_ge_15_and_hu_le3_skip", str(mode_paths.get("hu_le3") or "")),
+        ("ge6", "strong_vwap_ge_15_and_hu_ge6_only_allow", str(mode_paths.get("hu_ge6_allow") or "")),
+    ]
+
+    print(f"[{now_str()}] strong_trend_quality sweep: cells={len(cells)} ranges={ranges} repeat={n_repeat}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] generated configs: {list(mode_paths.values())}")
+
+    rows: list[dict[str, Any]] = []
+    for slug, label, cfg_abs in cells:
+        if not cfg_abs:
+            continue
+        cfg_raw = _load_replay_config(cfg_abs)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{slug}_{rng}"
+            output_subdir = os.path.join(f"strong_trend_quality_sweep_{sweep_stamp}", f"{slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {label} ({slug})  {rng}  ({n_repeat} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_abs),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = (
+                        [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                        if int(n_repeat) > 1
+                        else [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    )
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        pjson = os.path.join(results_dir, candidates_sorted[0])
+                        with open(pjson, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": pjson, "report": rep})
+                except Exception:
+                    pass
+
+            summ = _aggregate_strong_combo_filter_sweep_summaries(run_summaries)
+            cagg = summ.get("strong_combo_filter_cell_aggregate") if isinstance(summ.get("strong_combo_filter_cell_aggregate"), dict) else {}
+            rows.append(
+                {
+                    "cell_slug": str(slug),
+                    "cell_label": str(label),
+                    "config_name": str(cfg_name),
+                    "replay_range": str(rng),
+                    "replay_output_subdir": str(output_subdir),
+                    "summary": summ,
+                    "combo_skipped": int(cagg.get("combo_skipped_signals_total") or 0),
+                    "combo_virt_pnl": float(cagg.get("combo_virtual_pnl_sum") or 0.0),
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float((((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0)),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== strong_trend_quality sweep（STRONG×VWAP乖離×高値更新の質） ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    hdr = (
+        "rank\tcell_label\tavg_expectancy_yen\ttotal_pnl_yen\tlose_worst10_sum\tmax_lose_run_yen\t"
+        "plus_runs\tminus_runs\tskipped_signals(combo)\tvirtual_skipped_pnl(combo)\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('cell_label')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.4f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{int(r.get('combo_skipped') or 0)}\t{float(r.get('combo_virt_pnl') or 0.0):+.2f}\t"
+            f"results/{r.get('replay_output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append("[STRONG regime · focus] expectancy / lose_worst10_sum / skipped_signals(combo) / virtual_skipped_pnl(combo)")
+    for r in rows_sorted:
+        s = r.get("summary") or {}
+        agg = s.get("strong_combo_filter_cell_aggregate") if isinstance(s.get("strong_combo_filter_cell_aggregate"), dict) else {}
+        emr = agg.get("eval_by_market_regime_summed_over_runs") if isinstance(agg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        sr = emr.get("STRONG") if isinstance(emr.get("STRONG"), dict) else {}
+        out_lines.append(
+            f"  {r.get('cell_label')}: "
+            f"STRONG_exp={float(sr.get('avg_expectancy_yen_100_shares') or 0.0):+.4f} "
+            f"STRONG_lw10_sum={float(sr.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f} "
+            f"skipped_combo={int(r.get('combo_skipped') or 0)} "
+            f"virt_skipped_pnl_combo={float(r.get('combo_virt_pnl') or 0.0):+.2f}"
+        )
+
+    out_lines.append("")
+    out_lines.append("[EVAL_BY_MARKET_REGIME] ※各cell・複数runの eval を単純合算（参考）")
+    for r in rows_sorted:
+        s = r.get("summary") or {}
+        agg = s.get("strong_combo_filter_cell_aggregate") if isinstance(s.get("strong_combo_filter_cell_aggregate"), dict) else {}
+        emr = agg.get("eval_by_market_regime_summed_over_runs") if isinstance(agg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        out_lines.append(f"cell={r.get('cell_label')}")
+        if not emr:
+            out_lines.append("  (empty)")
+            out_lines.append("")
+            continue
+        for rk in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+            row = emr.get(rk)
+            if not isinstance(row, dict):
+                continue
+            out_lines.append(
+                f"  {rk}: signals={int(row.get('signals') or 0)} "
+                f"exp={float(row.get('avg_expectancy_yen_100_shares') or 0.0):+.4f} "
+                f"total_pnl={float(row.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                f"lose_w10_sum={float(row.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+            )
+        out_lines.append("")
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] strong_trend_quality sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def run_strong_trend_quality_validation_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    baseline vs STRONG×VWAP≥1.5×HU≤2 skip を random_apr / random_mar / random_60d で再現性検証する。
+    run_i の seed は replay_seed + i - 1（同一 run_index で baseline と variant が同じ抽選になる）。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges: tuple[str, ...] = ("random_apr", "random_mar", "random_60d")
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"strong_trend_quality_validation_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    p_full = _resolve_replay_config_path(os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json"))
+    mode_paths = _write_strong_trend_quality_sweep_configs(script_dir)
+    p_le2 = str(mode_paths.get("hu_le2") or "")
+    if not p_full or not p_le2:
+        print(f"[{now_str()}] strong_trend_quality_validation sweep: 必要なconfigが見つかりません。")
+        return 2
+
+    cells: list[tuple[str, str, str]] = [
+        ("fd", "baseline", str(p_full)),
+        ("le2", "strong_vwap_ge_15_and_hu_le2_skip", str(p_le2)),
+    ]
+
+    print(f"[{now_str()}] strong_trend_quality_validation sweep: cells={len(cells)} ranges={ranges} repeat={int(n_repeat)}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] replay_seed(base): {replay_seed}  (run_i seed = base + i - 1)")
+    print(f"[{now_str()}] hu_le2 config: {p_le2}")
+
+    rows: list[dict[str, Any]] = []
+    for slug, label, cfg_abs in cells:
+        if not cfg_abs:
+            continue
+        cfg_raw = _load_replay_config(cfg_abs)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{slug}_{rng}"
+            output_subdir = os.path.join(f"strong_trend_quality_validation_sweep_{sweep_stamp}", f"{slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {label} ({slug})  {rng}  ({int(n_repeat)} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            cr_status = "OK"
+            cr_reason = ""
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_abs),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                ic = int(code)
+                if ic != 0:
+                    cr_reason = f"run_replay exit={ic} (run={i})"
+                    if ic == 2:
+                        cr_status = "SKIPPED_NO_DATA"
+                        print(
+                            f"[{now_str()}] validation sweep SKIP: replay_range={rng} "
+                            f"cell_label={label} reason={cr_reason} skipped due to no replay data"
+                        )
+                    else:
+                        cr_status = "ERROR"
+                        print(
+                            f"[{now_str()}] validation sweep ERROR: replay_range={rng} "
+                            f"cell_label={label} reason={cr_reason}"
+                        )
+                    break
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = (
+                        [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                        if int(n_repeat) > 1
+                        else [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    )
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        pjson = os.path.join(results_dir, candidates_sorted[0])
+                        with open(pjson, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": pjson, "report": rep})
+                except Exception:
+                    pass
+
+            if cr_status != "OK":
+                rows.append(
+                    {
+                        "cell_slug": str(slug),
+                        "cell_label": str(label),
+                        "config_name": str(cfg_name),
+                        "replay_range": str(rng),
+                        "replay_output_subdir": str(output_subdir),
+                        "summary": {},
+                        "combo_skipped": None,
+                        "combo_virt_pnl": None,
+                        "status": str(cr_status),
+                        "skip_reason": str(cr_reason),
+                    }
+                )
+                continue
+
+            summ = _aggregate_strong_combo_filter_sweep_summaries(run_summaries)
+            cagg = summ.get("strong_combo_filter_cell_aggregate") if isinstance(summ.get("strong_combo_filter_cell_aggregate"), dict) else {}
+            rows.append(
+                {
+                    "cell_slug": str(slug),
+                    "cell_label": str(label),
+                    "config_name": str(cfg_name),
+                    "replay_range": str(rng),
+                    "replay_output_subdir": str(output_subdir),
+                    "summary": summ,
+                    "combo_skipped": int(cagg.get("combo_skipped_signals_total") or 0),
+                    "combo_virt_pnl": float(cagg.get("combo_virtual_pnl_sum") or 0.0),
+                    "status": "OK",
+                    "skip_reason": "",
+                }
+            )
+
+    _rng_order = {"random_apr": 0, "random_mar": 1, "random_60d": 2}
+    _cell_order = {"fd": 0, "le2": 1}
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: (
+            _rng_order.get(str(r.get("replay_range")), 99),
+            _cell_order.get(str(r.get("cell_slug")), 99),
+        ),
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== strong_trend_quality_validation sweep（baseline vs HU≤2×VWAP15・多月検証） ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"ranges: {', '.join(ranges)}")
+    out_lines.append(f"repeat_per_cell_range: {int(n_repeat)}")
+    out_lines.append(f"replay_seed(base): {replay_seed}")
+    out_lines.append(f"run_i_seed: base + i - 1  (i=1..{int(n_repeat)})")
+    out_lines.append("")
+    hdr = (
+        "rank\treplay_range\tcell_label\tstatus\tavg_expectancy_yen\ttotal_pnl_yen\tlose_worst10_sum\tmax_lose_run_yen\t"
+        "plus_runs\tminus_runs\tskipped_signals(combo)\tvirtual_skipped_pnl(combo)\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        st_r = str(r.get("status") or "OK")
+        s = r.get("summary") or {}
+        if st_r != "OK":
+            na = "N/A"
+            out_lines.append(
+                f"{idx}\t{r.get('replay_range')}\t{r.get('cell_label')}\t{st_r}\t"
+                f"{na}\t{na}\t{na}\t{na}\t"
+                f"{na}\t{na}\t{na}\t{na}\t"
+                f"results/{r.get('replay_output_subdir')}/"
+            )
+        else:
+            out_lines.append(
+                f"{idx}\t{r.get('replay_range')}\t{r.get('cell_label')}\t{st_r}\t"
+                f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.4f}\t"
+                f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+                f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+                f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+                f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+                f"{int(r.get('combo_skipped') or 0)}\t{float(r.get('combo_virt_pnl') or 0.0):+.2f}\t"
+                f"results/{r.get('replay_output_subdir')}/"
+            )
+
+    out_lines.append("")
+    out_lines.append("[DELTA VS BASELINE]")
+    out_lines.append(
+        "variant=strong_vwap_ge_15_and_hu_le2_skip minus baseline "
+        "(same replay_range; run_i uses same seed schedule on both cells). "
+        "If either side is not OK, deltas are N/A."
+    )
+    baseline_by_rng: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if str(r.get("cell_slug")) == "fd":
+            baseline_by_rng[str(r.get("replay_range"))] = r
+    for rng in ranges:
+        b_row = baseline_by_rng.get(str(rng))
+        v_row = next(
+            (x for x in rows if str(x.get("cell_slug")) == "le2" and str(x.get("replay_range")) == str(rng)),
+            None,
+        )
+        out_lines.append("")
+        out_lines.append(f"replay_range={rng}")
+        if not b_row or not v_row:
+            out_lines.append("  (baseline or variant row missing — delta N/A)")
+            continue
+        st_b = str(b_row.get("status") or "OK")
+        st_v = str(v_row.get("status") or "OK")
+        if st_b != "OK" or st_v != "OK":
+            out_lines.append(f"  baseline_status={st_b} variant_status={st_v}")
+            out_lines.append("  delta_total_pnl: N/A")
+            out_lines.append("  delta_lose_worst10_sum: N/A")
+            out_lines.append("  delta_expectancy: N/A")
+            out_lines.append("  delta_max_lose_run: N/A")
+            continue
+        sb = b_row.get("summary") or {}
+        sv = v_row.get("summary") or {}
+        d_pnl = float(sv.get("total_pnl_yen_100_shares") or 0.0) - float(sb.get("total_pnl_yen_100_shares") or 0.0)
+        d_lw = float(sv.get("sum_lose_worst10_yen_100_shares") or 0.0) - float(sb.get("sum_lose_worst10_yen_100_shares") or 0.0)
+        d_exp = float(sv.get("avg_expectancy_yen_100_shares") or 0.0) - float(sb.get("avg_expectancy_yen_100_shares") or 0.0)
+        d_mlr = float(sv.get("max_lose_run_pnl_yen_100_shares") or 0.0) - float(sb.get("max_lose_run_pnl_yen_100_shares") or 0.0)
+        out_lines.append(f"  delta_total_pnl: {d_pnl:+.2f}")
+        out_lines.append(f"  delta_lose_worst10_sum: {d_lw:+.2f}")
+        out_lines.append(f"  delta_expectancy: {d_exp:+.4f}")
+        out_lines.append(f"  delta_max_lose_run: {d_mlr:+.2f}")
+
+    out_lines.append("")
+    out_lines.append("[STRONG regime · focus] expectancy / lose_worst10_sum / skipped_signals(combo) / virtual_skipped_pnl(combo)")
+    for r in rows_sorted:
+        st_r = str(r.get("status") or "OK")
+        if st_r != "OK":
+            out_lines.append(
+                f"  [{r.get('replay_range')}] {r.get('cell_label')}: status={st_r} "
+                f"(STRONG metrics N/A; {r.get('skip_reason') or 'no detail'})"
+            )
+            continue
+        s = r.get("summary") or {}
+        agg = s.get("strong_combo_filter_cell_aggregate") if isinstance(s.get("strong_combo_filter_cell_aggregate"), dict) else {}
+        emr = agg.get("eval_by_market_regime_summed_over_runs") if isinstance(agg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        sr = emr.get("STRONG") if isinstance(emr.get("STRONG"), dict) else {}
+        out_lines.append(
+            f"  [{r.get('replay_range')}] {r.get('cell_label')}: "
+            f"STRONG_exp={float(sr.get('avg_expectancy_yen_100_shares') or 0.0):+.4f} "
+            f"STRONG_lw10_sum={float(sr.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f} "
+            f"skipped_combo={int(r.get('combo_skipped') or 0)} "
+            f"virt_skipped_pnl_combo={float(r.get('combo_virt_pnl') or 0.0):+.2f}"
+        )
+
+    out_lines.append("")
+    out_lines.append("[EVAL_BY_MARKET_REGIME] ※各cell・range・複数runの eval を単純合算（参考）")
+    for r in rows_sorted:
+        st_r = str(r.get("status") or "OK")
+        out_lines.append(f"replay_range={r.get('replay_range')} cell={r.get('cell_label')} status={st_r}")
+        if st_r != "OK":
+            out_lines.append(f"  (skipped — no aggregate; reason: {r.get('skip_reason') or 'n/a'})")
+            out_lines.append("")
+            continue
+        summ = r.get("summary") or {}
+        agg = summ.get("strong_combo_filter_cell_aggregate") if isinstance(summ.get("strong_combo_filter_cell_aggregate"), dict) else {}
+        emr = agg.get("eval_by_market_regime_summed_over_runs") if isinstance(agg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        if not emr:
+            out_lines.append("  (empty)")
+            out_lines.append("")
+            continue
+        for rk in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+            row = emr.get(rk)
+            if not isinstance(row, dict):
+                continue
+            out_lines.append(
+                f"  {rk}: signals={int(row.get('signals') or 0)} "
+                f"exp={float(row.get('avg_expectancy_yen_100_shares') or 0.0):+.4f} "
+                f"total_pnl={float(row.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                f"lose_w10_sum={float(row.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+            )
+        out_lines.append("")
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] strong_trend_quality_validation sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def _bucket_label_by_edges(x: Optional[float], edges: list[float], labels: list[str]) -> str:
+    """
+    edges: 境界値（昇順）. len(labels) = len(edges)+1
+    """
+    if x is None or (not isinstance(x, (int, float))) or (not math.isfinite(float(x))):
+        return "N/A"
+    v = float(x)
+    for i, e in enumerate(edges):
+        if v <= float(e):
+            return str(labels[i])
+    return str(labels[-1])
+
+
+def _build_signal_feature_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    all_runs 用（signals dict から集計）。
+    """
+    # feature -> bucket -> accum
+    acc: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def _add(feature: str, bucket: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        acc.setdefault(feature, {})
+        a = acc[feature].setdefault(bucket, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    # bucket definitions（ユーザー要望）
+    gap_edges = [-3.0, -1.0, 1.0, 3.0]
+    gap_labels = ["<=-3", "-3~-1", "-1~1", "1~3", ">=3"]
+
+    vdist_edges = [0.5, 1.0, 1.5, 2.0]
+    vdist_labels = ["<=0.5", "0.5~1.0", "1.0~1.5", "1.5~2.0", ">=2.0"]
+
+    vol30_edges = [1.0, 2.0, 3.0, 5.0]
+    vol30_labels = ["<1", "1~2", "2~3", "3~5", ">=5"]
+
+    atr_edges = [1.0, 2.0, 3.0]
+    atr_labels = ["<1", "1~2", "2~3", ">=3"]
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        # eval対象のみ
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        is_win = (res == "WIN")
+        is_lose = (res == "LOSE")
+
+        gap = s.get("gap_pct")
+        vdist = s.get("entry_vwap_distance_pct")
+        vol30 = s.get("first_30m_volume_ratio")
+        atrp = s.get("atr_pct")
+
+        _add("gap_pct", _bucket_label_by_edges(gap, gap_edges, gap_labels), pnl, is_win, is_lose)
+        _add("entry_vwap_distance_pct", _bucket_label_by_edges(vdist, vdist_edges, vdist_labels), pnl, is_win, is_lose)
+        _add("first_30m_volume_ratio", _bucket_label_by_edges(vol30, vol30_edges, vol30_labels), pnl, is_win, is_lose)
+        _add("atr_pct", _bucket_label_by_edges(atrp, atr_edges, atr_labels), pnl, is_win, is_lose)
+
+    out: dict[str, Any] = {}
+    for feat, buckets in acc.items():
+        rows: list[dict[str, Any]] = []
+        for b, a in buckets.items():
+            sigs = int(a.get("signals", 0))
+            win = int(a.get("win", 0))
+            lose = int(a.get("lose", 0))
+            pnl_sum = float(a.get("pnl_sum", 0.0))
+            winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+            exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+            pnls = a.get("pnls") or []
+            rows.append(
+                {
+                    "bucket": str(b),
+                    "signals": int(sigs),
+                    "winrate_pct": float(winrate),
+                    "avg_expectancy_yen_100_shares": float(exp),
+                    "total_pnl_yen_100_shares": float(pnl_sum),
+                    "lose_worst10_sum_yen_100_shares": float(_lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])),
+                }
+            )
+        # signals desc で見やすく
+        out[feat] = sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+    return out
+
+
+def _build_composite_signal_feature_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    gap / entry_vwap_distance と market_regime / entry_time_bucket の 2次元集計。
+    """
+    gap_edges = [-3.0, -1.0, 1.0, 3.0]
+    gap_labels = ["<=-3", "-3~-1", "-1~1", "1~3", ">=3"]
+    vdist_edges = [0.5, 1.0, 1.5, 2.0]
+    vdist_labels = ["<=0.5", "0.5~1.0", "1.0~1.5", "1.5~2.0", ">=2.0"]
+
+    # analysis_name -> (key1, key2) -> accum
+    acc: dict[str, dict[tuple[str, str], dict[str, Any]]] = {}
+
+    def _add_cross(name: str, k1: str, k2: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        acc.setdefault(name, {})
+        key = (str(k1), str(k2))
+        a = acc[name].setdefault(key, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        is_win = res == "WIN"
+        is_lose = res == "LOSE"
+        gap = s.get("gap_pct")
+        vdist = s.get("entry_vwap_distance_pct")
+        gap_b = _bucket_label_by_edges(gap, gap_edges, gap_labels)
+        vdist_b = _bucket_label_by_edges(vdist, vdist_edges, vdist_labels)
+        regime_b = str(s.get("market_regime") or "").strip() or "N/A"
+        time_b = str(s.get("entry_time_bucket") or "").strip() or "N/A"
+
+        _add_cross("gap_pct_x_market_regime", gap_b, regime_b, pnl, is_win, is_lose)
+        _add_cross("gap_pct_x_time_bucket", gap_b, time_b, pnl, is_win, is_lose)
+        _add_cross("entry_vwap_distance_pct_x_market_regime", vdist_b, regime_b, pnl, is_win, is_lose)
+        _add_cross("entry_vwap_distance_pct_x_time_bucket", vdist_b, time_b, pnl, is_win, is_lose)
+
+    def _rows_for_name(
+        name: str,
+        field1: str,
+        field2: str,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for (b1, b2), a in (acc.get(name) or {}).items():
+            sigs = int(a.get("signals", 0))
+            win = int(a.get("win", 0))
+            pnl_sum = float(a.get("pnl_sum", 0.0))
+            winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+            exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+            pnls = a.get("pnls") or []
+            rows.append(
+                {
+                    field1: str(b1),
+                    field2: str(b2),
+                    "signals": int(sigs),
+                    "winrate_pct": float(winrate),
+                    "avg_expectancy_yen_100_shares": float(exp),
+                    "total_pnl_yen_100_shares": float(pnl_sum),
+                    "lose_worst10_sum_yen_100_shares": float(
+                        _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                    ),
+                }
+            )
+        return sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+
+    return {
+        "gap_pct_x_market_regime": _rows_for_name("gap_pct_x_market_regime", "gap_pct_bucket", "market_regime"),
+        "gap_pct_x_time_bucket": _rows_for_name("gap_pct_x_time_bucket", "gap_pct_bucket", "entry_time_bucket"),
+        "entry_vwap_distance_pct_x_market_regime": _rows_for_name(
+            "entry_vwap_distance_pct_x_market_regime", "entry_vwap_distance_pct_bucket", "market_regime"
+        ),
+        "entry_vwap_distance_pct_x_time_bucket": _rows_for_name(
+            "entry_vwap_distance_pct_x_time_bucket", "entry_vwap_distance_pct_bucket", "entry_time_bucket"
+        ),
+    }
+
+
+def _bucket_high_update_count_before_entry(n: Any) -> str:
+    if n is None:
+        return "N/A"
+    try:
+        v = int(float(n))
+    except Exception:
+        return "N/A"
+    if v <= 0:
+        return "0"
+    if v == 1:
+        return "1"
+    if v == 2:
+        return "2"
+    if 3 <= v <= 5:
+        return "3~5"
+    return ">=6"
+
+
+def _build_signal_state_cross_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    high_update / hold と market_regime / entry_vwap_distance_pct bucket の2次元集計（eval対象のみ）。
+    """
+    vdist_edges = [0.5, 1.0, 1.5, 2.0]
+    vdist_labels = ["<=0.5", "0.5~1.0", "1.0~1.5", "1.5~2.0", ">=2.0"]
+    hold_edges = [5.0, 15.0, 30.0, 60.0, 120.0]
+    hold_labels = ["<=5", "5~15", "15~30", "30~60", "60~120", ">120"]
+
+    acc: dict[str, dict[tuple[str, str], dict[str, Any]]] = {}
+
+    def _add_cross(name: str, k1: str, k2: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        acc.setdefault(name, {})
+        key = (str(k1), str(k2))
+        a = acc[name].setdefault(key, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        is_win = res == "WIN"
+        is_lose = res == "LOSE"
+        vdist = s.get("entry_vwap_distance_pct")
+        hm = s.get("hold_minutes")
+        huc = s.get("high_update_count_before_entry")
+        vdist_b = _bucket_label_by_edges(vdist, vdist_edges, vdist_labels)
+        hold_b = _bucket_label_by_edges(hm, hold_edges, hold_labels)
+        huc_b = _bucket_high_update_count_before_entry(huc)
+        regime_b = str(s.get("market_regime") or "").strip() or "N/A"
+
+        _add_cross("high_update_count_before_entry_x_market_regime", huc_b, regime_b, pnl, is_win, is_lose)
+        _add_cross("high_update_count_before_entry_x_entry_vwap_distance_pct_bucket", huc_b, vdist_b, pnl, is_win, is_lose)
+        _add_cross("hold_minutes_x_market_regime", hold_b, regime_b, pnl, is_win, is_lose)
+        _add_cross("hold_minutes_x_entry_vwap_distance_pct_bucket", hold_b, vdist_b, pnl, is_win, is_lose)
+
+    def _rows_for_name(name: str, field1: str, field2: str) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for (b1, b2), a in (acc.get(name) or {}).items():
+            sigs = int(a.get("signals", 0))
+            win = int(a.get("win", 0))
+            pnl_sum = float(a.get("pnl_sum", 0.0))
+            winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+            exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+            pnls = a.get("pnls") or []
+            rows.append(
+                {
+                    field1: str(b1),
+                    field2: str(b2),
+                    "signals": int(sigs),
+                    "winrate_pct": float(winrate),
+                    "avg_expectancy_yen_100_shares": float(exp),
+                    "total_pnl_yen_100_shares": float(pnl_sum),
+                    "lose_worst10_sum_yen_100_shares": float(
+                        _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                    ),
+                }
+            )
+        return sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+
+    return {
+        "high_update_count_before_entry_x_market_regime": _rows_for_name(
+            "high_update_count_before_entry_x_market_regime",
+            "high_update_count_before_entry_bucket",
+            "market_regime",
+        ),
+        "high_update_count_before_entry_x_entry_vwap_distance_pct_bucket": _rows_for_name(
+            "high_update_count_before_entry_x_entry_vwap_distance_pct_bucket",
+            "high_update_count_before_entry_bucket",
+            "entry_vwap_distance_pct_bucket",
+        ),
+        "hold_minutes_x_market_regime": _rows_for_name(
+            "hold_minutes_x_market_regime", "hold_minutes_bucket", "market_regime"
+        ),
+        "hold_minutes_x_entry_vwap_distance_pct_bucket": _rows_for_name(
+            "hold_minutes_x_entry_vwap_distance_pct_bucket",
+            "hold_minutes_bucket",
+            "entry_vwap_distance_pct_bucket",
+        ),
+    }
+
+
+def _build_strong_loser_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    market_regime == STRONG かつ pnl_yen_100_shares < 0 のシグナルを対象に、bucket ごとに集計する。
+    """
+    gap_edges = [-3.0, -1.0, 1.0, 3.0]
+    gap_labels = ["<=-3", "-3~-1", "-1~1", "1~3", ">=3"]
+    vdist_edges = [0.5, 1.0, 1.5, 2.0]
+    vdist_labels = ["<=0.5", "0.5~1.0", "1.0~1.5", "1.5~2.0", ">=2.0"]
+    atr_edges = [1.0, 2.0, 3.0]
+    atr_labels = ["<1", "1~2", "2~3", ">=3"]
+    hold_edges = [5.0, 15.0, 30.0, 60.0, 120.0]
+    hold_labels = ["<=5", "5~15", "15~30", "30~60", "60~120", ">120"]
+
+    acc: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def _add(feature: str, bucket: str, pnl: float) -> None:
+        acc.setdefault(feature, {})
+        a = acc[feature].setdefault(bucket, {"signals": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        rk = str(s.get("market_regime") or "").strip().upper()
+        if rk != "STRONG":
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        if pnl >= 0.0:
+            continue
+
+        gap = s.get("gap_pct")
+        vdist = s.get("entry_vwap_distance_pct")
+        atrp = s.get("atr_pct")
+        etb = str(s.get("entry_time_bucket") or "").strip() or "N/A"
+        hm = s.get("hold_minutes")
+        huc = s.get("high_update_count_before_entry")
+
+        _add("gap_pct", _bucket_label_by_edges(gap, gap_edges, gap_labels), pnl)
+        _add("entry_vwap_distance_pct", _bucket_label_by_edges(vdist, vdist_edges, vdist_labels), pnl)
+        _add("atr_pct", _bucket_label_by_edges(atrp, atr_edges, atr_labels), pnl)
+        _add("entry_time_bucket", etb, pnl)
+        _add("hold_minutes", _bucket_label_by_edges(hm, hold_edges, hold_labels), pnl)
+        _add("high_update_count_before_entry", _bucket_high_update_count_before_entry(huc), pnl)
+
+    feat_order = [
+        "gap_pct",
+        "entry_vwap_distance_pct",
+        "atr_pct",
+        "entry_time_bucket",
+        "hold_minutes",
+        "high_update_count_before_entry",
+    ]
+    out: dict[str, Any] = {}
+    for feat in feat_order:
+        buckets = acc.get(feat) or {}
+        rows: list[dict[str, Any]] = []
+        for b, a in buckets.items():
+            sigs = int(a.get("signals", 0))
+            pnl_sum = float(a.get("pnl_sum", 0.0))
+            exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+            pnls = a.get("pnls") or []
+            rows.append(
+                {
+                    "bucket": str(b),
+                    "signals": int(sigs),
+                    "total_pnl_yen_100_shares": float(pnl_sum),
+                    "avg_expectancy_yen_100_shares": float(exp),
+                    "lose_worst10_sum_yen_100_shares": float(
+                        _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                    ),
+                }
+            )
+        out[feat] = sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+    return out
 
 
 def run_daily_loss_stop_sweep(
@@ -9119,7 +14484,7 @@ def run_daily_loss_stop_sweep(
     """
     daily_loss_stop の閾値比較を sweep します。
     - 対象config: replay_morning_vwap2(OFF), replay_morning_vwap2_dd30k/dd50k/dd70k
-    - 各configについて random_apr×n_repeat と random_60d×n_repeat を実行
+    - 各configについて SWEEP_REPLAY_RANGES（random_apr）×n_repeat のみ実行
     - 出力: results/daily_loss_stop_sweep_<stamp>/
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -9137,7 +14502,7 @@ def run_daily_loss_stop_sweep(
         if p:
             cfg_paths.append(p)
 
-    ranges = ["random_apr", "random_60d"]
+    ranges = list(SWEEP_REPLAY_RANGES)
     sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
 
     results_root = os.path.join(script_dir, "results")
@@ -9149,6 +14514,7 @@ def run_daily_loss_stop_sweep(
     print(f"[{now_str()}] sweep_root: {sweep_root}")
 
     rows: list[dict[str, Any]] = []
+    collect_debug_rows: list[dict[str, Any]] = []
     for cfg_path in cfg_paths:
         cfg_raw = _load_replay_config(cfg_path)
         f = _apply_replay_config_to_flags(cfg=cfg_raw)
@@ -9212,6 +14578,7 @@ def run_daily_loss_stop_sweep(
                     regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    **_replay_regime_control_kwargs_from_flags(f),
                     replay_settings=None,
                 )
                 if int(code) != 0:
@@ -9223,7 +14590,10 @@ def run_daily_loss_stop_sweep(
                     candidates = [
                         fn
                         for fn in os.listdir(results_dir)
-                        if fn.endswith(".json") and fn.endswith(f"{run_tag}.json")
+                        if fn.endswith(".json")
+                        and ("replay_summary_" in fn)
+                        and (not fn.endswith("_symbol_scores.json"))
+                        and fn.endswith(f"{run_tag}.json")
                     ]
                     candidates_sorted = sorted(
                         candidates,
@@ -9235,6 +14605,15 @@ def run_daily_loss_stop_sweep(
                         with open(p, "r", encoding="utf-8") as fp:
                             rep = json.load(fp)
                         run_summaries.append({"run_no": i, "json_path": p, "report": rep})
+                    collect_debug_rows.append(
+                        {
+                            "cell_folder": str(output_subdir),
+                            "run_no": int(i),
+                            "found_json_count": int(len(candidates_sorted)),
+                            "found_json_paths": [os.path.join(results_dir, x) for x in candidates_sorted[:10]],
+                            "loaded_runs_count": int(len(run_summaries)),
+                        }
+                    )
                 except Exception:
                     pass
 
@@ -9270,6 +14649,21 @@ def run_daily_loss_stop_sweep(
         out_lines.append(f"  - {p}")
     out_lines.append("")
     out_lines.append("ソート: avg_expectancy_yen_100_shares（降順）")
+    out_lines.append("")
+    out_lines.append("[SWEEP_COLLECT_DEBUG]")
+    out_lines.append("")
+    for it in collect_debug_rows[:200]:
+        try:
+            out_lines.append(
+                f"cell_folder: {it.get('cell_folder')} run_no={int(it.get('run_no') or 0)} "
+                f"found_json_count={int(it.get('found_json_count') or 0)} loaded_runs_count={int(it.get('loaded_runs_count') or 0)}"
+            )
+            fps = it.get("found_json_paths") or []
+            if isinstance(fps, list) and fps:
+                for p in fps:
+                    out_lines.append(f"  - {p}")
+        except Exception:
+            continue
     out_lines.append("")
 
     hdr = (
@@ -9348,6 +14742,262 @@ def _write_regime_filter_sweep_configs(script_dir: str) -> list[str]:
     return out_paths
 
 
+def _write_topix_weak_threshold_sweep_configs(script_dir: str) -> list[str]:
+    """
+    replay_morning_vwap2 をベースに TOPIX_WEAK threshold を変えた config を configs/regime_filter_sweep/ に保存。
+    """
+    _ensure_replay_configs_exist()
+    sweep_dir = os.path.join(script_dir, "configs", "regime_filter_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+
+    base_rel = os.path.join("configs", "replay_morning_vwap2.json")
+    base_path = _resolve_replay_config_path(base_rel)
+    base_cfg = _load_replay_config(base_path) if base_path else {}
+    if not base_cfg:
+        presets = _default_replay_configs_dicts()
+        fallback = presets.get("replay_morning_vwap2.json")
+        if isinstance(fallback, dict):
+            base_cfg = dict(fallback)
+
+    thresholds = [-0.2, -0.3, -0.5, -0.7]
+    out_paths: list[str] = []
+    for thr in thresholds:
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        slug = f"topix_weak_thr{str(abs(thr)).replace('.', '')}".replace("-", "")
+        cfg["name"] = f"replay_morning_vwap2_regime_{slug}"
+        cfg["regime_filters"] = {"disable_topix_weak": True, "topix_weak_threshold_pct": float(thr)}
+        fn = f"replay_morning_vwap2_regime_{slug}.json"
+        path = os.path.join(sweep_dir, fn)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        out_paths.append(os.path.abspath(path))
+    return out_paths
+
+
+def run_topix_weak_threshold_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    TOPIX_WEAK threshold を sweep します（disable_topix_weak を有効化）。
+    - threshold: -0.2/-0.3/-0.5/-0.7
+    - SWEEP_REPLAY_RANGES（random_apr）×n_repeat のみ
+    - 出力: results/topix_weak_threshold_sweep_<stamp>/
+    - config生成: configs/regime_filter_sweep/
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges = list(SWEEP_REPLAY_RANGES)
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+
+    cfg_paths = _write_topix_weak_threshold_sweep_configs(script_dir)
+
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"topix_weak_threshold_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    print(f"[{now_str()}] topix_weak_threshold sweep: configs={len(cfg_paths)} ranges={ranges} repeat={n_repeat}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] config_root: {os.path.join(script_dir, 'configs', 'regime_filter_sweep')}")
+    for p in cfg_paths:
+        print(f"[{now_str()}] 生成 config: {p}")
+
+    rows: list[dict[str, Any]] = []
+    collect_debug_rows: list[dict[str, Any]] = []
+    for cfg_path in cfg_paths:
+        cfg_raw = _load_replay_config(cfg_path)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_path))
+        # Windowsのパス長制限を踏まえ、短いslugを使います（ファイル名にも入るため重要）
+        thr0 = f.get("regime_filter_topix_weak_threshold_pct")
+        thr_s = "na"
+        try:
+            if isinstance(thr0, (int, float)):
+                thr_s = f"thr{str(abs(float(thr0))).replace('.', '')}".replace("-", "")
+        except Exception:
+            thr_s = "na"
+        cfg_slug = f"tw_{thr_s}"
+
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{cfg_slug}_{rng}"
+            output_subdir = os.path.join(f"topix_weak_threshold_sweep_{sweep_stamp}", f"{cfg_slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {cfg_slug}  {rng}  ({n_repeat} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_path),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    # repeat=1 の場合は runXX が付かないため、最新のjsonを拾う
+                    candidates = [
+                        fn
+                        for fn in os.listdir(results_dir)
+                        if fn.endswith(".json")
+                        and ("replay_summary_" in fn)
+                        and (not fn.endswith("_symbol_scores.json"))
+                    ]
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        p = os.path.join(results_dir, candidates_sorted[0])
+                        with open(p, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": p, "report": rep})
+                    collect_debug_rows.append(
+                        {
+                            "cell_folder": str(output_subdir),
+                            "run_no": int(i),
+                            "found_json_count": int(len(candidates_sorted)),
+                            "found_json_paths": [os.path.join(results_dir, x) for x in candidates_sorted[:10]],
+                            "loaded_runs_count": int(len(run_summaries)),
+                        }
+                    )
+                except Exception:
+                    pass
+
+            summ = _aggregate_replay_repeat_run_summaries_for_regime_filter(run_summaries)
+            rows.append(
+                {
+                    "config_name": cfg_name,
+                    "config_path": str(cfg_path),
+                    "config_slug": cfg_slug,
+                    "replay_range": str(rng),
+                    "output_subdir": str(output_subdir),
+                    "batch_stamp": str(batch_stamp),
+                    "summary": summ,
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float(((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== topix_weak_threshold sweep ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_mode: {replay_mode}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    out_lines.append("configs:")
+    for p in cfg_paths:
+        out_lines.append(f"  - {p}")
+    out_lines.append("")
+    out_lines.append("ソート: avg_expectancy_yen_100_shares（降順）")
+    out_lines.append("")
+    out_lines.append("[SWEEP_COLLECT_DEBUG]")
+    out_lines.append("")
+    for it in collect_debug_rows[:200]:
+        try:
+            out_lines.append(
+                f"cell_folder: {it.get('cell_folder')} run_no={int(it.get('run_no') or 0)} "
+                f"found_json_count={int(it.get('found_json_count') or 0)} loaded_runs_count={int(it.get('loaded_runs_count') or 0)}"
+            )
+            fps = it.get("found_json_paths") or []
+            if isinstance(fps, list) and fps:
+                for p in fps:
+                    out_lines.append(f"  - {p}")
+        except Exception:
+            continue
+    out_lines.append("")
+
+    hdr = (
+        "rank\tconfig_name\treplay_range\tavg_expectancy_yen\ttotal_pnl_100_shares\tlose_worst10_sum_yen\t"
+        "max_intraday_drawdown\tskipped_signals_count\ttotal_signals\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('config_name')}\t{r.get('replay_range')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_intraday_drawdown_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('skipped_signals_count') or 0)}\t"
+            f"{int(s.get('total_signals') or 0)}\t"
+            f"results/{r.get('output_subdir')}/"
+        )
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] topix_weak_threshold sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
 def run_regime_filter_sweep(
     *,
     fixed_watch: Optional[list[str]],
@@ -9360,12 +15010,12 @@ def run_regime_filter_sweep(
     """
     regime_filters の組み合わせを sweep します。
     - 対象: baseline(OFF), morning_weak, rising<50, topix_weak, morning_weak+rising<50
-    - random_apr×n_repeat と random_60d×n_repeat
+    - SWEEP_REPLAY_RANGES（random_apr）×n_repeat のみ
     - 出力: results/regime_filter_sweep_<stamp>/
     - config生成: configs/regime_filter_sweep/
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    ranges = ["random_apr", "random_60d"]
+    ranges = list(SWEEP_REPLAY_RANGES)
     sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
 
     cfg_paths = _write_regime_filter_sweep_configs(script_dir)
@@ -9382,11 +15032,26 @@ def run_regime_filter_sweep(
         print(f"[{now_str()}] 生成 config: {p}")
 
     rows: list[dict[str, Any]] = []
+    collect_debug_rows: list[dict[str, Any]] = []
     for cfg_path in cfg_paths:
         cfg_raw = _load_replay_config(cfg_path)
         f = _apply_replay_config_to_flags(cfg=cfg_raw)
         cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_path))
-        cfg_slug = os.path.basename(cfg_path).replace(".json", "")
+        # Windowsのパス長制限を踏まえ、短いslugを使います（ファイル名にも入るため重要）
+        mw = bool(f.get("regime_filter_disable_morning_weak", False))
+        rlt50 = bool(f.get("regime_filter_disable_rising_ratio_lt50", False))
+        tw = bool(f.get("regime_filter_disable_topix_weak", False))
+        if (not mw) and (not rlt50) and (not tw):
+            cfg_slug = "base"
+        else:
+            parts = []
+            if mw:
+                parts.append("mw")
+            if rlt50:
+                parts.append("rlt50")
+            if tw:
+                parts.append("tw")
+            cfg_slug = "_".join(parts) if parts else "x"
 
         for rng in ranges:
             replay_random_days = 5
@@ -9447,6 +15112,8 @@ def run_regime_filter_sweep(
                     regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    **_replay_regime_control_kwargs_from_flags(f),
                     replay_settings=None,
                 )
                 if int(code) != 0:
@@ -9454,9 +15121,11 @@ def run_regime_filter_sweep(
                     return int(code)
 
                 try:
-                    run_tag = f"run{i:02d}"
+                    # レポートjson（統計入り）だけを拾う（*_symbol_scores.json を誤って拾うと集計が0になり得る）
                     candidates = [
-                        fn for fn in os.listdir(results_dir) if fn.endswith(".json") and fn.endswith(f"{run_tag}.json")
+                        fn
+                        for fn in os.listdir(results_dir)
+                        if fn.endswith(".json") and ("replay_summary_" in fn) and (not fn.endswith("_symbol_scores.json"))
                     ]
                     candidates_sorted = sorted(
                         candidates,
@@ -9468,6 +15137,15 @@ def run_regime_filter_sweep(
                         with open(p, "r", encoding="utf-8") as fp:
                             rep = json.load(fp)
                         run_summaries.append({"run_no": i, "json_path": p, "report": rep})
+                    collect_debug_rows.append(
+                        {
+                            "cell_folder": str(output_subdir),
+                            "run_no": int(i),
+                            "found_json_count": int(len(candidates_sorted)),
+                            "found_json_paths": [os.path.join(results_dir, x) for x in candidates_sorted[:10]],
+                            "loaded_runs_count": int(len(run_summaries)),
+                        }
+                    )
                 except Exception:
                     pass
 
@@ -9504,10 +15182,26 @@ def run_regime_filter_sweep(
     out_lines.append("")
     out_lines.append("ソート: avg_expectancy_yen_100_shares（降順）")
     out_lines.append("")
+    out_lines.append("[SWEEP_COLLECT_DEBUG]")
+    out_lines.append("")
+    for it in collect_debug_rows[:200]:
+        try:
+            out_lines.append(
+                f"cell_folder: {it.get('cell_folder')} run_no={int(it.get('run_no') or 0)} "
+                f"found_json_count={int(it.get('found_json_count') or 0)} loaded_runs_count={int(it.get('loaded_runs_count') or 0)}"
+            )
+            fps = it.get("found_json_paths") or []
+            if isinstance(fps, list) and fps:
+                for p in fps:
+                    out_lines.append(f"  - {p}")
+        except Exception:
+            continue
+    out_lines.append("")
 
     hdr = (
         "rank\tconfig_name\treplay_range\tavg_expectancy_yen\ttotal_pnl_100_shares\tmax_lose_run_yen\t"
-        "plus_runs\tminus_runs\tlose_worst10_sum_yen\ttotal_signals\tmax_intraday_drawdown\tskipped_signals_count\tresults_folder"
+        "plus_runs\tminus_runs\tlose_worst10_sum_yen\tpassed_signals_count\tskipped_signals_count\tskip_ratio\t"
+        "max_intraday_drawdown\tresults_folder"
     )
     out_lines.append(hdr)
     for idx, r in enumerate(rows_sorted, start=1):
@@ -9519,9 +15213,10 @@ def run_regime_filter_sweep(
             f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
             f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
             f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
-            f"{int(s.get('total_signals') or 0)}\t"
-            f"{float(s.get('max_intraday_drawdown_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('passed_signals_count') or 0)}\t"
             f"{int(s.get('skipped_signals_count') or 0)}\t"
+            f"{float(s.get('skip_ratio') or 0.0):.3f}\t"
+            f"{float(s.get('max_intraday_drawdown_yen_100_shares') or 0.0):+.2f}\t"
             f"results/{r.get('output_subdir')}/"
         )
 
@@ -9560,10 +15255,15 @@ def main(argv: list[str]) -> int:
     if bool(getattr(args, "morning_screen", False)):
         return run_morning_screen()
 
+    paper_trade = bool(getattr(args, "paper_trade", False))
+    if paper_trade and bool(getattr(args, "replay", False)):
+        print(f"[{now_str()}] --paper-trade と --replay は同時指定できません。")
+        return 2
+
     # --replay が指定されたときだけ TEST_REPLAY_MODE を有効化します。
     # （指定しなければ False のまま = いつものリアルタイム監視に戻ります）
     global TEST_REPLAY_MODE
-    TEST_REPLAY_MODE = bool(getattr(args, "replay", False))
+    TEST_REPLAY_MODE = bool(getattr(args, "replay", False)) and (not paper_trade)
     replay_range: str = str(getattr(args, "replay_range", "1d"))
     replay_random_days: int = int(getattr(args, "replay_random_days", 0) or 0)
     replay_random_months: int = int(getattr(args, "replay_random_months", 3) or 3)
@@ -9587,11 +15287,17 @@ def main(argv: list[str]) -> int:
     replay_config_path: str = str(getattr(args, "replay_config", "") or "").strip()
     # 要件: replay実行時に config パス未指定なら configs/replay_morning_vwap2.json をデフォルトで読む（自動生成も行う）
     # さらに、未生成の比較用config（replay_morning_rsi75 等）を configs/ に揃えてから読み込む
-    if bool(TEST_REPLAY_MODE):
+    # paper_trade 時は未指定なら configs/replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json（Replay検証と同一）
+    if bool(TEST_REPLAY_MODE) or paper_trade:
         _default_replay_cfg_path = _ensure_replay_configs_exist()
         if not replay_config_path:
-            replay_config_path = _default_replay_cfg_path
-    if bool(TEST_REPLAY_MODE) and replay_config_path:
+            if paper_trade:
+                replay_config_path = _resolve_replay_config_path(
+                    "configs/replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json"
+                )
+            else:
+                replay_config_path = _default_replay_cfg_path
+    if (bool(TEST_REPLAY_MODE) or paper_trade) and replay_config_path:
         # configs/ が無いケースでも落ちないようにする（ユーザーが明示パス指定した場合）
         try:
             parent = os.path.dirname(os.path.abspath(_resolve_replay_config_path(replay_config_path)))
@@ -9606,6 +15312,16 @@ def main(argv: list[str]) -> int:
 
     cfg_raw = _load_replay_config(replay_config_path)
     cfg_flags = _apply_replay_config_to_flags(cfg=cfg_raw)
+
+    if (bool(TEST_REPLAY_MODE) or paper_trade) and replay_config_path:
+        try:
+            _bn_pt = os.path.basename(str(replay_config_path).replace("\\", "/"))
+            if _bn_pt in PAPER_TRADE_REPLAY_CONFIG_FILENAMES:
+                print(
+                    f"[{now_str()}] Paper trade 暫定候補 config（当面フィルタ追加なし・運用検証向け）: {_bn_pt}"
+                )
+        except Exception:
+            pass
 
     # プリセット別の期待値（読み込み後に実フラグと照合して WARN）
     _preset_expect_morning: dict[str, Any] = {
@@ -9651,6 +15367,22 @@ def main(argv: list[str]) -> int:
     regime_filter_disable_morning_weak = bool(cfg_flags.get("regime_filter_disable_morning_weak", False))
     regime_filter_disable_rising_ratio_lt50 = bool(cfg_flags.get("regime_filter_disable_rising_ratio_lt50", False))
     regime_filter_disable_topix_weak = bool(cfg_flags.get("regime_filter_disable_topix_weak", False))
+    regime_filter_topix_weak_threshold_pct = cfg_flags.get("regime_filter_topix_weak_threshold_pct", None)
+    signal_filter_disable_gap_ge_pct = bool(cfg_flags.get("signal_filter_disable_gap_ge_pct", False))
+    signal_filter_gap_ge_threshold_pct = float(cfg_flags.get("signal_filter_gap_ge_threshold_pct", 3.0))
+    signal_filter_disable_vwap_distance_ge_pct = bool(cfg_flags.get("signal_filter_disable_vwap_distance_ge_pct", False))
+    signal_filter_vwap_distance_ge_threshold_pct = float(cfg_flags.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5))
+    signal_filter_disable_entry_after_hhmm = bool(cfg_flags.get("signal_filter_disable_entry_after_hhmm", False))
+    signal_filter_entry_after_hhmm = str(cfg_flags.get("signal_filter_entry_after_hhmm", "10:30"))
+    composite_signal_filter_disable_weak_vwap_ge = bool(cfg_flags.get("composite_signal_filter_disable_weak_vwap_ge", False))
+    composite_signal_filter_weak_vwap_ge_threshold_pct = float(
+        cfg_flags.get("composite_signal_filter_weak_vwap_ge_threshold_pct", 1.5)
+    )
+    composite_signal_filter_disable_weak_gap_ge = bool(cfg_flags.get("composite_signal_filter_disable_weak_gap_ge", False))
+    composite_signal_filter_weak_gap_ge_threshold_pct = float(
+        cfg_flags.get("composite_signal_filter_weak_gap_ge_threshold_pct", 3.0)
+    )
+    regime_control_enabled = bool(cfg_flags.get("regime_control_enabled", False))
 
     if replay_config_path:
         # 必須同等キーがプリセット期待と一致しない場合は WARNING（マージ後でも欠落/上書きミスを検知）
@@ -9700,7 +15432,7 @@ def main(argv: list[str]) -> int:
         replay_config_name = ""
 
     # 要件: replay開始時に必ず読み込んだconfigをprint（反映確認）
-    if bool(TEST_REPLAY_MODE):
+    if bool(TEST_REPLAY_MODE) or paper_trade:
         print("Loaded replay config:")
         print(f"config_name={str(replay_config_name or '')}")
         print(f"config_path={str(replay_config_path or '')}")
@@ -9722,6 +15454,34 @@ def main(argv: list[str]) -> int:
             "entry_filter_atr_pct: "
             f"enabled={bool(entry_filter_atr_pct_enabled)} exclude_above={float(entry_filter_atr_pct_exclude_above):g}%"
         )
+        print(
+            "signal_filters: "
+            f"gap_ge disable={bool(signal_filter_disable_gap_ge_pct)} thr={float(signal_filter_gap_ge_threshold_pct):g}% | "
+            f"vwap_ge disable={bool(signal_filter_disable_vwap_distance_ge_pct)} thr={float(signal_filter_vwap_distance_ge_threshold_pct):g}%"
+        )
+        print(
+            "composite_signal_filters(WEAKのみ): "
+            f"weak_gap_ge disable={bool(composite_signal_filter_disable_weak_gap_ge)} thr={float(composite_signal_filter_weak_gap_ge_threshold_pct):g}% | "
+            f"weak_vwap_ge disable={bool(composite_signal_filter_disable_weak_vwap_ge)} thr={float(composite_signal_filter_weak_vwap_ge_threshold_pct):g}% | "
+            f"weak_risk_filter={str(cfg_flags.get('composite_signal_filter_weak_risk_filter') or '')}"
+        )
+        print(
+            "composite_signal_filters(STRONG): "
+            f"strong_risk_filter={str(cfg_flags.get('composite_signal_filter_strong_risk_filter') or '')} "
+            f"thr={float(cfg_flags.get('composite_signal_filter_strong_vwap_ge_threshold_pct', 1.5)):g}%"
+        )
+        _sc_en_t = bool(cfg_flags.get("composite_signal_filter_strong_combo_enabled", False))
+        _sc_bl_t = list(cfg_flags.get("composite_signal_filter_strong_combo_block_conditions") or [])
+        _fc_t = _sc_bl_t[0] if _sc_bl_t else {}
+        print(
+            "strong_combo_filter: "
+            f"enabled={_sc_en_t} "
+            f"market_regime={str(_fc_t.get('market_regime') or '')} "
+            f"vwap_ge={_fc_t.get('entry_vwap_distance_pct_ge')} "
+            f"hu_le={_fc_t.get('high_update_count_before_entry_le')} "
+            f"hu_eq={_fc_t.get('high_update_count_before_entry_eq')}"
+        )
+        print(f"regime_controls: enabled={bool(regime_control_enabled)}")
 
     # =========================
     # Replay設定（値 + source）を作って run_replay へ渡す
@@ -9778,6 +15538,48 @@ def main(argv: list[str]) -> int:
             pass
         return "default"
 
+    def _src_sf(child_key: str) -> str:
+        try:
+            if replay_config_path and isinstance(cfg_raw, dict):
+                sf0 = cfg_raw.get("signal_filters")
+                if isinstance(sf0, dict) and child_key in sf0:
+                    return "config"
+        except Exception:
+            pass
+        return "default"
+
+    def _src_csf(child_key: str) -> str:
+        try:
+            if replay_config_path and isinstance(cfg_raw, dict):
+                csf0 = cfg_raw.get("composite_signal_filters")
+                if isinstance(csf0, dict) and child_key in csf0:
+                    return "config"
+        except Exception:
+            pass
+        return "default"
+
+    def _src_rcfg_any() -> str:
+        try:
+            if replay_config_path and isinstance(cfg_raw, dict) and isinstance(cfg_raw.get("regime_controls"), dict):
+                return "config"
+        except Exception:
+            pass
+        return "default"
+
+    def _src_scf_strong_combo_any() -> str:
+        try:
+            if replay_config_path and isinstance(cfg_raw, dict):
+                csf = cfg_raw.get("composite_signal_filters")
+                if isinstance(csf, dict) and isinstance(csf.get("strong_combo_filter"), dict):
+                    return "config"
+        except Exception:
+            pass
+        return "default"
+
+    _sc_src_combo = _src_scf_strong_combo_any()
+    _sc_block_main = list(cfg_flags.get("composite_signal_filter_strong_combo_block_conditions") or [])
+    _first_sc_main = _sc_block_main[0] if _sc_block_main else {}
+
     replay_settings = {
         "config_name": str(replay_config_name or ""),
         "config_path": str(replay_config_path or ""),
@@ -9825,6 +15627,95 @@ def main(argv: list[str]) -> int:
                 "source": _src_rf("disable_rising_ratio_lt50"),
             },
             "disable_topix_weak": {"value": bool(regime_filter_disable_topix_weak), "source": _src_rf("disable_topix_weak")},
+            "topix_weak_threshold_pct": {
+                "value": (
+                    float(regime_filter_topix_weak_threshold_pct)
+                    if isinstance(regime_filter_topix_weak_threshold_pct, (int, float))
+                    else float(WEAK_TOPIX_CHG_PCT_MAX)
+                ),
+                "source": _src_rf("topix_weak_threshold_pct"),
+            },
+        },
+        "signal_filters": {
+            "disable_gap_ge_pct": {"value": bool(signal_filter_disable_gap_ge_pct), "source": _src_sf("disable_gap_ge_pct")},
+            "gap_ge_threshold_pct": {"value": float(signal_filter_gap_ge_threshold_pct), "source": _src_sf("gap_ge_threshold_pct")},
+            "disable_vwap_distance_ge_pct": {
+                "value": bool(signal_filter_disable_vwap_distance_ge_pct),
+                "source": _src_sf("disable_vwap_distance_ge_pct"),
+            },
+            "vwap_distance_ge_threshold_pct": {
+                "value": float(signal_filter_vwap_distance_ge_threshold_pct),
+                "source": _src_sf("vwap_distance_ge_threshold_pct"),
+            },
+            "disable_entry_after_hhmm": {"value": bool(signal_filter_disable_entry_after_hhmm), "source": _src_sf("disable_entry_after_hhmm")},
+            "entry_after_hhmm": {"value": str(signal_filter_entry_after_hhmm), "source": _src_sf("entry_after_hhmm")},
+        },
+        "composite_signal_filters": {
+            "disable_state_weak_and_vwap_ge_pct": {
+                "value": bool(composite_signal_filter_disable_weak_vwap_ge),
+                "source": _src_csf("disable_state_weak_and_vwap_ge_pct"),
+            },
+            "state_weak_vwap_ge_threshold_pct": {
+                "value": float(composite_signal_filter_weak_vwap_ge_threshold_pct),
+                "source": _src_csf("state_weak_vwap_ge_threshold_pct"),
+            },
+            "disable_state_weak_and_gap_ge_pct": {
+                "value": bool(composite_signal_filter_disable_weak_gap_ge),
+                "source": _src_csf("disable_state_weak_and_gap_ge_pct"),
+            },
+            "state_weak_gap_ge_threshold_pct": {
+                "value": float(composite_signal_filter_weak_gap_ge_threshold_pct),
+                "source": _src_csf("state_weak_gap_ge_threshold_pct"),
+            },
+            "weak_risk_filter": {
+                "value": str(cfg_flags.get("composite_signal_filter_weak_risk_filter") or ""),
+                "source": _src_csf("weak_risk_filter"),
+            },
+            "strong_risk_filter": {
+                "value": str(cfg_flags.get("composite_signal_filter_strong_risk_filter") or ""),
+                "source": _src_csf("strong_risk_filter"),
+            },
+            "strong_vwap_ge_threshold_pct": {
+                "value": float(cfg_flags.get("composite_signal_filter_strong_vwap_ge_threshold_pct", 1.5)),
+                "source": _src_csf("strong_vwap_ge_threshold_pct"),
+            },
+        },
+        "strong_combo_filter": {
+            "enabled": {
+                "value": bool(cfg_flags.get("composite_signal_filter_strong_combo_enabled", False)),
+                "source": _sc_src_combo,
+            },
+            "market_regime": {
+                "value": str(_first_sc_main.get("market_regime") or ""),
+                "source": _sc_src_combo,
+            },
+            "entry_vwap_distance_pct_ge": {
+                "value": (
+                    float(_first_sc_main["entry_vwap_distance_pct_ge"])
+                    if isinstance(_first_sc_main.get("entry_vwap_distance_pct_ge"), (int, float))
+                    else None
+                ),
+                "source": _sc_src_combo,
+            },
+            "high_update_count_before_entry_le": {
+                "value": (
+                    int(_first_sc_main["high_update_count_before_entry_le"])
+                    if isinstance(_first_sc_main.get("high_update_count_before_entry_le"), (int, float))
+                    else None
+                ),
+                "source": _sc_src_combo,
+            },
+            "high_update_count_before_entry_eq": {
+                "value": (
+                    int(_first_sc_main["high_update_count_before_entry_eq"])
+                    if isinstance(_first_sc_main.get("high_update_count_before_entry_eq"), (int, float))
+                    else None
+                ),
+                "source": _sc_src_combo,
+            },
+        },
+        "regime_controls": {
+            "enabled": {"value": bool(regime_control_enabled), "source": _src_rcfg_any()},
         },
     }
     _rr_cli = str(replay_range).strip()
@@ -9922,8 +15813,24 @@ def main(argv: list[str]) -> int:
     if bool(getattr(args, "regime_filter_sweep", False)):
         _rs = getattr(args, "replay_seed", None)
         _seed: Optional[int] = int(_rs) if _rs is not None else None
+        _rep = getattr(args, "replay_repeat", None)
+        _nrep = int(_rep) if _rep is not None else 10
         return int(
             run_regime_filter_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=int(_nrep),
+            )
+        )
+
+    if bool(getattr(args, "topix_weak_threshold_sweep", False)):
+        _rs = getattr(args, "replay_seed", None)
+        _seed: Optional[int] = int(_rs) if _rs is not None else None
+        return int(
+            run_topix_weak_threshold_sweep(
                 fixed_watch=fixed_watch,
                 interval_sec=interval_sec,
                 only_changes=only_changes,
@@ -9932,6 +15839,195 @@ def main(argv: list[str]) -> int:
                 n_repeat=10,
             )
         )
+
+    if bool(getattr(args, "signal_filter_sweep", False)):
+        _rs = getattr(args, "replay_seed", None)
+        _seed: Optional[int] = int(_rs) if _rs is not None else None
+        _rep = getattr(args, "replay_repeat", None)
+        _nrep = int(_rep) if _rep is not None else 10
+        return int(
+            run_signal_filter_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=int(_nrep),
+            )
+        )
+
+    if bool(getattr(args, "composite_filter_sweep", False)):
+        _rs = getattr(args, "replay_seed", None)
+        _seed2: Optional[int] = int(_rs) if _rs is not None else None
+        _rep = getattr(args, "replay_repeat", None)
+        _nrep = int(_rep) if _rep is not None else 10
+        return int(
+            run_composite_filter_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed2,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=int(_nrep),
+            )
+        )
+
+    if bool(getattr(args, "regime_control_sweep", False)):
+        _rs = getattr(args, "replay_seed", None)
+        _seed_rc: Optional[int] = int(_rs) if _rs is not None else None
+        _rep = getattr(args, "replay_repeat", None)
+        _nrep_rc = int(_rep) if _rep is not None else 10
+        return int(
+            run_regime_control_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_rc,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=int(_nrep_rc),
+            )
+        )
+
+    if bool(getattr(args, "weak_risk_filter_sweep", False)):
+        _rs = getattr(args, "replay_seed", None)
+        _seed_wrf: Optional[int] = int(_rs) if _rs is not None else None
+        _rep = getattr(args, "replay_repeat", None)
+        _nrep_wrf = int(_rep) if _rep is not None else 10
+        return int(
+            run_weak_risk_filter_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_wrf,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=int(_nrep_wrf),
+            )
+        )
+
+    if bool(getattr(args, "strong_risk_filter_sweep", False)):
+        _rs2 = getattr(args, "replay_seed", None)
+        _seed_srf: Optional[int] = int(_rs2) if _rs2 is not None else None
+        _rep2 = getattr(args, "replay_repeat", None)
+        _nrep_srf = int(_rep2) if _rep2 is not None else 10
+        return int(
+            run_strong_risk_filter_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_srf,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=int(_nrep_srf),
+            )
+        )
+
+    if bool(getattr(args, "strong_combo_filter_sweep", False)):
+        _rs3 = getattr(args, "replay_seed", None)
+        _seed_scf: Optional[int] = int(_rs3) if _rs3 is not None else None
+        _rep3 = getattr(args, "replay_repeat", None)
+        _nrep_scf = int(_rep3) if _rep3 is not None else 10
+        return int(
+            run_strong_combo_filter_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_scf,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=int(_nrep_scf),
+            )
+        )
+
+    if bool(getattr(args, "strong_trend_quality_sweep", False)):
+        _rs_stq = getattr(args, "replay_seed", None)
+        _seed_stq: Optional[int] = int(_rs_stq) if _rs_stq is not None else None
+        _rep_stq = getattr(args, "replay_repeat", None)
+        _nrep_stq = int(_rep_stq) if _rep_stq is not None else 10
+        return int(
+            run_strong_trend_quality_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_stq,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=int(_nrep_stq),
+            )
+        )
+
+    if bool(getattr(args, "strong_trend_quality_validation_sweep", False)):
+        _rs_val = getattr(args, "replay_seed", None)
+        _seed_val: Optional[int] = int(_rs_val) if _rs_val is not None else None
+        _rep_val = getattr(args, "replay_repeat", None)
+        _nrep_val = int(_rep_val) if _rep_val is not None else 20
+        return int(
+            run_strong_trend_quality_validation_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_val,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=int(_nrep_val),
+            )
+        )
+
+    if paper_trade:
+        _pti = float(getattr(args, "paper_trade_interval", 60.0) or 60.0)
+        if _pti <= 0:
+            print(f"[{now_str()}] --paper-trade-interval は 0 より大きい値にしてください。")
+            return 2
+        _batch_pt = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+        _pt_kw: dict[str, Any] = {
+            "interval_sec": interval_sec,
+            "only_changes": only_changes,
+            "fixed_watch": fixed_watch,
+            "replay_range": "1d",
+            "replay_random_days": 0,
+            "replay_random_months": 3,
+            "replay_seed": None,
+            "replay_mode": "fast",
+            "replay_fast_discord": False,
+            "replay_fast_verbose": False,
+            "replay_fast_print_signal_details": False,
+            "replay_market_debug": False,
+            "replay_repeat_run_no": 1,
+            "replay_repeat_total": 1,
+            "replay_output_subdir": "",
+            "replay_batch_stamp": _batch_pt,
+            "replay_morning_screen_hhmm": "",
+            "one_trade_per_symbol_per_day": one_trade_per_symbol_per_day,
+            "enable_add": enable_add,
+            "replay_early_exit_before_stop": replay_early_exit_before_stop,
+            "replay_early_exit_vwap": bool(replay_early_exit_vwap),
+            "replay_early_exit_recent_low": bool(replay_early_exit_recent_low),
+            "replay_disable_afternoon_entry": bool(replay_disable_afternoon_entry),
+            "replay_strict_afternoon_entry": bool(replay_strict_afternoon_entry),
+            "replay_afternoon_topix_weak_block": bool(replay_afternoon_topix_weak_block),
+            "replay_config_name": str(replay_config_name or ""),
+            "replay_config_path": str(replay_config_path or ""),
+            "aft_volume_spike_ratio_min": float(aft_volume_spike_ratio_min),
+            "aft_vwap_dist_pct_max": float(aft_vwap_dist_pct_max),
+            "aft_rebreak_mult": float(aft_rebreak_mult),
+            "entry_filter_rsi_enabled": bool(entry_filter_rsi_enabled),
+            "entry_filter_rsi_exclude_above": float(entry_filter_rsi_exclude_above),
+            "entry_filter_vwap_distance_enabled": bool(entry_filter_vwap_distance_enabled),
+            "entry_filter_vwap_distance_exclude_above": float(entry_filter_vwap_distance_exclude_above),
+            "entry_filter_atr_pct_enabled": bool(entry_filter_atr_pct_enabled),
+            "entry_filter_atr_pct_exclude_above": float(entry_filter_atr_pct_exclude_above),
+            "daily_loss_stop_enabled": bool(daily_loss_stop_enabled),
+            "daily_loss_stop_threshold_yen_100_shares": float(daily_loss_stop_threshold_yen_100_shares),
+            "regime_filter_disable_morning_weak": bool(regime_filter_disable_morning_weak),
+            "regime_filter_disable_rising_ratio_lt50": bool(regime_filter_disable_rising_ratio_lt50),
+            "regime_filter_disable_topix_weak": bool(regime_filter_disable_topix_weak),
+            "regime_filter_topix_weak_threshold_pct": regime_filter_topix_weak_threshold_pct,
+            "signal_filter_disable_gap_ge_pct": bool(signal_filter_disable_gap_ge_pct),
+            "signal_filter_gap_ge_threshold_pct": float(signal_filter_gap_ge_threshold_pct),
+            "signal_filter_disable_vwap_distance_ge_pct": bool(signal_filter_disable_vwap_distance_ge_pct),
+            "signal_filter_vwap_distance_ge_threshold_pct": float(signal_filter_vwap_distance_ge_threshold_pct),
+            "signal_filter_disable_entry_after_hhmm": bool(signal_filter_disable_entry_after_hhmm),
+            "signal_filter_entry_after_hhmm": str(signal_filter_entry_after_hhmm),
+        }
+        _pt_kw.update(_replay_composite_signal_filter_kwargs_from_flags(cfg_flags))
+        _pt_kw.update(_replay_regime_control_kwargs_from_flags(cfg_flags))
+        _pt_kw["replay_settings"] = replay_settings
+        return int(run_paper_trade(paper_trade_interval_sec=_pti, run_replay_kw=_pt_kw))
 
     # -----------------------------
     # テスト用リプレイモード
@@ -10030,6 +16126,15 @@ def main(argv: list[str]) -> int:
                     regime_filter_disable_morning_weak=bool(regime_filter_disable_morning_weak),
                     regime_filter_disable_rising_ratio_lt50=bool(regime_filter_disable_rising_ratio_lt50),
                     regime_filter_disable_topix_weak=bool(regime_filter_disable_topix_weak),
+                    regime_filter_topix_weak_threshold_pct=regime_filter_topix_weak_threshold_pct,
+                    signal_filter_disable_gap_ge_pct=bool(signal_filter_disable_gap_ge_pct),
+                    signal_filter_gap_ge_threshold_pct=float(signal_filter_gap_ge_threshold_pct),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(signal_filter_disable_vwap_distance_ge_pct),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(signal_filter_vwap_distance_ge_threshold_pct),
+                    signal_filter_disable_entry_after_hhmm=bool(signal_filter_disable_entry_after_hhmm),
+                    signal_filter_entry_after_hhmm=str(signal_filter_entry_after_hhmm),
+                    **_replay_composite_signal_filter_kwargs_from_flags(cfg_flags),
+                    **_replay_regime_control_kwargs_from_flags(cfg_flags),
                     replay_settings=replay_settings,
                 )
                 if int(code) != 0:
@@ -10189,6 +16294,17 @@ def main(argv: list[str]) -> int:
                 sym_rank.append({"symbol": sym, "signals": n_sig, "pnl_yen_100_shares": float(pnl), "expectancy_yen_100_shares": float(exp2)})
             sym_rank_sorted = sorted(sym_rank, key=lambda x: float(x.get("expectancy_yen_100_shares") or 0.0), reverse=True)[:30]
 
+            # 銘柄依存（symbol contribution）分析（run合算）
+            sym_contrib = _build_symbol_contribution_analysis(
+                by_symbol_summary={
+                    sym: {"signals": int(by_symbol_signals.get(sym, 0)), "pnl_yen_100_shares": float(pnl)}
+                    for sym, pnl in by_symbol_pnl.items()
+                },
+                total_pnl_yen_100_shares=float(total_pnl),
+                total_signals=int(total_signals),
+                exclude_top_n_symbols_list=(1, 2, 3),
+            )
+
             block_rank = sorted(
                 [{"reason": k, "count": int(v)} for k, v in block_reason_counts.items()],
                 key=lambda x: int(x.get("count") or 0),
@@ -10237,6 +16353,20 @@ def main(argv: list[str]) -> int:
                     "blocked_reason_ranking": block_rank[:30],
                 },
                 "by_symbol_expectancy_ranking": sym_rank_sorted,
+                "symbol_contribution_analysis": sym_contrib,
+                "signal_feature_analysis": _build_signal_feature_analysis_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
+                "signal_composite_feature_analysis": _build_composite_signal_feature_analysis_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
+                "strong_loser_analysis": _build_strong_loser_analysis_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
+                "signal_state_cross_analysis": _build_signal_state_cross_analysis_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
+                "combo_filter_analysis": _aggregate_combo_filter_analysis_from_run_summaries(run_summaries),
                 "runs": [
                     {
                         "run_no": int(x.get("run_no") or 0),
@@ -10363,7 +16493,7 @@ def main(argv: list[str]) -> int:
                 lines.append(f"- output_folder: results/{output_subdir}/")
             lines.append(f"- 実行回数: {total_runs}")
             s = agg["summary"]
-            lines.append("【比較指標（run合算・月別/random_60d 比較用）】")
+            lines.append("【比較指標（run合算・同一replay-range内の条件比較）】")
             lines.append(f"- 平均expectancy(円/信号・run平均): {s['avg_expectancy_yen_100_shares']:+,.0f}円")
             lines.append(f"- 合計100株損益: {s['total_pnl_yen_100_shares']:+,.0f}円")
             lines.append(f"- 最大負けrun: {s['max_lose_run_pnl_yen_100_shares']:+,.0f}円")
@@ -10666,10 +16796,554 @@ def main(argv: list[str]) -> int:
                 )
             lines.append("")
 
+            # =========================
+            # SYMBOL_CONTRIBUTION_ANALYSIS（run合算）
+            # =========================
+            try:
+                sca = agg.get("symbol_contribution_analysis") or {}
+                lines.append("【銘柄依存分析（symbol contribution）】")
+                lines.append("")
+                bys = sca.get("by_symbol") or []
+                if isinstance(bys, list) and bys:
+                    lines.append("- symbol pnl contribution (pnl desc, top10):")
+                    for it in bys[:10]:
+                        if not isinstance(it, dict):
+                            continue
+                        lines.append(
+                            f"  - {it.get('symbol')}: pnl={float(it.get('pnl_yen_100_shares') or 0.0):+,.0f}円 "
+                            f"ratio={float(it.get('pnl_ratio_of_total') or 0.0):+.2f} "
+                            f"signals={int(it.get('signals') or 0)} "
+                            f"cum={float(it.get('cumulative_pnl_yen_100_shares') or 0.0):+,.0f}円"
+                        )
+                sims = sca.get("exclude_top_n_simulation") or []
+                if isinstance(sims, list) and sims:
+                    lines.append("")
+                    lines.append("- exclude top N symbols simulation:")
+                    for sim in sims:
+                        if not isinstance(sim, dict):
+                            continue
+                        lines.append(
+                            f"  - exclude_top_n={int(sim.get('exclude_top_n_symbols') or 0)} "
+                            f"symbols={sim.get('excluded_symbols') or []} "
+                            f"total_pnl_after={float(sim.get('total_pnl_after_yen_100_shares') or 0.0):+,.0f}円 "
+                            f"expectancy_after={float(sim.get('expectancy_after_yen_100_shares_per_signal') or 0.0):+,.0f}円 "
+                            f"(signals_after={int(sim.get('total_signals_after') or 0)})"
+                        )
+                lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # SIGNAL_FEATURE_ANALYSIS（run合算）
+            # =========================
+            try:
+                sfa = agg.get("signal_feature_analysis") or {}
+                lines.append("【SIGNAL_FEATURE_ANALYSIS】")
+                lines.append("")
+                for feat in ["gap_pct", "entry_vwap_distance_pct", "first_30m_volume_ratio", "atr_pct"]:
+                    rows = sfa.get(feat) or []
+                    if not isinstance(rows, list) or not rows:
+                        continue
+                    lines.append(f"[{feat}]")
+                    for r in rows:
+                        if not isinstance(r, dict):
+                            continue
+                        lines.append(
+                            f"- bucket={r.get('bucket')}: signals={int(r.get('signals') or 0)} "
+                            f"winrate={float(r.get('winrate_pct') or 0.0):.1f}% "
+                            f"avg_expectancy_yen_100_shares={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"total_pnl_yen_100_shares={float(r.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # SIGNAL_COMPOSITE_FEATURE_ANALYSIS（run合算）
+            # =========================
+            try:
+                scfa = agg.get("signal_composite_feature_analysis") or {}
+                lines.append("【SIGNAL_COMPOSITE_FEATURE_ANALYSIS】")
+                lines.append("")
+                _scfa_sections: list[tuple[str, str, str]] = [
+                    ("gap_pct_x_market_regime", "gap_pct_bucket", "market_regime"),
+                    ("gap_pct_x_time_bucket", "gap_pct_bucket", "entry_time_bucket"),
+                    ("entry_vwap_distance_pct_x_market_regime", "entry_vwap_distance_pct_bucket", "market_regime"),
+                    ("entry_vwap_distance_pct_x_time_bucket", "entry_vwap_distance_pct_bucket", "entry_time_bucket"),
+                ]
+                for sec_key, fk1, fk2 in _scfa_sections:
+                    rows2 = scfa.get(sec_key) or []
+                    if not isinstance(rows2, list) or not rows2:
+                        continue
+                    lines.append(f"[{sec_key}]")
+                    for r2 in rows2:
+                        if not isinstance(r2, dict):
+                            continue
+                        lines.append(
+                            f"- {fk1}={r2.get(fk1)} × {fk2}={r2.get(fk2)}: "
+                            f"signals={int(r2.get('signals') or 0)} "
+                            f"winrate={float(r2.get('winrate_pct') or 0.0):.1f}% "
+                            f"avg_expectancy_yen_100_shares={float(r2.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"total_pnl_yen_100_shares={float(r2.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(r2.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # STRONG_LOSER_ANALYSIS（run合算）
+            # =========================
+            try:
+                sla = agg.get("strong_loser_analysis") or {}
+                lines.append("【STRONG_LOSER_ANALYSIS】")
+                lines.append("")
+                for feat in [
+                    "gap_pct",
+                    "entry_vwap_distance_pct",
+                    "atr_pct",
+                    "entry_time_bucket",
+                    "hold_minutes",
+                    "high_update_count_before_entry",
+                ]:
+                    rows_sla = sla.get(feat) or []
+                    if not isinstance(rows_sla, list) or not rows_sla:
+                        continue
+                    lines.append(f"[STRONG_LOSER_ANALYSIS / {feat}]")
+                    for r in rows_sla:
+                        if not isinstance(r, dict):
+                            continue
+                        lines.append(
+                            f"- bucket={r.get('bucket')}: signals={int(r.get('signals') or 0)} "
+                            f"total_pnl_yen_100_shares={float(r.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"avg_expectancy_yen_100_shares={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # SIGNAL_STATE_CROSS_ANALYSIS（run合算）
+            # =========================
+            try:
+                ssca = agg.get("signal_state_cross_analysis") or {}
+                lines.append("【SIGNAL_STATE_CROSS_ANALYSIS】")
+                lines.append("")
+                _ssca_sections: list[tuple[str, str, str]] = [
+                    (
+                        "high_update_count_before_entry_x_market_regime",
+                        "high_update_count_before_entry_bucket",
+                        "market_regime",
+                    ),
+                    (
+                        "high_update_count_before_entry_x_entry_vwap_distance_pct_bucket",
+                        "high_update_count_before_entry_bucket",
+                        "entry_vwap_distance_pct_bucket",
+                    ),
+                    ("hold_minutes_x_market_regime", "hold_minutes_bucket", "market_regime"),
+                    (
+                        "hold_minutes_x_entry_vwap_distance_pct_bucket",
+                        "hold_minutes_bucket",
+                        "entry_vwap_distance_pct_bucket",
+                    ),
+                ]
+                for sec_key, fk1, fk2 in _ssca_sections:
+                    rows_ss = ssca.get(sec_key) or []
+                    if not isinstance(rows_ss, list) or not rows_ss:
+                        continue
+                    lines.append(f"[SIGNAL_STATE_CROSS_ANALYSIS / {sec_key}]")
+                    for rss in rows_ss:
+                        if not isinstance(rss, dict):
+                            continue
+                        lines.append(
+                            f"- {fk1}={rss.get(fk1)} × {fk2}={rss.get(fk2)}: "
+                            f"signals={int(rss.get('signals') or 0)} "
+                            f"winrate={float(rss.get('winrate_pct') or 0.0):.1f}% "
+                            f"avg_expectancy_yen_100_shares={float(rss.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"total_pnl_yen_100_shares={float(rss.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rss.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # COMBO_FILTER_ANALYSIS（run合算）
+            # =========================
+            try:
+                cfa_agg = agg.get("combo_filter_analysis") or {}
+                sc_agg = cfa_agg.get("strong_combo_filter") if isinstance(cfa_agg.get("strong_combo_filter"), dict) else {}
+                lines.append("【COMBO_FILTER_ANALYSIS】")
+                lines.append("")
+                if isinstance(sc_agg, dict) and sc_agg:
+                    lines.append(f"- enabled: {bool(sc_agg.get('enabled', False))}")
+                    skr = sc_agg.get("skip_reason_counts") if isinstance(sc_agg.get("skip_reason_counts"), dict) else {}
+                    if skr:
+                        lines.append("- reason別 skipped_signals:")
+                        for rk, cnt in sorted(skr.items(), key=lambda kv: int(kv[1]), reverse=True):
+                            lines.append(f"  - {rk}: {int(cnt)}")
+                    vpa_c = sc_agg.get("virtual_pnl_analysis") if isinstance(sc_agg.get("virtual_pnl_analysis"), dict) else {}
+                    br_c = vpa_c.get("by_reason") if isinstance(vpa_c.get("by_reason"), dict) else {}
+                    if br_c:
+                        lines.append("- reason別 virtual expectancy / prevented_loss_estimate:")
+                        for rk in sorted(br_c.keys()):
+                            row_c = br_c.get(rk) if isinstance(br_c.get(rk), dict) else {}
+                            lines.append(
+                                f"  - [{rk}] skipped={int(row_c.get('skipped_signals_count') or 0)} "
+                                f"virtual_exp_if_skipped={float(row_c.get('avg_expectancy_yen_100_shares_if_skipped') or 0.0):+,.0f}円 "
+                                f"prevented_loss_est={float(row_c.get('prevented_loss_estimate_yen_100_shares') or 0.0):+,.0f}円"
+                            )
+                    lines.append("")
+            except Exception:
+                pass
+
+            signal_filter_agg_lines: list[str] = []
+            regime_control_agg_lines: list[str] = []
+            # =========================
+            # SIGNAL_FILTER_ANALYSIS（run合算）
+            # =========================
+            try:
+                skipped_total = 0
+                skip_reason_counts: dict[str, int] = {}
+                virt_cnt = 0
+                virt_pnl = 0.0
+                composite_skipped = 0
+                composite_skip_reason: dict[str, int] = {}
+                comp_virt_skipped = 0
+                comp_virt_pnl = 0.0
+                comp_prevented = 0.0
+                for rr in run_summaries:
+                    rep = rr.get("report") or {}
+                    sf = ((rep.get("overall_summary") or {}).get("signal_filters")) or {}
+                    if not isinstance(sf, dict):
+                        continue
+                    skipped_total += int(sf.get("skipped_signals_count") or 0)
+                    for k, v in (sf.get("skip_reason_counts") or {}).items():
+                        try:
+                            kk = str(k)
+                            vv = int(v)
+                            if kk:
+                                skip_reason_counts[kk] = int(skip_reason_counts.get(kk, 0)) + vv
+                        except Exception:
+                            continue
+                    vpa = sf.get("virtual_pnl_analysis") or {}
+                    if isinstance(vpa, dict):
+                        virt_cnt += int(vpa.get("skipped_signals_count") or 0)
+                        virt_pnl += float(vpa.get("total_pnl_yen_100_shares") or 0.0)
+
+                    csf = sf.get("composite_signal_filters") or {}
+                    if isinstance(csf, dict):
+                        composite_skipped += int(csf.get("skipped_signals_count") or 0)
+                        for ck, cv in (csf.get("skip_reason_counts") or {}).items():
+                            try:
+                                ckk = str(ck)
+                                cvv = int(cv)
+                                if ckk:
+                                    composite_skip_reason[ckk] = int(composite_skip_reason.get(ckk, 0)) + cvv
+                            except Exception:
+                                continue
+                        cvpa = csf.get("virtual_pnl_analysis") or {}
+                        if isinstance(cvpa, dict):
+                            comp_virt_skipped += int(cvpa.get("skipped_signals_count") or 0)
+                            comp_virt_pnl += float(cvpa.get("total_pnl_yen_100_shares") or 0.0)
+                            comp_prevented += float(cvpa.get("prevented_loss_estimate_yen_100_shares") or 0.0)
+
+                prevented_all = float(-virt_pnl)
+                comp_expectancy = (
+                    float(comp_virt_pnl / float(comp_virt_skipped)) if int(comp_virt_skipped) > 0 else 0.0
+                )
+
+                signal_filter_agg_lines.append("[SIGNAL_FILTER_ANALYSIS]")
+                signal_filter_agg_lines.append("")
+                signal_filter_agg_lines.append(f"- skipped_signals_count(合算=SIGNAL_FILTER+COMPOSITE): {int(skipped_total)}")
+                if skip_reason_counts:
+                    signal_filter_agg_lines.append("- skip_reason_counts:")
+                    for it in sorted(skip_reason_counts.items(), key=lambda x: int(x[1]), reverse=True):
+                        signal_filter_agg_lines.append(f"  - {it[0]}: {int(it[1])}")
+                signal_filter_agg_lines.append(f"- virtual_skipped_signals_count(合算=simple+COMPOSITE): {int(virt_cnt)}")
+                signal_filter_agg_lines.append(f"- virtual_total_pnl_yen_100_shares(合算): {float(virt_pnl):+,.0f}")
+                signal_filter_agg_lines.append(f"- virtual_prevented_loss_estimate_yen_100_shares(合算): {float(prevented_all):+,.0f}")
+                signal_filter_agg_lines.append("")
+                signal_filter_agg_lines.append("[COMPOSITE_SIGNAL_FILTERS / market_regime==WEAK のみ]")
+                signal_filter_agg_lines.append(f"- composite_skipped_signals_count(合算): {int(composite_skipped)}")
+                if composite_skip_reason:
+                    signal_filter_agg_lines.append("- composite_skip_reason_counts:")
+                    for it in sorted(composite_skip_reason.items(), key=lambda x: int(x[1]), reverse=True):
+                        signal_filter_agg_lines.append(f"  - {it[0]}: {int(it[1])}")
+                signal_filter_agg_lines.append(f"- composite_virtual_skipped_signals_count: {int(comp_virt_skipped)}")
+                signal_filter_agg_lines.append(f"- composite_virtual_total_pnl_yen_100_shares: {float(comp_virt_pnl):+,.0f}")
+                signal_filter_agg_lines.append(f"- composite_prevented_loss_estimate_yen_100_shares: {float(comp_prevented):+,.0f}")
+                signal_filter_agg_lines.append(
+                    f"- composite_expectancy_if_skipped_yen_100_shares: {float(comp_expectancy):+,.0f}"
+                )
+                signal_filter_agg_lines.append("")
+                lines.extend(signal_filter_agg_lines)
+            except Exception:
+                pass
+
+            # =========================
+            # REGIME_CONTROL_ANALYSIS（run合算 / market_regime 別）
+            # =========================
+            try:
+                rc_skip = 0
+                rc_reasons: dict[str, int] = {}
+                rc_vcnt = 0
+                rc_vpnl = 0.0
+                mr_acc: dict[str, dict[str, float]] = {
+                    rk: {"signals": 0.0, "pnl": 0.0, "lw10": 0.0}
+                    for rk in ("STRONG", "NORMAL", "WEAK", "CRASH")
+                }
+                for rr in run_summaries:
+                    rep = rr.get("report") or {}
+                    ov_rc = rep.get("overall_summary") or {}
+                    rc = ov_rc.get("regime_controls") if isinstance(ov_rc.get("regime_controls"), dict) else {}
+                    rc_skip += int(rc.get("skipped_signals_count") or 0)
+                    for kk, vv in (rc.get("skip_reason_counts") or {}).items():
+                        try:
+                            ks = str(kk)
+                            if ks:
+                                rc_reasons[ks] = int(rc_reasons.get(ks, 0)) + int(vv or 0)
+                        except Exception:
+                            continue
+                    vpa2 = rc.get("virtual_pnl_analysis") if isinstance(rc.get("virtual_pnl_analysis"), dict) else {}
+                    if isinstance(vpa2, dict):
+                        rc_vcnt += int(vpa2.get("skipped_signals_count") or 0)
+                        rc_vpnl += float(vpa2.get("total_pnl_yen_100_shares") or 0.0)
+                    evmr2 = rc.get("eval_by_market_regime") if isinstance(rc.get("eval_by_market_regime"), dict) else {}
+                    if isinstance(evmr2, dict):
+                        for rk2 in mr_acc:
+                            row2 = evmr2.get(rk2)
+                            if not isinstance(row2, dict):
+                                continue
+                            mr_acc[rk2]["signals"] += float(row2.get("signals") or 0)
+                            mr_acc[rk2]["pnl"] += float(row2.get("total_pnl_yen_100_shares") or 0.0)
+                            mr_acc[rk2]["lw10"] += float(row2.get("lose_worst10_sum_yen_100_shares") or 0.0)
+
+                regime_control_agg_lines.append("[REGIME_CONTROL_ANALYSIS]")
+                regime_control_agg_lines.append("")
+                regime_control_agg_lines.append(f"- skipped_signals_count(run合算): {int(rc_skip)}")
+                if rc_reasons:
+                    regime_control_agg_lines.append("- skip_reason_counts:")
+                    for it in sorted(rc_reasons.items(), key=lambda x: int(x[1]), reverse=True):
+                        regime_control_agg_lines.append(f"  - {it[0]}: {int(it[1])}")
+                regime_control_agg_lines.append(f"- virtual_pnl_analysis.skipped_signals_count(run合算): {int(rc_vcnt)}")
+                regime_control_agg_lines.append(f"- virtual_pnl_analysis.total_pnl_yen_100_shares(run合算): {float(rc_vpnl):+,.0f}")
+                if int(rc_vcnt) > 0:
+                    regime_control_agg_lines.append(
+                        f"- virtual_if_skipped_avg_expectancy(run合算): {float(rc_vpnl/float(rc_vcnt)):+,.0f}円"
+                    )
+                else:
+                    regime_control_agg_lines.append("- virtual_if_skipped_avg_expectancy(run合算): 0円")
+                regime_control_agg_lines.append(
+                    f"- virtual_prevented_loss_estimate(run合算): {-float(rc_vpnl):+,.0f}"
+                )
+                regime_control_agg_lines.append("")
+                regime_control_agg_lines.append("- eval_by_market_regime（実際に採用されたBASE信号・run値の単純合算）:")
+                for rk3 in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+                    acc3 = mr_acc.get(rk3) or {}
+                    n3 = int(acc3.get("signals") or 0)
+                    p3 = float(acc3.get("pnl") or 0.0)
+                    lw3 = float(acc3.get("lw10") or 0.0)
+                    exp3 = (p3 / float(n3)) if n3 > 0 else 0.0
+                    regime_control_agg_lines.append(
+                        f"  - {rk3}: signals={n3}  expectancy={exp3:+,.0f}円  total_pnl={p3:+,.0f}円  lose_worst10_sum={lw3:+,.0f}円"
+                    )
+                regime_control_agg_lines.append("")
+                lines.extend(regime_control_agg_lines)
+            except Exception:
+                pass
+
             # ----- 以下は all_runs_debug.txt へ分離（マーケット/REJECT/パイプライン等） -----
             debug_lines.append("=== Replay 合算サマリー（デバッグ詳細） ===")
             debug_lines.append(f"summary_file: {name_base}.txt")
             debug_lines.append("")
+            if signal_filter_agg_lines:
+                debug_lines.extend(signal_filter_agg_lines)
+            if regime_control_agg_lines:
+                debug_lines.extend(regime_control_agg_lines)
+
+            # =========================
+            # SYMBOL_CONTRIBUTION_ANALYSIS（デバッグ）
+            # =========================
+            try:
+                sca = agg.get("symbol_contribution_analysis") or {}
+                debug_lines.append("[SYMBOL_CONTRIBUTION_ANALYSIS]")
+                debug_lines.append("")
+                bys = sca.get("by_symbol") or []
+                if isinstance(bys, list) and bys:
+                    debug_lines.append("by_symbol (pnl desc, top30):")
+                    for it in bys[:30]:
+                        if not isinstance(it, dict):
+                            continue
+                        debug_lines.append(
+                            f"- {it.get('symbol')}: pnl={float(it.get('pnl_yen_100_shares') or 0.0):+,.2f} "
+                            f"ratio_total={float(it.get('pnl_ratio_of_total') or 0.0):+.4f} "
+                            f"ratio_abs={float(it.get('pnl_ratio_of_abs_total') or 0.0):.4f} "
+                            f"signals={int(it.get('signals') or 0)} "
+                            f"cum_pnl={float(it.get('cumulative_pnl_yen_100_shares') or 0.0):+,.2f}"
+                        )
+                sims = sca.get("exclude_top_n_simulation") or []
+                if isinstance(sims, list) and sims:
+                    debug_lines.append("")
+                    debug_lines.append("exclude_top_n_simulation:")
+                    for sim in sims:
+                        if not isinstance(sim, dict):
+                            continue
+                        debug_lines.append(
+                            f"- exclude_top_n={int(sim.get('exclude_top_n_symbols') or 0)} "
+                            f"excluded_symbols={sim.get('excluded_symbols') or []} "
+                            f"pnl_after={float(sim.get('total_pnl_after_yen_100_shares') or 0.0):+,.2f} "
+                            f"exp_after={float(sim.get('expectancy_after_yen_100_shares_per_signal') or 0.0):+,.2f} "
+                            f"signals_after={int(sim.get('total_signals_after') or 0)}"
+                        )
+                debug_lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # SIGNAL_COMPOSITE_FEATURE_ANALYSIS（デバッグ・全行）
+            # =========================
+            try:
+                scfa2 = agg.get("signal_composite_feature_analysis") or {}
+                debug_lines.append("[SIGNAL_COMPOSITE_FEATURE_ANALYSIS]")
+                debug_lines.append("")
+                _scfa_dbg: list[tuple[str, str, str]] = [
+                    ("gap_pct_x_market_regime", "gap_pct_bucket", "market_regime"),
+                    ("gap_pct_x_time_bucket", "gap_pct_bucket", "entry_time_bucket"),
+                    ("entry_vwap_distance_pct_x_market_regime", "entry_vwap_distance_pct_bucket", "market_regime"),
+                    ("entry_vwap_distance_pct_x_time_bucket", "entry_vwap_distance_pct_bucket", "entry_time_bucket"),
+                ]
+                for sec_key, fk1, fk2 in _scfa_dbg:
+                    rows2 = scfa2.get(sec_key) or []
+                    if not isinstance(rows2, list) or not rows2:
+                        continue
+                    debug_lines.append(f"[{sec_key}]")
+                    for r2 in rows2:
+                        if not isinstance(r2, dict):
+                            continue
+                        debug_lines.append(
+                            f"- {fk1}={r2.get(fk1)} | {fk2}={r2.get(fk2)} | "
+                            f"signals={int(r2.get('signals') or 0)} "
+                            f"winrate_pct={float(r2.get('winrate_pct') or 0.0):.2f} "
+                            f"avg_expectancy_yen_100_shares={float(r2.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                            f"total_pnl_yen_100_shares={float(r2.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                            f"lose_worst10_sum_yen_100_shares={float(r2.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                        )
+                    debug_lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # STRONG_LOSER_ANALYSIS（デバッグ・全行）
+            # =========================
+            try:
+                sla2 = agg.get("strong_loser_analysis") or {}
+                debug_lines.append("[STRONG_LOSER_ANALYSIS]")
+                debug_lines.append("")
+                for feat2 in [
+                    "gap_pct",
+                    "entry_vwap_distance_pct",
+                    "atr_pct",
+                    "entry_time_bucket",
+                    "hold_minutes",
+                    "high_update_count_before_entry",
+                ]:
+                    rows_dbg = sla2.get(feat2) or []
+                    if not isinstance(rows_dbg, list) or not rows_dbg:
+                        continue
+                    debug_lines.append(f"[STRONG_LOSER_ANALYSIS / {feat2}]")
+                    for rd in rows_dbg:
+                        if not isinstance(rd, dict):
+                            continue
+                        debug_lines.append(
+                            f"- bucket={rd.get('bucket')} | "
+                            f"signals={int(rd.get('signals') or 0)} "
+                            f"total_pnl_yen_100_shares={float(rd.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                            f"avg_expectancy_yen_100_shares={float(rd.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rd.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                        )
+                    debug_lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # SIGNAL_STATE_CROSS_ANALYSIS（デバッグ・全行）
+            # =========================
+            try:
+                ssca_dbg = agg.get("signal_state_cross_analysis") or {}
+                debug_lines.append("[SIGNAL_STATE_CROSS_ANALYSIS]")
+                debug_lines.append("")
+                _ssca_dbg: list[tuple[str, str, str]] = [
+                    (
+                        "high_update_count_before_entry_x_market_regime",
+                        "high_update_count_before_entry_bucket",
+                        "market_regime",
+                    ),
+                    (
+                        "high_update_count_before_entry_x_entry_vwap_distance_pct_bucket",
+                        "high_update_count_before_entry_bucket",
+                        "entry_vwap_distance_pct_bucket",
+                    ),
+                    ("hold_minutes_x_market_regime", "hold_minutes_bucket", "market_regime"),
+                    (
+                        "hold_minutes_x_entry_vwap_distance_pct_bucket",
+                        "hold_minutes_bucket",
+                        "entry_vwap_distance_pct_bucket",
+                    ),
+                ]
+                for sec_key, fk1, fk2 in _ssca_dbg:
+                    rows_ssd = ssca_dbg.get(sec_key) or []
+                    if not isinstance(rows_ssd, list) or not rows_ssd:
+                        continue
+                    debug_lines.append(f"[{sec_key}]")
+                    for rsd in rows_ssd:
+                        if not isinstance(rsd, dict):
+                            continue
+                        debug_lines.append(
+                            f"- {fk1}={rsd.get(fk1)} | {fk2}={rsd.get(fk2)} | "
+                            f"signals={int(rsd.get('signals') or 0)} "
+                            f"winrate_pct={float(rsd.get('winrate_pct') or 0.0):.2f} "
+                            f"avg_expectancy_yen_100_shares={float(rsd.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                            f"total_pnl_yen_100_shares={float(rsd.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rsd.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                        )
+                    debug_lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # COMBO_FILTER_ANALYSIS（デバッグ）
+            # =========================
+            try:
+                cfa_dbg = agg.get("combo_filter_analysis") or {}
+                sc_dbg = cfa_dbg.get("strong_combo_filter") if isinstance(cfa_dbg.get("strong_combo_filter"), dict) else {}
+                debug_lines.append("[COMBO_FILTER_ANALYSIS]")
+                debug_lines.append("")
+                if isinstance(sc_dbg, dict) and sc_dbg:
+                    debug_lines.append(f"enabled={bool(sc_dbg.get('enabled', False))}")
+                    skd = sc_dbg.get("skip_reason_counts") if isinstance(sc_dbg.get("skip_reason_counts"), dict) else {}
+                    if skd:
+                        debug_lines.append("skip_reason_counts:")
+                        for rk, cnt in sorted(skd.items(), key=lambda kv: int(kv[1]), reverse=True):
+                            debug_lines.append(f"  - {rk}: {int(cnt)}")
+                    vp_dbg = sc_dbg.get("virtual_pnl_analysis") if isinstance(sc_dbg.get("virtual_pnl_analysis"), dict) else {}
+                    br_dbg = vp_dbg.get("by_reason") if isinstance(vp_dbg.get("by_reason"), dict) else {}
+                    if br_dbg:
+                        debug_lines.append("by_reason (virtual expectancy / prevented_loss):")
+                        for rk in sorted(br_dbg.keys()):
+                            row_d = br_dbg.get(rk) if isinstance(br_dbg.get(rk), dict) else {}
+                            debug_lines.append(
+                                f"  - [{rk}] skipped={int(row_d.get('skipped_signals_count') or 0)} "
+                                f"virtual_resolved={int(row_d.get('virtual_resolved_count') or 0)} "
+                                f"total_pnl={float(row_d.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                                f"avg_exp_if_skipped={float(row_d.get('avg_expectancy_yen_100_shares_if_skipped') or 0.0):+.2f} "
+                                f"prevented_loss_est={float(row_d.get('prevented_loss_estimate_yen_100_shares') or 0.0):+.2f}"
+                            )
+                    debug_lines.append("")
+            except Exception:
+                pass
 
             # =========================
             # risk_controls.daily_loss_stop（デバッグ）
@@ -10758,6 +17432,55 @@ def main(argv: list[str]) -> int:
                     debug_lines.append("  skip_reason_counts:")
                     for k in sorted(src.keys()):
                         debug_lines.append(f"    - {k}: {int(src.get(k) or 0)}")
+                d2 = rf.get("diag") or {}
+                if isinstance(d2, dict) and d2:
+                    debug_lines.append("  [REGIME_FILTER_DIAG]")
+                    debug_lines.append(f"  filter_name: {str(d2.get('filter_name') or '')}")
+                    debug_lines.append(f"  checked_count: {int(d2.get('checked_count') or 0)}")
+                    debug_lines.append(f"  skipped_count: {int(d2.get('skipped_count') or 0)}")
+                    debug_lines.append(f"  passed_count: {int(d2.get('passed_count') or 0)}")
+                    debug_lines.append(f"  skip_ratio: {float(d2.get('skip_ratio') or 0.0):.1%}")
+                    ss = d2.get("sample_skipped") or []
+                    if isinstance(ss, list) and ss:
+                        debug_lines.append("  sample_skipped:")
+                        for it in ss[:10]:
+                            if not isinstance(it, dict):
+                                continue
+                            debug_lines.append(
+                                "    - "
+                                f"symbol={it.get('symbol')} time={it.get('time_jst')} "
+                                f"market_regime={it.get('market_regime')} "
+                                f"rising_ratio={it.get('rising_ratio')} topix_pct={it.get('topix_pct')} "
+                                f"reason={it.get('reason')}"
+                            )
+            debug_lines.append("")
+
+            debug_lines.append("[MARKET_REGIME_DISTRIBUTION]")
+            debug_lines.append("")
+            for rr in run_summaries:
+                rep = rr.get("report") or {}
+                run_no = int(rr.get("run_no") or 0)
+                md = ((rep.get("meta") or {}).get("market_regime_distribution")) or {}
+                if not isinstance(md, dict) or not md:
+                    continue
+                debug_lines.append(f"run{run_no:02d}: {', '.join([f'{k}={int(md.get(k) or 0)}' for k in sorted(md.keys())])}")
+            debug_lines.append("")
+
+            debug_lines.append("[RISING_RATIO_DISTRIBUTION]")
+            debug_lines.append("")
+            for rr in run_summaries:
+                rep = rr.get("report") or {}
+                run_no = int(rr.get("run_no") or 0)
+                rd = ((rep.get("meta") or {}).get("rising_ratio_distribution")) or {}
+                if not isinstance(rd, dict) or not rd:
+                    continue
+                debug_lines.append(
+                    f"run{run_no:02d}: samples={int(rd.get('samples') or 0)} "
+                    f"avg={float(rd.get('avg') or 0.0):.3f} "
+                    f"min={rd.get('min')} max={rd.get('max')} "
+                    f"lt50_ratio={float(rd.get('lt50_ratio') or 0.0):.1%} "
+                    f"lt40={int(rd.get('lt40_count') or 0)} lt50={int(rd.get('lt50_count') or 0)} ge60={int(rd.get('ge60_count') or 0)}"
+                )
             debug_lines.append("")
 
             # =========================

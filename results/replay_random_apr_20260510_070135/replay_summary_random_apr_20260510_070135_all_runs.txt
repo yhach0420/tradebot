@@ -1,0 +1,475 @@
+=== Replay 合算サマリー ===
+debug_file: replay_summary_random_apr_20260510_070135_all_runs_debug.txt
+
+【Replay設定】
+
+config_name: replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15
+config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json
+
+replay_range: random_apr (cli)
+replay_repeat: 3 (cli)
+replay_mode:  (cli)
+
+early_exit: True
+strict_afternoon: False
+disable_afternoon_entry: False
+topix_weak_block: True
+replay_date_pool_start: 2026-04-01 (random_apr)
+replay_date_pool_end: 2026-04-30 (random_apr)
+replay_candidate_days_count: 22 (random_apr)
+RSI filter: enabled=False threshold=75.0 (config/config)
+VWAP distance filter: enabled=True threshold=2.0 (config/config)
+ATR filter: enabled=False threshold=4.0 (config/config)
+
+- saved_at_jst: 2026-05-10 07:02:23
+- repeat_label: random_apr
+- output_folder: results/replay_random_apr_20260510_070135/
+- 実行回数: 3
+【比較指標（run合算・同一replay-range内の条件比較）】
+- 平均expectancy(円/信号・run平均): -574円
+- 合計100株損益: -54,087円
+- 最大負けrun: -52,548円
+- プラスrun数/マイナスrun数: 1/2
+- lose_worst10_sum合算(全run): -269,260円
+- max_intraday_drawdown(最悪run): +63,844円
+- avg_daily_drawdown(run平均): +18,082円
+- daily_loss_stop_trigger_count(合算): 2
+- daily_loss_stop_skipped_entries(合算): 7
+- regime_filter_skipped_signals_count(合算): 135
+- 合計signal数: 117
+
+【その他サマリー】
+- 平均勝率: 47.7%
+- 平均100株損益: -18,029円
+- ADD ON時損益(合算,100株): -54,087円
+- ADD OFF時損益(参考/BASEのみ合算,100株): -54,087円
+- 最大勝ちrun: +41,823円
+
+[TIME_BUCKET_ANALYSIS]
+
+bucket: 09:00-09:30
+signals: 18
+winrate: 16.7%
+expectancy: -4138
+total_pnl: -74478
+lose_worst10_sum: -78764
+avg_hold_minutes: 9.3
+
+bucket: 09:30-10:00
+signals: 15
+winrate: 66.7%
+expectancy: +552
+total_pnl: +8278
+lose_worst10_sum: -8488
+avg_hold_minutes: 18.3
+
+bucket: 10:00-10:30
+signals: 11
+winrate: 63.6%
+expectancy: +648
+total_pnl: +7126
+lose_worst10_sum: -4014
+avg_hold_minutes: 14.1
+
+bucket: 10:30-11:00
+signals: 8
+winrate: 75.0%
+expectancy: +8516
+total_pnl: +68127
+lose_worst10_sum: -462
+avg_hold_minutes: 18.9
+
+bucket: 11:00-11:30
+signals: 10
+winrate: 50.0%
+expectancy: +946
+total_pnl: +9462
+lose_worst10_sum: -40104
+avg_hold_minutes: 57.0
+
+bucket: 12:30-13:00
+signals: 20
+winrate: 60.0%
+expectancy: +2710
+total_pnl: +54201
+lose_worst10_sum: -15348
+avg_hold_minutes: 14.9
+
+bucket: 13:00-14:00
+signals: 16
+winrate: 62.5%
+expectancy: -262
+total_pnl: -4189
+lose_worst10_sum: -15101
+avg_hold_minutes: 13.2
+
+bucket: 14:00-15:00
+signals: 15
+winrate: 40.0%
+expectancy: -3889
+total_pnl: -58335
+lose_worst10_sum: -62335
+avg_hold_minutes: 14.7
+
+[MARKET_REGIME_ANALYSIS]
+
+regime: AFTERNOON_WEAK
+signals: 6
+winrate: 33.3%
+avg_expectancy_yen_100_shares: -437
+total_pnl_100_shares: -2621
+lose_worst10_sum: -4374
+max_drawdown: +2849
+
+regime: MORNING_STRONG
+signals: 35
+winrate: 40.0%
+avg_expectancy_yen_100_shares: -1583
+total_pnl_100_shares: -55409
+lose_worst10_sum: -94345
+max_drawdown: +36564
+
+regime: MORNING_WEAK
+signals: 19
+winrate: 52.6%
+avg_expectancy_yen_100_shares: -5098
+total_pnl_100_shares: -96860
+lose_worst10_sum: -113042
+max_drawdown: +57258
+
+regime: RISING_RATIO_GE50
+signals: 117
+winrate: 50.4%
+avg_expectancy_yen_100_shares: -462
+total_pnl_100_shares: -54087
+lose_worst10_sum: -269260
+max_drawdown: +57258
+
+regime: STATE_NORMAL
+signals: 8
+winrate: 50.0%
+avg_expectancy_yen_100_shares: +559
+total_pnl_100_shares: +4475
+lose_worst10_sum: -25433
+max_drawdown: +18479
+
+regime: STATE_STRONG
+signals: 64
+winrate: 48.4%
+avg_expectancy_yen_100_shares: +483
+total_pnl_100_shares: +30899
+lose_worst10_sum: -123691
+max_drawdown: +36564
+
+regime: STATE_WEAK
+signals: 45
+winrate: 53.3%
+avg_expectancy_yen_100_shares: -1988
+total_pnl_100_shares: -89461
+lose_worst10_sum: -136281
+max_drawdown: +57258
+
+regime: TOPIX_STRONG
+signals: 103
+winrate: 50.5%
+avg_expectancy_yen_100_shares: -593
+total_pnl_100_shares: -61085
+lose_worst10_sum: -242525
+max_drawdown: +57258
+
+regime: TOPIX_WEAK
+signals: 2
+winrate: 100.0%
+avg_expectancy_yen_100_shares: +255
+total_pnl_100_shares: +509
+lose_worst10_sum: +0
+max_drawdown: +180
+
+regime: TOPIX_WEAK_PCT
+signals: 2
+winrate: 100.0%
+avg_expectancy_yen_100_shares: +255
+total_pnl_100_shares: +509
+lose_worst10_sum: +0
+max_drawdown: +180
+
+【各runの概要】
+- run01: seed=12345  signals=20  勝率=40.0%  100株損益=-43,362円
+  replay_dates: 2026-04-10, 2026-04-15, 2026-04-17, 2026-04-22, 2026-04-27
+  config_name: replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json
+  early_exit: True
+  strict_afternoon: False
+  disable_afternoon_entry: False
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-79,937円
+- run02: seed=12346  signals=64  勝率=54.7%  100株損益=-52,548円
+  replay_dates: 2026-04-15, 2026-04-16, 2026-04-24, 2026-04-27, 2026-04-28
+  config_name: replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json
+  early_exit: True
+  strict_afternoon: False
+  disable_afternoon_entry: False
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-164,659円 (vs baseline -84,722円)
+- run03: seed=12347  signals=33  勝率=48.5%  100株損益=+41,823円
+  replay_dates: 2026-04-13, 2026-04-17, 2026-04-24, 2026-04-28, 2026-04-30
+  config_name: replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json
+  early_exit: True
+  strict_afternoon: False
+  disable_afternoon_entry: False
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-24,663円 (vs baseline +55,274円)
+
+【最大損失run】
+- run02: -57,258円 6920.T 2026-04-16 14:52 JST exit_reason=RECENT_5M_LOW_BREAK_EARLY
+
+【後場損益（12:30以降, mode別合算）】
+- NORMAL: signals=166  100株損益=+67,200円  expectancy=+405円
+
+【BASE/ADD別（合算）】
+- BASE: signals=117  100株損益=-54,087円  expectancy=-462円
+- ADD1: signals=0  100株損益=+0円  expectancy=+0円
+- ADD2: signals=0  100株損益=+0円  expectancy=+0円
+
+【地合いフィルタ】
+- BLOCK数合計: 14
+- BLOCK理由ランキング:
+  - rising<40%: 14
+  - TOPIX_CRASH: 14
+  - high_update_low: 7
+
+【銘柄別 期待値ランキング（合算）】
+- 6857.T: signals=9  expectancy=+11,703円  100株損益=+105,331円
+- 6890.T: signals=1  expectancy=+5,283円  100株損益=+5,283円
+- 8306.T: signals=7  expectancy=+981円  100株損益=+6,864円
+- 7012.T: signals=11  expectancy=+952円  100株損益=+10,475円
+- 9984.T: signals=3  expectancy=+912円  100株損益=+2,737円
+- 8002.T: signals=4  expectancy=+523円  100株損益=+2,092円
+- 8473.T: signals=5  expectancy=+509円  100株損益=+2,547円
+- 5803.T: signals=14  expectancy=+363円  100株損益=+5,078円
+- 8136.T: signals=10  expectancy=-60円  100株損益=-599円
+- 6501.T: signals=2  expectancy=-278円  100株損益=-557円
+
+【銘柄依存分析（symbol contribution）】
+
+- symbol pnl contribution (pnl desc, top10):
+  - 6857.T: pnl=+105,331円 ratio=-1.95 signals=9 cum=+105,331円
+  - 7012.T: pnl=+10,475円 ratio=-0.19 signals=11 cum=+115,806円
+  - 8306.T: pnl=+6,864円 ratio=-0.13 signals=7 cum=+122,670円
+  - 6890.T: pnl=+5,283円 ratio=-0.10 signals=1 cum=+127,953円
+  - 5803.T: pnl=+5,078円 ratio=-0.09 signals=14 cum=+133,031円
+  - 9984.T: pnl=+2,737円 ratio=-0.05 signals=3 cum=+135,768円
+  - 8473.T: pnl=+2,547円 ratio=-0.05 signals=5 cum=+138,316円
+  - 8002.T: pnl=+2,092円 ratio=-0.04 signals=4 cum=+140,408円
+  - 6501.T: pnl=-557円 ratio=+0.01 signals=2 cum=+139,851円
+  - 8136.T: pnl=-599円 ratio=+0.01 signals=10 cum=+139,252円
+
+- exclude top N symbols simulation:
+  - exclude_top_n=1 symbols=['6857.T'] total_pnl_after=-159,417円 expectancy_after=-1,476円 (signals_after=108)
+  - exclude_top_n=2 symbols=['6857.T', '7012.T'] total_pnl_after=-169,892円 expectancy_after=-1,751円 (signals_after=97)
+  - exclude_top_n=3 symbols=['6857.T', '7012.T', '8306.T'] total_pnl_after=-176,757円 expectancy_after=-1,964円 (signals_after=90)
+
+【SIGNAL_FEATURE_ANALYSIS】
+
+[gap_pct]
+- bucket=1~3: signals=48 winrate=62.5% avg_expectancy_yen_100_shares=+1,323 total_pnl_yen_100_shares=+63,487 lose_worst10_sum_yen_100_shares=-47,754
+- bucket=-1~1: signals=34 winrate=47.1% avg_expectancy_yen_100_shares=-2,252 total_pnl_yen_100_shares=-76,580 lose_worst10_sum_yen_100_shares=-159,180
+- bucket=>=3: signals=28 winrate=32.1% avg_expectancy_yen_100_shares=-1,708 total_pnl_yen_100_shares=-47,829 lose_worst10_sum_yen_100_shares=-64,070
+- bucket=-3~-1: signals=7 winrate=57.1% avg_expectancy_yen_100_shares=+977 total_pnl_yen_100_shares=+6,836 lose_worst10_sum_yen_100_shares=+6,836
+
+[entry_vwap_distance_pct]
+- bucket=0.5~1.0: signals=60 winrate=50.0% avg_expectancy_yen_100_shares=-511 total_pnl_yen_100_shares=-30,665 lose_worst10_sum_yen_100_shares=-113,034
+- bucket=1.0~1.5: signals=45 winrate=51.1% avg_expectancy_yen_100_shares=+709 total_pnl_yen_100_shares=+31,887 lose_worst10_sum_yen_100_shares=-80,646
+- bucket=1.5~2.0: signals=12 winrate=50.0% avg_expectancy_yen_100_shares=-4,609 total_pnl_yen_100_shares=-55,308 lose_worst10_sum_yen_100_shares=-65,121
+
+[first_30m_volume_ratio]
+- bucket=<1: signals=117 winrate=50.4% avg_expectancy_yen_100_shares=-462 total_pnl_yen_100_shares=-54,087 lose_worst10_sum_yen_100_shares=-211,099
+
+[atr_pct]
+- bucket=<1: signals=109 winrate=51.4% avg_expectancy_yen_100_shares=-457 total_pnl_yen_100_shares=-49,833 lose_worst10_sum_yen_100_shares=-211,099
+- bucket=1~2: signals=5 winrate=40.0% avg_expectancy_yen_100_shares=-544 total_pnl_yen_100_shares=-2,722 lose_worst10_sum_yen_100_shares=-2,722
+- bucket=N/A: signals=2 winrate=50.0% avg_expectancy_yen_100_shares=-388 total_pnl_yen_100_shares=-775 lose_worst10_sum_yen_100_shares=-775
+- bucket=2~3: signals=1 winrate=0.0% avg_expectancy_yen_100_shares=-756 total_pnl_yen_100_shares=-756 lose_worst10_sum_yen_100_shares=-756
+
+【SIGNAL_COMPOSITE_FEATURE_ANALYSIS】
+
+[gap_pct_x_market_regime]
+- gap_pct_bucket=1~3 × market_regime=STRONG: signals=26 winrate=65.4% avg_expectancy_yen_100_shares=+1,804 total_pnl_yen_100_shares=+46,899 lose_worst10_sum_yen_100_shares=-19,616
+- gap_pct_bucket=-1~1 × market_regime=STRONG: signals=22 winrate=45.5% avg_expectancy_yen_100_shares=+1,577 total_pnl_yen_100_shares=+34,702 lose_worst10_sum_yen_100_shares=-49,809
+- gap_pct_bucket=1~3 × market_regime=WEAK: signals=18 winrate=61.1% avg_expectancy_yen_100_shares=+765 total_pnl_yen_100_shares=+13,772 lose_worst10_sum_yen_100_shares=-10,802
+- gap_pct_bucket=>=3 × market_regime=STRONG: signals=14 winrate=21.4% avg_expectancy_yen_100_shares=-3,568 total_pnl_yen_100_shares=-49,949 lose_worst10_sum_yen_100_shares=-54,736
+- gap_pct_bucket=-1~1 × market_regime=WEAK: signals=11 winrate=45.5% avg_expectancy_yen_100_shares=-10,250 total_pnl_yen_100_shares=-112,747 lose_worst10_sum_yen_100_shares=-113,238
+- gap_pct_bucket=>=3 × market_regime=WEAK: signals=11 winrate=45.5% avg_expectancy_yen_100_shares=+175 total_pnl_yen_100_shares=+1,924 lose_worst10_sum_yen_100_shares=-8,058
+- gap_pct_bucket=-3~-1 × market_regime=WEAK: signals=5 winrate=60.0% avg_expectancy_yen_100_shares=+1,518 total_pnl_yen_100_shares=+7,589 lose_worst10_sum_yen_100_shares=+7,589
+- gap_pct_bucket=1~3 × market_regime=NORMAL: signals=4 winrate=50.0% avg_expectancy_yen_100_shares=+704 total_pnl_yen_100_shares=+2,815 lose_worst10_sum_yen_100_shares=+2,815
+- gap_pct_bucket=>=3 × market_regime=NORMAL: signals=3 winrate=33.3% avg_expectancy_yen_100_shares=+65 total_pnl_yen_100_shares=+195 lose_worst10_sum_yen_100_shares=+195
+- gap_pct_bucket=-3~-1 × market_regime=STRONG: signals=2 winrate=50.0% avg_expectancy_yen_100_shares=-377 total_pnl_yen_100_shares=-753 lose_worst10_sum_yen_100_shares=-753
+- gap_pct_bucket=-1~1 × market_regime=NORMAL: signals=1 winrate=100.0% avg_expectancy_yen_100_shares=+1,465 total_pnl_yen_100_shares=+1,465 lose_worst10_sum_yen_100_shares=+1,465
+
+[gap_pct_x_time_bucket]
+- gap_pct_bucket=1~3 × entry_time_bucket=UNKNOWN: signals=48 winrate=62.5% avg_expectancy_yen_100_shares=+1,323 total_pnl_yen_100_shares=+63,487 lose_worst10_sum_yen_100_shares=-47,754
+- gap_pct_bucket=-1~1 × entry_time_bucket=UNKNOWN: signals=34 winrate=47.1% avg_expectancy_yen_100_shares=-2,252 total_pnl_yen_100_shares=-76,580 lose_worst10_sum_yen_100_shares=-159,180
+- gap_pct_bucket=>=3 × entry_time_bucket=UNKNOWN: signals=28 winrate=32.1% avg_expectancy_yen_100_shares=-1,708 total_pnl_yen_100_shares=-47,829 lose_worst10_sum_yen_100_shares=-64,070
+- gap_pct_bucket=-3~-1 × entry_time_bucket=UNKNOWN: signals=7 winrate=57.1% avg_expectancy_yen_100_shares=+977 total_pnl_yen_100_shares=+6,836 lose_worst10_sum_yen_100_shares=+6,836
+
+[entry_vwap_distance_pct_x_market_regime]
+- entry_vwap_distance_pct_bucket=0.5~1.0 × market_regime=STRONG: signals=38 winrate=50.0% avg_expectancy_yen_100_shares=+881 total_pnl_yen_100_shares=+33,488 lose_worst10_sum_yen_100_shares=-51,247
+- entry_vwap_distance_pct_bucket=1.0~1.5 × market_regime=STRONG: signals=24 winrate=41.7% avg_expectancy_yen_100_shares=-181 total_pnl_yen_100_shares=-4,353 lose_worst10_sum_yen_100_shares=-69,127
+- entry_vwap_distance_pct_bucket=0.5~1.0 × market_regime=WEAK: signals=19 winrate=47.4% avg_expectancy_yen_100_shares=-2,760 total_pnl_yen_100_shares=-52,435 lose_worst10_sum_yen_100_shares=-60,274
+- entry_vwap_distance_pct_bucket=1.0~1.5 × market_regime=WEAK: signals=16 winrate=68.8% avg_expectancy_yen_100_shares=+1,253 total_pnl_yen_100_shares=+20,047 lose_worst10_sum_yen_100_shares=-5,760
+- entry_vwap_distance_pct_bucket=1.5~2.0 × market_regime=WEAK: signals=10 winrate=40.0% avg_expectancy_yen_100_shares=-5,707 total_pnl_yen_100_shares=-57,072 lose_worst10_sum_yen_100_shares=-57,072
+- entry_vwap_distance_pct_bucket=1.0~1.5 × market_regime=NORMAL: signals=5 winrate=40.0% avg_expectancy_yen_100_shares=+3,239 total_pnl_yen_100_shares=+16,193 lose_worst10_sum_yen_100_shares=+16,193
+- entry_vwap_distance_pct_bucket=0.5~1.0 × market_regime=NORMAL: signals=3 winrate=66.7% avg_expectancy_yen_100_shares=-3,906 total_pnl_yen_100_shares=-11,718 lose_worst10_sum_yen_100_shares=-11,718
+- entry_vwap_distance_pct_bucket=1.5~2.0 × market_regime=STRONG: signals=2 winrate=100.0% avg_expectancy_yen_100_shares=+882 total_pnl_yen_100_shares=+1,764 lose_worst10_sum_yen_100_shares=+1,764
+
+[entry_vwap_distance_pct_x_time_bucket]
+- entry_vwap_distance_pct_bucket=0.5~1.0 × entry_time_bucket=UNKNOWN: signals=60 winrate=50.0% avg_expectancy_yen_100_shares=-511 total_pnl_yen_100_shares=-30,665 lose_worst10_sum_yen_100_shares=-113,034
+- entry_vwap_distance_pct_bucket=1.0~1.5 × entry_time_bucket=UNKNOWN: signals=45 winrate=51.1% avg_expectancy_yen_100_shares=+709 total_pnl_yen_100_shares=+31,887 lose_worst10_sum_yen_100_shares=-80,646
+- entry_vwap_distance_pct_bucket=1.5~2.0 × entry_time_bucket=UNKNOWN: signals=12 winrate=50.0% avg_expectancy_yen_100_shares=-4,609 total_pnl_yen_100_shares=-55,308 lose_worst10_sum_yen_100_shares=-65,121
+
+【STRONG_LOSER_ANALYSIS】
+
+[STRONG_LOSER_ANALYSIS / gap_pct]
+- bucket=-1~1: signals=12 total_pnl_yen_100_shares=-50,411 avg_expectancy_yen_100_shares=-4,201 lose_worst10_sum_yen_100_shares=-49,809
+- bucket=>=3: signals=11 total_pnl_yen_100_shares=-54,739 avg_expectancy_yen_100_shares=-4,976 lose_worst10_sum_yen_100_shares=-54,736
+- bucket=1~3: signals=9 total_pnl_yen_100_shares=-19,792 avg_expectancy_yen_100_shares=-2,199 lose_worst10_sum_yen_100_shares=-19,792
+- bucket=-3~-1: signals=1 total_pnl_yen_100_shares=-2,240 avg_expectancy_yen_100_shares=-2,240 lose_worst10_sum_yen_100_shares=-2,240
+
+[STRONG_LOSER_ANALYSIS / entry_vwap_distance_pct]
+- bucket=0.5~1.0: signals=19 total_pnl_yen_100_shares=-56,848 avg_expectancy_yen_100_shares=-2,992 lose_worst10_sum_yen_100_shares=-51,247
+- bucket=1.0~1.5: signals=14 total_pnl_yen_100_shares=-70,333 avg_expectancy_yen_100_shares=-5,024 lose_worst10_sum_yen_100_shares=-69,127
+
+[STRONG_LOSER_ANALYSIS / atr_pct]
+- bucket=<1: signals=28 total_pnl_yen_100_shares=-118,642 avg_expectancy_yen_100_shares=-4,237 lose_worst10_sum_yen_100_shares=-101,458
+- bucket=1~2: signals=3 total_pnl_yen_100_shares=-5,544 avg_expectancy_yen_100_shares=-1,848 lose_worst10_sum_yen_100_shares=-5,544
+- bucket=N/A: signals=1 total_pnl_yen_100_shares=-2,240 avg_expectancy_yen_100_shares=-2,240 lose_worst10_sum_yen_100_shares=-2,240
+- bucket=2~3: signals=1 total_pnl_yen_100_shares=-756 avg_expectancy_yen_100_shares=-756 lose_worst10_sum_yen_100_shares=-756
+
+[STRONG_LOSER_ANALYSIS / entry_time_bucket]
+- bucket=UNKNOWN: signals=33 total_pnl_yen_100_shares=-127,182 avg_expectancy_yen_100_shares=-3,854 lose_worst10_sum_yen_100_shares=-101,779
+
+[STRONG_LOSER_ANALYSIS / hold_minutes]
+- bucket=5~15: signals=19 total_pnl_yen_100_shares=-91,718 avg_expectancy_yen_100_shares=-4,827 lose_worst10_sum_yen_100_shares=-86,709
+- bucket=<=5: signals=7 total_pnl_yen_100_shares=-12,409 avg_expectancy_yen_100_shares=-1,773 lose_worst10_sum_yen_100_shares=-12,409
+- bucket=15~30: signals=4 total_pnl_yen_100_shares=-4,339 avg_expectancy_yen_100_shares=-1,085 lose_worst10_sum_yen_100_shares=-4,339
+- bucket=>120: signals=2 total_pnl_yen_100_shares=-18,314 avg_expectancy_yen_100_shares=-9,157 lose_worst10_sum_yen_100_shares=-18,314
+- bucket=30~60: signals=1 total_pnl_yen_100_shares=-402 avg_expectancy_yen_100_shares=-402 lose_worst10_sum_yen_100_shares=-402
+
+[STRONG_LOSER_ANALYSIS / high_update_count_before_entry]
+- bucket=2: signals=16 total_pnl_yen_100_shares=-76,388 avg_expectancy_yen_100_shares=-4,774 lose_worst10_sum_yen_100_shares=-74,770
+- bucket=3~5: signals=12 total_pnl_yen_100_shares=-41,008 avg_expectancy_yen_100_shares=-3,417 lose_worst10_sum_yen_100_shares=-40,708
+- bucket=>=6: signals=5 total_pnl_yen_100_shares=-9,785 avg_expectancy_yen_100_shares=-1,957 lose_worst10_sum_yen_100_shares=-9,785
+
+【SIGNAL_STATE_CROSS_ANALYSIS】
+
+[SIGNAL_STATE_CROSS_ANALYSIS / high_update_count_before_entry_x_market_regime]
+- high_update_count_before_entry_bucket=2 × market_regime=STRONG: signals=30 winrate=46.7% avg_expectancy_yen_100_shares=-841 total_pnl_yen_100_shares=-25,229 lose_worst10_sum_yen_100_shares=-74,770
+- high_update_count_before_entry_bucket=3~5 × market_regime=STRONG: signals=24 winrate=50.0% avg_expectancy_yen_100_shares=+2,586 total_pnl_yen_100_shares=+62,069 lose_worst10_sum_yen_100_shares=-40,708
+- high_update_count_before_entry_bucket=1 × market_regime=WEAK: signals=24 winrate=54.2% avg_expectancy_yen_100_shares=-4,387 total_pnl_yen_100_shares=-105,292 lose_worst10_sum_yen_100_shares=-124,592
+- high_update_count_before_entry_bucket=0 × market_regime=WEAK: signals=17 winrate=47.1% avg_expectancy_yen_100_shares=+850 total_pnl_yen_100_shares=+14,449 lose_worst10_sum_yen_100_shares=-10,232
+- high_update_count_before_entry_bucket=>=6 × market_regime=STRONG: signals=10 winrate=50.0% avg_expectancy_yen_100_shares=-594 total_pnl_yen_100_shares=-5,941 lose_worst10_sum_yen_100_shares=-5,941
+- high_update_count_before_entry_bucket=2 × market_regime=NORMAL: signals=4 winrate=50.0% avg_expectancy_yen_100_shares=+1,950 total_pnl_yen_100_shares=+7,800 lose_worst10_sum_yen_100_shares=+7,800
+- high_update_count_before_entry_bucket=3~5 × market_regime=NORMAL: signals=4 winrate=50.0% avg_expectancy_yen_100_shares=-831 total_pnl_yen_100_shares=-3,325 lose_worst10_sum_yen_100_shares=-3,325
+- high_update_count_before_entry_bucket=2 × market_regime=WEAK: signals=3 winrate=66.7% avg_expectancy_yen_100_shares=-96 total_pnl_yen_100_shares=-287 lose_worst10_sum_yen_100_shares=-287
+- high_update_count_before_entry_bucket=3~5 × market_regime=WEAK: signals=1 winrate=100.0% avg_expectancy_yen_100_shares=+1,669 total_pnl_yen_100_shares=+1,669 lose_worst10_sum_yen_100_shares=+1,669
+
+[SIGNAL_STATE_CROSS_ANALYSIS / high_update_count_before_entry_x_entry_vwap_distance_pct_bucket]
+- high_update_count_before_entry_bucket=2 × entry_vwap_distance_pct_bucket=1.0~1.5: signals=20 winrate=45.0% avg_expectancy_yen_100_shares=+445 total_pnl_yen_100_shares=+8,891 lose_worst10_sum_yen_100_shares=-59,836
+- high_update_count_before_entry_bucket=3~5 × entry_vwap_distance_pct_bucket=0.5~1.0: signals=19 winrate=52.6% avg_expectancy_yen_100_shares=+2,753 total_pnl_yen_100_shares=+52,299 lose_worst10_sum_yen_100_shares=-33,220
+- high_update_count_before_entry_bucket=2 × entry_vwap_distance_pct_bucket=0.5~1.0: signals=15 winrate=46.7% avg_expectancy_yen_100_shares=-1,808 total_pnl_yen_100_shares=-27,116 lose_worst10_sum_yen_100_shares=-34,218
+- high_update_count_before_entry_bucket=1 × entry_vwap_distance_pct_bucket=0.5~1.0: signals=12 winrate=58.3% avg_expectancy_yen_100_shares=-4,201 total_pnl_yen_100_shares=-50,410 lose_worst10_sum_yen_100_shares=-51,368
+- high_update_count_before_entry_bucket=3~5 × entry_vwap_distance_pct_bucket=1.0~1.5: signals=9 winrate=44.4% avg_expectancy_yen_100_shares=+882 total_pnl_yen_100_shares=+7,934 lose_worst10_sum_yen_100_shares=+7,934
+- high_update_count_before_entry_bucket=1 × entry_vwap_distance_pct_bucket=1.0~1.5: signals=7 winrate=71.4% avg_expectancy_yen_100_shares=+938 total_pnl_yen_100_shares=+6,563 lose_worst10_sum_yen_100_shares=+6,563
+- high_update_count_before_entry_bucket=0 × entry_vwap_distance_pct_bucket=1.0~1.5: signals=7 winrate=71.4% avg_expectancy_yen_100_shares=+1,802 total_pnl_yen_100_shares=+12,611 lose_worst10_sum_yen_100_shares=+12,611
+- high_update_count_before_entry_bucket=0 × entry_vwap_distance_pct_bucket=0.5~1.0: signals=7 winrate=28.6% avg_expectancy_yen_100_shares=-289 total_pnl_yen_100_shares=-2,025 lose_worst10_sum_yen_100_shares=-2,025
+- high_update_count_before_entry_bucket=>=6 × entry_vwap_distance_pct_bucket=0.5~1.0: signals=7 winrate=57.1% avg_expectancy_yen_100_shares=-488 total_pnl_yen_100_shares=-3,413 lose_worst10_sum_yen_100_shares=-3,413
+- high_update_count_before_entry_bucket=1 × entry_vwap_distance_pct_bucket=1.5~2.0: signals=5 winrate=20.0% avg_expectancy_yen_100_shares=-12,289 total_pnl_yen_100_shares=-61,446 lose_worst10_sum_yen_100_shares=-61,446
+- high_update_count_before_entry_bucket=0 × entry_vwap_distance_pct_bucket=1.5~2.0: signals=3 winrate=33.3% avg_expectancy_yen_100_shares=+1,288 total_pnl_yen_100_shares=+3,864 lose_worst10_sum_yen_100_shares=+3,864
+- high_update_count_before_entry_bucket=2 × entry_vwap_distance_pct_bucket=1.5~2.0: signals=2 winrate=100.0% avg_expectancy_yen_100_shares=+255 total_pnl_yen_100_shares=+509 lose_worst10_sum_yen_100_shares=+509
+- high_update_count_before_entry_bucket=>=6 × entry_vwap_distance_pct_bucket=1.0~1.5: signals=2 winrate=0.0% avg_expectancy_yen_100_shares=-2,056 total_pnl_yen_100_shares=-4,112 lose_worst10_sum_yen_100_shares=-4,112
+- high_update_count_before_entry_bucket=>=6 × entry_vwap_distance_pct_bucket=1.5~2.0: signals=1 winrate=100.0% avg_expectancy_yen_100_shares=+1,584 total_pnl_yen_100_shares=+1,584 lose_worst10_sum_yen_100_shares=+1,584
+- high_update_count_before_entry_bucket=3~5 × entry_vwap_distance_pct_bucket=1.5~2.0: signals=1 winrate=100.0% avg_expectancy_yen_100_shares=+180 total_pnl_yen_100_shares=+180 lose_worst10_sum_yen_100_shares=+180
+
+[SIGNAL_STATE_CROSS_ANALYSIS / hold_minutes_x_market_regime]
+- hold_minutes_bucket=5~15 × market_regime=STRONG: signals=28 winrate=32.1% avg_expectancy_yen_100_shares=-2,260 total_pnl_yen_100_shares=-63,270 lose_worst10_sum_yen_100_shares=-86,709
+- hold_minutes_bucket=15~30 × market_regime=STRONG: signals=23 winrate=82.6% avg_expectancy_yen_100_shares=+3,346 total_pnl_yen_100_shares=+76,964 lose_worst10_sum_yen_100_shares=-2,570
+- hold_minutes_bucket=5~15 × market_regime=WEAK: signals=22 winrate=54.5% avg_expectancy_yen_100_shares=-183 total_pnl_yen_100_shares=-4,032 lose_worst10_sum_yen_100_shares=-9,100
+- hold_minutes_bucket=15~30 × market_regime=WEAK: signals=11 winrate=63.6% avg_expectancy_yen_100_shares=+1,742 total_pnl_yen_100_shares=+19,162 lose_worst10_sum_yen_100_shares=+9,179
+- hold_minutes_bucket=<=5 × market_regime=STRONG: signals=7 winrate=0.0% avg_expectancy_yen_100_shares=-1,773 total_pnl_yen_100_shares=-12,409 lose_worst10_sum_yen_100_shares=-12,409
+- hold_minutes_bucket=<=5 × market_regime=WEAK: signals=6 winrate=0.0% avg_expectancy_yen_100_shares=-18,864 total_pnl_yen_100_shares=-113,185 lose_worst10_sum_yen_100_shares=-113,185
+- hold_minutes_bucket=5~15 × market_regime=NORMAL: signals=4 winrate=25.0% avg_expectancy_yen_100_shares=-4,862 total_pnl_yen_100_shares=-19,448 lose_worst10_sum_yen_100_shares=-19,448
+- hold_minutes_bucket=60~120 × market_regime=WEAK: signals=4 winrate=75.0% avg_expectancy_yen_100_shares=-74 total_pnl_yen_100_shares=-294 lose_worst10_sum_yen_100_shares=-294
+- hold_minutes_bucket=15~30 × market_regime=NORMAL: signals=3 winrate=100.0% avg_expectancy_yen_100_shares=+8,833 total_pnl_yen_100_shares=+26,498 lose_worst10_sum_yen_100_shares=+26,498
+- hold_minutes_bucket=30~60 × market_regime=STRONG: signals=3 winrate=66.7% avg_expectancy_yen_100_shares=+4,744 total_pnl_yen_100_shares=+14,233 lose_worst10_sum_yen_100_shares=+14,233
+- hold_minutes_bucket=30~60 × market_regime=WEAK: signals=2 winrate=100.0% avg_expectancy_yen_100_shares=+4,444 total_pnl_yen_100_shares=+8,888 lose_worst10_sum_yen_100_shares=+8,888
+- hold_minutes_bucket=>120 × market_regime=STRONG: signals=2 winrate=0.0% avg_expectancy_yen_100_shares=-9,157 total_pnl_yen_100_shares=-18,314 lose_worst10_sum_yen_100_shares=-18,314
+- hold_minutes_bucket=<=5 × market_regime=NORMAL: signals=1 winrate=0.0% avg_expectancy_yen_100_shares=-2,574 total_pnl_yen_100_shares=-2,574 lose_worst10_sum_yen_100_shares=-2,574
+- hold_minutes_bucket=60~120 × market_regime=STRONG: signals=1 winrate=100.0% avg_expectancy_yen_100_shares=+33,695 total_pnl_yen_100_shares=+33,695 lose_worst10_sum_yen_100_shares=+33,695
+
+[SIGNAL_STATE_CROSS_ANALYSIS / hold_minutes_x_entry_vwap_distance_pct_bucket]
+- hold_minutes_bucket=5~15 × entry_vwap_distance_pct_bucket=0.5~1.0: signals=25 winrate=44.0% avg_expectancy_yen_100_shares=-1,949 total_pnl_yen_100_shares=-48,726 lose_worst10_sum_yen_100_shares=-56,709
+- hold_minutes_bucket=5~15 × entry_vwap_distance_pct_bucket=1.0~1.5: signals=24 winrate=41.7% avg_expectancy_yen_100_shares=-1,456 total_pnl_yen_100_shares=-34,934 lose_worst10_sum_yen_100_shares=-61,273
+- hold_minutes_bucket=15~30 × entry_vwap_distance_pct_bucket=0.5~1.0: signals=20 winrate=75.0% avg_expectancy_yen_100_shares=+2,689 total_pnl_yen_100_shares=+53,777 lose_worst10_sum_yen_100_shares=-1,381
+- hold_minutes_bucket=15~30 × entry_vwap_distance_pct_bucket=1.0~1.5: signals=12 winrate=83.3% avg_expectancy_yen_100_shares=+5,695 total_pnl_yen_100_shares=+68,337 lose_worst10_sum_yen_100_shares=+21,340
+- hold_minutes_bucket=<=5 × entry_vwap_distance_pct_bucket=0.5~1.0: signals=9 winrate=0.0% avg_expectancy_yen_100_shares=-7,058 total_pnl_yen_100_shares=-63,519 lose_worst10_sum_yen_100_shares=-63,519
+- hold_minutes_bucket=5~15 × entry_vwap_distance_pct_bucket=1.5~2.0: signals=5 winrate=20.0% avg_expectancy_yen_100_shares=-618 total_pnl_yen_100_shares=-3,090 lose_worst10_sum_yen_100_shares=-3,090
+- hold_minutes_bucket=15~30 × entry_vwap_distance_pct_bucket=1.5~2.0: signals=5 winrate=80.0% avg_expectancy_yen_100_shares=+102 total_pnl_yen_100_shares=+510 lose_worst10_sum_yen_100_shares=+510
+- hold_minutes_bucket=<=5 × entry_vwap_distance_pct_bucket=1.0~1.5: signals=4 winrate=0.0% avg_expectancy_yen_100_shares=-1,848 total_pnl_yen_100_shares=-7,391 lose_worst10_sum_yen_100_shares=-7,391
+- hold_minutes_bucket=30~60 × entry_vwap_distance_pct_bucket=1.0~1.5: signals=3 winrate=100.0% avg_expectancy_yen_100_shares=+7,515 total_pnl_yen_100_shares=+22,544 lose_worst10_sum_yen_100_shares=+22,544
+- hold_minutes_bucket=60~120 × entry_vwap_distance_pct_bucket=0.5~1.0: signals=3 winrate=100.0% avg_expectancy_yen_100_shares=+11,685 total_pnl_yen_100_shares=+35,055 lose_worst10_sum_yen_100_shares=+35,055
+- hold_minutes_bucket=30~60 × entry_vwap_distance_pct_bucket=0.5~1.0: signals=2 winrate=50.0% avg_expectancy_yen_100_shares=+288 total_pnl_yen_100_shares=+577 lose_worst10_sum_yen_100_shares=+577
+- hold_minutes_bucket=60~120 × entry_vwap_distance_pct_bucket=1.5~2.0: signals=1 winrate=100.0% avg_expectancy_yen_100_shares=+4,530 total_pnl_yen_100_shares=+4,530 lose_worst10_sum_yen_100_shares=+4,530
+- hold_minutes_bucket=60~120 × entry_vwap_distance_pct_bucket=1.0~1.5: signals=1 winrate=0.0% avg_expectancy_yen_100_shares=-6,184 total_pnl_yen_100_shares=-6,184 lose_worst10_sum_yen_100_shares=-6,184
+- hold_minutes_bucket=>120 × entry_vwap_distance_pct_bucket=0.5~1.0: signals=1 winrate=0.0% avg_expectancy_yen_100_shares=-7,829 total_pnl_yen_100_shares=-7,829 lose_worst10_sum_yen_100_shares=-7,829
+- hold_minutes_bucket=<=5 × entry_vwap_distance_pct_bucket=1.5~2.0: signals=1 winrate=0.0% avg_expectancy_yen_100_shares=-57,258 total_pnl_yen_100_shares=-57,258 lose_worst10_sum_yen_100_shares=-57,258
+- hold_minutes_bucket=>120 × entry_vwap_distance_pct_bucket=1.0~1.5: signals=1 winrate=0.0% avg_expectancy_yen_100_shares=-10,485 total_pnl_yen_100_shares=-10,485 lose_worst10_sum_yen_100_shares=-10,485
+
+【COMBO_FILTER_ANALYSIS】
+
+- enabled: True
+- reason別 skipped_signals:
+  - STRONG_VWAP15_HU_LE2_SKIP: 15
+- reason別 virtual expectancy / prevented_loss_estimate:
+  - [STRONG_VWAP15_HU_LE2_SKIP] skipped=15 virtual_exp_if_skipped=-597円 prevented_loss_est=+6,568円
+
+[SIGNAL_FILTER_ANALYSIS]
+
+- skipped_signals_count(合算=SIGNAL_FILTER+COMPOSITE): 15
+- skip_reason_counts:
+  - STRONG_VWAP15_HU_LE2_SKIP: 15
+- virtual_skipped_signals_count(合算=simple+COMPOSITE): 0
+- virtual_total_pnl_yen_100_shares(合算): +0
+- virtual_prevented_loss_estimate_yen_100_shares(合算): -0
+
+[COMPOSITE_SIGNAL_FILTERS / market_regime==WEAK のみ]
+- composite_skipped_signals_count(合算): 0
+- composite_virtual_skipped_signals_count: 0
+- composite_virtual_total_pnl_yen_100_shares: +0
+- composite_prevented_loss_estimate_yen_100_shares: +0
+- composite_expectancy_if_skipped_yen_100_shares: +0
+
+[REGIME_CONTROL_ANALYSIS]
+
+- skipped_signals_count(run合算): 0
+- virtual_pnl_analysis.skipped_signals_count(run合算): 0
+- virtual_pnl_analysis.total_pnl_yen_100_shares(run合算): +0
+- virtual_if_skipped_avg_expectancy(run合算): 0円
+- virtual_prevented_loss_estimate(run合算): -0
+
+- eval_by_market_regime（実際に採用されたBASE信号・run値の単純合算）:
+  - STRONG: signals=64  expectancy=+483円  total_pnl=+30,899円  lose_worst10_sum=-123,691円
+  - NORMAL: signals=8  expectancy=+559円  total_pnl=+4,475円  lose_worst10_sum=-25,433円
+  - WEAK: signals=45  expectancy=-1,988円  total_pnl=-89,461円  lose_worst10_sum=-136,281円
+  - CRASH: signals=0  expectancy=+0円  total_pnl=+0円  lose_worst10_sum=+0円
+

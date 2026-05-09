@@ -1,0 +1,27 @@
+=== regime_filter sweep ===
+saved_at_jst: 2026-05-09 20:40:13
+sweep_stamp: 20260509_203802
+repeat_per_cell: 1
+replay_mode: fast
+replay_seed: 12345
+
+configs:
+  - C:\Users\yhach\Documents\tradebotfile\configs\regime_filter_sweep\replay_morning_vwap2_regime_baseline_off.json
+  - C:\Users\yhach\Documents\tradebotfile\configs\regime_filter_sweep\replay_morning_vwap2_regime_disable_morning_weak.json
+  - C:\Users\yhach\Documents\tradebotfile\configs\regime_filter_sweep\replay_morning_vwap2_regime_disable_rising_ratio_lt50.json
+  - C:\Users\yhach\Documents\tradebotfile\configs\regime_filter_sweep\replay_morning_vwap2_regime_disable_topix_weak.json
+  - C:\Users\yhach\Documents\tradebotfile\configs\regime_filter_sweep\replay_morning_vwap2_regime_disable_morning_weak__disable_rising_ratio_lt50.json
+
+ソート: avg_expectancy_yen_100_shares（降順）
+
+rank	config_name	replay_range	avg_expectancy_yen	total_pnl_100_shares	max_lose_run_yen	plus_runs	minus_runs	lose_worst10_sum_yen	passed_signals_count	skipped_signals_count	skip_ratio	max_intraday_drawdown	results_folder
+1	replay_morning_vwap2_regime_baseline_off	random_apr	+0.00	+0.00	+0.00	0	0	+0.00	0	0	0.000	+0.00	results/regime_filter_sweep_20260509_203802\base_random_apr/
+2	replay_morning_vwap2_regime_baseline_off	random_60d	+0.00	+0.00	+0.00	0	0	+0.00	0	0	0.000	+0.00	results/regime_filter_sweep_20260509_203802\base_random_60d/
+3	replay_morning_vwap2_regime_disable_morning_weak	random_apr	+0.00	+0.00	+0.00	0	0	+0.00	0	0	0.000	+0.00	results/regime_filter_sweep_20260509_203802\mw_random_apr/
+4	replay_morning_vwap2_regime_disable_morning_weak	random_60d	+0.00	+0.00	+0.00	0	0	+0.00	0	0	0.000	+0.00	results/regime_filter_sweep_20260509_203802\mw_random_60d/
+5	replay_morning_vwap2_regime_disable_rising_ratio_lt50	random_apr	+0.00	+0.00	+0.00	0	0	+0.00	0	0	0.000	+0.00	results/regime_filter_sweep_20260509_203802\rlt50_random_apr/
+6	replay_morning_vwap2_regime_disable_rising_ratio_lt50	random_60d	+0.00	+0.00	+0.00	0	0	+0.00	0	0	0.000	+0.00	results/regime_filter_sweep_20260509_203802\rlt50_random_60d/
+7	replay_morning_vwap2_regime_disable_topix_weak	random_apr	+0.00	+0.00	+0.00	0	0	+0.00	0	0	0.000	+0.00	results/regime_filter_sweep_20260509_203802\tw_random_apr/
+8	replay_morning_vwap2_regime_disable_topix_weak	random_60d	+0.00	+0.00	+0.00	0	0	+0.00	0	0	0.000	+0.00	results/regime_filter_sweep_20260509_203802\tw_random_60d/
+9	replay_morning_vwap2_regime_disable_morning_weak__disable_rising_ratio_lt50	random_apr	+0.00	+0.00	+0.00	0	0	+0.00	0	0	0.000	+0.00	results/regime_filter_sweep_20260509_203802\mw_rlt50_random_apr/
+10	replay_morning_vwap2_regime_disable_morning_weak__disable_rising_ratio_lt50	random_60d	+0.00	+0.00	+0.00	0	0	+0.00	0	0	0.000	+0.00	results/regime_filter_sweep_20260509_203802\mw_rlt50_random_60d/

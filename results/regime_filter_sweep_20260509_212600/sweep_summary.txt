@@ -1,0 +1,120 @@
+=== regime_filter sweep ===
+saved_at_jst: 2026-05-09 21:33:17
+sweep_stamp: 20260509_212600
+repeat_per_cell: 3
+replay_mode: fast
+replay_seed: 12345
+
+configs:
+  - C:\Users\yhach\Documents\tradebotfile\configs\regime_filter_sweep\replay_morning_vwap2_regime_baseline_off.json
+  - C:\Users\yhach\Documents\tradebotfile\configs\regime_filter_sweep\replay_morning_vwap2_regime_disable_morning_weak.json
+  - C:\Users\yhach\Documents\tradebotfile\configs\regime_filter_sweep\replay_morning_vwap2_regime_disable_rising_ratio_lt50.json
+  - C:\Users\yhach\Documents\tradebotfile\configs\regime_filter_sweep\replay_morning_vwap2_regime_disable_topix_weak.json
+  - C:\Users\yhach\Documents\tradebotfile\configs\regime_filter_sweep\replay_morning_vwap2_regime_disable_morning_weak__disable_rising_ratio_lt50.json
+
+ソート: avg_expectancy_yen_100_shares（降順）
+
+[SWEEP_COLLECT_DEBUG]
+
+cell_folder: regime_filter_sweep_20260509_212600\base_random_apr run_no=1 found_json_count=1 loaded_runs_count=1
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_apr\replay_summary_random_apr_20260509_212600_base_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\base_random_apr run_no=2 found_json_count=2 loaded_runs_count=2
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_apr\replay_summary_random_apr_20260509_212600_base_random_apr_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_apr\replay_summary_random_apr_20260509_212600_base_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\base_random_apr run_no=3 found_json_count=3 loaded_runs_count=3
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_apr\replay_summary_random_apr_20260509_212600_base_random_apr_run03.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_apr\replay_summary_random_apr_20260509_212600_base_random_apr_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_apr\replay_summary_random_apr_20260509_212600_base_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\base_random_60d run_no=1 found_json_count=1 loaded_runs_count=1
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_60d\replay_summary_random_60d_20260509_212600_base_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\base_random_60d run_no=2 found_json_count=2 loaded_runs_count=2
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_60d\replay_summary_random_60d_20260509_212600_base_random_60d_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_60d\replay_summary_random_60d_20260509_212600_base_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\base_random_60d run_no=3 found_json_count=3 loaded_runs_count=3
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_60d\replay_summary_random_60d_20260509_212600_base_random_60d_run03.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_60d\replay_summary_random_60d_20260509_212600_base_random_60d_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\base_random_60d\replay_summary_random_60d_20260509_212600_base_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_random_apr run_no=1 found_json_count=1 loaded_runs_count=1
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_apr\replay_summary_random_apr_20260509_212600_mw_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_random_apr run_no=2 found_json_count=2 loaded_runs_count=2
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_apr\replay_summary_random_apr_20260509_212600_mw_random_apr_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_apr\replay_summary_random_apr_20260509_212600_mw_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_random_apr run_no=3 found_json_count=3 loaded_runs_count=3
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_apr\replay_summary_random_apr_20260509_212600_mw_random_apr_run03.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_apr\replay_summary_random_apr_20260509_212600_mw_random_apr_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_apr\replay_summary_random_apr_20260509_212600_mw_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_random_60d run_no=1 found_json_count=1 loaded_runs_count=1
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_60d\replay_summary_random_60d_20260509_212600_mw_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_random_60d run_no=2 found_json_count=2 loaded_runs_count=2
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_60d\replay_summary_random_60d_20260509_212600_mw_random_60d_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_60d\replay_summary_random_60d_20260509_212600_mw_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_random_60d run_no=3 found_json_count=3 loaded_runs_count=3
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_60d\replay_summary_random_60d_20260509_212600_mw_random_60d_run03.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_60d\replay_summary_random_60d_20260509_212600_mw_random_60d_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_random_60d\replay_summary_random_60d_20260509_212600_mw_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\rlt50_random_apr run_no=1 found_json_count=1 loaded_runs_count=1
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_apr\replay_summary_random_apr_20260509_212600_rlt50_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\rlt50_random_apr run_no=2 found_json_count=2 loaded_runs_count=2
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_apr\replay_summary_random_apr_20260509_212600_rlt50_random_apr_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_apr\replay_summary_random_apr_20260509_212600_rlt50_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\rlt50_random_apr run_no=3 found_json_count=3 loaded_runs_count=3
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_apr\replay_summary_random_apr_20260509_212600_rlt50_random_apr_run03.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_apr\replay_summary_random_apr_20260509_212600_rlt50_random_apr_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_apr\replay_summary_random_apr_20260509_212600_rlt50_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\rlt50_random_60d run_no=1 found_json_count=1 loaded_runs_count=1
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_60d\replay_summary_random_60d_20260509_212600_rlt50_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\rlt50_random_60d run_no=2 found_json_count=2 loaded_runs_count=2
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_60d\replay_summary_random_60d_20260509_212600_rlt50_random_60d_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_60d\replay_summary_random_60d_20260509_212600_rlt50_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\rlt50_random_60d run_no=3 found_json_count=3 loaded_runs_count=3
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_60d\replay_summary_random_60d_20260509_212600_rlt50_random_60d_run03.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_60d\replay_summary_random_60d_20260509_212600_rlt50_random_60d_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\rlt50_random_60d\replay_summary_random_60d_20260509_212600_rlt50_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\tw_random_apr run_no=1 found_json_count=1 loaded_runs_count=1
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_apr\replay_summary_random_apr_20260509_212600_tw_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\tw_random_apr run_no=2 found_json_count=2 loaded_runs_count=2
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_apr\replay_summary_random_apr_20260509_212600_tw_random_apr_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_apr\replay_summary_random_apr_20260509_212600_tw_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\tw_random_apr run_no=3 found_json_count=3 loaded_runs_count=3
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_apr\replay_summary_random_apr_20260509_212600_tw_random_apr_run03.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_apr\replay_summary_random_apr_20260509_212600_tw_random_apr_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_apr\replay_summary_random_apr_20260509_212600_tw_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\tw_random_60d run_no=1 found_json_count=1 loaded_runs_count=1
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_60d\replay_summary_random_60d_20260509_212600_tw_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\tw_random_60d run_no=2 found_json_count=2 loaded_runs_count=2
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_60d\replay_summary_random_60d_20260509_212600_tw_random_60d_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_60d\replay_summary_random_60d_20260509_212600_tw_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\tw_random_60d run_no=3 found_json_count=3 loaded_runs_count=3
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_60d\replay_summary_random_60d_20260509_212600_tw_random_60d_run03.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_60d\replay_summary_random_60d_20260509_212600_tw_random_60d_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\tw_random_60d\replay_summary_random_60d_20260509_212600_tw_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_rlt50_random_apr run_no=1 found_json_count=1 loaded_runs_count=1
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_apr\replay_summary_random_apr_20260509_212600_mw_rlt50_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_rlt50_random_apr run_no=2 found_json_count=2 loaded_runs_count=2
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_apr\replay_summary_random_apr_20260509_212600_mw_rlt50_random_apr_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_apr\replay_summary_random_apr_20260509_212600_mw_rlt50_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_rlt50_random_apr run_no=3 found_json_count=3 loaded_runs_count=3
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_apr\replay_summary_random_apr_20260509_212600_mw_rlt50_random_apr_run03.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_apr\replay_summary_random_apr_20260509_212600_mw_rlt50_random_apr_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_apr\replay_summary_random_apr_20260509_212600_mw_rlt50_random_apr_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_rlt50_random_60d run_no=1 found_json_count=1 loaded_runs_count=1
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_60d\replay_summary_random_60d_20260509_212600_mw_rlt50_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_rlt50_random_60d run_no=2 found_json_count=2 loaded_runs_count=2
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_60d\replay_summary_random_60d_20260509_212600_mw_rlt50_random_60d_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_60d\replay_summary_random_60d_20260509_212600_mw_rlt50_random_60d_run01.json
+cell_folder: regime_filter_sweep_20260509_212600\mw_rlt50_random_60d run_no=3 found_json_count=3 loaded_runs_count=3
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_60d\replay_summary_random_60d_20260509_212600_mw_rlt50_random_60d_run03.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_60d\replay_summary_random_60d_20260509_212600_mw_rlt50_random_60d_run02.json
+  - C:\Users\yhach\Documents\tradebotfile\results\regime_filter_sweep_20260509_212600\mw_rlt50_random_60d\replay_summary_random_60d_20260509_212600_mw_rlt50_random_60d_run01.json
+
+rank	config_name	replay_range	avg_expectancy_yen	total_pnl_100_shares	max_lose_run_yen	plus_runs	minus_runs	lose_worst10_sum_yen	passed_signals_count	skipped_signals_count	skip_ratio	max_intraday_drawdown	results_folder
+1	replay_morning_vwap2_regime_disable_rising_ratio_lt50	random_60d	+3992.18	+406337.33	-3968.65	2	1	-68139.02	59	72	0.550	+6746.72	results/regime_filter_sweep_20260509_212600\rlt50_random_60d/
+2	replay_morning_vwap2_regime_disable_morning_weak__disable_rising_ratio_lt50	random_60d	+3992.18	+406337.33	-3968.65	2	1	-68139.02	59	73	0.553	+6746.72	results/regime_filter_sweep_20260509_212600\mw_rlt50_random_60d/
+3	replay_morning_vwap2_regime_disable_morning_weak	random_60d	+3834.37	+434646.85	+9706.27	3	0	-105052.83	98	25	0.203	+6746.72	results/regime_filter_sweep_20260509_212600\mw_random_60d/
+4	replay_morning_vwap2_regime_disable_topix_weak	random_60d	+3755.50	+416781.55	+2591.53	3	0	-73184.20	76	50	0.397	+6746.72	results/regime_filter_sweep_20260509_212600\tw_random_60d/
+5	replay_morning_vwap2_regime_baseline_off	random_60d	+3461.94	+440043.43	+5210.61	3	0	-123476.26	114	0	0.000	+9477.73	results/regime_filter_sweep_20260509_212600\base_random_60d/
+6	replay_morning_vwap2_regime_disable_rising_ratio_lt50	random_apr	+332.44	+27491.63	-54273.35	2	1	-131566.58	68	62	0.477	+48999.35	results/regime_filter_sweep_20260509_212600\rlt50_random_apr/
+7	replay_morning_vwap2_regime_disable_morning_weak__disable_rising_ratio_lt50	random_apr	+222.50	+26982.18	-54782.80	2	1	-131566.58	66	64	0.492	+48999.35	results/regime_filter_sweep_20260509_212600\mw_rlt50_random_apr/
+8	replay_morning_vwap2_regime_baseline_off	random_apr	+29.14	-12761.14	-46812.24	2	1	-220068.60	125	0	0.000	+48999.35	results/regime_filter_sweep_20260509_212600\base_random_apr/
+9	replay_morning_vwap2_regime_disable_topix_weak	random_apr	-218.11	-29058.79	-66365.85	2	1	-206468.25	96	30	0.238	+48999.35	results/regime_filter_sweep_20260509_212600\tw_random_apr/
+10	replay_morning_vwap2_regime_disable_morning_weak	random_apr	-518.70	-40372.07	-74964.84	2	1	-216230.73	103	24	0.189	+48999.35	results/regime_filter_sweep_20260509_212600\mw_random_apr/
