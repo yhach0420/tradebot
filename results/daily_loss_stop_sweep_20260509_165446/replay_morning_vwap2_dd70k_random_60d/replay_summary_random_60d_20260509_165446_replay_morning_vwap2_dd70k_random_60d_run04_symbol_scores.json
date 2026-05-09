@@ -1,0 +1,318 @@
+{
+  "entry_blacklist_rules": {
+    "expectancy_lt_yen_100_shares": -5000.0,
+    "signals_gte": 2
+  },
+  "priority_rules": {
+    "expectancy_gt_yen_100_shares": 5000.0,
+    "win_rate_gt_pct": 60.0
+  },
+  "blacklist_symbols": [
+    "6920.T"
+  ],
+  "priority_symbols": [],
+  "provisional_blacklist_candidates": [
+    "8058.T",
+    "6890.T",
+    "8473.T"
+  ],
+  "priority_emphasis_symbols": [
+    "9984.T"
+  ],
+  "quality_filter_rules": {
+    "mode": "expectancy_le_0",
+    "signals_gte": 2,
+    "expectancy_lte_yen_100_shares": 0.0,
+    "alt_mode": "win_rate_lt_50_and_expectancy_lt_0",
+    "win_rate_lt_pct": 50.0
+  },
+  "quality_blocked_symbols": [
+    "5016.T",
+    "6501.T",
+    "6920.T"
+  ],
+  "quality_allowed_symbols": [
+    "5803.T",
+    "6315.T",
+    "7011.T",
+    "7013.T",
+    "7974.T",
+    "8136.T",
+    "8306.T",
+    "9412.T"
+  ],
+  "quality_alt_blocked_symbols": [
+    "5016.T",
+    "6920.T"
+  ],
+  "quality_reason_by_symbol": {
+    "5016.T": "signals>=2 and expectancy<=0.0",
+    "6501.T": "signals>=2 and expectancy<=0.0",
+    "6920.T": "signals>=2 and expectancy<=0.0"
+  },
+  "scores_by_symbol": {
+    "8306.T": {
+      "symbol": "8306.T",
+      "signals": 1,
+      "win_rate_pct": 100.0,
+      "expectancy_yen_100_shares_per_signal": 1465.0438619238007,
+      "avg_pnl_yen_100_shares_per_signal": 1465.0438619238007,
+      "max_drawdown_pct_worst": 0.07471989642939565,
+      "max_drawdown_yen_100_shares_worst_est": 214.10986321843325,
+      "blacklisted": false,
+      "priority": false
+    },
+    "7013.T": {
+      "symbol": "7013.T",
+      "signals": 1,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -2240.4941427287636,
+      "avg_pnl_yen_100_shares_per_signal": -2240.4941427287636,
+      "max_drawdown_pct_worst": -0.6580012166604299,
+      "max_drawdown_yen_100_shares_worst_est": -2240.4941427287636,
+      "blacklisted": false,
+      "priority": false
+    },
+    "8136.T": {
+      "symbol": "8136.T",
+      "signals": 3,
+      "win_rate_pct": 66.66666666666666,
+      "expectancy_yen_100_shares_per_signal": 234.27194768819325,
+      "avg_pnl_yen_100_shares_per_signal": 234.27194768819325,
+      "max_drawdown_pct_worst": -0.33809776299045513,
+      "max_drawdown_yen_100_shares_worst_est": -330.62581068270595,
+      "blacklisted": false,
+      "priority": false
+    },
+    "5016.T": {
+      "symbol": "5016.T",
+      "signals": 2,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -2052.2017620692745,
+      "avg_pnl_yen_100_shares_per_signal": -2052.2017620692745,
+      "max_drawdown_pct_worst": -0.764692053258293,
+      "max_drawdown_yen_100_shares_worst_est": -3807.401733173041,
+      "blacklisted": false,
+      "priority": false
+    },
+    "7974.T": {
+      "symbol": "7974.T",
+      "signals": 1,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -4740.51033105803,
+      "avg_pnl_yen_100_shares_per_signal": -4740.51033105803,
+      "max_drawdown_pct_worst": -0.5648844531766003,
+      "max_drawdown_yen_100_shares_worst_est": -4740.51033105803,
+      "blacklisted": false,
+      "priority": false
+    },
+    "5803.T": {
+      "symbol": "5803.T",
+      "signals": 9,
+      "win_rate_pct": 77.77777777777779,
+      "expectancy_yen_100_shares_per_signal": 2151.213526571164,
+      "avg_pnl_yen_100_shares_per_signal": 2151.213526571164,
+      "max_drawdown_pct_worst": -0.5966598559191054,
+      "max_drawdown_yen_100_shares_worst_est": -3440.9373890854813,
+      "blacklisted": false,
+      "priority": false
+    },
+    "6501.T": {
+      "symbol": "6501.T",
+      "signals": 4,
+      "win_rate_pct": 50.0,
+      "expectancy_yen_100_shares_per_signal": -131.87594572602083,
+      "avg_pnl_yen_100_shares_per_signal": -131.87594572602083,
+      "max_drawdown_pct_worst": -0.34319371149644173,
+      "max_drawdown_yen_100_shares_worst_est": -1798.678241952851,
+      "blacklisted": false,
+      "priority": false
+    },
+    "9412.T": {
+      "symbol": "9412.T",
+      "signals": 4,
+      "win_rate_pct": 75.0,
+      "expectancy_yen_100_shares_per_signal": 673.8176538371177,
+      "avg_pnl_yen_100_shares_per_signal": 673.8176538371177,
+      "max_drawdown_pct_worst": -0.25502447862695693,
+      "max_drawdown_yen_100_shares_worst_est": -821.1788211788013,
+      "blacklisted": false,
+      "priority": false
+    },
+    "6920.T": {
+      "symbol": "6920.T",
+      "signals": 2,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -11388.14713446329,
+      "avg_pnl_yen_100_shares_per_signal": -11388.14713446329,
+      "max_drawdown_pct_worst": -0.3620477488835152,
+      "max_drawdown_yen_100_shares_worst_est": -15155.318768263947,
+      "blacklisted": true,
+      "priority": false
+    },
+    "7011.T": {
+      "symbol": "7011.T",
+      "signals": 4,
+      "win_rate_pct": 75.0,
+      "expectancy_yen_100_shares_per_signal": 2435.3693627524713,
+      "avg_pnl_yen_100_shares_per_signal": 2435.3693627524713,
+      "max_drawdown_pct_worst": -0.5449366077282717,
+      "max_drawdown_yen_100_shares_worst_est": -2536.6799089751044,
+      "blacklisted": false,
+      "priority": false
+    },
+    "6315.T": {
+      "symbol": "6315.T",
+      "signals": 2,
+      "win_rate_pct": 100.0,
+      "expectancy_yen_100_shares_per_signal": 3032.1140331056235,
+      "avg_pnl_yen_100_shares_per_signal": 3032.1140331056235,
+      "max_drawdown_pct_worst": 0.010853891119978462,
+      "max_drawdown_yen_100_shares_worst_est": 29.034158745942385,
+      "blacklisted": false,
+      "priority": false
+    }
+  },
+  "pnl_all_yen_100_shares": 5640.551526942455,
+  "pnl_after_excluding_blacklist_yen_100_shares": 28416.845795869034,
+  "improvement_yen_100_shares": 22776.29426892658,
+  "quality_filter_comparison": {
+    "symbols_blocked": 3,
+    "signals_off": 33,
+    "signals_on": 25,
+    "signal_decrease_rate_pct": 24.242424242424242,
+    "pnl_off_yen_100_shares": 5640.551526942455,
+    "pnl_on_yen_100_shares": 33048.753102911665,
+    "improvement_yen_100_shares": 27408.20157596921,
+    "expectancy_off_yen_100_shares_per_signal": 170.92580384674105,
+    "expectancy_on_yen_100_shares_per_signal": 1321.9501241164667,
+    "expectancy_delta_yen_100_shares_per_signal": 1151.0243202697256
+  },
+  "quality_ranking_top50": [
+    {
+      "symbol": "6315.T",
+      "signals": 2,
+      "win_rate_pct": 100.0,
+      "expectancy_yen_100_shares_per_signal": 3032.1140331056235,
+      "allowed": true
+    },
+    {
+      "symbol": "7011.T",
+      "signals": 4,
+      "win_rate_pct": 75.0,
+      "expectancy_yen_100_shares_per_signal": 2435.3693627524713,
+      "allowed": true
+    },
+    {
+      "symbol": "5803.T",
+      "signals": 9,
+      "win_rate_pct": 77.77777777777779,
+      "expectancy_yen_100_shares_per_signal": 2151.213526571164,
+      "allowed": true
+    },
+    {
+      "symbol": "9412.T",
+      "signals": 4,
+      "win_rate_pct": 75.0,
+      "expectancy_yen_100_shares_per_signal": 673.8176538371177,
+      "allowed": true
+    },
+    {
+      "symbol": "8136.T",
+      "signals": 3,
+      "win_rate_pct": 66.66666666666666,
+      "expectancy_yen_100_shares_per_signal": 234.27194768819325,
+      "allowed": true
+    },
+    {
+      "symbol": "6501.T",
+      "signals": 4,
+      "win_rate_pct": 50.0,
+      "expectancy_yen_100_shares_per_signal": -131.87594572602083,
+      "allowed": false
+    },
+    {
+      "symbol": "5016.T",
+      "signals": 2,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -2052.2017620692745,
+      "allowed": false
+    },
+    {
+      "symbol": "6920.T",
+      "signals": 2,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -11388.14713446329,
+      "allowed": false
+    },
+    {
+      "symbol": "8306.T",
+      "signals": 1,
+      "win_rate_pct": 100.0,
+      "expectancy_yen_100_shares_per_signal": 1465.0438619238007,
+      "allowed": true
+    },
+    {
+      "symbol": "7013.T",
+      "signals": 1,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -2240.4941427287636,
+      "allowed": true
+    },
+    {
+      "symbol": "7974.T",
+      "signals": 1,
+      "win_rate_pct": 0.0,
+      "expectancy_yen_100_shares_per_signal": -4740.51033105803,
+      "allowed": true
+    }
+  ],
+  "exclusion_scenarios": [
+    {
+      "exclude_symbols": [
+        "7003.T"
+      ],
+      "pnl_after_yen_100_shares": 5640.551526942455,
+      "improvement_yen_100_shares": 0.0
+    },
+    {
+      "exclude_symbols": [
+        "8058.T"
+      ],
+      "pnl_after_yen_100_shares": 5640.551526942455,
+      "improvement_yen_100_shares": 0.0
+    },
+    {
+      "exclude_symbols": [
+        "8473.T"
+      ],
+      "pnl_after_yen_100_shares": 5640.551526942455,
+      "improvement_yen_100_shares": 0.0
+    },
+    {
+      "exclude_symbols": [
+        "6890.T"
+      ],
+      "pnl_after_yen_100_shares": 5640.551526942455,
+      "improvement_yen_100_shares": 0.0
+    },
+    {
+      "exclude_symbols": [
+        "7003.T",
+        "8058.T"
+      ],
+      "pnl_after_yen_100_shares": 5640.551526942455,
+      "improvement_yen_100_shares": 0.0
+    },
+    {
+      "exclude_symbols": [
+        "7003.T",
+        "8058.T",
+        "8473.T",
+        "6890.T"
+      ],
+      "pnl_after_yen_100_shares": 5640.551526942455,
+      "improvement_yen_100_shares": 0.0
+    }
+  ]
+}

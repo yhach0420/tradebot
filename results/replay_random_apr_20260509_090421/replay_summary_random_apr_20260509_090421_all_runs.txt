@@ -1,0 +1,194 @@
+=== Replay 合算サマリー ===
+debug_file: replay_summary_random_apr_20260509_090421_all_runs_debug.txt
+
+【Replay設定】
+
+config_name: replay_morning_vwap2
+config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+
+replay_range: random_apr (cli)
+replay_repeat: 10 (cli)
+replay_mode:  (cli)
+
+early_exit: True
+strict_afternoon: True
+disable_afternoon_entry: True
+topix_weak_block: True
+replay_date_pool_start: 2026-04-01 (random_apr)
+replay_date_pool_end: 2026-04-30 (random_apr)
+replay_candidate_days_count: 22 (random_apr)
+RSI filter: enabled=False threshold=75.0 (config/config)
+VWAP distance filter: enabled=True threshold=2.0 (config/config)
+ATR filter: enabled=False threshold=4.0 (config/config)
+
+- saved_at_jst: 2026-05-09 09:07:21
+- repeat_label: random_apr
+- output_folder: results/replay_random_apr_20260509_090421/
+- 実行回数: 10
+【比較指標（run合算・月別/random_60d 比較用）】
+- 平均expectancy(円/信号・run平均): +3,655円
+- 合計100株損益: +1,867,049円
+- 最大負けrun: -12,578円
+- プラスrun数/マイナスrun数: 9/1
+- lose_worst10_sum合算(全run): -580,738円
+- 合計signal数: 475
+
+【その他サマリー】
+- 平均勝率: 51.3%
+- 平均100株損益: +186,705円
+- ADD ON時損益(合算,100株): +1,867,049円
+- ADD OFF時損益(参考/BASEのみ合算,100株): +1,867,049円
+- 最大勝ちrun: +426,465円
+
+【各runの概要】
+- run01: seed=None  signals=50  勝率=54.0%  100株損益=-12,578円
+  replay_dates: 2026-04-13, 2026-04-15, 2026-04-21, 2026-04-22, 2026-04-27
+  config_name: replay_morning_vwap2
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-94,090円
+- run02: seed=None  signals=29  勝率=37.9%  100株損益=+15,822円
+  replay_dates: 2026-04-10, 2026-04-17, 2026-04-22, 2026-04-23, 2026-04-30
+  config_name: replay_morning_vwap2
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-20,649円 (vs baseline +73,441円)
+- run03: seed=None  signals=50  勝率=52.0%  100株損益=+366,194円
+  replay_dates: 2026-04-10, 2026-04-13, 2026-04-14, 2026-04-24, 2026-04-30
+  config_name: replay_morning_vwap2
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-54,160円 (vs baseline +39,930円)
+- run04: seed=None  signals=57  勝率=54.4%  100株損益=+426,465円
+  replay_dates: 2026-04-10, 2026-04-13, 2026-04-14, 2026-04-22, 2026-04-27
+  config_name: replay_morning_vwap2
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-82,260円 (vs baseline +11,830円)
+- run05: seed=None  signals=42  勝率=47.6%  100株損益=+363,977円
+  replay_dates: 2026-04-10, 2026-04-14, 2026-04-16, 2026-04-17, 2026-04-30
+  config_name: replay_morning_vwap2
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-62,745円 (vs baseline +31,344円)
+- run06: seed=None  signals=43  勝率=46.5%  100株損益=+27,447円
+  replay_dates: 2026-04-10, 2026-04-17, 2026-04-22, 2026-04-24, 2026-04-27
+  config_name: replay_morning_vwap2
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-37,315円 (vs baseline +56,775円)
+- run07: seed=None  signals=60  勝率=60.0%  100株損益=+137,268円
+  replay_dates: 2026-04-22, 2026-04-23, 2026-04-24, 2026-04-27, 2026-04-28
+  config_name: replay_morning_vwap2
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-51,826円 (vs baseline +42,263円)
+- run08: seed=None  signals=46  勝率=45.7%  100株損益=+103,039円
+  replay_dates: 2026-04-16, 2026-04-22, 2026-04-24, 2026-04-28, 2026-04-30
+  config_name: replay_morning_vwap2
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-46,338円 (vs baseline +47,752円)
+- run09: seed=None  signals=59  勝率=50.8%  100株損益=+420,282円
+  replay_dates: 2026-04-10, 2026-04-14, 2026-04-22, 2026-04-27, 2026-04-30
+  config_name: replay_morning_vwap2
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-90,242円 (vs baseline +3,847円)
+- run10: seed=None  signals=39  勝率=64.1%  100株損益=+19,131円
+  replay_dates: 2026-04-13, 2026-04-16, 2026-04-24, 2026-04-27, 2026-04-28
+  config_name: replay_morning_vwap2
+  config_path: C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+  early_exit: True
+  strict_afternoon: True
+  disable_afternoon_entry: True
+  topix_weak_block: True
+  RSI filter: enabled=False threshold=75.0
+  VWAP distance filter: enabled=True threshold=2.0%
+  ATR filter: enabled=False threshold=4.0%
+  lose_worst10_sum=-41,112円 (vs baseline +52,978円)
+
+【最大損失run】
+- run01: -36,564円 6920.T 2026-04-15 09:16 JST exit_reason=VWAP_BREAK_EARLY
+
+【後場損益（12:30以降, mode別合算）】
+- AFTERNOON_DISABLED: signals=0  100株損益=+0円  expectancy=+0円
+
+【BASE/ADD別（合算）】
+- BASE: signals=475  100株損益=+1,867,049円  expectancy=+3,931円
+- ADD1: signals=0  100株損益=+0円  expectancy=+0円
+- ADD2: signals=0  100株損益=+0円  expectancy=+0円
+
+【地合いフィルタ】
+- BLOCK数合計: 10
+- BLOCK理由ランキング:
+  - rising<40%: 10
+  - TOPIX_CRASH: 10
+  - high_update_low: 2
+
+【銘柄別 期待値ランキング（合算）】
+- 6920.T: signals=53  expectancy=+19,780円  100株損益=+1,048,334円
+- 6857.T: signals=33  expectancy=+14,824円  100株損益=+489,203円
+- 6526.T: signals=7  expectancy=+5,855円  100株損益=+40,986円
+- 6890.T: signals=12  expectancy=+4,622円  100株損益=+55,463円
+- 9412.T: signals=24  expectancy=+1,548円  100株損益=+37,160円
+- 9984.T: signals=38  expectancy=+1,440円  100株損益=+54,734円
+- 6315.T: signals=54  expectancy=+1,427円  100株損益=+77,035円
+- 7012.T: signals=17  expectancy=+1,393円  100株損益=+23,688円
+- 7011.T: signals=29  expectancy=+1,123円  100株損益=+32,561円
+- 5016.T: signals=18  expectancy=+1,108円  100株損益=+19,945円
+

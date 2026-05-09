@@ -37,16 +37,109 @@ import math
 import logging
 import traceback
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+# 固定プールのランダムReplay（平日カレンダーを候補→probeで実データがある日だけ採用）
+FIXED_REPLAY_RANDOM_POOLS: dict[str, tuple[date, date]] = {
+    "random_60d": (date(2026, 2, 1), date(2026, 4, 30)),
+    "random_feb": (date(2026, 2, 1), date(2026, 2, 28)),
+    "random_mar": (date(2026, 3, 1), date(2026, 3, 31)),
+    # cache_only: Yahoo 1m の保持期間外でも「キャッシュがある日だけ」で検証できるようにする
+    "random_mar_cache_only": (date(2026, 3, 1), date(2026, 3, 31)),
+    "random_apr": (date(2026, 4, 1), date(2026, 4, 30)),
+}
+FIXED_RANDOM_REPLAY_LABELS: frozenset[str] = frozenset(FIXED_REPLAY_RANDOM_POOLS.keys())
+
+
+def _replay_fixed_random_pool_dates(replay_range: str) -> Optional[tuple[date, date]]:
+    return FIXED_REPLAY_RANDOM_POOLS.get(str(replay_range).strip())
+
+
+def _replay_fixed_random_weekday_candidate_count(replay_range: str) -> int:
+    p = _replay_fixed_random_pool_dates(replay_range)
+    if not p:
+        return 0
+    return len(_weekday_date_strings_between(p[0], p[1]))
+
+
+def _replay_fixed_random_meta_extra(replay_range: str) -> dict[str, Any]:
+    """random_60d / random_feb 等の meta replay_settings 用・report meta 用フィールド。"""
+    p = _replay_fixed_random_pool_dates(replay_range)
+    if not p:
+        return {}
+    return {
+        "replay_date_pool_start": p[0].strftime("%Y-%m-%d"),
+        "replay_date_pool_end": p[1].strftime("%Y-%m-%d"),
+        "replay_candidate_days_count": len(_weekday_date_strings_between(p[0], p[1])),
+    }
+
+
+def _weekday_date_strings_between(start_d: date, end_d: date) -> list[str]:
+    """start_d〜end_d の間の月〜金のカレンダー日を YYYY-MM-DD で列挙（祝日は含む・後段probeで除外）。"""
+    out: list[str] = []
+    d = start_d
+    while d <= end_d:
+        if d.weekday() < 5:
+            out.append(d.strftime("%Y-%m-%d"))
+        d = d + timedelta(days=1)
+    return out
+
+
+# Yahoo Finance chart interval=1m は実質「直近約30日」の intraday のみ返すことが多く、
+# それより古い period1/period2（unix）では HTTP 422 や chart.error になる。
+YAHOO_CHART_1M_INTRADAY_HISTORY_DAYS = 30
+
+
+def _yahoo_1m_available_calendar_bounds_jst(today_jst: date, *, history_days: int = YAHOO_CHART_1M_INTRADAY_HISTORY_DAYS) -> tuple[date, date]:
+    """1m が取得できるとみなす暦日の範囲 [earliest, latest]（JST・目安）。"""
+    hi = today_jst
+    lo = today_jst - timedelta(days=max(1, int(history_days)))
+    return (lo, hi)
+
+
+def _replay_morning_only_template() -> dict[str, Any]:
+    """replay_morning_only 系プリセットの共通ベース（朝のみ・早期Exit等）。"""
+    return {
+        "name": "replay_morning_only",
+        "early_exit": True,
+        "vwap_break_exit": True,
+        "recent_5m_low_break_exit": True,
+        "strict_afternoon": True,
+        "topix_weak_block": True,
+        "disable_afternoon_entry": True,
+        "entry_filters": {
+            "rsi": {"enabled": False, "exclude_above": 75.0},
+            "vwap_distance_pct": {"enabled": False, "exclude_above": 2.0},
+            "atr_pct": {"enabled": False, "exclude_above": 4.0},
+        },
+    }
+
 
 def _default_replay_configs_dicts() -> dict[str, dict[str, Any]]:
     """
     Replay比較用configの初期値（要件どおり）。
     キーはファイル名（configs/ 配下）。
     """
+    mo = _replay_morning_only_template()
+    vwap2_base = {
+        **dict(mo),
+        "name": "replay_morning_vwap2",
+        "entry_filters": {
+            "rsi": {"enabled": False, "exclude_above": 75.0},
+            "vwap_distance_pct": {"enabled": True, "exclude_above": 2.0},
+            "atr_pct": {"enabled": False, "exclude_above": 4.0},
+        },
+        # baseline: daily_loss_stop は OFF（比較基準）
+        "risk_controls": {
+            "daily_loss_stop": {
+                "enabled": False,
+                "stop_yen_100_shares": 50_000,
+            }
+        },
+    }
     return {
         "replay_default.json": {
             "name": "replay_default",
@@ -91,14 +184,76 @@ def _default_replay_configs_dicts() -> dict[str, dict[str, Any]]:
                 "rebreak_mult": 1.0010,
             },
         },
-        "replay_morning_only.json": {
-            "name": "replay_morning_only",
-            "early_exit": True,
-            "vwap_break_exit": True,
-            "recent_5m_low_break_exit": True,
-            "strict_afternoon": True,
-            "topix_weak_block": True,
-            "disable_afternoon_entry": True,
+        "replay_morning_only.json": dict(mo),
+        "replay_morning_rsi75.json": {
+            **dict(mo),
+            "name": "replay_morning_rsi75",
+            "entry_filters": {
+                "rsi": {"enabled": True, "exclude_above": 75.0},
+                "vwap_distance_pct": {"enabled": False, "exclude_above": 2.0},
+                "atr_pct": {"enabled": False, "exclude_above": 4.0},
+            },
+        },
+        "replay_morning_vwap2.json": dict(vwap2_base),
+        "replay_morning_vwap2_dd30k.json": {
+            **dict(vwap2_base),
+            "name": "replay_morning_vwap2_dd30k",
+            "risk_controls": {"daily_loss_stop": {"enabled": True, "stop_yen_100_shares": 30_000}},
+        },
+        "replay_morning_vwap2_dd50k.json": {
+            **dict(vwap2_base),
+            "name": "replay_morning_vwap2_dd50k",
+            "risk_controls": {"daily_loss_stop": {"enabled": True, "stop_yen_100_shares": 50_000}},
+        },
+        "replay_morning_vwap2_dd70k.json": {
+            **dict(vwap2_base),
+            "name": "replay_morning_vwap2_dd70k",
+            "risk_controls": {"daily_loss_stop": {"enabled": True, "stop_yen_100_shares": 70_000}},
+        },
+        "replay_morning_vwap15.json": {
+            **dict(mo),
+            "name": "replay_morning_vwap15",
+            "entry_filters": {
+                "rsi": {"enabled": False, "exclude_above": 75.0},
+                "vwap_distance_pct": {"enabled": True, "exclude_above": 1.5},
+                "atr_pct": {"enabled": False, "exclude_above": 4.0},
+            },
+        },
+        "replay_morning_vwap20.json": {
+            **dict(mo),
+            "name": "replay_morning_vwap20",
+            "entry_filters": {
+                "rsi": {"enabled": False, "exclude_above": 75.0},
+                "vwap_distance_pct": {"enabled": True, "exclude_above": 2.0},
+                "atr_pct": {"enabled": False, "exclude_above": 4.0},
+            },
+        },
+        "replay_morning_vwap25.json": {
+            **dict(mo),
+            "name": "replay_morning_vwap25",
+            "entry_filters": {
+                "rsi": {"enabled": False, "exclude_above": 75.0},
+                "vwap_distance_pct": {"enabled": True, "exclude_above": 2.5},
+                "atr_pct": {"enabled": False, "exclude_above": 4.0},
+            },
+        },
+        "replay_morning_vwap30.json": {
+            **dict(mo),
+            "name": "replay_morning_vwap30",
+            "entry_filters": {
+                "rsi": {"enabled": False, "exclude_above": 75.0},
+                "vwap_distance_pct": {"enabled": True, "exclude_above": 3.0},
+                "atr_pct": {"enabled": False, "exclude_above": 4.0},
+            },
+        },
+        "replay_morning_atr4.json": {
+            **dict(mo),
+            "name": "replay_morning_atr4",
+            "entry_filters": {
+                "rsi": {"enabled": False, "exclude_above": 75.0},
+                "vwap_distance_pct": {"enabled": False, "exclude_above": 2.0},
+                "atr_pct": {"enabled": True, "exclude_above": 4.0},
+            },
         },
     }
 
@@ -108,8 +263,8 @@ def _ensure_replay_configs_exist() -> str:
     要件:
     - configs/ フォルダを自動作成
     - 起動時に存在しない config は自動生成（replay実行時に呼ぶ）
-    - config未指定時のデフォルトは configs/replay_default.json
-    戻り値: デフォルトconfigの絶対パス（configs/replay_default.json）
+    - config未指定時のデフォルトは configs/replay_morning_vwap2.json（baseline候補）
+    戻り値: デフォルトconfigの絶対パス（configs/replay_morning_vwap2.json）
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     cfg_dir = os.path.join(script_dir, "configs")
@@ -124,7 +279,58 @@ def _ensure_replay_configs_exist() -> str:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"[{now_str()}] configの自動生成に失敗: {p} ({type(e).__name__}: {e})")
-    return os.path.join(cfg_dir, "replay_default.json")
+    return os.path.join(cfg_dir, "replay_morning_vwap2.json")
+
+
+def _resolve_replay_config_path(path: str) -> str:
+    """
+    configパスを実ファイルへ解決します。
+    - 相対パスは「カレントディレクトリ依存」を避けるため、スクリプト直下を基準にします。
+    """
+    p = str(path or "").strip()
+    if not p:
+        return ""
+    if os.path.isabs(p):
+        return p
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.normpath(os.path.join(script_dir, p))
+
+
+def _merge_preset_config_defaults(cfg: dict[str, Any], *, resolved_path: str) -> dict[str, Any]:
+    """
+    既知プリセット（replay_default.json 等）のデフォルトとマージします。
+    - ファイルが欠けているキーは preset で補完（古い/手編集で欠けたキーを救う）
+    - ユーザーJSONの明示キーは優先（上書き）
+    """
+    if not isinstance(cfg, dict):
+        cfg = {}
+    base = os.path.basename(str(resolved_path or "").replace("\\", "/"))
+    presets = _default_replay_configs_dicts()
+    tmpl = presets.get(base)
+    if not isinstance(tmpl, dict):
+        return dict(cfg)
+    merged: dict[str, Any] = dict(tmpl)
+    for k, v in cfg.items():
+        if k == "_path":
+            continue
+        if k == "afternoon_strict" and isinstance(v, dict) and isinstance(merged.get("afternoon_strict"), dict):
+            inner = dict(merged["afternoon_strict"])
+            inner.update(v)
+            merged["afternoon_strict"] = inner
+        elif k == "entry_filters" and isinstance(v, dict) and isinstance(merged.get("entry_filters"), dict):
+            inner_merged = dict(merged["entry_filters"])
+            for ek, ev in v.items():
+                if isinstance(ev, dict) and isinstance(inner_merged.get(ek), dict):
+                    sub = dict(inner_merged[ek])
+                    sub.update(ev)
+                    inner_merged[ek] = sub
+                else:
+                    inner_merged[ek] = ev
+            merged["entry_filters"] = inner_merged
+        else:
+            merged[k] = v
+    merged["_path"] = cfg.get("_path") or resolved_path
+    return merged
 
 
 def _load_replay_config(path: str) -> dict[str, Any]:
@@ -132,7 +338,7 @@ def _load_replay_config(path: str) -> dict[str, Any]:
     Replay戦略条件のconfig JSONを読み込みます。
     - 失敗したら {} を返す（CLIだけでも動くように）
     """
-    p = str(path or "").strip()
+    p = _resolve_replay_config_path(path)
     if not p:
         return {}
     try:
@@ -140,11 +346,22 @@ def _load_replay_config(path: str) -> dict[str, Any]:
             data = json.load(f)
         if isinstance(data, dict):
             data["_path"] = p
-            return data
+            merged = _merge_preset_config_defaults(data, resolved_path=p)
+            return merged
         return {}
     except Exception as e:
         # now_str はこの時点では未定義の可能性があるため、単純にprintする
         print(f"Replay configの読み込みに失敗: {p} ({type(e).__name__}: {e})")
+        base = os.path.basename(str(p).replace("\\", "/"))
+        presets = _default_replay_configs_dicts()
+        if base in presets:
+            print(
+                f"[WARNING] 埋め込みプリセットで代替します: {base} "
+                f"(ファイルを修正するか削除して自動生成してください)"
+            )
+            fb = dict(presets[base])
+            fb["_path"] = p
+            return fb
         return {}
 
 
@@ -168,6 +385,32 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
     vwap_dist_max = float(aft.get("vwap_dist_pct_max", AFTERNOON_ENTRY_STRICT_VWAP_DIST_PCT_MAX)) if isinstance(aft, dict) else float(AFTERNOON_ENTRY_STRICT_VWAP_DIST_PCT_MAX)
     rebreak_mult = float(aft.get("rebreak_mult", AFTERNOON_ENTRY_STRICT_REBREAK_MULT)) if isinstance(aft, dict) else float(AFTERNOON_ENTRY_STRICT_REBREAK_MULT)
 
+    ef = cfg.get("entry_filters") if isinstance(cfg.get("entry_filters"), dict) else {}
+
+    def _entry_filter_thr(key: str, default_exclude_above: float) -> tuple[bool, float]:
+        sub = ef.get(key)
+        if not isinstance(sub, dict):
+            return False, float(default_exclude_above)
+        en = bool(sub.get("enabled", False))
+        thr = float(sub.get("exclude_above", default_exclude_above))
+        return en, thr
+
+    rsi_en, rsi_thr = _entry_filter_thr("rsi", 75.0)
+    vwap_en, vwap_thr = _entry_filter_thr("vwap_distance_pct", 2.0)
+    atr_en, atr_thr = _entry_filter_thr("atr_pct", 4.0)
+
+    # risk controls（任意）
+    rc = cfg.get("risk_controls") if isinstance(cfg.get("risk_controls"), dict) else {}
+    dls = rc.get("daily_loss_stop") if isinstance(rc, dict) and isinstance(rc.get("daily_loss_stop"), dict) else {}
+    daily_loss_stop_enabled = bool(dls.get("enabled", False)) if isinstance(dls, dict) else False
+    daily_loss_stop_threshold = float(dls.get("stop_yen_100_shares", 50_000.0)) if isinstance(dls, dict) else 50_000.0
+
+    # regime filters（任意）
+    rf = cfg.get("regime_filters") if isinstance(cfg.get("regime_filters"), dict) else {}
+    disable_morning_weak = bool(rf.get("disable_morning_weak", False)) if isinstance(rf, dict) else False
+    disable_rising_ratio_lt50 = bool(rf.get("disable_rising_ratio_lt50", False)) if isinstance(rf, dict) else False
+    disable_topix_weak = bool(rf.get("disable_topix_weak", False)) if isinstance(rf, dict) else False
+
     return {
         "replay_config_path": str(cfg.get("_path") or ""),
         "replay_config_name": str(cfg.get("name") or ""),
@@ -180,6 +423,17 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
         "aft_volume_spike_ratio_min": float(volx_min),
         "aft_vwap_dist_pct_max": float(vwap_dist_max),
         "aft_rebreak_mult": float(rebreak_mult),
+        "entry_filter_rsi_enabled": bool(rsi_en),
+        "entry_filter_rsi_exclude_above": float(rsi_thr),
+        "entry_filter_vwap_distance_enabled": bool(vwap_en),
+        "entry_filter_vwap_distance_exclude_above": float(vwap_thr),
+        "entry_filter_atr_pct_enabled": bool(atr_en),
+        "entry_filter_atr_pct_exclude_above": float(atr_thr),
+        "daily_loss_stop_enabled": bool(daily_loss_stop_enabled),
+        "daily_loss_stop_threshold_yen_100_shares": float(daily_loss_stop_threshold),
+        "regime_filter_disable_morning_weak": bool(disable_morning_weak),
+        "regime_filter_disable_rising_ratio_lt50": bool(disable_rising_ratio_lt50),
+        "regime_filter_disable_topix_weak": bool(disable_topix_weak),
     }
 
 
@@ -212,6 +466,37 @@ def _signal_time_bucket_jst(dt: Optional[Any]) -> str:
     except Exception:
         return "UNKNOWN"
 
+
+def _time_bucket_jst_strict(dt: Optional[Any]) -> Optional[str]:
+    """
+    time bucket expectancy analysis 用（JST・指定バケットのみ）。
+    entry_datetime_jst = signal_time_utc(JST) を使う前提。
+    """
+    try:
+        if dt is None or not isinstance(dt, datetime):
+            return None
+        t = dt
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        jst = t.astimezone(JST)
+        hm = jst.hour * 60 + jst.minute
+        buckets = [
+            ("09:00-09:30", 9 * 60, 9 * 60 + 30),
+            ("09:30-10:00", 9 * 60 + 30, 10 * 60),
+            ("10:00-10:30", 10 * 60, 10 * 60 + 30),
+            ("10:30-11:00", 10 * 60 + 30, 11 * 60),
+            ("11:00-11:30", 11 * 60, 11 * 60 + 30),
+            ("12:30-13:00", 12 * 60 + 30, 13 * 60),
+            ("13:00-14:00", 13 * 60, 14 * 60),
+            ("14:00-15:00", 14 * 60, 15 * 60),
+        ]
+        for label, lo, hi in buckets:
+            if lo <= hm < hi:
+                return label
+        return None
+    except Exception:
+        return None
+
 # requests は標準ライブラリではありません。無い場合は分かりやすく案内します。
 try:
     import requests
@@ -232,6 +517,9 @@ YAHOO_QUOTE_URL = "https://query1.finance.yahoo.com/v7/finance/quote"
 # 例:
 # https://query1.finance.yahoo.com/v8/finance/chart/7203.T?interval=1m&range=1d
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+
+# Replay 用: Yahoo 1分足のローカルキャッシュ（CSV）。スクリプト直下 data/intraday_1m/<日付>/<銘柄>.csv
+INTRADAY_1M_CACHE_ROOT = os.path.join(os.path.dirname(__file__), "data", "intraday_1m")
 
 # ----------------------------
 # 過去データの仮想リプレイ（テスト用）
@@ -1402,12 +1690,24 @@ def fetch_history_1m_by_period(
     headers = _browser_headers(referer=referer)
 
     r = session.get(url, params=params, headers=headers, timeout=timeout_sec)
-    r.raise_for_status()
+    if not r.ok:
+        body_snip = (r.text or "")[:8000]
+        try:
+            body_snip = json.dumps(r.json(), ensure_ascii=False)[:8000]
+        except Exception:
+            pass
+        print(
+            f"[{now_str()}] Yahoo chart HTTP {r.status_code} interval=1m symbol={symbol} "
+            f"period1={params.get('period1')} period2={params.get('period2')} "
+            f"response_body={body_snip}"
+        )
+        r.raise_for_status()
     data = r.json()
 
     chart = (data.get("chart") or {})
     error = chart.get("error")
     if error:
+        print(f"[{now_str()}] Yahoo chart JSON error field interval=1m symbol={symbol} error={error!r}")
         raise RuntimeError(f"chart error: {error!r}")
 
     results = chart.get("result") or []
@@ -1452,6 +1752,508 @@ def fetch_history_1m_by_period(
             )
         )
     return bars, meta
+
+
+def _intraday_1m_cache_csv_path(symbol: str, day_jst: str) -> str:
+    """day_jst: JST の暦日 YYYY-MM-DD（ディレクトリ名・ラベル用）。"""
+    return os.path.join(INTRADAY_1M_CACHE_ROOT, day_jst, f"{symbol}.csv")
+
+
+def _parse_csv_timestamp_utc(s: str) -> datetime:
+    t = (s or "").strip()
+    if t.endswith("Z"):
+        t = t[:-1] + "+00:00"
+    dt = datetime.fromisoformat(t)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _load_intraday_1m_csv_cache(cache_path: str) -> list[ReplayBar]:
+    """キャッシュ CSV を読み込み、有効なバーが1本以上あれば返す。無ければ []。"""
+    if not os.path.isfile(cache_path):
+        return []
+    try:
+        bars: list[ReplayBar] = []
+        with open(cache_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames:
+                return []
+            for row in reader:
+                if not row:
+                    continue
+                ts_raw = (row.get("timestamp_utc") or "").strip()
+                if not ts_raw:
+                    continue
+                dt = _parse_csv_timestamp_utc(ts_raw)
+                o = float(row["open"])
+                h = float(row["high"])
+                l = float(row["low"])
+                c = float(row["close"])
+                v = float(row["volume"])
+                bars.append(
+                    ReplayBar(
+                        timestamp_utc=dt,
+                        open=o,
+                        high=h,
+                        low=l,
+                        close=c,
+                        volume=v,
+                    )
+                )
+        bars.sort(key=lambda b: b.timestamp_utc)
+        return bars
+    except Exception:
+        return []
+
+
+def _save_intraday_1m_csv_cache(cache_path: str, bars: list[ReplayBar]) -> None:
+    """Yahoo 取得成功時に 1日分の 1m 足を保存する。"""
+    if not bars:
+        return
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    tmp_path = cache_path + ".tmp"
+    try:
+        with open(tmp_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp_utc", "open", "high", "low", "close", "volume"])
+            for b in bars:
+                w.writerow(
+                    [
+                        b.timestamp_utc.astimezone(timezone.utc).isoformat(),
+                        b.open,
+                        b.high,
+                        b.low,
+                        b.close,
+                        b.volume,
+                    ]
+                )
+        os.replace(tmp_path, cache_path)
+    except Exception:
+        try:
+            if os.path.isfile(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+        raise
+
+
+def validate_intraday_1m_cache_coverage_for_replay_days(
+    symbols: list[str],
+    replay_days_jst: list[str],
+) -> dict[str, Any]:
+    """
+    Replay前に、replay_days_jst のキャッシュ存在を検証します。
+
+    定義:
+    - covered_day: 指定した symbols すべての CSV が存在し、かつバーが1本以上読める日
+    - missing_day: 1銘柄でも欠けている日
+    """
+    syms = [str(s).strip() for s in (symbols or []) if str(s).strip()]
+    days = [str(d).strip() for d in (replay_days_jst or []) if str(d).strip()]
+    total_days = len(days)
+    if not syms or not days:
+        return {
+            "total_days": int(total_days),
+            "covered_days": 0,
+            "coverage_ratio": 0.0,
+            "missing_days": [],
+            "missing_by_day": {},
+        }
+
+    missing_by_day: dict[str, list[str]] = {}
+    covered_days = 0
+    for d in days:
+        missing_syms: list[str] = []
+        for sym in syms:
+            p = _intraday_1m_cache_csv_path(sym, d)
+            bars = _load_intraday_1m_csv_cache(p)
+            if not bars:
+                missing_syms.append(sym)
+        if missing_syms:
+            missing_by_day[d] = missing_syms
+        else:
+            covered_days += 1
+
+    ratio = (float(covered_days) / float(total_days)) if total_days > 0 else 0.0
+    return {
+        "total_days": int(total_days),
+        "covered_days": int(covered_days),
+        "coverage_ratio": float(ratio),
+        "missing_days": sorted(list(missing_by_day.keys())),
+        "missing_by_day": {k: list(v) for k, v in sorted(missing_by_day.items(), key=lambda kv: kv[0])},
+    }
+
+
+def _effective_replay_days_count_from_bars(
+    bars_by_symbol: dict[str, list[ReplayBar]],
+    base_symbols: set[str],
+) -> int:
+    """各銘柄にバーが存在するJST暦日の共通集合サイズ（=全銘柄で実際に再生可能だった日数の目安）。"""
+    syms = [s for s in (base_symbols or set()) if s in bars_by_symbol]
+    if not syms:
+        return 0
+    day_sets: list[set[str]] = []
+    for sym in syms:
+        ds: set[str] = set()
+        for b in (bars_by_symbol.get(sym) or []):
+            try:
+                ds.add(_day_jst_str(b.timestamp_utc))
+            except Exception:
+                continue
+        day_sets.append(ds)
+    if not day_sets:
+        return 0
+    inter = set(day_sets[0])
+    for s in day_sets[1:]:
+        inter &= set(s)
+    return int(len(inter))
+
+
+def load_or_fetch_intraday_1m_for_replay_day(
+    session: requests.Session,
+    symbol: str,
+    day_jst: str,
+    counters: dict[str, int],
+    *,
+    timeout_sec: float = 20.0,
+) -> tuple[list[ReplayBar], dict]:
+    """
+    Replay 用 1日分 1m 足: ローカル CSV があれば読む / 無ければ Yahoo（窓外は取得しない）。
+    counters は cache_hit / cache_miss / yahoo_fetch / yahoo_1m_window_out を累積する。
+    """
+    cache_path = _intraday_1m_cache_csv_path(symbol, day_jst)
+    cached = _load_intraday_1m_csv_cache(cache_path)
+    if cached:
+        counters["cache_hit"] += 1
+        print(f"[{now_str()}] intraday_1m cache_hit symbol={symbol} day={day_jst} bars={len(cached)}")
+        return cached, {}
+
+    counters["cache_miss"] += 1
+    print(f"[{now_str()}] intraday_1m cache_miss symbol={symbol} day={day_jst}")
+
+    try:
+        y, m, dd = (int(x) for x in day_jst.split("-"))
+        day_date = date(y, m, dd)
+    except Exception:
+        return [], {}
+
+    today_jst = datetime.now(JST).date()
+    lo, hi = _yahoo_1m_available_calendar_bounds_jst(today_jst)
+    if day_date < lo or day_date > hi:
+        counters["yahoo_1m_window_out"] += 1
+        print(
+            f"[{now_str()}] intraday_1m yahoo_1m_window_out symbol={symbol} day={day_jst} "
+            f"(skip Yahoo: outside ~{YAHOO_CHART_1M_INTRADAY_HISTORY_DAYS}d intraday window)"
+        )
+        return [], {}
+
+    day0 = datetime(y, m, dd, 0, 0, 0, tzinfo=JST)
+    day1 = day0 + timedelta(days=1)
+    start_u = day0.astimezone(timezone.utc)
+    end_u = day1.astimezone(timezone.utc)
+
+    last_err: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            bs, meta = fetch_history_1m_by_period(
+                session,
+                symbol,
+                start_utc=start_u,
+                end_utc=end_u,
+                timeout_sec=timeout_sec,
+            )
+            counters["yahoo_fetch"] += 1
+            print(f"[{now_str()}] intraday_1m yahoo_fetch symbol={symbol} day={day_jst} bars={len(bs)}")
+            if bs:
+                try:
+                    _save_intraday_1m_csv_cache(cache_path, bs)
+                except Exception as se:
+                    print(f"[{now_str()}] intraday_1m cache_save_failed symbol={symbol} day={day_jst}: {se}")
+            return bs, meta
+        except requests.HTTPError as e:
+            sc = int(e.response.status_code) if e.response is not None else -1
+            if sc == 422:
+                counters["yahoo_1m_window_out"] += 1
+                print(
+                    f"[{now_str()}] intraday_1m yahoo_1m_window_out symbol={symbol} day={day_jst} "
+                    f"(HTTP {sc})"
+                )
+                return [], {}
+            last_err = e
+            time.sleep(1.0 * (attempt + 1))
+        except RuntimeError:
+            counters["yahoo_1m_window_out"] += 1
+            print(f"[{now_str()}] intraday_1m yahoo_1m_window_out symbol={symbol} day={day_jst} (chart error)")
+            return [], {}
+        except Exception as e:
+            if "NameResolutionError" in str(e) or "getaddrinfo failed" in str(e):
+                last_err = e
+                break
+            last_err = e
+            time.sleep(1.0 * (attempt + 1))
+
+    if last_err is not None:
+        raise last_err
+    return [], {}
+
+
+def summarize_intraday_1m_cache_coverage(cache_root: str = INTRADAY_1M_CACHE_ROOT) -> dict[str, Any]:
+    """
+    data/intraday_1m の CSV を走査し、coverage（全日付・銘柄日・月別）を集計します。
+    """
+    out: dict[str, Any] = {
+        "cache_root": cache_root,
+        "exists": os.path.isdir(cache_root),
+        "unique_calendar_days": 0,
+        "total_csv_files": 0,
+        "symbols_distinct": 0,
+        "date_min": "",
+        "date_max": "",
+        "by_month": {},
+    }
+    if not out["exists"]:
+        return out
+
+    date_dirs: list[str] = []
+    for name in os.listdir(cache_root):
+        p = os.path.join(cache_root, name)
+        if not os.path.isdir(p):
+            continue
+        try:
+            datetime.strptime(name, "%Y-%m-%d")
+        except ValueError:
+            continue
+        date_dirs.append(name)
+
+    date_dirs.sort()
+    out["unique_calendar_days"] = len(date_dirs)
+    if date_dirs:
+        out["date_min"] = date_dirs[0]
+        out["date_max"] = date_dirs[-1]
+
+    sym_union: set[str] = set()
+    total_files = 0
+    by_month: dict[str, dict[str, Any]] = {}
+
+    for d in date_dirs:
+        dir_path = os.path.join(cache_root, d)
+        ym = d[:7]
+        month_bucket = by_month.setdefault(
+            ym,
+            {"calendar_days_with_any_csv": 0, "symbol_day_files": 0},
+        )
+        day_files = 0
+        try:
+            for fn in os.listdir(dir_path):
+                if not fn.endswith(".csv"):
+                    continue
+                fp = os.path.join(dir_path, fn)
+                if not os.path.isfile(fp):
+                    continue
+                sym = fn[:-4]
+                sym_union.add(sym)
+                total_files += 1
+                day_files += 1
+        except Exception:
+            continue
+        if day_files > 0:
+            month_bucket["calendar_days_with_any_csv"] += 1
+            month_bucket["symbol_day_files"] += day_files
+
+    out["total_csv_files"] = total_files
+    out["symbols_distinct"] = len(sym_union)
+    out["by_month"] = {
+        ym: {
+            "calendar_days_with_any_csv": int(v.get("calendar_days_with_any_csv", 0)),
+            "symbol_day_files": int(v.get("symbol_day_files", 0)),
+        }
+        for ym, v in sorted(by_month.items(), key=lambda kv: kv[0])
+    }
+    return out
+
+
+def print_intraday_1m_cache_coverage_report(stats: dict[str, Any]) -> None:
+    """summarize_intraday_1m_cache_coverage の結果をターミナルへ整形出力する。"""
+    print("=== intraday_1m cache coverage ===")
+    root = str(stats.get("cache_root") or "")
+    print(f"- cache_root: {root}")
+    if not stats.get("exists"):
+        print("- (キャッシュディレクトリなし)")
+        print("")
+        return
+    print(f"- unique_calendar_days: {int(stats.get('unique_calendar_days') or 0)}")
+    print(f"- total_csv_files (symbol-days): {int(stats.get('total_csv_files') or 0)}")
+    print(f"- symbols_distinct: {int(stats.get('symbols_distinct') or 0)}")
+    dm = str(stats.get("date_min") or "")
+    dx = str(stats.get("date_max") or "")
+    if dm and dx:
+        print(f"- date_range: {dm} .. {dx}")
+    print("- by_month:")
+    bm = stats.get("by_month") or {}
+    if isinstance(bm, dict):
+        for ym in sorted(bm.keys()):
+            row = bm.get(ym) or {}
+            if not isinstance(row, dict):
+                continue
+            print(
+                f"  - {ym}: calendar_days_with_any_csv={int(row.get('calendar_days_with_any_csv') or 0)}, "
+                f"symbol_day_files={int(row.get('symbol_day_files') or 0)}"
+            )
+    print("")
+
+
+def _resolve_watch_symbols_for_eod(fixed_watch: Optional[list[str]]) -> list[str]:
+    """監視ループと同優先度で銘柄リストを解決（--watch-file / --watch → watchlist.json → symbols.csv → WATCH）。"""
+    if fixed_watch is not None:
+        out = [str(s).strip() for s in fixed_watch if str(s).strip()]
+        return list(dict.fromkeys(out))
+    if os.path.exists(WATCHLIST_JSON_PATH):
+        w, err = _load_watchlist_json(WATCHLIST_JSON_PATH)
+        if err:
+            print(f"[{now_str()}] watchlist.json 読み込みエラー: {err}")
+            return []
+        out = [str(x).strip() for x in w if str(x).strip()]
+        return list(dict.fromkeys(out))
+    loaded = _load_symbols_csv(SYMBOLS_CSV_PATH)
+    base = loaded if loaded else list(WATCH)
+    out = [str(x).strip() for x in base if str(x).strip()]
+    return list(dict.fromkeys(out))
+
+
+def run_intraday_1m_eod_save_cli(
+    symbols: list[str],
+    *,
+    day_jst: str,
+    force_before_close: bool,
+    timeout_sec: float = 25.0,
+    delay_sec: float = 0.15,
+) -> int:
+    """
+    引け後に当日（または指定日）の 1分足を Yahoo から取得し CSV キャッシュへ保存します。
+    ログ語: cache_saved / cache_skip_exists / yahoo_fetch_failed
+    """
+    syms = list(dict.fromkeys([s for s in symbols if str(s).strip()]))
+    if not syms:
+        print(f"[{now_str()}] intraday_1m_eod: 監視銘柄が空です。")
+        return 2
+
+    now_jst = datetime.now(JST)
+    today_jst = now_jst.strftime("%Y-%m-%d")
+    if not day_jst.strip():
+        day_jst = today_jst
+    else:
+        day_jst = day_jst.strip()
+        try:
+            datetime.strptime(day_jst, "%Y-%m-%d")
+        except ValueError:
+            print(f"[{now_str()}] intraday_1m_eod: 日付が不正です（YYYY-MM-DD）: {day_jst}")
+            return 2
+
+    if day_jst == today_jst and not force_before_close:
+        if now_jst.hour < 15 or (now_jst.hour == 15 and now_jst.minute < 30):
+            print(
+                f"[{now_str()}] intraday_1m_eod: JST 15:30 未満のため中止します "
+                f"(当日分は引け後に実行してください。テスト時は --force-intraday-1m-eod-time)"
+            )
+            return 2
+
+    try:
+        y, m, dd = (int(x) for x in day_jst.split("-"))
+        day0 = datetime(y, m, dd, 0, 0, 0, tzinfo=JST)
+    except Exception:
+        print(f"[{now_str()}] intraday_1m_eod: 日付の解釈に失敗しました: {day_jst}")
+        return 2
+    day1 = day0 + timedelta(days=1)
+    start_u = day0.astimezone(timezone.utc)
+    end_u = day1.astimezone(timezone.utc)
+
+    cnt = {"cache_saved": 0, "cache_skip_exists": 0, "yahoo_fetch_failed": 0}
+
+    print(f"[{now_str()}] intraday_1m_eod: start day_jst={day_jst} symbols={len(syms)} delay_sec={delay_sec}")
+    print("")
+
+    with requests.Session() as session:
+        for i, sym in enumerate(syms):
+            cache_path = _intraday_1m_cache_csv_path(sym, day_jst)
+            existing = _load_intraday_1m_csv_cache(cache_path)
+            if existing:
+                cnt["cache_skip_exists"] += 1
+                print(f"[{now_str()}] intraday_1m_eod cache_skip_exists symbol={sym} day={day_jst} bars={len(existing)}")
+                if i + 1 < len(syms) and delay_sec > 0:
+                    time.sleep(delay_sec)
+                continue
+
+            last_err: Optional[Exception] = None
+            bs: list[ReplayBar] = []
+            meta: dict = {}
+            for attempt in range(3):
+                try:
+                    bs, meta = fetch_history_1m_by_period(
+                        session,
+                        sym,
+                        start_utc=start_u,
+                        end_utc=end_u,
+                        timeout_sec=timeout_sec,
+                    )
+                    last_err = None
+                    break
+                except requests.HTTPError as e:
+                    last_err = e
+                    sc = int(e.response.status_code) if e.response is not None else -1
+                    if sc != 422:
+                        time.sleep(1.0 * (attempt + 1))
+                    else:
+                        break
+                except RuntimeError as e:
+                    last_err = e
+                    break
+                except Exception as e:
+                    last_err = e
+                    if "NameResolutionError" in str(e) or "getaddrinfo failed" in str(e):
+                        break
+                    time.sleep(1.0 * (attempt + 1))
+
+            if last_err is not None:
+                cnt["yahoo_fetch_failed"] += 1
+                print(
+                    f"[{now_str()}] intraday_1m_eod yahoo_fetch_failed symbol={sym} day={day_jst} error={last_err!r}"
+                )
+            elif not bs:
+                cnt["yahoo_fetch_failed"] += 1
+                print(
+                    f"[{now_str()}] intraday_1m_eod yahoo_fetch_failed symbol={sym} day={day_jst} "
+                    f"error=(empty chart / holiday / no session)"
+                )
+            else:
+                try:
+                    _save_intraday_1m_csv_cache(cache_path, bs)
+                    cnt["cache_saved"] += 1
+                    print(
+                        f"[{now_str()}] intraday_1m_eod cache_saved symbol={sym} day={day_jst} bars={len(bs)}"
+                    )
+                except Exception as se:
+                    cnt["yahoo_fetch_failed"] += 1
+                    print(
+                        f"[{now_str()}] intraday_1m_eod yahoo_fetch_failed symbol={sym} day={day_jst} error={se!r}"
+                    )
+
+            if i + 1 < len(syms) and delay_sec > 0:
+                time.sleep(delay_sec)
+
+    print("")
+    print("=== intraday_1m_eod summary ===")
+    print(f"- cache_saved: {cnt['cache_saved']}")
+    print(f"- cache_skip_exists: {cnt['cache_skip_exists']}")
+    print(f"- yahoo_fetch_failed: {cnt['yahoo_fetch_failed']}")
+    print("")
+
+    cov = summarize_intraday_1m_cache_coverage()
+    print_intraday_1m_cache_coverage_report(cov)
+    days_cached = int(cov.get("unique_calendar_days") or 0)
+    print(f"=== キャッシュ済みカレンダー日数（全日・全銘柄合算）: {days_cached} 日分 ===")
+    print("")
+    return 1 if cnt["yahoo_fetch_failed"] > 0 else 0
 
 
 def fetch_intraday_1m_series(
@@ -1631,10 +2433,25 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--replay-range",
         type=str,
         default="1d",
-        choices=["1d", "5d", "10d", "20d", "60d", "random_5d"],
+        choices=[
+            "1d",
+            "5d",
+            "10d",
+            "20d",
+            "60d",
+            "random_5d",
+            "random_60d",
+            "random_feb",
+            "random_mar",
+            "random_mar_cache_only",
+            "random_apr",
+        ],
         help=(
             "リプレイで取得する期間。1d/5d/10d/20d/60d。"
-            " random_5d を指定すると『過去3か月からランダムに5営業日抽出』になります。"
+            " random_5d は『直近の過去3か月ウィンドウからランダムに5営業日抽出』。"
+            " random_60d は『2026-02-01〜2026-04-30 の平日候補からランダムに5営業日抽出』。"
+            " random_feb/mar/apr は各月の全日付ウィンドウの平日候補から同様に抽出。"
+            " random_mar_cache_only は『random_mar と同じ日付プールだが、キャッシュがある日だけから抽出（Yahoo取得しない）』。"
             " デフォルト 1d"
         ),
     )
@@ -1756,6 +2573,63 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--only-changes",
         action="store_true",
         help="候補リストが変わった時だけ表示します（出力を減らしたい場合）。",
+    )
+    p.add_argument(
+        "--save-intraday-1m-eod",
+        action="store_true",
+        help=(
+            "引け後（JST 15:30 以降）向け: 監視銘柄の当日 1分足を Yahoo から取得し "
+            "data/intraday_1m/YYYY-MM-DD/<銘柄>.csv に保存（既存ならスキップ）。"
+        ),
+    )
+    p.add_argument(
+        "--intraday-1m-eod-date",
+        type=str,
+        default="",
+        help="上書きする対象日（YYYY-MM-DD）。未指定は当日（JST）。過去日の再取得時は時間制約なし。",
+    )
+    p.add_argument(
+        "--force-intraday-1m-eod-time",
+        action="store_true",
+        help="当日分を保存する際、JST 15:30 前でも実行する（検証用）。",
+    )
+    p.add_argument(
+        "--intraday-1m-eod-delay-sec",
+        type=float,
+        default=0.15,
+        help="銘柄間の待機秒（レート緩和）。デフォルト 0.15",
+    )
+    p.add_argument(
+        "--intraday-1m-cache-report-only",
+        action="store_true",
+        help="1分足キャッシュの coverage 集計だけ表示し、Yahoo 取得は行いません。",
+    )
+    p.add_argument(
+        "--vwap-distance-sweep",
+        action="store_true",
+        help=(
+            "VWAP distance フィルタ閾値 1.5/2.0/2.5/3.0 で replay random_apr×10 と random_60d×10 を順に実行し、"
+            " expectancy（平均）順の比較表を results/vwap_sweep_summary_<時刻>.txt に保存します（config は自動生成）。"
+        ),
+    )
+    p.add_argument(
+        "--daily-loss-stop-sweep",
+        action="store_true",
+        help=(
+            "daily_loss_stop のON/OFF・閾値(dd30k/dd50k/dd70k)を sweep します。"
+            " 対象config: replay_morning_vwap2.json(OFF), replay_morning_vwap2_dd30k/dd50k/dd70k。"
+            " 各configについて random_apr×10 と random_60d×10 を実行し、"
+            " results/daily_loss_stop_sweep_<時刻>/sweep_summary.txt に保存します。"
+        ),
+    )
+    p.add_argument(
+        "--regime-filter-sweep",
+        action="store_true",
+        help=(
+            "market regime filter（disable_morning_weak / disable_rising_ratio_lt50 / disable_topix_weak）の組み合わせを sweep します。"
+            " random_apr×10 と random_60d×10 を実行し、results/regime_filter_sweep_<時刻>/sweep_summary.txt に保存します。"
+            " configs/regime_filter_sweep/ に比較用configを自動生成します。"
+        ),
     )
     return p.parse_args(argv)
 
@@ -2654,6 +3528,17 @@ def run_replay(
     aft_volume_spike_ratio_min: float = AFTERNOON_ENTRY_STRICT_VOLUME_SPIKE_RATIO_MIN,
     aft_vwap_dist_pct_max: float = AFTERNOON_ENTRY_STRICT_VWAP_DIST_PCT_MAX,
     aft_rebreak_mult: float = AFTERNOON_ENTRY_STRICT_REBREAK_MULT,
+    entry_filter_rsi_enabled: bool = False,
+    entry_filter_rsi_exclude_above: float = 75.0,
+    entry_filter_vwap_distance_enabled: bool = False,
+    entry_filter_vwap_distance_exclude_above: float = 2.0,
+    entry_filter_atr_pct_enabled: bool = False,
+    entry_filter_atr_pct_exclude_above: float = 4.0,
+    daily_loss_stop_enabled: bool = False,
+    daily_loss_stop_threshold_yen_100_shares: float = 50_000.0,
+    regime_filter_disable_morning_weak: bool = False,
+    regime_filter_disable_rising_ratio_lt50: bool = False,
+    regime_filter_disable_topix_weak: bool = False,
     replay_settings: Optional[dict[str, Any]] = None,
 ) -> int:
     """
@@ -2668,8 +3553,23 @@ def run_replay(
     - 条件一致通知 / 条件外れ通知 / 候補価格変更通知 を Discord に送る
     """
     # replay_range は parse_args の choices で制限されますが、保険でここでもチェックします。
-    if replay_range not in ("1d", "5d", "10d", "20d", "60d", "random_5d"):
-        print("--replay-range は 1d/5d/10d/20d/60d を指定してください。")
+    if replay_range not in (
+        "1d",
+        "5d",
+        "10d",
+        "20d",
+        "60d",
+        "random_5d",
+        "random_60d",
+        "random_feb",
+        "random_mar",
+        "random_mar_cache_only",
+        "random_apr",
+    ):
+        print(
+            "--replay-range は 1d/5d/10d/20d/60d と "
+            "random_5d / random_60d / random_feb / random_mar / random_apr を指定してください。"
+        )
         return 2
 
     # repeatロットの識別子（重要: run_replay 全体で必ず定義しておく）
@@ -2688,7 +3588,45 @@ def run_replay(
             "replay_range": str(replay_range),
             "replay_repeat": int(replay_repeat_total or 0),
             "replay_mode": str(replay_mode),
+            "entry_filters": {
+                "rsi": {
+                    "enabled": {"value": bool(entry_filter_rsi_enabled), "source": "default"},
+                    "exclude_above": {"value": float(entry_filter_rsi_exclude_above), "source": "default"},
+                },
+                "vwap_distance_pct": {
+                    "enabled": {"value": bool(entry_filter_vwap_distance_enabled), "source": "default"},
+                    "exclude_above": {"value": float(entry_filter_vwap_distance_exclude_above), "source": "default"},
+                },
+                "atr_pct": {
+                    "enabled": {"value": bool(entry_filter_atr_pct_enabled), "source": "default"},
+                    "exclude_above": {"value": float(entry_filter_atr_pct_exclude_above), "source": "default"},
+                },
+            },
+            "risk_controls": {
+                "daily_loss_stop": {
+                    "enabled": {"value": bool(daily_loss_stop_enabled), "source": "default"},
+                    "stop_yen_100_shares": {"value": float(daily_loss_stop_threshold_yen_100_shares), "source": "default"},
+                }
+            },
         }
+    _rr_fixed = str(replay_range).strip()
+    if _replay_fixed_random_pool_dates(_rr_fixed) and isinstance(replay_settings, dict):
+        _meta_x = _replay_fixed_random_meta_extra(_rr_fixed)
+        replay_settings.setdefault(
+            "replay_date_pool_start",
+            {"value": str(_meta_x.get("replay_date_pool_start") or ""), "source": _rr_fixed},
+        )
+        replay_settings.setdefault(
+            "replay_date_pool_end",
+            {"value": str(_meta_x.get("replay_date_pool_end") or ""), "source": _rr_fixed},
+        )
+        replay_settings.setdefault(
+            "replay_candidate_days_count",
+            {
+                "value": int(_replay_fixed_random_weekday_candidate_count(_rr_fixed)),
+                "source": _rr_fixed,
+            },
+        )
 
     def _settings_lines(st: dict[str, Any]) -> list[str]:
         def _get_flag(k: str) -> tuple[str, str]:
@@ -2706,6 +3644,13 @@ def run_replay(
         out.append(f"replay_range: {str(st.get('replay_range') or '')} (cli)")
         out.append(f"replay_repeat: {int(st.get('replay_repeat') or 0)} (cli)")
         out.append(f"replay_mode: {str(st.get('replay_mode') or '')} (cli)")
+        out.append("")
+        for pk in ("replay_date_pool_start", "replay_date_pool_end", "replay_candidate_days_count"):
+            if pk not in st:
+                continue
+            pv = st.get(pk)
+            if isinstance(pv, dict):
+                out.append(f"{pk}={pv.get('value')} ({pv.get('source')})")
         out.append("")
         v, s = _get_flag("early_exit")
         out.append(f"early_exit={v} ({s})")
@@ -2732,6 +3677,43 @@ def run_replay(
                 if isinstance(vv, dict):
                     out.append(f"{label}={vv.get('value')} ({vv.get('source')})")
         out.append("")
+        ef = st.get("entry_filters") if isinstance(st.get("entry_filters"), dict) else {}
+        if isinstance(ef, dict):
+            for fk, title in [
+                ("rsi", "RSI filter"),
+                ("vwap_distance_pct", "VWAP distance filter"),
+                ("atr_pct", "ATR filter"),
+            ]:
+                sub = ef.get(fk) if isinstance(ef.get(fk), dict) else {}
+                en = sub.get("enabled") if isinstance(sub.get("enabled"), dict) else {}
+                thr = sub.get("exclude_above") if isinstance(sub.get("exclude_above"), dict) else {}
+                if isinstance(en, dict) and isinstance(thr, dict):
+                    out.append(
+                        f"{title}: enabled={en.get('value')} threshold={thr.get('value')} ({en.get('source')}/{thr.get('source')})"
+                    )
+        out.append("")
+        rc = st.get("risk_controls") if isinstance(st.get("risk_controls"), dict) else {}
+        if isinstance(rc, dict):
+            dls = rc.get("daily_loss_stop") if isinstance(rc.get("daily_loss_stop"), dict) else {}
+            if isinstance(dls, dict):
+                en = dls.get("enabled") if isinstance(dls.get("enabled"), dict) else {}
+                thr = dls.get("stop_yen_100_shares") if isinstance(dls.get("stop_yen_100_shares"), dict) else {}
+                if isinstance(en, dict) and isinstance(thr, dict):
+                    out.append(
+                        f"daily_loss_stop.enabled={en.get('value')} ({en.get('source')})"
+                    )
+                    out.append(
+                        f"daily_loss_stop.stop_yen_100_shares={thr.get('value')} ({thr.get('source')})"
+                    )
+                    out.append("")
+        rf = st.get("regime_filters") if isinstance(st.get("regime_filters"), dict) else {}
+        if isinstance(rf, dict) and rf:
+            out.append("【Regime filters】")
+            for k in ("disable_morning_weak", "disable_rising_ratio_lt50", "disable_topix_weak"):
+                v = rf.get(k)
+                if isinstance(v, dict):
+                    out.append(f"{k}={v.get('value')} ({v.get('source')})")
+            out.append("")
         return out
 
     # ターミナル出力（要件）
@@ -2824,6 +3806,8 @@ def run_replay(
         "post_signal_object_count": 0,
     }
     continue_reason_counts: dict[str, int] = {}
+    regime_filter_skipped_signals_count = 0
+    regime_filter_skip_reason_counts: dict[str, int] = {}
 
     # signal append 直前デバッグ（ユーザー要望）
     APPEND_SIGNAL_DEBUG_MAX_ROWS = 500
@@ -3010,11 +3994,22 @@ def run_replay(
     # - value: 出来高増加が「継続」しているかを見るための前回値
     prev_vol_inc_by_day_symbol: dict[tuple[str, str], bool] = {}
 
-    # 当日停止（追加仕様）:
-    # - 同一銘柄で当日累計損失（=損益%の合計）が -3% を超えたら、その日その銘柄の新規ENTRY/ADDを停止
-    #   ※期待値検証のための簡易ルール。勝ちで相殺される設計にしています（累計損益%）。
-    daily_cum_profit_pct_by_day_symbol: dict[tuple[str, str], float] = {}
-    trading_stopped_by_day_symbol: dict[tuple[str, str], bool] = {}
+    # 当日停止（risk_controls.daily_loss_stop）:
+    # - 当日累積損益(100株円) が -threshold 以下になったら、その日それ以降の新規ENTRY/ADDを停止
+    daily_pnl_yen_100_by_day: dict[str, float] = {}
+    daily_pnl_min_yen_100_by_day: dict[str, float] = {}
+    daily_loss_stop_triggered_by_day: dict[str, bool] = {}
+    daily_loss_stop_trigger_dt_jst_by_day: dict[str, datetime] = {}
+    daily_loss_stop_pnl_at_trigger_by_day: dict[str, float] = {}
+    daily_loss_stop_trigger_count = 0
+    daily_loss_stop_triggered_days: list[str] = []
+    daily_loss_stop_skipped_entries = 0
+    daily_loss_stop_skipped_entries_by_day: dict[str, int] = {}
+    daily_loss_stop_virtual_pnl_sum_by_day: dict[str, float] = {}
+    daily_loss_stop_virtual_win_by_day: dict[str, int] = {}
+    daily_loss_stop_virtual_lose_by_day: dict[str, int] = {}
+    daily_loss_stop_virtual_active_indices_by_symbol: dict[str, list[int]] = {}
+    resolved_counted_virtual_signal_indices: set[int] = set()
     # 解決済みsignalの損益を二重計上しないためのフラグ
     resolved_counted_signal_indices: set[int] = set()
     # 停止ログのスパム防止
@@ -3056,8 +4051,12 @@ def run_replay(
         if replay_range_label == "random_5d" and int(replay_random_days or 0) <= 0:
             replay_random_days = 5
             replay_random_months = 3
+        # 固定プール（random_60d / random_feb 等）: プールから5営業日（ショートカット）
+        if replay_range_label in FIXED_RANDOM_REPLAY_LABELS and int(replay_random_days or 0) <= 0:
+            replay_random_days = 5
         if int(replay_random_days or 0) > 0:
-            replay_range_label = f"random_{int(replay_random_days)}d"
+            if replay_range_label not in FIXED_RANDOM_REPLAY_LABELS:
+                replay_range_label = f"random_{int(replay_random_days)}d"
         print(f"- replay_range: {replay_range_label}")
         # リプレイ速度の見せ方を「直感的」にします。
         # interval_sec=1.0 なら「1秒 = 1分」
@@ -3077,7 +4076,7 @@ def run_replay(
         # random_5d は Replay制御用ラベルであり、Yahooのrange_strには渡さない
         # - 1分足取得は 60d を使い、その中からランダム営業日を抽出する
         fetch_range = str(replay_range)
-        if str(replay_range) == "random_5d" or int(replay_random_days or 0) > 0:
+        if str(replay_range) == "random_5d" or str(replay_range) in FIXED_RANDOM_REPLAY_LABELS or int(replay_random_days or 0) > 0:
             fetch_range = "60d"
 
         # -----------------------------
@@ -3085,9 +4084,17 @@ def run_replay(
         # -----------------------------
         bars_by_symbol: dict[str, list[ReplayBar]] = {}
         meta_by_symbol: dict[str, dict] = {}
+        intraday_1m_counters: dict[str, int] = {
+            "cache_hit": 0,
+            "cache_miss": 0,
+            "yahoo_fetch": 0,
+            "yahoo_1m_window_out": 0,
+        }
 
         # Replay日付のランダム抽出（追加仕様）
         replay_dates_jst: list[str] = []
+        replay_random_pick_meta: dict[str, Any] = {}
+        replay_cache_coverage_validator: dict[str, Any] = {}
         if int(replay_random_days or 0) > 0:
             months = int(replay_random_months or 3)
             if months <= 0:
@@ -3096,16 +4103,65 @@ def run_replay(
             if k <= 0:
                 k = 5
 
-            # 候補日（平日）を作る（祝日はAPIでデータが無いので後で除外される）
-            now_jst = datetime.now(JST)
-            start_jst = (now_jst - timedelta(days=months * 31)).date()
-            end_jst = now_jst.date()
-            candidates: list[str] = []
-            d = start_jst
-            while d <= end_jst:
-                if d.weekday() < 5:
-                    candidates.append(d.strftime("%Y-%m-%d"))
-                d = d + timedelta(days=1)
+            # 候補日（平日カレンダー）を作る（祝日はAPIでデータが無いので後で除外される）
+            # cache_only は「キャッシュがある日だけ」で抽出する（Yahoo取得しない）
+            cache_only = str(replay_range).strip().endswith("_cache_only")
+            _pool_dates = _replay_fixed_random_pool_dates(str(replay_range))
+            if _pool_dates:
+                candidates = _weekday_date_strings_between(_pool_dates[0], _pool_dates[1])
+            else:
+                now_jst = datetime.now(JST)
+                start_jst = (now_jst - timedelta(days=months * 31)).date()
+                end_jst = now_jst.date()
+                candidates = []
+                d = start_jst
+                while d <= end_jst:
+                    if d.weekday() < 5:
+                        candidates.append(d.strftime("%Y-%m-%d"))
+                    d = d + timedelta(days=1)
+
+            _today_ref = datetime.now(JST).date()
+            _lo_ref, _hi_ref = _yahoo_1m_available_calendar_bounds_jst(_today_ref)
+            n_weekdays_in_pool = len(candidates)
+
+            cache_complete_candidate_days_count = 0
+            cache_incomplete_days_count = 0
+            cache_complete_ratio = 0.0
+            cache_incomplete_missing_symbol_counts_by_day: dict[str, int] = {}
+            if cache_only:
+                # 候補を「全監視銘柄でキャッシュ完備の日」だけに絞る
+                cov_all = validate_intraday_1m_cache_coverage_for_replay_days(
+                    symbols=list(watch),
+                    replay_days_jst=list(candidates),
+                )
+                missing_by_day = cov_all.get("missing_by_day") or {}
+                complete_days = [d for d in candidates if str(d) not in set(missing_by_day.keys())]
+                incomplete_days = sorted(list(set([d for d in candidates if d not in set(complete_days)])))
+                cache_complete_candidate_days_count = int(len(complete_days))
+                cache_incomplete_days_count = int(len(incomplete_days))
+                total_cand = int(len(candidates))
+                cache_complete_ratio = (float(cache_complete_candidate_days_count) / float(total_cand)) if total_cand > 0 else 0.0
+                # 除外日: missing symbol 数を表示
+                try:
+                    for d in incomplete_days:
+                        ms = missing_by_day.get(d) or []
+                        if isinstance(ms, list):
+                            cache_incomplete_missing_symbol_counts_by_day[str(d)] = int(len(ms))
+                except Exception:
+                    pass
+
+                print(
+                    f"[{now_str()}] random_cache_only candidates (cache complete): "
+                    f"{cache_complete_candidate_days_count}/{total_cand} days (ratio={cache_complete_ratio:.2%})"
+                )
+                if cache_incomplete_days_count > 0:
+                    print(f"[{now_str()}] excluded incomplete cache days: {cache_incomplete_days_count}")
+                    for d in incomplete_days:
+                        mc = int(cache_incomplete_missing_symbol_counts_by_day.get(d, 0))
+                        print(f"- {d}: missing_symbols={mc}")
+                    print("")
+
+                candidates = list(complete_days)
 
             rng = random.Random(int(replay_seed)) if replay_seed is not None else random.Random()
             rng.shuffle(candidates)
@@ -3113,29 +4169,80 @@ def run_replay(
             # 祝日などを除外するため、先頭銘柄で「データが取れる日」だけ採用
             probe_sym = watch[0]
             picked: list[str] = []
+            probe_empty_bar_days = 0
+            probe_fetch_failures = 0
             for day_s in candidates:
                 if len(picked) >= k:
                     break
                 try:
-                    y, m, dd = (int(x) for x in day_s.split("-"))
-                    day0 = datetime(y, m, dd, 0, 0, 0, tzinfo=JST)
-                    day1 = day0 + timedelta(days=1)
-                    bs, _m = fetch_history_1m_by_period(
-                        session,
-                        probe_sym,
-                        start_utc=day0.astimezone(timezone.utc),
-                        end_utc=day1.astimezone(timezone.utc),
-                    )
+                    if cache_only:
+                        # 候補が cache complete なので、そのまま採用（ダミーで truthy にする）
+                        bs = [1]
+                    else:
+                        bs, _m = load_or_fetch_intraday_1m_for_replay_day(
+                            session,
+                            probe_sym,
+                            day_s,
+                            intraday_1m_counters,
+                        )
                     if bs:
                         picked.append(day_s)
+                    else:
+                        probe_empty_bar_days += 1
                 except Exception:
+                    probe_fetch_failures += 1
                     continue
 
             replay_dates_jst = sorted(picked)
+            # Replay前に cache coverage を検証（watch銘柄のみ・指数は除外）
+            replay_cache_coverage_validator = validate_intraday_1m_cache_coverage_for_replay_days(
+                symbols=list(watch),
+                replay_days_jst=list(replay_dates_jst),
+            )
+            if replay_dates_jst:
+                cov = replay_cache_coverage_validator
+                print(
+                    f"[{now_str()}] replay cache coverage: {int(cov.get('covered_days') or 0)}/{int(cov.get('total_days') or 0)} days "
+                    f"(ratio={float(cov.get('coverage_ratio') or 0.0):.2%})"
+                )
+                miss = cov.get("missing_days") or []
+                if miss:
+                    print(f"[{now_str()}] missing cache days:")
+                    for d in miss:
+                        print(f"- {d}")
+                    print("")
+            replay_random_pick_meta = {
+                "yahoo_1m_history_days_assumed": int(YAHOO_CHART_1M_INTRADAY_HISTORY_DAYS),
+                "yahoo_1m_calendar_window_reference_jst": {
+                    "start": _lo_ref.strftime("%Y-%m-%d"),
+                    "end": _hi_ref.strftime("%Y-%m-%d"),
+                },
+                "weekday_candidates_in_pool": int(n_weekdays_in_pool),
+                "replay_random_requested_days": int(k),
+                "replay_random_probe_symbol": str(probe_sym),
+                "replay_random_probe_empty_bar_days": int(probe_empty_bar_days),
+                "replay_random_probe_fetch_failures": int(probe_fetch_failures),
+                "replay_random_picked_count": int(len(replay_dates_jst)),
+                "cache_only": bool(cache_only),
+                "cache_complete_candidate_days_count": int(cache_complete_candidate_days_count),
+                "cache_incomplete_days_count": int(cache_incomplete_days_count),
+                "cache_complete_ratio": float(cache_complete_ratio),
+                "cache_incomplete_missing_symbol_counts_by_day": dict(cache_incomplete_missing_symbol_counts_by_day),
+                "cache_coverage": dict(replay_cache_coverage_validator),
+                "intraday_1m_cache_stats_after_probe": {
+                    "cache_hit": int(intraday_1m_counters["cache_hit"]),
+                    "cache_miss": int(intraday_1m_counters["cache_miss"]),
+                    "yahoo_fetch": int(intraday_1m_counters["yahoo_fetch"]),
+                    "yahoo_1m_window_out": int(intraday_1m_counters["yahoo_1m_window_out"]),
+                },
+            }
             if len(replay_dates_jst) < k:
                 print(
-                    f"[{now_str()}] ランダム抽出の候補日が不足しました: "
-                    f"picked={len(replay_dates_jst)}/{k}（祝日が多い/データ取得制限など）"
+                    f"[{now_str()}] ランダム抽出不足: picked={len(replay_dates_jst)}/{k} "
+                    f"（probe: empty_bar試行={probe_empty_bar_days}, fetch失敗={probe_fetch_failures}; "
+                    f"intraday cache_hit={intraday_1m_counters['cache_hit']}, cache_miss={intraday_1m_counters['cache_miss']}, "
+                    f"yahoo_fetch={intraday_1m_counters['yahoo_fetch']}, "
+                    f"yahoo_1m_window_out={intraday_1m_counters['yahoo_1m_window_out']}）"
                 )
             if replay_dates_jst:
                 print("=== Replayランダム抽出日（JST） ===")
@@ -3149,29 +4256,12 @@ def run_replay(
                     all_bars_sym: list[ReplayBar] = []
                     meta_last: dict = {}
                     for day_s in replay_dates_jst:
-                        y, m, dd = (int(x) for x in day_s.split("-"))
-                        day0 = datetime(y, m, dd, 0, 0, 0, tzinfo=JST)
-                        day1 = day0 + timedelta(days=1)
-                        bs, mt = [], {}
-                        last_err: Optional[Exception] = None
-                        for attempt in range(3):
-                            try:
-                                bs, mt = fetch_history_1m_by_period(
-                                    session,
-                                    sym,
-                                    start_utc=day0.astimezone(timezone.utc),
-                                    end_utc=day1.astimezone(timezone.utc),
-                                )
-                                last_err = None
-                                break
-                            except Exception as e:
-                                if "NameResolutionError" in str(e) or "getaddrinfo failed" in str(e):
-                                    last_err = e
-                                    break
-                                last_err = e
-                                time.sleep(1.0 * (attempt + 1))
-                        if last_err is not None and (not bs) and (not mt):
-                            raise last_err
+                        bs, mt = load_or_fetch_intraday_1m_for_replay_day(
+                            session,
+                            sym,
+                            day_s,
+                            intraday_1m_counters,
+                        )
                         if bs:
                             all_bars_sym.extend(bs)
                         if mt:
@@ -3202,6 +4292,14 @@ def run_replay(
             except Exception as e:
                 print(f"[{now_str()}] {sym} 過去1分足の取得に失敗（スキップ）: {e}")
 
+        if replay_dates_jst or any(int(intraday_1m_counters[k]) for k in intraday_1m_counters):
+            print("=== Replay 1分足キャッシュ ===")
+            print(f"- cache_hit: {intraday_1m_counters['cache_hit']}")
+            print(f"- cache_miss: {intraday_1m_counters['cache_miss']}")
+            print(f"- yahoo_fetch: {intraday_1m_counters['yahoo_fetch']}")
+            print(f"- yahoo_1m_window_out: {intraday_1m_counters['yahoo_1m_window_out']}")
+            print("")
+
         if not bars_by_symbol:
             print(f"[{now_str()}] リプレイ対象のデータが1つも取得できませんでした。")
             return 2
@@ -3220,6 +4318,16 @@ def run_replay(
         print(f"- 開始時刻(JST): {_fmt_dt_jst(start_utc)}")
         print(f"- 終了時刻(JST): {_fmt_dt_jst(end_utc)}")
         print(f"- 対象銘柄: {', '.join(sorted(bars_by_symbol.keys()))}\n")
+
+        # -----------------------------
+        # Replay日付の実効日数/キャッシュcoverage（ユーザー要望）
+        # -----------------------------
+        effective_replay_days_count = _effective_replay_days_count_from_bars(
+            bars_by_symbol=bars_by_symbol,
+            base_symbols=set([s for s in bars_by_symbol.keys() if s not in set(index_syms)]),
+        )
+        cache_cov = replay_cache_coverage_validator if isinstance(replay_cache_coverage_validator, dict) else {}
+        cache_coverage_ratio = float(cache_cov.get("coverage_ratio") or 0.0) if cache_cov else 0.0
 
         # -----------------------------
         # 前日終値（previous close）を「日単位で固定」するためのテーブルを作ります。
@@ -3893,7 +5001,8 @@ def run_replay(
                         # 通常の 1d/5d Replay 表示には影響させない（ランダム時だけ切替）
                         replay_range_label = str(replay_range)
                         if int(replay_random_days or 0) > 0:
-                            replay_range_label = f"random_{int(replay_random_days)}d"
+                            if replay_range_label not in FIXED_RANDOM_REPLAY_LABELS:
+                                replay_range_label = f"random_{int(replay_random_days)}d"
                         if replay_range_label.startswith("random_"):
                             # 例: replay_summary_random_5d_20260507_232500_run01
                             if int(replay_repeat_total or 0) > 1:
@@ -4154,6 +5263,148 @@ def run_replay(
                         regime_on = _by_regime(eval_signals)
                         regime_all = _by_regime([s for s in replay_signals if str(getattr(s, "position_kind", "BASE") or "BASE") == "BASE"])
 
+                        # =========================
+                        # TIME_BUCKET_ANALYSIS（entry_datetime_jst=signal_time_utc を元に集計）
+                        # =========================
+                        tb_labels = [
+                            "09:00-09:30",
+                            "09:30-10:00",
+                            "10:00-10:30",
+                            "10:30-11:00",
+                            "11:00-11:30",
+                            "12:30-13:00",
+                            "13:00-14:00",
+                            "14:00-15:00",
+                        ]
+                        by_tb: dict[str, list[ReplaySignalEval]] = {k: [] for k in tb_labels}
+                        for s in eval_signals:
+                            b = _time_bucket_jst_strict(getattr(s, "signal_time_utc", None))
+                            if b and b in by_tb:
+                                by_tb[b].append(s)
+
+                        def _exit_time_utc_of_signal(s: ReplaySignalEval) -> Optional[datetime]:
+                            t = getattr(s, "exit_time_utc", None)
+                            if isinstance(t, datetime):
+                                return t
+                            tt = getattr(s, "trailing_exit_time_utc", None)
+                            if isinstance(tt, datetime):
+                                return tt
+                            return None
+
+                        time_bucket_analysis: dict[str, Any] = {}
+                        for b in tb_labels:
+                            xs = by_tb.get(b) or []
+                            if not xs:
+                                continue
+                            t = len(xs)
+                            w = sum(1 for s in xs if str(getattr(s, "result", "")) == "WIN")
+                            l = sum(1 for s in xs if str(getattr(s, "result", "")) == "LOSE")
+                            pnl_sum = float(sum(_pnl_yen_100_shares(s) for s in xs))
+                            exp_y = (pnl_sum / float(t)) if t > 0 else 0.0
+                            lose_pnls = sorted([float(_pnl_yen_100_shares(s)) for s in xs if str(getattr(s, "result", "")) == "LOSE"])
+                            lose_worst10_sum = float(sum(lose_pnls[:10])) if lose_pnls else 0.0
+                            hold_mins: list[float] = []
+                            for s in xs:
+                                et = _exit_time_utc_of_signal(s)
+                                st = getattr(s, "signal_time_utc", None)
+                                if not isinstance(et, datetime) or not isinstance(st, datetime):
+                                    continue
+                                st2 = st if st.tzinfo is not None else st.replace(tzinfo=timezone.utc)
+                                et2 = et if et.tzinfo is not None else et.replace(tzinfo=timezone.utc)
+                                hm = (et2 - st2).total_seconds() / 60.0
+                                if hm >= 0:
+                                    hold_mins.append(float(hm))
+                            avg_hold_minutes = (sum(hold_mins) / float(len(hold_mins))) if hold_mins else 0.0
+                            time_bucket_analysis[b] = {
+                                "signals": int(t),
+                                "winrate_pct": float((float(w) / float(t) * 100.0) if t > 0 else 0.0),
+                                "total_pnl_yen_100_shares": float(pnl_sum),
+                                "avg_expectancy_yen_100_shares": float(exp_y),
+                                "lose_worst10_sum_yen_100_shares": float(lose_worst10_sum),
+                                "avg_hold_minutes": float(avg_hold_minutes),
+                            }
+
+                        # =========================
+                        # MARKET_REGIME_ANALYSIS（signalごと分類）
+                        # =========================
+                        def _parse_reasons(s: ReplaySignalEval) -> set[str]:
+                            r = str(getattr(s, "market_reasons", "") or "")
+                            xs = [x.strip() for x in r.split(",") if x.strip()]
+                            return set(xs)
+
+                        def _drawdown_yen_100_shares_est(s: ReplaySignalEval) -> float:
+                            try:
+                                dd_pct = float(s.max_drawdown_pct())
+                            except Exception:
+                                dd_pct = 0.0
+                            try:
+                                px = float(getattr(s, "signal_price", 0.0) or 0.0)
+                            except Exception:
+                                px = 0.0
+                            return float(px) * 100.0 * (abs(float(dd_pct)) / 100.0)
+
+                        def _regime_labels_for_signal(s: ReplaySignalEval) -> list[str]:
+                            labels: set[str] = set()
+                            state = str(getattr(s, "market_regime", "") or getattr(s, "market_state", "") or "")
+                            if state:
+                                labels.add(f"STATE_{state}")
+                            rs = _parse_reasons(s)
+                            if "TOPIX_CRASH" in rs:
+                                labels.add("TOPIX_CRASH")
+                            if "TOPIX_WEAK" in rs:
+                                labels.add("TOPIX_WEAK")
+                            if "BREADTH_WEAK" in rs:
+                                labels.add("BREADTH_WEAK")
+                            if "afternoon_weak" in rs:
+                                labels.add("AFTERNOON_WEAK")
+                            if "NIKKEI<VWAP" in rs:
+                                labels.add("NIKKEI_BELOW_VWAP")
+                            if "fail30m>60%" in rs:
+                                labels.add("FAIL_RATE_30M_HIGH")
+
+                            topix_pct = getattr(s, "topix_pct", None)
+                            if isinstance(topix_pct, (int, float)):
+                                if float(topix_pct) >= 0.5:
+                                    labels.add("TOPIX_STRONG")
+                                elif float(topix_pct) <= float(WEAK_TOPIX_CHG_PCT_MAX):
+                                    labels.add("TOPIX_WEAK_PCT")
+
+                            rising = getattr(s, "rising_ratio", None)
+                            if isinstance(rising, (int, float)):
+                                labels.add("RISING_RATIO_GE50" if float(rising) >= 0.5 else "RISING_RATIO_LT50")
+
+                            hm = getattr(s, "hm_now", None)
+                            if isinstance(hm, int):
+                                if hm < (11 * 60 + 30):
+                                    labels.add("MORNING_WEAK" if state in ("WEAK", "CRASH") else "MORNING_STRONG")
+
+                            return sorted(list(labels))
+
+                        market_regime_analysis: dict[str, Any] = {}
+                        buckets: dict[str, list[ReplaySignalEval]] = {}
+                        for s in eval_signals:
+                            for lb in _regime_labels_for_signal(s):
+                                buckets.setdefault(lb, []).append(s)
+
+                        for lb, xs in sorted(buckets.items(), key=lambda kv: kv[0]):
+                            t = len(xs)
+                            if t <= 0:
+                                continue
+                            w = sum(1 for s in xs if str(getattr(s, "result", "")) == "WIN")
+                            pnl_sum = float(sum(_pnl_yen_100_shares(s) for s in xs))
+                            exp_y = (pnl_sum / float(t)) if t > 0 else 0.0
+                            lose_pnls = sorted([float(_pnl_yen_100_shares(s)) for s in xs if str(getattr(s, "result", "")) == "LOSE"])
+                            lose_worst10_sum = float(sum(lose_pnls[:10])) if lose_pnls else 0.0
+                            max_dd = float(max((_drawdown_yen_100_shares_est(s) for s in xs), default=0.0))
+                            market_regime_analysis[lb] = {
+                                "signals": int(t),
+                                "winrate_pct": float((float(w) / float(t) * 100.0) if t > 0 else 0.0),
+                                "avg_expectancy_yen_100_shares": float(exp_y),
+                                "total_pnl_yen_100_shares": float(pnl_sum),
+                                "lose_worst10_sum_yen_100_shares": float(lose_worst10_sum),
+                                "max_drawdown_yen_100_shares_est": float(max_dd),
+                            }
+
                         # json
                         report: dict[str, Any] = {
                             "meta": {
@@ -4167,7 +5418,40 @@ def run_replay(
                                 "replay_dates": list(replay_dates_jst),
                                 "replay_random_days": int(replay_random_days or 0),
                                 "replay_random_months": int(replay_random_months or 0),
+                                **(
+                                    _replay_fixed_random_meta_extra(str(replay_range))
+                                    if _replay_fixed_random_pool_dates(str(replay_range))
+                                    else {}
+                                ),
                                 "replay_seed": int(replay_seed) if replay_seed is not None else None,
+                                **(
+                                    {"replay_random_pick_debug": dict(replay_random_pick_meta)}
+                                    if replay_random_pick_meta
+                                    else {}
+                                ),
+                                "intraday_1m_cache_stats": dict(intraday_1m_counters),
+                                "effective_replay_days_count": int(effective_replay_days_count),
+                                "cache_coverage_ratio": float(cache_coverage_ratio),
+                                **(
+                                    {
+                                        "cache_complete_candidate_days_count": int(
+                                            (replay_random_pick_meta.get("cache_complete_candidate_days_count") or 0)
+                                        ),
+                                        "cache_incomplete_days_count": int(
+                                            (replay_random_pick_meta.get("cache_incomplete_days_count") or 0)
+                                        ),
+                                        "cache_complete_ratio": float(
+                                            (replay_random_pick_meta.get("cache_complete_ratio") or 0.0)
+                                        ),
+                                    }
+                                    if isinstance(replay_random_pick_meta, dict) and bool(replay_random_pick_meta.get("cache_only"))
+                                    else {}
+                                ),
+                                **(
+                                    {"replay_cache_coverage_validator": dict(replay_cache_coverage_validator)}
+                                    if isinstance(replay_cache_coverage_validator, dict) and replay_cache_coverage_validator
+                                    else {}
+                                ),
                                 "repeat_run_no": int(replay_repeat_run_no or 0),
                                 "repeat_total": int(replay_repeat_total or 0),
                                 "batch_stamp": str(batch_stamp),
@@ -4220,9 +5504,76 @@ def run_replay(
                                 "avg_loss_pct_lose_only": float(avg_loss_pct),
                                 "avg_max_profit_pct": float(avg_max_profit_pct),
                                 "avg_max_drawdown_pct": float(avg_max_drawdown_pct),
+                                "risk_controls": {
+                                    "daily_loss_stop_enabled": bool(daily_loss_stop_enabled),
+                                    "daily_loss_stop_threshold_yen_100_shares": float(daily_loss_stop_threshold_yen_100_shares),
+                                    "daily_loss_stop_trigger_count": int(daily_loss_stop_trigger_count),
+                                    "daily_loss_stop_triggered_days": sorted(list(set([str(x) for x in daily_loss_stop_triggered_days if str(x)]))),
+                                    "daily_loss_stop_skipped_entries": int(daily_loss_stop_skipped_entries),
+                                    "daily_pnl_min_yen_100_shares": float(min(daily_pnl_min_yen_100_by_day.values())) if daily_pnl_min_yen_100_by_day else 0.0,
+                                    "max_intraday_drawdown_yen_100_shares": float(
+                                        abs(min(daily_pnl_min_yen_100_by_day.values())) if daily_pnl_min_yen_100_by_day else 0.0
+                                    ),
+                                    "avg_daily_drawdown_yen_100_shares": float(
+                                        (
+                                            sum(abs(float(v)) for v in daily_pnl_min_yen_100_by_day.values())
+                                            / float(len(daily_pnl_min_yen_100_by_day))
+                                        )
+                                        if daily_pnl_min_yen_100_by_day
+                                        else 0.0
+                                    ),
+                                    "daily_loss_stop_analysis": [
+                                        {
+                                            "trigger_day_jst": str(day),
+                                            "trigger_datetime_jst": (
+                                                daily_loss_stop_trigger_dt_jst_by_day.get(day).strftime("%Y-%m-%d %H:%M:%S")
+                                                if isinstance(daily_loss_stop_trigger_dt_jst_by_day.get(day), datetime)
+                                                else ""
+                                            ),
+                                            "pnl_before_trigger_yen_100_shares": float(
+                                                daily_loss_stop_pnl_at_trigger_by_day.get(day, 0.0)
+                                            ),
+                                            "skipped_entries_count_after_trigger": int(
+                                                daily_loss_stop_skipped_entries_by_day.get(day, 0)
+                                            ),
+                                            "skipped_entries_virtual_pnl_sum_yen_100_shares": float(
+                                                daily_loss_stop_virtual_pnl_sum_by_day.get(day, 0.0)
+                                            ),
+                                            "skipped_entries_virtual_winrate_pct": float(
+                                                (
+                                                    float(daily_loss_stop_virtual_win_by_day.get(day, 0))
+                                                    / float(
+                                                        int(daily_loss_stop_virtual_win_by_day.get(day, 0))
+                                                        + int(daily_loss_stop_virtual_lose_by_day.get(day, 0))
+                                                    )
+                                                    * 100.0
+                                                )
+                                                if (
+                                                    int(daily_loss_stop_virtual_win_by_day.get(day, 0))
+                                                    + int(daily_loss_stop_virtual_lose_by_day.get(day, 0))
+                                                )
+                                                > 0
+                                                else 0.0
+                                            ),
+                                            "prevented_loss_estimate_yen_100_shares": float(
+                                                -float(daily_loss_stop_virtual_pnl_sum_by_day.get(day, 0.0))
+                                            ),
+                                        }
+                                        for day in sorted(list(set([str(x) for x in daily_loss_stop_triggered_days if str(x)])))
+                                    ],
+                                },
+                                "regime_filters": {
+                                    "disable_morning_weak": bool(regime_filter_disable_morning_weak),
+                                    "disable_rising_ratio_lt50": bool(regime_filter_disable_rising_ratio_lt50),
+                                    "disable_topix_weak": bool(regime_filter_disable_topix_weak),
+                                    "skipped_signals_count": int(regime_filter_skipped_signals_count),
+                                    "skip_reason_counts": dict(regime_filter_skip_reason_counts),
+                                },
                             },
                             "by_symbol_summary": {sym: _agg_stats(xs) for sym, xs in by_symbol.items()},
                             "by_time_bucket_summary": {b: _agg_stats(by_bucket.get(b) or []) for b in bucket_order if (by_bucket.get(b) or [])},
+                            "time_bucket_analysis": dict(time_bucket_analysis),
+                            "market_regime_analysis": dict(market_regime_analysis),
                             "by_position_kind_summary": {
                                 pk: _agg_stats(by_pos.get(pk) or []) for pk in ["BASE", "ADD1", "ADD2"] if (by_pos.get(pk) or [])
                             },
@@ -4394,6 +5745,12 @@ def run_replay(
                             "afternoon_volume_spike_ratio_min": float(aft_volume_spike_ratio_min),
                             "afternoon_vwap_dist_pct_max": float(aft_vwap_dist_pct_max),
                             "afternoon_rebreak_mult": float(aft_rebreak_mult),
+                            "entry_filter_rsi_enabled": bool(entry_filter_rsi_enabled),
+                            "entry_filter_rsi_exclude_above": float(entry_filter_rsi_exclude_above),
+                            "entry_filter_vwap_distance_enabled": bool(entry_filter_vwap_distance_enabled),
+                            "entry_filter_vwap_distance_exclude_above": float(entry_filter_vwap_distance_exclude_above),
+                            "entry_filter_atr_pct_enabled": bool(entry_filter_atr_pct_enabled),
+                            "entry_filter_atr_pct_exclude_above": float(entry_filter_atr_pct_exclude_above),
                             "config_name": str(replay_config_name or ""),
                             "config_path": str(replay_config_path or ""),
                         }
@@ -4827,6 +6184,29 @@ def run_replay(
                             for d in replay_dates_jst:
                                 lines.append(f"  - {d}")
                             lines.append(f"- replay_seed: {replay_seed if replay_seed is not None else '(random)'}")
+                        if isinstance(report.get("meta"), dict):
+                            md = report.get("meta") or {}
+                            if "effective_replay_days_count" in md:
+                                lines.append(f"- effective_replay_days_count: {int(md.get('effective_replay_days_count') or 0)}")
+                            if "cache_coverage_ratio" in md:
+                                lines.append(f"- cache_coverage_ratio: {float(md.get('cache_coverage_ratio') or 0.0):.2%}")
+                            if "cache_complete_candidate_days_count" in md:
+                                lines.append(f"- cache_complete_candidate_days_count: {int(md.get('cache_complete_candidate_days_count') or 0)}")
+                            if "cache_incomplete_days_count" in md:
+                                lines.append(f"- cache_incomplete_days_count: {int(md.get('cache_incomplete_days_count') or 0)}")
+                            if "cache_complete_ratio" in md:
+                                lines.append(f"- cache_complete_ratio: {float(md.get('cache_complete_ratio') or 0.0):.2%}")
+                            v = md.get("replay_cache_coverage_validator") or {}
+                            if isinstance(v, dict):
+                                miss = v.get("missing_days") or []
+                                covd = int(v.get("covered_days") or 0)
+                                totd = int(v.get("total_days") or 0)
+                                if totd > 0 and covd < totd:
+                                    lines.append(f"- WARNING: replay cache coverage {covd}/{totd} days (missing cache exists)")
+                                    if miss:
+                                        lines.append("  missing_cache_days:")
+                                        for d in miss:
+                                            lines.append(f"    - {d}")
                         if (replay_morning_screen_hhmm or '').strip():
                             lines.append(f"- replay_morning_screen_hhmm_jst: {(replay_morning_screen_hhmm or '').strip()}")
                         if one_trade_per_symbol_per_day:
@@ -5767,22 +7147,38 @@ def run_replay(
                                 pass
 
                             # -----------------------------
-                            # 当日累計損益%の更新（当日停止条件）
+                            # 当日累積PnL(円/100株)の更新（risk_controls.daily_loss_stop）
                             # -----------------------------
-                            # 初心者向けポイント:
-                            # - 「その日の同じ銘柄で負けが続く」状況を止めるための安全装置です。
-                            # - ここでは “解決した時点” の final_profit_pct を足し込みます。
-                            # - 1つのsignalを何度も数えると壊れるので、indexで一度だけ計上します。
                             if idx not in resolved_counted_signal_indices:
                                 resolved_counted_signal_indices.add(idx)
-                                day_jst = _day_jst_str(s.signal_time_utc)
-                                k = (day_jst, s.symbol)
-                                fp = float(s.final_profit_pct) if isinstance(s.final_profit_pct, (int, float)) else 0.0
-                                cur = float(daily_cum_profit_pct_by_day_symbol.get(k, 0.0))
-                                new_v = cur + fp
-                                daily_cum_profit_pct_by_day_symbol[k] = new_v
-                                if new_v <= -3.0:
-                                    trading_stopped_by_day_symbol[k] = True
+                                tcur2 = (q.market_time_utc or datetime.now(tz=timezone.utc))
+                                if tcur2.tzinfo is None:
+                                    tcur2 = tcur2.replace(tzinfo=timezone.utc)
+                                day_jst = _day_jst_str(tcur2)
+                                pnl_y = float(_pnl_yen_100_shares_replay(s))
+                                cur = float(daily_pnl_yen_100_by_day.get(day_jst, 0.0))
+                                new_v = cur + pnl_y
+                                daily_pnl_yen_100_by_day[day_jst] = new_v
+                                mn = float(daily_pnl_min_yen_100_by_day.get(day_jst, 0.0))
+                                if day_jst not in daily_pnl_min_yen_100_by_day:
+                                    mn = new_v
+                                else:
+                                    mn = float(min(mn, new_v))
+                                daily_pnl_min_yen_100_by_day[day_jst] = mn
+
+                                if bool(daily_loss_stop_enabled):
+                                    thr = float(daily_loss_stop_threshold_yen_100_shares)
+                                    if new_v <= -abs(thr):
+                                        if not bool(daily_loss_stop_triggered_by_day.get(day_jst, False)):
+                                            daily_loss_stop_triggered_by_day[day_jst] = True
+                                            daily_loss_stop_trigger_dt_jst_by_day[day_jst] = tcur2.astimezone(JST)
+                                            daily_loss_stop_pnl_at_trigger_by_day[day_jst] = float(new_v)
+                                            daily_loss_stop_trigger_count += 1
+                                            daily_loss_stop_triggered_days.append(day_jst)
+                                            print(
+                                                f"[{now_str()}][STOP] daily_loss_stop triggered day={day_jst} "
+                                                f"pnl_yen_100_shares={new_v:+,.0f} <= -{abs(thr):,.0f}"
+                                            )
                     if idxs:
                         active_signal_indices_by_symbol[q.symbol] = idxs
                     else:
@@ -5809,6 +7205,40 @@ def run_replay(
                         blocked_signal_indices_by_symbol[q.symbol] = bidxs
                     else:
                         blocked_signal_indices_by_symbol.pop(q.symbol, None)
+
+                    # daily_loss_stop で除外された“仮想signal”も更新（集計対象外だが、損益推定に使う）
+                    vidxs = daily_loss_stop_virtual_active_indices_by_symbol.get(q.symbol) or []
+                    for idx in list(vidxs):
+                        s = replay_signals[idx]
+                        s.update_with_price(
+                            time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
+                            price=float(q.price),
+                            vwap=vwap_now,
+                            recent_5m_low=recent_5m_low,
+                            early_exit_before_partial_take=bool(replay_early_exit_before_stop),
+                            early_exit_vwap=bool(replay_early_exit_vwap),
+                            early_exit_recent_low=bool(replay_early_exit_recent_low),
+                        )
+                        if s.resolved:
+                            try:
+                                vidxs.remove(idx)
+                            except Exception:
+                                pass
+                            if idx not in resolved_counted_virtual_signal_indices:
+                                resolved_counted_virtual_signal_indices.add(idx)
+                                d = _day_jst_str(s.signal_time_utc)
+                                pnl_v = float(_pnl_yen_100_shares_replay(s))
+                                daily_loss_stop_virtual_pnl_sum_by_day[d] = float(
+                                    daily_loss_stop_virtual_pnl_sum_by_day.get(d, 0.0)
+                                ) + pnl_v
+                                if str(s.result) == "WIN":
+                                    daily_loss_stop_virtual_win_by_day[d] = int(daily_loss_stop_virtual_win_by_day.get(d, 0)) + 1
+                                elif str(s.result) == "LOSE":
+                                    daily_loss_stop_virtual_lose_by_day[d] = int(daily_loss_stop_virtual_lose_by_day.get(d, 0)) + 1
+                    if vidxs:
+                        daily_loss_stop_virtual_active_indices_by_symbol[q.symbol] = vidxs
+                    else:
+                        daily_loss_stop_virtual_active_indices_by_symbol.pop(q.symbol, None)
 
                 # -----------------------------
                 # ここから下は「通常の判定ロジック」と同じ流れ
@@ -5999,8 +7429,8 @@ def run_replay(
                             if total_qty > 0:
                                 avg_entry = total_cost / float(total_qty)
 
-                            # 当日停止チェック（-3%超）
-                            stopped_today = bool(trading_stopped_by_day_symbol.get(key, False))
+                            # 当日停止チェック（risk_controls.daily_loss_stop）
+                            stopped_today = bool(daily_loss_stop_enabled) and bool(daily_loss_stop_triggered_by_day.get(day_jst, False))
                             # 地合いWEAK/CRASHのときはADD禁止（仕様）
                             # - 前ループの判定（market_regime_last）を使います（1分遅れで適用）
                             add_allowed_by_regime = (str(market_regime_last) == "NORMAL")
@@ -6242,6 +7672,13 @@ def run_replay(
                 topix_chg_raw = None
                 topix_chg = None
                 topix_chg_ok = False
+                # market features（analysis用）
+                rising_ratio = 0.0
+                high_ratio = 0.0
+                fail_rate30 = 0.0
+                brk_ratio = 0.0
+                below_ratio = 0.0
+                hm_now = 0
                 try:
                     # 時刻（JST）
                     rt = replay_t
@@ -6462,6 +7899,13 @@ def run_replay(
                                     "topix_prev_close": (float(topix_prev_close) if isinstance(topix_prev_close, (int, float)) else None),
                                     "topix_pct": (float(topix_chg) if isinstance(topix_chg, (int, float)) else None),
                                     "market_state": str(market_regime),
+                                    "market_reasons": list([str(x) for x in (market_reasons or [])]),
+                                    "rising_ratio": float(rising_ratio),
+                                    "high_ratio": float(high_ratio),
+                                    "fail_rate30": float(fail_rate30),
+                                    "brk_ratio": float(brk_ratio),
+                                    "below_ratio": float(below_ratio),
+                                    "hm_now": int(hm_now),
                                     "entry_allowed": bool(entry_allowed_by_market),
                                     "blocked_reason": list([str(x) for x in blocked_reason_dbg]),
                                 }
@@ -6799,19 +8243,20 @@ def run_replay(
                             day_jst = _day_jst_str(sig_time)
                             key_day_sym = (day_jst, q.symbol)
 
-                            # 当日停止（-3%）
-                            daily_stop = bool(trading_stopped_by_day_symbol.get(key_day_sym, False))
-                            if daily_stop and key_day_sym not in stop_logged_by_day_symbol:
-                                stop_logged_by_day_symbol.add(key_day_sym)
-                                v = float(daily_cum_profit_pct_by_day_symbol.get(key_day_sym, 0.0))
+                            # 当日停止（risk_controls.daily_loss_stop）
+                            daily_stop = bool(daily_loss_stop_enabled) and bool(daily_loss_stop_triggered_by_day.get(day_jst, False))
+                            if daily_stop and (day_jst, "__DAY__") not in stop_logged_by_day_symbol:
+                                stop_logged_by_day_symbol.add((day_jst, "__DAY__"))
+                                v = float(daily_pnl_yen_100_by_day.get(day_jst, 0.0))
                                 print(
-                                    f"[{now_str()}][STOP] {day_jst} {q.symbol} 当日累計損益が {v:.2f}% になったため、"
-                                    "この銘柄の新規ENTRY/ADDを停止します。"
+                                    f"[{now_str()}][STOP] {day_jst} 当日累積PnLが {v:+,.0f}円(100株) になったため、"
+                                    "この日の新規ENTRY/ADDを停止します。"
                                 )
 
                             # 重複エントリー制限
                             exclude = False
                             exclude_reason = ""
+                            excluded_by_daily_loss_stop = False
                             if one_trade_per_symbol_per_day:
                                 seen = accepted_entry_symbols_by_day.setdefault(day_jst, set())
                                 if q.symbol in seen:
@@ -6823,7 +8268,72 @@ def run_replay(
                             # 当日停止は「signal候補としては記録するが集計対象外」
                             if daily_stop:
                                 exclude = True
-                                exclude_reason = "当日停止（-3%）により新規ENTRY/ADD停止"
+                                exclude_reason = "当日停止（daily_loss_stop）により新規ENTRY/ADD停止"
+                                daily_loss_stop_skipped_entries += 1
+                                excluded_by_daily_loss_stop = True
+                                daily_loss_stop_skipped_entries_by_day[day_jst] = int(
+                                    daily_loss_stop_skipped_entries_by_day.get(day_jst, 0)
+                                ) + 1
+
+                            # regime filter AB test（ENTRY前に skip）
+                            if not exclude:
+                                rf_reasons: list[str] = []
+                                if bool(regime_filter_disable_morning_weak):
+                                    if int(hm_now) < (11 * 60 + 30) and str(market_regime) in ("WEAK", "CRASH"):
+                                        rf_reasons.append("REGIME_FILTER_MORNING_WEAK")
+                                if bool(regime_filter_disable_rising_ratio_lt50):
+                                    if isinstance(rising_ratio, (int, float)) and float(rising_ratio) < 0.5:
+                                        rf_reasons.append("REGIME_FILTER_RISING_LT50")
+                                if bool(regime_filter_disable_topix_weak):
+                                    if isinstance(topix_chg, (int, float)) and float(topix_chg) <= float(WEAK_TOPIX_CHG_PCT_MAX):
+                                        rf_reasons.append("REGIME_FILTER_TOPIX_WEAK")
+                                    elif isinstance(market_reasons, list) and ("TOPIX_WEAK" in market_reasons):
+                                        rf_reasons.append("REGIME_FILTER_TOPIX_WEAK")
+
+                                if rf_reasons:
+                                    exclude = True
+                                    exclude_reason = " / ".join(rf_reasons)
+                                    regime_filter_skipped_signals_count += 1
+                                    for rr in rf_reasons:
+                                        continue_reason_counts[rr] = int(continue_reason_counts.get(rr, 0)) + 1
+                                        regime_filter_skip_reason_counts[rr] = int(regime_filter_skip_reason_counts.get(rr, 0)) + 1
+                                    if len(continue_before_append_rows) < 500:
+                                        continue_before_append_rows.append(
+                                            {
+                                                "reason": "REGIME_FILTER",
+                                                "symbol": str(q.symbol),
+                                                "day_jst": str(day_jst),
+                                                "time_jst": sig_time.astimezone(JST).strftime("%Y-%m-%d %H:%M"),
+                                                "market_state": str(market_regime),
+                                                "market_reasons": ",".join([str(x) for x in (market_reasons or [])]),
+                                                "rising_ratio": float(rising_ratio) if isinstance(rising_ratio, (int, float)) else None,
+                                                "topix_pct": float(topix_chg) if isinstance(topix_chg, (int, float)) else None,
+                                                "exclude_reason": str(exclude_reason),
+                                            }
+                                        )
+
+                            # ENTRY filters（config / 集計対象外）
+                            if not exclude:
+                                ef_reasons: list[str] = []
+                                if bool(entry_filter_rsi_enabled) and rsi14 is not None and float(rsi14) > float(entry_filter_rsi_exclude_above):
+                                    ef_reasons.append(f"ENTRY_FILTER_RSI>{float(entry_filter_rsi_exclude_above):g}")
+                                    reject_reason_counts["ENTRY_FILTER_RSI"] = int(reject_reason_counts.get("ENTRY_FILTER_RSI", 0)) + 1
+                                if bool(entry_filter_vwap_distance_enabled) and vwap_dist_pct is not None:
+                                    if abs(float(vwap_dist_pct)) > float(entry_filter_vwap_distance_exclude_above):
+                                        ef_reasons.append(
+                                            f"ENTRY_FILTER_VWAP_DIST>{float(entry_filter_vwap_distance_exclude_above):g}%"
+                                        )
+                                        reject_reason_counts["ENTRY_FILTER_VWAP_DIST"] = int(
+                                            reject_reason_counts.get("ENTRY_FILTER_VWAP_DIST", 0)
+                                        ) + 1
+                                if bool(entry_filter_atr_pct_enabled) and atr_pct is not None and float(atr_pct) > float(
+                                    entry_filter_atr_pct_exclude_above
+                                ):
+                                    ef_reasons.append(f"ENTRY_FILTER_ATR>{float(entry_filter_atr_pct_exclude_above):g}%")
+                                    reject_reason_counts["ENTRY_FILTER_ATR"] = int(reject_reason_counts.get("ENTRY_FILTER_ATR", 0)) + 1
+                                if ef_reasons:
+                                    exclude = True
+                                    exclude_reason = " / ".join(ef_reasons)
 
                             # PRE_SIGNAL_OBJECT_DEBUG（ユーザー要望）
                             try:
@@ -6940,6 +8450,11 @@ def run_replay(
                                 active_signal_indices_by_symbol.setdefault(q.symbol, []).append(idx)
                                 day_jst2 = _day_jst_str(sig_time)
                                 last_entry_price_by_day_symbol[(day_jst2, q.symbol)] = float(entry)
+                            else:
+                                # daily_loss_stop で除外された signal は「仮想PnL」を計算するため、別のactiveとして追跡
+                                if bool(excluded_by_daily_loss_stop):
+                                    idx = len(replay_signals) - 1
+                                    daily_loss_stop_virtual_active_indices_by_symbol.setdefault(q.symbol, []).append(idx)
 
                             # 補助属性（失敗しても継続）
                             try:
@@ -6959,6 +8474,12 @@ def run_replay(
                                 setattr(s, "market_state", str(market_regime))
                                 setattr(s, "crash_blocked", bool(crash_blocked))
                                 setattr(s, "market_reasons", ",".join([str(x) for x in (market_reasons or [])]))
+                                setattr(s, "rising_ratio", float(rising_ratio))
+                                setattr(s, "high_ratio", float(high_ratio))
+                                setattr(s, "fail_rate30", float(fail_rate30))
+                                setattr(s, "brk_ratio", float(brk_ratio))
+                                setattr(s, "below_ratio", float(below_ratio))
+                                setattr(s, "hm_now", int(hm_now))
                                 setattr(s, "market_blocked", bool(crash_blocked))
                                 setattr(s, "blocked_reason", (",".join([str(x) for x in (market_reasons or [])]) if crash_blocked else ""))
                                 setattr(s, "entry_allowed_by_market", bool(not crash_blocked))
@@ -7155,6 +8676,865 @@ def run_replay(
             return 0
 
 
+def _aggregate_replay_repeat_run_summaries(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    repeat 実行で得た runXX.json レポートのリストから、main と同様の集計 summary を返します。
+    """
+    if not run_summaries:
+        return {}
+    run_stats: list[dict[str, Any]] = []
+    regime_skipped_total = 0
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        stats = (((rep.get("overall_summary") or {}).get("stats")) or {})
+        pnl = float(stats.get("pnl_yen_100_shares") or 0.0)
+        sigs = int(stats.get("signals") or 0)
+        wr = float(stats.get("win_rate_pct") or 0.0)
+        exp = float(stats.get("expectancy_yen_100_shares_per_signal") or 0.0)
+        rc = ((rep.get("overall_summary") or {}).get("risk_controls")) or {}
+        rf = ((rep.get("overall_summary") or {}).get("regime_filters")) or {}
+        if isinstance(rf, dict):
+            regime_skipped_total += int(rf.get("skipped_signals_count") or 0)
+        run_stats.append(
+            {
+                "signals": sigs,
+                "win_rate_pct": wr,
+                "pnl": pnl,
+                "exp": exp,
+                "max_intraday_dd": float(rc.get("max_intraday_drawdown_yen_100_shares") or 0.0)
+                if isinstance(rc, dict)
+                else 0.0,
+                "avg_daily_dd": float(rc.get("avg_daily_drawdown_yen_100_shares") or 0.0)
+                if isinstance(rc, dict)
+                else 0.0,
+            }
+        )
+
+    total_runs = len(run_stats)
+    if total_runs <= 0:
+        return {}
+    total_signals = sum(int(x.get("signals") or 0) for x in run_stats)
+    total_pnl = sum(float(x.get("pnl") or 0.0) for x in run_stats)
+    avg_exp = sum(float(x.get("exp") or 0.0) for x in run_stats) / float(total_runs)
+    plus_runs = sum(1 for x in run_stats if float(x.get("pnl") or 0.0) > 0)
+    minus_runs = sum(1 for x in run_stats if float(x.get("pnl") or 0.0) < 0)
+    max_lose_run = min(run_stats, key=lambda x: float(x.get("pnl") or 0.0))
+
+    sum_lose_worst10_yen = 0.0
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        aa = rep.get("accident_analysis") or {}
+        lw = aa.get("lose_worst10") or []
+        if not isinstance(lw, list):
+            continue
+        for it in lw:
+            try:
+                sum_lose_worst10_yen += float(it.get("pnl_yen_100_shares") or 0.0)
+            except Exception:
+                continue
+
+    return {
+        "runs": int(total_runs),
+        "total_signals": int(total_signals),
+        "avg_expectancy_yen_100_shares": float(avg_exp),
+        "total_pnl_yen_100_shares": float(total_pnl),
+        "plus_runs": int(plus_runs),
+        "minus_runs": int(minus_runs),
+        "max_lose_run_pnl_yen_100_shares": float(max_lose_run.get("pnl") or 0.0),
+        "sum_lose_worst10_yen_100_shares": float(sum_lose_worst10_yen),
+        "regime_filter_skipped_signals_total": int(regime_skipped_total),
+    }
+
+
+def _vwap_sweep_thr_slug(threshold: float) -> str:
+    return f"thr{int(round(float(threshold) * 10)):03d}"
+
+
+def _write_vwap_sweep_configs(script_dir: str, thresholds: list[float]) -> dict[float, str]:
+    """replay_safe をベースに entry_filters.vwap_distance_pct を上書きした JSON を configs/vwap_sweep/ に保存。"""
+    sweep_dir = os.path.join(script_dir, "configs", "vwap_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+    base_rel = "configs/replay_safe.json"
+    base_path = _resolve_replay_config_path(base_rel)
+    base_cfg = _load_replay_config(base_path) if base_path else {}
+    if not base_cfg:
+        presets = _default_replay_configs_dicts()
+        fallback = presets.get("replay_safe.json")
+        if isinstance(fallback, dict):
+            base_cfg = dict(fallback)
+    out_paths: dict[float, str] = {}
+    for thr in thresholds:
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        cfg["name"] = f"replay_safe_vwap_sweep_{thr:g}".replace(".", "_")
+        ef = cfg.get("entry_filters")
+        if not isinstance(ef, dict):
+            ef = {}
+        ef["rsi"] = {"enabled": False, "exclude_above": 75.0}
+        ef["vwap_distance_pct"] = {"enabled": True, "exclude_above": float(thr)}
+        ef["atr_pct"] = {"enabled": False, "exclude_above": 4.0}
+        cfg["entry_filters"] = ef
+        slug = _vwap_sweep_thr_slug(thr)
+        fn = f"replay_safe_vwap_sweep_{slug}.json"
+        path = os.path.join(sweep_dir, fn)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        out_paths[float(thr)] = os.path.abspath(path)
+    return out_paths
+
+
+def run_vwap_distance_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    VWAP distance exclude_above を複数値でスイープし、random_apr / random_60d を各 n_repeat 回実行して比較表を保存します。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    thresholds = [1.5, 2.0, 2.5, 3.0]
+    ranges = ["random_apr", "random_60d"]
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+
+    print(f"[{now_str()}] VWAP distance sweep: thresholds={thresholds} ranges={ranges} repeat={n_repeat}")
+    cfg_paths = _write_vwap_sweep_configs(script_dir, thresholds)
+    for t, p in cfg_paths.items():
+        print(f"[{now_str()}] 生成 config: vwap_exclude={t:g}% -> {p}")
+
+    rows: list[dict[str, Any]] = []
+
+    for thr in thresholds:
+        cfg_path = cfg_paths[thr]
+        cfg_raw = _load_replay_config(cfg_path)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+
+        for rng in ranges:
+            replay_random_days = 5
+            thr_slug = _vwap_sweep_thr_slug(thr)
+            batch_stamp = f"{sweep_stamp}_{thr_slug}_{rng}"
+            output_subdir = os.path.join(f"vwap_sweep_{sweep_stamp}", f"{thr_slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: vwap_exclude={thr:g}%  {rng}  ({n_repeat} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_path),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = [
+                        fn
+                        for fn in os.listdir(results_dir)
+                        if fn.endswith(".json") and fn.endswith(f"{run_tag}.json")
+                    ]
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        p = os.path.join(results_dir, candidates_sorted[0])
+                        with open(p, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": p, "report": rep})
+                except Exception:
+                    pass
+
+            summ = _aggregate_replay_repeat_run_summaries(run_summaries)
+            rows.append(
+                {
+                    "vwap_exclude_above": float(thr),
+                    "replay_range": str(rng),
+                    "config_path": str(cfg_path),
+                    "output_subdir": str(output_subdir),
+                    "batch_stamp": str(batch_stamp),
+                    "summary": summ,
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float(((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== VWAP distance filter sweep ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_mode: {replay_mode}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    out_lines.append("生成した config（replay_safe ベース）:")
+    for t in thresholds:
+        out_lines.append(f"  - {t:g}% -> {cfg_paths[t]}")
+    out_lines.append("")
+    out_lines.append("ソート: avg_expectancy_yen_100_shares（降順）")
+    out_lines.append("")
+    hdr = (
+        "rank\tvwap_exclude_%\treplay_range\tavg_expectancy_yen\ttotal_pnl_100_shares\t"
+        "max_lose_run_yen\tplus_runs\tminus_runs\tlose_worst10_sum_yen\ttotal_signals\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('vwap_exclude_above')}\t{r.get('replay_range')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('total_signals') or 0)}\t"
+            f"results/{r.get('output_subdir')}/"
+        )
+
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"vwap_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    out_path = os.path.join(sweep_root, f"vwap_sweep_summary_{sweep_stamp}.txt")
+    out_compat_path = os.path.join(results_root, f"vwap_sweep_summary_{sweep_stamp}.txt")
+    content = "\n".join(out_lines) + "\n"
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    # 互換: 旧パスにも同内容を保存（主保存先は sweep フォルダ）
+    try:
+        with open(out_compat_path, "w", encoding="utf-8") as f2:
+            f2.write(content)
+    except Exception:
+        pass
+
+    print("")
+    print(f"[{now_str()}] VWAP sweep summary_path: {out_path}")
+    print(f"[{now_str()}] (compat) VWAP sweep summary_path: {out_compat_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def _aggregate_replay_repeat_run_summaries_for_daily_loss_stop(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    daily_loss_stop sweep 用の集計（repeat runXX.json から必要項目を合算/平均）。
+    """
+    if not run_summaries:
+        return {}
+
+    run_rows: list[dict[str, Any]] = []
+    sum_lose_worst10_yen = 0.0
+    trigger_count_total = 0
+    skipped_entries_total = 0
+    max_intraday_dd_worst = 0.0
+    avg_daily_dd_sum = 0.0
+
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        stats = (((rep.get("overall_summary") or {}).get("stats")) or {})
+        pnl = float(stats.get("pnl_yen_100_shares") or 0.0)
+        sigs = int(stats.get("signals") or 0)
+        wr = float(stats.get("win_rate_pct") or 0.0)
+        exp = float(stats.get("expectancy_yen_100_shares_per_signal") or 0.0)
+
+        rc = ((rep.get("overall_summary") or {}).get("risk_controls")) or {}
+        if not isinstance(rc, dict):
+            rc = {}
+        trigger_count_total += int(rc.get("daily_loss_stop_trigger_count") or 0)
+        skipped_entries_total += int(rc.get("daily_loss_stop_skipped_entries") or 0)
+        max_intraday_dd_worst = float(max(max_intraday_dd_worst, float(rc.get("max_intraday_drawdown_yen_100_shares") or 0.0)))
+        avg_daily_dd_sum += float(rc.get("avg_daily_drawdown_yen_100_shares") or 0.0)
+
+        run_rows.append({"signals": sigs, "win_rate_pct": wr, "pnl": pnl, "exp": exp})
+
+        aa = rep.get("accident_analysis") or {}
+        lw = aa.get("lose_worst10") or []
+        if isinstance(lw, list):
+            for it in lw:
+                try:
+                    sum_lose_worst10_yen += float(it.get("pnl_yen_100_shares") or 0.0)
+                except Exception:
+                    continue
+
+    total_runs = len(run_rows)
+    if total_runs <= 0:
+        return {}
+
+    total_signals = sum(int(x.get("signals") or 0) for x in run_rows)
+    total_pnl = sum(float(x.get("pnl") or 0.0) for x in run_rows)
+    avg_exp = sum(float(x.get("exp") or 0.0) for x in run_rows) / float(total_runs)
+    plus_runs = sum(1 for x in run_rows if float(x.get("pnl") or 0.0) > 0)
+    minus_runs = sum(1 for x in run_rows if float(x.get("pnl") or 0.0) < 0)
+    max_lose_run = min(run_rows, key=lambda x: float(x.get("pnl") or 0.0))
+    avg_daily_dd_avg = (float(avg_daily_dd_sum) / float(total_runs)) if total_runs > 0 else 0.0
+
+    return {
+        "runs": int(total_runs),
+        "total_signals": int(total_signals),
+        "avg_expectancy_yen_100_shares": float(avg_exp),
+        "total_pnl_yen_100_shares": float(total_pnl),
+        "plus_runs": int(plus_runs),
+        "minus_runs": int(minus_runs),
+        "max_lose_run_pnl_yen_100_shares": float(max_lose_run.get("pnl") or 0.0),
+        "sum_lose_worst10_yen_100_shares": float(sum_lose_worst10_yen),
+        "daily_loss_stop_trigger_count": int(trigger_count_total),
+        "daily_loss_stop_skipped_entries": int(skipped_entries_total),
+        "max_intraday_drawdown_yen_100_shares": float(max_intraday_dd_worst),
+        "avg_daily_drawdown_yen_100_shares": float(avg_daily_dd_avg),
+    }
+
+
+def _aggregate_replay_repeat_run_summaries_for_regime_filter(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    repeat 実行で得た runXX.json レポートのリストから、regime_filter sweep用の集計 summary を返します。
+    """
+    if not run_summaries:
+        return {}
+    run_rows: list[dict[str, Any]] = []
+    sum_lose_worst10_yen = 0.0
+    max_intraday_dd_worst = 0.0
+    skipped_signals_total = 0
+
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        stats = (((rep.get("overall_summary") or {}).get("stats")) or {})
+        pnl = float(stats.get("pnl_yen_100_shares") or 0.0)
+        sigs = int(stats.get("signals") or 0)
+        exp = float(stats.get("expectancy_yen_100_shares_per_signal") or 0.0)
+
+        rc = ((rep.get("overall_summary") or {}).get("risk_controls")) or {}
+        if isinstance(rc, dict):
+            try:
+                max_intraday_dd_worst = float(
+                    max(float(max_intraday_dd_worst), float(rc.get("max_intraday_drawdown_yen_100_shares") or 0.0))
+                )
+            except Exception:
+                pass
+
+        rf = ((rep.get("overall_summary") or {}).get("regime_filters")) or {}
+        if isinstance(rf, dict):
+            skipped_signals_total += int(rf.get("skipped_signals_count") or 0)
+
+        # lose_worst10
+        aa = rep.get("accident_analysis") or {}
+        lw = aa.get("lose_worst10") or []
+        if isinstance(lw, list):
+            for it in lw:
+                try:
+                    sum_lose_worst10_yen += float((it or {}).get("pnl_yen_100_shares") or 0.0)
+                except Exception:
+                    continue
+
+        run_rows.append({"signals": sigs, "pnl": pnl, "exp": exp})
+
+    total_runs = len(run_rows)
+    if total_runs <= 0:
+        return {}
+
+    total_signals = sum(int(x.get("signals") or 0) for x in run_rows)
+    total_pnl = sum(float(x.get("pnl") or 0.0) for x in run_rows)
+    avg_exp = sum(float(x.get("exp") or 0.0) for x in run_rows) / float(total_runs)
+    plus_runs = sum(1 for x in run_rows if float(x.get("pnl") or 0.0) > 0)
+    minus_runs = sum(1 for x in run_rows if float(x.get("pnl") or 0.0) < 0)
+    max_lose_run = min(run_rows, key=lambda x: float(x.get("pnl") or 0.0))
+
+    return {
+        "runs": int(total_runs),
+        "total_signals": int(total_signals),
+        "avg_expectancy_yen_100_shares": float(avg_exp),
+        "total_pnl_yen_100_shares": float(total_pnl),
+        "plus_runs": int(plus_runs),
+        "minus_runs": int(minus_runs),
+        "max_lose_run_pnl_yen_100_shares": float(max_lose_run.get("pnl") or 0.0),
+        "sum_lose_worst10_yen_100_shares": float(sum_lose_worst10_yen),
+        "max_intraday_drawdown_yen_100_shares": float(max_intraday_dd_worst),
+        "skipped_signals_count": int(skipped_signals_total),
+    }
+
+
+def run_daily_loss_stop_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    daily_loss_stop の閾値比較を sweep します。
+    - 対象config: replay_morning_vwap2(OFF), replay_morning_vwap2_dd30k/dd50k/dd70k
+    - 各configについて random_apr×n_repeat と random_60d×n_repeat を実行
+    - 出力: results/daily_loss_stop_sweep_<stamp>/
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    _ensure_replay_configs_exist()  # configs が無ければ生成
+
+    cfg_files = [
+        "replay_morning_vwap2.json",
+        "replay_morning_vwap2_dd30k.json",
+        "replay_morning_vwap2_dd50k.json",
+        "replay_morning_vwap2_dd70k.json",
+    ]
+    cfg_paths: list[str] = []
+    for fn in cfg_files:
+        p = _resolve_replay_config_path(os.path.join("configs", fn))
+        if p:
+            cfg_paths.append(p)
+
+    ranges = ["random_apr", "random_60d"]
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"daily_loss_stop_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    print(f"[{now_str()}] daily_loss_stop sweep: configs={len(cfg_paths)} ranges={ranges} repeat={n_repeat}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+
+    rows: list[dict[str, Any]] = []
+    for cfg_path in cfg_paths:
+        cfg_raw = _load_replay_config(cfg_path)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_path))
+        cfg_slug = os.path.basename(cfg_path).replace(".json", "")
+
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{cfg_slug}_{rng}"
+            output_subdir = os.path.join(f"daily_loss_stop_sweep_{sweep_stamp}", f"{cfg_slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {cfg_slug}  {rng}  ({n_repeat} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_path),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = [
+                        fn
+                        for fn in os.listdir(results_dir)
+                        if fn.endswith(".json") and fn.endswith(f"{run_tag}.json")
+                    ]
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        p = os.path.join(results_dir, candidates_sorted[0])
+                        with open(p, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": p, "report": rep})
+                except Exception:
+                    pass
+
+            summ = _aggregate_replay_repeat_run_summaries_for_daily_loss_stop(run_summaries)
+            rows.append(
+                {
+                    "config_name": cfg_name,
+                    "config_path": str(cfg_path),
+                    "config_slug": cfg_slug,
+                    "replay_range": str(rng),
+                    "output_subdir": str(output_subdir),
+                    "batch_stamp": str(batch_stamp),
+                    "summary": summ,
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float(((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== daily_loss_stop sweep ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_mode: {replay_mode}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    out_lines.append("configs:")
+    for p in cfg_paths:
+        out_lines.append(f"  - {p}")
+    out_lines.append("")
+    out_lines.append("ソート: avg_expectancy_yen_100_shares（降順）")
+    out_lines.append("")
+
+    hdr = (
+        "rank\tconfig_name\treplay_range\tavg_expectancy_yen\ttotal_pnl_100_shares\tmax_lose_run_yen\t"
+        "plus_runs\tminus_runs\tlose_worst10_sum_yen\ttotal_signals\t"
+        "daily_loss_stop_trigger_count\tdaily_loss_stop_skipped_entries\t"
+        "max_intraday_drawdown\tavg_daily_drawdown\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('config_name')}\t{r.get('replay_range')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('total_signals') or 0)}\t"
+            f"{int(s.get('daily_loss_stop_trigger_count') or 0)}\t"
+            f"{int(s.get('daily_loss_stop_skipped_entries') or 0)}\t"
+            f"{float(s.get('max_intraday_drawdown_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('avg_daily_drawdown_yen_100_shares') or 0.0):+.2f}\t"
+            f"results/{r.get('output_subdir')}/"
+        )
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] daily_loss_stop sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def _write_regime_filter_sweep_configs(script_dir: str) -> list[str]:
+    """
+    replay_morning_vwap2 をベースに regime_filters のON/OFF組み合わせ config を configs/regime_filter_sweep/ に保存。
+    """
+    _ensure_replay_configs_exist()
+    sweep_dir = os.path.join(script_dir, "configs", "regime_filter_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+
+    base_rel = os.path.join("configs", "replay_morning_vwap2.json")
+    base_path = _resolve_replay_config_path(base_rel)
+    base_cfg = _load_replay_config(base_path) if base_path else {}
+    if not base_cfg:
+        presets = _default_replay_configs_dicts()
+        fallback = presets.get("replay_morning_vwap2.json")
+        if isinstance(fallback, dict):
+            base_cfg = dict(fallback)
+
+    cases: list[tuple[str, dict[str, bool]]] = [
+        ("baseline_off", {}),
+        ("disable_morning_weak", {"disable_morning_weak": True}),
+        ("disable_rising_ratio_lt50", {"disable_rising_ratio_lt50": True}),
+        ("disable_topix_weak", {"disable_topix_weak": True}),
+        ("disable_morning_weak__disable_rising_ratio_lt50", {"disable_morning_weak": True, "disable_rising_ratio_lt50": True}),
+    ]
+
+    out_paths: list[str] = []
+    for slug, flags in cases:
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        cfg["name"] = f"replay_morning_vwap2_regime_{slug}"
+        if flags:
+            cfg["regime_filters"] = dict(flags)
+        else:
+            cfg.pop("regime_filters", None)
+        fn = f"replay_morning_vwap2_regime_{slug}.json"
+        path = os.path.join(sweep_dir, fn)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        out_paths.append(os.path.abspath(path))
+    return out_paths
+
+
+def run_regime_filter_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    regime_filters の組み合わせを sweep します。
+    - 対象: baseline(OFF), morning_weak, rising<50, topix_weak, morning_weak+rising<50
+    - random_apr×n_repeat と random_60d×n_repeat
+    - 出力: results/regime_filter_sweep_<stamp>/
+    - config生成: configs/regime_filter_sweep/
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges = ["random_apr", "random_60d"]
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+
+    cfg_paths = _write_regime_filter_sweep_configs(script_dir)
+
+    results_root = os.path.join(script_dir, "results")
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = os.path.join(results_root, f"regime_filter_sweep_{sweep_stamp}")
+    os.makedirs(sweep_root, exist_ok=True)
+
+    print(f"[{now_str()}] regime_filter sweep: configs={len(cfg_paths)} ranges={ranges} repeat={n_repeat}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] config_root: {os.path.join(script_dir, 'configs', 'regime_filter_sweep')}")
+    for p in cfg_paths:
+        print(f"[{now_str()}] 生成 config: {p}")
+
+    rows: list[dict[str, Any]] = []
+    for cfg_path in cfg_paths:
+        cfg_raw = _load_replay_config(cfg_path)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_path))
+        cfg_slug = os.path.basename(cfg_path).replace(".json", "")
+
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{cfg_slug}_{rng}"
+            output_subdir = os.path.join(f"regime_filter_sweep_{sweep_stamp}", f"{cfg_slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {cfg_slug}  {rng}  ({n_repeat} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = os.path.join(script_dir, "results", output_subdir)
+            os.makedirs(results_dir, exist_ok=True)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_path),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = [
+                        fn for fn in os.listdir(results_dir) if fn.endswith(".json") and fn.endswith(f"{run_tag}.json")
+                    ]
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        p = os.path.join(results_dir, candidates_sorted[0])
+                        with open(p, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": p, "report": rep})
+                except Exception:
+                    pass
+
+            summ = _aggregate_replay_repeat_run_summaries_for_regime_filter(run_summaries)
+            rows.append(
+                {
+                    "config_name": cfg_name,
+                    "config_path": str(cfg_path),
+                    "config_slug": cfg_slug,
+                    "replay_range": str(rng),
+                    "output_subdir": str(output_subdir),
+                    "batch_stamp": str(batch_stamp),
+                    "summary": summ,
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float(((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== regime_filter sweep ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_mode: {replay_mode}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    out_lines.append("configs:")
+    for p in cfg_paths:
+        out_lines.append(f"  - {p}")
+    out_lines.append("")
+    out_lines.append("ソート: avg_expectancy_yen_100_shares（降順）")
+    out_lines.append("")
+
+    hdr = (
+        "rank\tconfig_name\treplay_range\tavg_expectancy_yen\ttotal_pnl_100_shares\tmax_lose_run_yen\t"
+        "plus_runs\tminus_runs\tlose_worst10_sum_yen\ttotal_signals\tmax_intraday_drawdown\tskipped_signals_count\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('config_name')}\t{r.get('replay_range')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('total_signals') or 0)}\t"
+            f"{float(s.get('max_intraday_drawdown_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('skipped_signals_count') or 0)}\t"
+            f"results/{r.get('output_subdir')}/"
+        )
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] regime_filter sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     # shorthand:
     #   python yahoo_kabu_watch.py replay <range> <repeat> <mode> <config.json>
@@ -7200,22 +9580,52 @@ def main(argv: list[str]) -> int:
     replay_early_exit_before_stop: bool = bool(getattr(args, "replay_early_exit", False))
     replay_disable_afternoon_entry: bool = bool(getattr(args, "replay_disable_afternoon_entry", False))
     replay_strict_afternoon_entry: bool = bool(getattr(args, "replay_strict_afternoon_entry", False))
+    # CLI同時指定チェック用（config適用後でも参照できるよう、ここで確定）
+    _cli_disable_afternoon_entry: bool = bool(getattr(args, "replay_disable_afternoon_entry", False))
+    _cli_strict_afternoon_entry: bool = bool(getattr(args, "replay_strict_afternoon_entry", False))
     replay_afternoon_compare: bool = bool(getattr(args, "replay_afternoon_compare", False))
     replay_config_path: str = str(getattr(args, "replay_config", "") or "").strip()
-    # 要件: replay実行時に config パス未指定なら configs/replay_safe.json をデフォルトで読む（自動生成も行う）
-    if bool(TEST_REPLAY_MODE) and (not replay_config_path):
-        replay_config_path = _ensure_replay_configs_exist()
-    elif bool(TEST_REPLAY_MODE):
+    # 要件: replay実行時に config パス未指定なら configs/replay_morning_vwap2.json をデフォルトで読む（自動生成も行う）
+    # さらに、未生成の比較用config（replay_morning_rsi75 等）を configs/ に揃えてから読み込む
+    if bool(TEST_REPLAY_MODE):
+        _default_replay_cfg_path = _ensure_replay_configs_exist()
+        if not replay_config_path:
+            replay_config_path = _default_replay_cfg_path
+    if bool(TEST_REPLAY_MODE) and replay_config_path:
         # configs/ が無いケースでも落ちないようにする（ユーザーが明示パス指定した場合）
         try:
-            parent = os.path.dirname(os.path.abspath(replay_config_path))
+            parent = os.path.dirname(os.path.abspath(_resolve_replay_config_path(replay_config_path)))
             if parent:
                 os.makedirs(parent, exist_ok=True)
         except Exception:
             pass
 
+    # 相対パスはカレント依存で読み損なうことがあるため、必ずスクリプト基準へ解決してから読む
+    if replay_config_path:
+        replay_config_path = _resolve_replay_config_path(replay_config_path)
+
     cfg_raw = _load_replay_config(replay_config_path)
     cfg_flags = _apply_replay_config_to_flags(cfg=cfg_raw)
+
+    # プリセット別の期待値（読み込み後に実フラグと照合して WARN）
+    _preset_expect_morning: dict[str, Any] = {
+        "replay_early_exit_before_stop": True,
+        "replay_early_exit_vwap": True,
+        "replay_early_exit_recent_low": True,
+        "replay_strict_afternoon_entry": True,
+        "replay_disable_afternoon_entry": True,
+        "replay_afternoon_topix_weak_block": True,
+    }
+    _preset_expect: dict[str, dict[str, Any]] = {
+        "replay_morning_only.json": dict(_preset_expect_morning),
+        "replay_morning_rsi75.json": dict(_preset_expect_morning),
+        "replay_morning_vwap2.json": dict(_preset_expect_morning),
+        "replay_morning_vwap15.json": dict(_preset_expect_morning),
+        "replay_morning_vwap20.json": dict(_preset_expect_morning),
+        "replay_morning_vwap25.json": dict(_preset_expect_morning),
+        "replay_morning_vwap30.json": dict(_preset_expect_morning),
+        "replay_morning_atr4.json": dict(_preset_expect_morning),
+    }
 
     # configがある場合、戦略条件は基本的にconfig側を優先（CLIは毎回変えるものだけに寄せる）
     if replay_config_path:
@@ -7229,6 +9639,57 @@ def main(argv: list[str]) -> int:
         aft_vwap_dist_pct_max = float(cfg_flags.get("aft_vwap_dist_pct_max", AFTERNOON_ENTRY_STRICT_VWAP_DIST_PCT_MAX))
         aft_rebreak_mult = float(cfg_flags.get("aft_rebreak_mult", AFTERNOON_ENTRY_STRICT_REBREAK_MULT))
         replay_config_name = str(cfg_flags.get("replay_config_name") or str(cfg_raw.get("name") or ""))
+
+    entry_filter_rsi_enabled = bool(cfg_flags.get("entry_filter_rsi_enabled", False))
+    entry_filter_rsi_exclude_above = float(cfg_flags.get("entry_filter_rsi_exclude_above", 75.0))
+    entry_filter_vwap_distance_enabled = bool(cfg_flags.get("entry_filter_vwap_distance_enabled", False))
+    entry_filter_vwap_distance_exclude_above = float(cfg_flags.get("entry_filter_vwap_distance_exclude_above", 2.0))
+    entry_filter_atr_pct_enabled = bool(cfg_flags.get("entry_filter_atr_pct_enabled", False))
+    entry_filter_atr_pct_exclude_above = float(cfg_flags.get("entry_filter_atr_pct_exclude_above", 4.0))
+    daily_loss_stop_enabled = bool(cfg_flags.get("daily_loss_stop_enabled", False))
+    daily_loss_stop_threshold_yen_100_shares = float(cfg_flags.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0))
+    regime_filter_disable_morning_weak = bool(cfg_flags.get("regime_filter_disable_morning_weak", False))
+    regime_filter_disable_rising_ratio_lt50 = bool(cfg_flags.get("regime_filter_disable_rising_ratio_lt50", False))
+    regime_filter_disable_topix_weak = bool(cfg_flags.get("regime_filter_disable_topix_weak", False))
+
+    if replay_config_path:
+        # 必須同等キーがプリセット期待と一致しない場合は WARNING（マージ後でも欠落/上書きミスを検知）
+        try:
+            base_fn = os.path.basename(str(replay_config_path or "").replace("\\", "/"))
+            exp = _preset_expect.get(base_fn)
+            if isinstance(exp, dict):
+                for k, ev in exp.items():
+                    av = cfg_flags.get(k)
+                    if av != ev:
+                        print(
+                            f"[{now_str()}][WARNING] Replay config preset mismatch: "
+                            f"preset={base_fn} key={k} expected={ev} actual={av} "
+                            f"(JSONキー名: early_exit / vwap_break_exit / recent_5m_low_break_exit / strict_afternoon / disable_afternoon_entry / topix_weak_block)"
+                        )
+        except Exception:
+            pass
+
+        # replay_morning_* なのに後場禁止が効いていない場合は明示
+        try:
+            base_fn2 = os.path.basename(str(replay_config_path or "").replace("\\", "/"))
+            morning_presets = (
+                "replay_morning_only.json",
+                "replay_morning_rsi75.json",
+                "replay_morning_vwap2.json",
+                "replay_morning_vwap15.json",
+                "replay_morning_vwap20.json",
+                "replay_morning_vwap25.json",
+                "replay_morning_vwap30.json",
+                "replay_morning_atr4.json",
+            )
+            if base_fn2 in morning_presets and not bool(replay_disable_afternoon_entry):
+                print(
+                    f"[{now_str()}] CONFIG_MISMATCH_WARNING: "
+                    f"config_path suggests morning-only preset but disable_afternoon_entry=False "
+                    f"(check JSON key disable_afternoon_entry: true, or delete stale config file and regenerate)"
+                )
+        except Exception:
+            pass
     else:
         replay_early_exit_vwap = True
         replay_early_exit_recent_low = True
@@ -7244,9 +9705,23 @@ def main(argv: list[str]) -> int:
         print(f"config_name={str(replay_config_name or '')}")
         print(f"config_path={str(replay_config_path or '')}")
         print(f"early_exit_before_stop={bool(replay_early_exit_before_stop)}")
+        print(f"vwap_break_exit={bool(replay_early_exit_vwap)}")
+        print(f"recent_5m_low_break_exit={bool(replay_early_exit_recent_low)}")
         print(f"strict_afternoon={bool(replay_strict_afternoon_entry)}")
-        print(f"topix_weak_block={bool(replay_afternoon_topix_weak_block)}")
         print(f"disable_afternoon_entry={bool(replay_disable_afternoon_entry)}")
+        print(f"topix_weak_block={bool(replay_afternoon_topix_weak_block)}")
+        print(
+            f"entry_filter_rsi: enabled={bool(entry_filter_rsi_enabled)} exclude_above={float(entry_filter_rsi_exclude_above):g}"
+        )
+        print(
+            "entry_filter_vwap_distance: "
+            f"enabled={bool(entry_filter_vwap_distance_enabled)} "
+            f"exclude_above={float(entry_filter_vwap_distance_exclude_above):g}%"
+        )
+        print(
+            "entry_filter_atr_pct: "
+            f"enabled={bool(entry_filter_atr_pct_enabled)} exclude_above={float(entry_filter_atr_pct_exclude_above):g}%"
+        )
 
     # =========================
     # Replay設定（値 + source）を作って run_replay へ渡す
@@ -7269,6 +9744,40 @@ def main(argv: list[str]) -> int:
             pass
         return "default"
 
+    def _src_ef(filter_key: str, child_key: str) -> str:
+        try:
+            if replay_config_path and isinstance(cfg_raw, dict):
+                ef0 = cfg_raw.get("entry_filters")
+                if isinstance(ef0, dict):
+                    sub = ef0.get(filter_key)
+                    if isinstance(sub, dict) and child_key in sub:
+                        return "config"
+        except Exception:
+            pass
+        return "default"
+
+    def _src_rc(child_key: str) -> str:
+        try:
+            if replay_config_path and isinstance(cfg_raw, dict):
+                rc0 = cfg_raw.get("risk_controls")
+                if isinstance(rc0, dict):
+                    sub = rc0.get("daily_loss_stop")
+                    if isinstance(sub, dict) and child_key in sub:
+                        return "config"
+        except Exception:
+            pass
+        return "default"
+
+    def _src_rf(child_key: str) -> str:
+        try:
+            if replay_config_path and isinstance(cfg_raw, dict):
+                rf0 = cfg_raw.get("regime_filters")
+                if isinstance(rf0, dict) and child_key in rf0:
+                    return "config"
+        except Exception:
+            pass
+        return "default"
+
     replay_settings = {
         "config_name": str(replay_config_name or ""),
         "config_path": str(replay_config_path or ""),
@@ -7286,16 +9795,51 @@ def main(argv: list[str]) -> int:
             "vwap_dist_pct_max": {"value": float(aft_vwap_dist_pct_max), "source": _src_aft("vwap_dist_pct_max")},
             "rebreak_mult": {"value": float(aft_rebreak_mult), "source": _src_aft("rebreak_mult")},
         },
+        "entry_filters": {
+            "rsi": {
+                "enabled": {"value": bool(entry_filter_rsi_enabled), "source": _src_ef("rsi", "enabled")},
+                "exclude_above": {"value": float(entry_filter_rsi_exclude_above), "source": _src_ef("rsi", "exclude_above")},
+            },
+            "vwap_distance_pct": {
+                "enabled": {"value": bool(entry_filter_vwap_distance_enabled), "source": _src_ef("vwap_distance_pct", "enabled")},
+                "exclude_above": {
+                    "value": float(entry_filter_vwap_distance_exclude_above),
+                    "source": _src_ef("vwap_distance_pct", "exclude_above"),
+                },
+            },
+            "atr_pct": {
+                "enabled": {"value": bool(entry_filter_atr_pct_enabled), "source": _src_ef("atr_pct", "enabled")},
+                "exclude_above": {"value": float(entry_filter_atr_pct_exclude_above), "source": _src_ef("atr_pct", "exclude_above")},
+            },
+        },
+        "risk_controls": {
+            "daily_loss_stop": {
+                "enabled": {"value": bool(daily_loss_stop_enabled), "source": _src_rc("enabled")},
+                "stop_yen_100_shares": {"value": float(daily_loss_stop_threshold_yen_100_shares), "source": _src_rc("stop_yen_100_shares")},
+            }
+        },
+        "regime_filters": {
+            "disable_morning_weak": {"value": bool(regime_filter_disable_morning_weak), "source": _src_rf("disable_morning_weak")},
+            "disable_rising_ratio_lt50": {
+                "value": bool(regime_filter_disable_rising_ratio_lt50),
+                "source": _src_rf("disable_rising_ratio_lt50"),
+            },
+            "disable_topix_weak": {"value": bool(regime_filter_disable_topix_weak), "source": _src_rf("disable_topix_weak")},
+        },
     }
+    _rr_cli = str(replay_range).strip()
+    if _replay_fixed_random_pool_dates(_rr_cli):
+        _mx = _replay_fixed_random_meta_extra(_rr_cli)
+        replay_settings["replay_date_pool_start"] = {"value": str(_mx.get("replay_date_pool_start") or ""), "source": _rr_cli}
+        replay_settings["replay_date_pool_end"] = {"value": str(_mx.get("replay_date_pool_end") or ""), "source": _rr_cli}
+        replay_settings["replay_candidate_days_count"] = {
+            "value": int(_replay_fixed_random_weekday_candidate_count(_rr_cli)),
+            "source": _rr_cli,
+        }
 
-    # 事故防止: 後場禁止と後場厳格化は同時ONにしない（厳格化が無意味になるため）
-    if bool(replay_disable_afternoon_entry) and bool(replay_strict_afternoon_entry):
+    # 事故防止: CLIだけ「後場禁止」と「後場厳格化」を同時指定しない（config の replay_morning_only は両方 True が正当）
+    if bool(_cli_disable_afternoon_entry) and bool(_cli_strict_afternoon_entry):
         print(f"[{now_str()}] --replay-disable-afternoon-entry と --replay-strict-afternoon-entry は同時指定できません。")
-        return 2
-
-    # 事故防止: config側で後場厳格化をONにしている場合も同様
-    if bool(replay_disable_afternoon_entry) and bool(replay_config_path) and bool(replay_strict_afternoon_entry):
-        print(f"[{now_str()}] 後場禁止と後場厳格化が同時に有効です。config/CLIの指定を見直してください。")
         return 2
 
     interval_sec: float = float(args.interval)
@@ -7326,6 +9870,69 @@ def main(argv: list[str]) -> int:
         print("--interval は 0 より大きい値にしてください。")
         return 2
 
+    if bool(getattr(args, "intraday_1m_cache_report_only", False)):
+        cov = summarize_intraday_1m_cache_coverage()
+        print_intraday_1m_cache_coverage_report(cov)
+        days_cached = int(cov.get("unique_calendar_days") or 0)
+        print(f"=== キャッシュ済みカレンダー日数（全日・全銘柄合算）: {days_cached} 日分 ===")
+        print("")
+        return 0
+
+    if bool(getattr(args, "save_intraday_1m_eod", False)):
+        syms = _resolve_watch_symbols_for_eod(fixed_watch)
+        delay_sec = float(getattr(args, "intraday_1m_eod_delay_sec", 0.15) or 0.0)
+        return int(
+            run_intraday_1m_eod_save_cli(
+                syms,
+                day_jst=str(getattr(args, "intraday_1m_eod_date", "") or ""),
+                force_before_close=bool(getattr(args, "force_intraday_1m_eod_time", False)),
+                timeout_sec=25.0,
+                delay_sec=max(0.0, delay_sec),
+            )
+        )
+
+    if bool(getattr(args, "vwap_distance_sweep", False)):
+        _rs = getattr(args, "replay_seed", None)
+        _seed: Optional[int] = int(_rs) if _rs is not None else None
+        return int(
+            run_vwap_distance_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=10,
+            )
+        )
+
+    if bool(getattr(args, "daily_loss_stop_sweep", False)):
+        _rs = getattr(args, "replay_seed", None)
+        _seed: Optional[int] = int(_rs) if _rs is not None else None
+        return int(
+            run_daily_loss_stop_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=10,
+            )
+        )
+
+    if bool(getattr(args, "regime_filter_sweep", False)):
+        _rs = getattr(args, "replay_seed", None)
+        _seed: Optional[int] = int(_rs) if _rs is not None else None
+        return int(
+            run_regime_filter_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=10,
+            )
+        )
+
     # -----------------------------
     # テスト用リプレイモード
     # -----------------------------
@@ -7337,6 +9944,8 @@ def main(argv: list[str]) -> int:
         if str(replay_range) == "random_5d" and int(replay_random_days or 0) <= 0:
             replay_random_days = 5
             replay_random_months = 3
+        if str(replay_range) in FIXED_RANDOM_REPLAY_LABELS and int(replay_random_days or 0) <= 0:
+            replay_random_days = 5
 
         n = int(replay_repeat)
         if n <= 0:
@@ -7354,7 +9963,12 @@ def main(argv: list[str]) -> int:
 
         # repeatの合算
         run_summaries: list[dict[str, Any]] = []
-        repeat_label = f"random_{int(replay_random_days)}d" if int(replay_random_days or 0) > 0 else str(replay_range)
+        if str(replay_range) in FIXED_RANDOM_REPLAY_LABELS:
+            repeat_label = str(replay_range)
+        elif int(replay_random_days or 0) > 0:
+            repeat_label = f"random_{int(replay_random_days)}d"
+        else:
+            repeat_label = str(replay_range)
 
         # repeatロットごとのフォルダ（results配下にまとめる）
         batch_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
@@ -7405,6 +10019,17 @@ def main(argv: list[str]) -> int:
                     aft_volume_spike_ratio_min=float(aft_volume_spike_ratio_min),
                     aft_vwap_dist_pct_max=float(aft_vwap_dist_pct_max),
                     aft_rebreak_mult=float(aft_rebreak_mult),
+                    entry_filter_rsi_enabled=bool(entry_filter_rsi_enabled),
+                    entry_filter_rsi_exclude_above=float(entry_filter_rsi_exclude_above),
+                    entry_filter_vwap_distance_enabled=bool(entry_filter_vwap_distance_enabled),
+                    entry_filter_vwap_distance_exclude_above=float(entry_filter_vwap_distance_exclude_above),
+                    entry_filter_atr_pct_enabled=bool(entry_filter_atr_pct_enabled),
+                    entry_filter_atr_pct_exclude_above=float(entry_filter_atr_pct_exclude_above),
+                    daily_loss_stop_enabled=bool(daily_loss_stop_enabled),
+                    daily_loss_stop_threshold_yen_100_shares=float(daily_loss_stop_threshold_yen_100_shares),
+                    regime_filter_disable_morning_weak=bool(regime_filter_disable_morning_weak),
+                    regime_filter_disable_rising_ratio_lt50=bool(regime_filter_disable_rising_ratio_lt50),
+                    regime_filter_disable_topix_weak=bool(regime_filter_disable_topix_weak),
                     replay_settings=replay_settings,
                 )
                 if int(code) != 0:
@@ -7463,7 +10088,29 @@ def main(argv: list[str]) -> int:
                 sigs = int(stats.get("signals") or 0)
                 wr = float(stats.get("win_rate_pct") or 0.0)
                 exp = float(stats.get("expectancy_yen_100_shares_per_signal") or 0.0)
-                run_stats.append({"signals": sigs, "win_rate_pct": wr, "pnl": pnl, "exp": exp})
+                rc = ((rep.get("overall_summary") or {}).get("risk_controls")) or {}
+                rf = ((rep.get("overall_summary") or {}).get("regime_filters")) or {}
+                run_stats.append(
+                    {
+                        "signals": sigs,
+                        "win_rate_pct": wr,
+                        "pnl": pnl,
+                        "exp": exp,
+                        "max_intraday_dd": float(rc.get("max_intraday_drawdown_yen_100_shares") or 0.0)
+                        if isinstance(rc, dict)
+                        else 0.0,
+                        "avg_daily_dd": float(rc.get("avg_daily_drawdown_yen_100_shares") or 0.0)
+                        if isinstance(rc, dict)
+                        else 0.0,
+                        "daily_loss_stop_trigger_count": int(rc.get("daily_loss_stop_trigger_count") or 0)
+                        if isinstance(rc, dict)
+                        else 0,
+                        "daily_loss_stop_skipped_entries": int(rc.get("daily_loss_stop_skipped_entries") or 0)
+                        if isinstance(rc, dict)
+                        else 0,
+                        "regime_filter_skipped_signals": int(rf.get("skipped_signals_count") or 0) if isinstance(rf, dict) else 0,
+                    }
+                )
 
             # ADD ON/OFF（参考）も合算
             add_on_total = 0.0
@@ -7507,10 +10154,32 @@ def main(argv: list[str]) -> int:
             avg_wr = sum(float(x.get("win_rate_pct") or 0.0) for x in run_stats) / float(total_runs) if total_runs > 0 else 0.0
             avg_pnl = total_pnl / float(total_runs) if total_runs > 0 else 0.0
             avg_exp = sum(float(x.get("exp") or 0.0) for x in run_stats) / float(total_runs) if total_runs > 0 else 0.0
+            max_intraday_dd_worst = max(float(x.get("max_intraday_dd") or 0.0) for x in run_stats) if run_stats else 0.0
+            avg_daily_dd_avg = (
+                sum(float(x.get("avg_daily_dd") or 0.0) for x in run_stats) / float(total_runs)
+                if total_runs > 0
+                else 0.0
+            )
+            daily_loss_stop_trigger_count_total = sum(int(x.get("daily_loss_stop_trigger_count") or 0) for x in run_stats)
+            daily_loss_stop_skipped_entries_total = sum(int(x.get("daily_loss_stop_skipped_entries") or 0) for x in run_stats)
+            regime_filter_skipped_signals_total = sum(int(x.get("regime_filter_skipped_signals") or 0) for x in run_stats)
             plus_runs = sum(1 for x in run_stats if float(x.get("pnl") or 0.0) > 0)
             minus_runs = sum(1 for x in run_stats if float(x.get("pnl") or 0.0) < 0)
             max_win_run = max(run_stats, key=lambda x: float(x.get("pnl") or 0.0))
             max_lose_run = min(run_stats, key=lambda x: float(x.get("pnl") or 0.0))
+
+            sum_lose_worst10_yen = 0.0
+            for rr in run_summaries:
+                rep = rr.get("report") or {}
+                aa = rep.get("accident_analysis") or {}
+                lw = aa.get("lose_worst10") or []
+                if not isinstance(lw, list):
+                    continue
+                for it in lw:
+                    try:
+                        sum_lose_worst10_yen += float(it.get("pnl_yen_100_shares") or 0.0)
+                    except Exception:
+                        continue
 
             # 銘柄別期待値ランキング（合算）
             sym_rank = []
@@ -7540,12 +10209,18 @@ def main(argv: list[str]) -> int:
                     "avg_pnl_yen_100_shares": float(avg_pnl),
                     "total_pnl_yen_100_shares": float(total_pnl),
                     "avg_expectancy_yen_100_shares": float(avg_exp),
+                    "max_intraday_drawdown_yen_100_shares_worst": float(max_intraday_dd_worst),
+                    "avg_daily_drawdown_yen_100_shares_avg": float(avg_daily_dd_avg),
+                    "daily_loss_stop_trigger_count_total": int(daily_loss_stop_trigger_count_total),
+                    "daily_loss_stop_skipped_entries_total": int(daily_loss_stop_skipped_entries_total),
+                    "regime_filter_skipped_signals_total": int(regime_filter_skipped_signals_total),
                     "add_on_total_pnl_yen_100_shares": float(add_on_total),
                     "add_off_ref_total_pnl_yen_100_shares": float(add_off_ref_total),
                     "plus_runs": int(plus_runs),
                     "minus_runs": int(minus_runs),
                     "max_win_run_pnl_yen_100_shares": float(max_win_run.get("pnl") or 0.0),
                     "max_lose_run_pnl_yen_100_shares": float(max_lose_run.get("pnl") or 0.0),
+                    "sum_lose_worst10_yen_100_shares": float(sum_lose_worst10_yen),
                 },
                 "by_position_kind": {
                     pk: {
@@ -7601,7 +10276,10 @@ def main(argv: list[str]) -> int:
                 wcsv.writerow(["AVG", "", "", float(s.get("avg_win_rate_pct") or 0.0), float(s.get("avg_pnl_yen_100_shares") or 0.0)])
 
             lines: list[str] = []
+            debug_lines: list[str] = []
             lines.append("=== Replay 合算サマリー ===")
+            lines.append(f"debug_file: {name_base}_debug.txt")
+            lines.append("")
             # 要件: 「今回どの設定で回したか」を最上部に必ず表示（=== の直下）
             try:
                 cfg_names = set()
@@ -7650,6 +10328,32 @@ def main(argv: list[str]) -> int:
                     lines.append(f"disable_afternoon_entry: {list(da_vals)[0] if len(da_vals)==1 else 'MIXED'}")
                 if tw_vals:
                     lines.append(f"topix_weak_block: {list(tw_vals)[0] if len(tw_vals)==1 else 'MIXED'}")
+                rs_first = None
+                for rr in run_summaries:
+                    rep = rr.get("report") or {}
+                    rs_first = rep.get("replay_settings") if isinstance(rep.get("replay_settings"), dict) else None
+                    if rs_first:
+                        break
+                if isinstance(rs_first, dict):
+                    for pk in ("replay_date_pool_start", "replay_date_pool_end", "replay_candidate_days_count"):
+                        pv = rs_first.get(pk)
+                        if isinstance(pv, dict):
+                            lines.append(f"{pk}: {pv.get('value')} ({pv.get('source')})")
+                ef_hdr = rs_first.get("entry_filters") if isinstance(rs_first.get("entry_filters"), dict) else {}
+                if isinstance(ef_hdr, dict):
+                    for fk, label in [
+                        ("rsi", "RSI filter"),
+                        ("vwap_distance_pct", "VWAP distance filter"),
+                        ("atr_pct", "ATR filter"),
+                    ]:
+                        sub = ef_hdr.get(fk) if isinstance(ef_hdr.get(fk), dict) else {}
+                        en = sub.get("enabled") if isinstance(sub.get("enabled"), dict) else {}
+                        thr = sub.get("exclude_above") if isinstance(sub.get("exclude_above"), dict) else {}
+                        if isinstance(en, dict) and isinstance(thr, dict):
+                            lines.append(
+                                f"{label}: enabled={en.get('value')} threshold={thr.get('value')} "
+                                f"({en.get('source')}/{thr.get('source')})"
+                            )
                 lines.append("")
             except Exception:
                 pass
@@ -7659,17 +10363,138 @@ def main(argv: list[str]) -> int:
                 lines.append(f"- output_folder: results/{output_subdir}/")
             lines.append(f"- 実行回数: {total_runs}")
             s = agg["summary"]
+            lines.append("【比較指標（run合算・月別/random_60d 比較用）】")
+            lines.append(f"- 平均expectancy(円/信号・run平均): {s['avg_expectancy_yen_100_shares']:+,.0f}円")
+            lines.append(f"- 合計100株損益: {s['total_pnl_yen_100_shares']:+,.0f}円")
+            lines.append(f"- 最大負けrun: {s['max_lose_run_pnl_yen_100_shares']:+,.0f}円")
+            lines.append(f"- プラスrun数/マイナスrun数: {s['plus_runs']}/{s['minus_runs']}")
+            lines.append(f"- lose_worst10_sum合算(全run): {float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+,.0f}円")
+            lines.append(
+                f"- max_intraday_drawdown(最悪run): {float(s.get('max_intraday_drawdown_yen_100_shares_worst') or 0.0):+,.0f}円"
+            )
+            lines.append(
+                f"- avg_daily_drawdown(run平均): {float(s.get('avg_daily_drawdown_yen_100_shares_avg') or 0.0):+,.0f}円"
+            )
+            lines.append(
+                f"- daily_loss_stop_trigger_count(合算): {int(s.get('daily_loss_stop_trigger_count_total') or 0)}"
+            )
+            lines.append(
+                f"- daily_loss_stop_skipped_entries(合算): {int(s.get('daily_loss_stop_skipped_entries_total') or 0)}"
+            )
+            lines.append(
+                f"- regime_filter_skipped_signals_count(合算): {int(s.get('regime_filter_skipped_signals_total') or 0)}"
+            )
             lines.append(f"- 合計signal数: {s['total_signals']}")
+            lines.append("")
+            lines.append("【その他サマリー】")
             lines.append(f"- 平均勝率: {s['avg_win_rate_pct']:.1f}%")
             lines.append(f"- 平均100株損益: {s['avg_pnl_yen_100_shares']:+,.0f}円")
-            lines.append(f"- 合計100株損益: {s['total_pnl_yen_100_shares']:+,.0f}円")
-            lines.append(f"- 平均expectancy: {s['avg_expectancy_yen_100_shares']:+,.0f}円")
             lines.append(f"- ADD ON時損益(合算,100株): {float(s.get('add_on_total_pnl_yen_100_shares') or 0.0):+,.0f}円")
             lines.append(f"- ADD OFF時損益(参考/BASEのみ合算,100株): {float(s.get('add_off_ref_total_pnl_yen_100_shares') or 0.0):+,.0f}円")
-            lines.append(f"- プラスrun数/マイナスrun数: {s['plus_runs']}/{s['minus_runs']}")
             lines.append(f"- 最大勝ちrun: {s['max_win_run_pnl_yen_100_shares']:+,.0f}円")
-            lines.append(f"- 最大負けrun: {s['max_lose_run_pnl_yen_100_shares']:+,.0f}円")
             lines.append("")
+
+            # =========================
+            # TIME_BUCKET_ANALYSIS（run合算）
+            # =========================
+            tb_order = [
+                "09:00-09:30",
+                "09:30-10:00",
+                "10:00-10:30",
+                "10:30-11:00",
+                "11:00-11:30",
+                "12:30-13:00",
+                "13:00-14:00",
+                "14:00-15:00",
+            ]
+            tb_tot: dict[str, dict[str, float]] = {}
+            tb_cnt: dict[str, dict[str, int]] = {}
+            for rr in run_summaries:
+                rep = rr.get("report") or {}
+                tba = rep.get("time_bucket_analysis") or {}
+                if not isinstance(tba, dict):
+                    continue
+                for b, row in tba.items():
+                    if b not in tb_order or not isinstance(row, dict):
+                        continue
+                    tb_cnt.setdefault(b, {})
+                    tb_tot.setdefault(b, {})
+                    tb_cnt[b]["signals"] = int(tb_cnt[b].get("signals", 0)) + int(row.get("signals") or 0)
+                    tb_cnt[b]["wins"] = int(tb_cnt[b].get("wins", 0)) + int(round((float(row.get("winrate_pct") or 0.0) / 100.0) * float(row.get("signals") or 0)))
+                    tb_tot[b]["pnl"] = float(tb_tot[b].get("pnl", 0.0)) + float(row.get("total_pnl_yen_100_shares") or 0.0)
+                    tb_tot[b]["lose_worst10_sum"] = float(tb_tot[b].get("lose_worst10_sum", 0.0)) + float(
+                        row.get("lose_worst10_sum_yen_100_shares") or 0.0
+                    )
+                    # hold minutes は signals 加重で合算
+                    tb_tot[b]["hold_min_sum"] = float(tb_tot[b].get("hold_min_sum", 0.0)) + float(
+                        row.get("avg_hold_minutes") or 0.0
+                    ) * float(row.get("signals") or 0.0)
+
+            lines.append("[TIME_BUCKET_ANALYSIS]")
+            lines.append("")
+            for b in tb_order:
+                sigs = int((tb_cnt.get(b, {}) or {}).get("signals", 0))
+                if sigs <= 0:
+                    continue
+                pnl = float((tb_tot.get(b, {}) or {}).get("pnl", 0.0))
+                exp_y = (pnl / float(sigs)) if sigs > 0 else 0.0
+                wins_est = int((tb_cnt.get(b, {}) or {}).get("wins", 0))
+                winrate = (float(wins_est) / float(sigs) * 100.0) if sigs > 0 else 0.0
+                lw10 = float((tb_tot.get(b, {}) or {}).get("lose_worst10_sum", 0.0))
+                hm_avg = float((tb_tot.get(b, {}) or {}).get("hold_min_sum", 0.0)) / float(sigs) if sigs > 0 else 0.0
+                lines.append(f"bucket: {b}")
+                lines.append(f"signals: {sigs}")
+                lines.append(f"winrate: {winrate:.1f}%")
+                lines.append(f"expectancy: {exp_y:+.0f}")
+                lines.append(f"total_pnl: {pnl:+.0f}")
+                lines.append(f"lose_worst10_sum: {lw10:+.0f}")
+                lines.append(f"avg_hold_minutes: {hm_avg:.1f}")
+                lines.append("")
+
+            # =========================
+            # MARKET_REGIME_ANALYSIS（run合算）
+            # =========================
+            mr_tot: dict[str, dict[str, float]] = {}
+            mr_cnt: dict[str, dict[str, int]] = {}
+            for rr in run_summaries:
+                rep = rr.get("report") or {}
+                mra = rep.get("market_regime_analysis") or {}
+                if not isinstance(mra, dict):
+                    continue
+                for k, row in mra.items():
+                    if not isinstance(row, dict):
+                        continue
+                    mr_cnt.setdefault(k, {})
+                    mr_tot.setdefault(k, {})
+                    mr_cnt[k]["signals"] = int(mr_cnt[k].get("signals", 0)) + int(row.get("signals") or 0)
+                    mr_cnt[k]["wins_est"] = int(mr_cnt[k].get("wins_est", 0)) + int(
+                        round((float(row.get("winrate_pct") or 0.0) / 100.0) * float(row.get("signals") or 0))
+                    )
+                    mr_tot[k]["pnl"] = float(mr_tot[k].get("pnl", 0.0)) + float(row.get("total_pnl_yen_100_shares") or 0.0)
+                    mr_tot[k]["lw10"] = float(mr_tot[k].get("lw10", 0.0)) + float(row.get("lose_worst10_sum_yen_100_shares") or 0.0)
+                    mr_tot[k]["max_dd"] = float(max(float(mr_tot[k].get("max_dd", 0.0)), float(row.get("max_drawdown_yen_100_shares_est") or 0.0)))
+
+            if mr_tot:
+                lines.append("[MARKET_REGIME_ANALYSIS]")
+                lines.append("")
+                for k in sorted(mr_tot.keys()):
+                    sigs = int((mr_cnt.get(k, {}) or {}).get("signals", 0))
+                    if sigs <= 0:
+                        continue
+                    wins = int((mr_cnt.get(k, {}) or {}).get("wins_est", 0))
+                    winrate = (float(wins) / float(sigs) * 100.0) if sigs > 0 else 0.0
+                    pnl = float((mr_tot.get(k, {}) or {}).get("pnl", 0.0))
+                    exp_y = (pnl / float(sigs)) if sigs > 0 else 0.0
+                    lw10 = float((mr_tot.get(k, {}) or {}).get("lw10", 0.0))
+                    mdd = float((mr_tot.get(k, {}) or {}).get("max_dd", 0.0))
+                    lines.append(f"regime: {k}")
+                    lines.append(f"signals: {sigs}")
+                    lines.append(f"winrate: {winrate:.1f}%")
+                    lines.append(f"avg_expectancy_yen_100_shares: {exp_y:+.0f}")
+                    lines.append(f"total_pnl_100_shares: {pnl:+.0f}")
+                    lines.append(f"lose_worst10_sum: {lw10:+.0f}")
+                    lines.append(f"max_drawdown: {mdd:+.0f}")
+                    lines.append("")
 
             lines.append("【各runの概要】")
             baseline_worst10_sum: Optional[float] = None
@@ -7698,6 +10523,21 @@ def main(argv: list[str]) -> int:
                         lines.append(f"  strict_afternoon: {bool(cfg.get('strict_afternoon_entry', False))}")
                         lines.append(f"  disable_afternoon_entry: {bool(cfg.get('disable_afternoon_entry', False))}")
                         lines.append(f"  topix_weak_block: {bool(cfg.get('afternoon_topix_weak_block', False))}")
+                        lines.append(
+                            "  RSI filter: "
+                            f"enabled={bool(cfg.get('entry_filter_rsi_enabled', False))} "
+                            f"threshold={float(cfg.get('entry_filter_rsi_exclude_above', 75.0))}"
+                        )
+                        lines.append(
+                            "  VWAP distance filter: "
+                            f"enabled={bool(cfg.get('entry_filter_vwap_distance_enabled', False))} "
+                            f"threshold={float(cfg.get('entry_filter_vwap_distance_exclude_above', 2.0))}%"
+                        )
+                        lines.append(
+                            "  ATR filter: "
+                            f"enabled={bool(cfg.get('entry_filter_atr_pct_enabled', False))} "
+                            f"threshold={float(cfg.get('entry_filter_atr_pct_exclude_above', 4.0))}%"
+                        )
                     aa = rep.get("accident_analysis") or {}
                     lw = aa.get("lose_worst10") or []
                     worst10_sum = None
@@ -7818,9 +10658,169 @@ def main(argv: list[str]) -> int:
                     lines.append(f"  - {it['reason']}: {int(it['count'])}")
             lines.append("")
 
+            lines.append("【銘柄別 期待値ランキング（合算）】")
+            for it in agg["by_symbol_expectancy_ranking"][:10]:
+                lines.append(
+                    f"- {it['symbol']}: signals={int(it['signals'])}  expectancy={float(it['expectancy_yen_100_shares']):+,.0f}円  "
+                    f"100株損益={float(it['pnl_yen_100_shares']):+,.0f}円"
+                )
+            lines.append("")
+
+            # ----- 以下は all_runs_debug.txt へ分離（マーケット/REJECT/パイプライン等） -----
+            debug_lines.append("=== Replay 合算サマリー（デバッグ詳細） ===")
+            debug_lines.append(f"summary_file: {name_base}.txt")
+            debug_lines.append("")
+
+            # =========================
+            # risk_controls.daily_loss_stop（デバッグ）
+            # =========================
+            debug_lines.append("[DAILY_LOSS_STOP_DEBUG]")
+            debug_lines.append("")
+            for rr in run_summaries:
+                rep = rr.get("report") or {}
+                rc = ((rep.get("overall_summary") or {}).get("risk_controls")) or {}
+                run_no = int(rr.get("run_no") or 0)
+                if not isinstance(rc, dict):
+                    debug_lines.append(f"run{run_no:02d}: (no risk_controls)")
+                    continue
+                debug_lines.append(
+                    f"run{run_no:02d}: enabled={bool(rc.get('daily_loss_stop_enabled', False))} "
+                    f"thr={float(rc.get('daily_loss_stop_threshold_yen_100_shares') or 0.0):g} "
+                    f"trigger_count={int(rc.get('daily_loss_stop_trigger_count') or 0)} "
+                    f"skipped_entries={int(rc.get('daily_loss_stop_skipped_entries') or 0)} "
+                    f"daily_pnl_min={float(rc.get('daily_pnl_min_yen_100_shares') or 0.0):+,.0f} "
+                    f"max_intraday_dd={float(rc.get('max_intraday_drawdown_yen_100_shares') or 0.0):+,.0f} "
+                    f"avg_daily_dd={float(rc.get('avg_daily_drawdown_yen_100_shares') or 0.0):+,.0f}"
+                )
+                tdays = rc.get("daily_loss_stop_triggered_days") or []
+                if isinstance(tdays, list) and tdays:
+                    debug_lines.append("  triggered_days:")
+                    for d in tdays:
+                        debug_lines.append(f"    - {d}")
+            debug_lines.append("")
+
+            debug_lines.append("[DAILY_LOSS_STOP_ANALYSIS]")
+            debug_lines.append("")
+            for rr in run_summaries:
+                rep = rr.get("report") or {}
+                rc = ((rep.get("overall_summary") or {}).get("risk_controls")) or {}
+                run_no = int(rr.get("run_no") or 0)
+                if not isinstance(rc, dict):
+                    continue
+                an = rc.get("daily_loss_stop_analysis") or []
+                if not isinstance(an, list) or not an:
+                    continue
+                debug_lines.append(f"run{run_no:02d}:")
+                for it in an:
+                    if not isinstance(it, dict):
+                        continue
+                    debug_lines.append(f"  trigger_day: {str(it.get('trigger_day_jst') or '')}")
+                    debug_lines.append(f"  trigger_datetime_jst: {str(it.get('trigger_datetime_jst') or '')}")
+                    debug_lines.append(
+                        f"  pnl_before_trigger: {float(it.get('pnl_before_trigger_yen_100_shares') or 0.0):+,.0f}"
+                    )
+                    debug_lines.append(
+                        f"  skipped_entries_count_after_trigger: {int(it.get('skipped_entries_count_after_trigger') or 0)}"
+                    )
+                    debug_lines.append(
+                        f"  skipped_entries_virtual_pnl_sum: {float(it.get('skipped_entries_virtual_pnl_sum_yen_100_shares') or 0.0):+,.0f}"
+                    )
+                    debug_lines.append(
+                        f"  prevented_loss_estimate: {float(it.get('prevented_loss_estimate_yen_100_shares') or 0.0):+,.0f}"
+                    )
+                    debug_lines.append(
+                        f"  skipped_entries_virtual_winrate: {float(it.get('skipped_entries_virtual_winrate_pct') or 0.0):.1f}%"
+                    )
+                    debug_lines.append("")
+            debug_lines.append("")
+
+            # =========================
+            # regime_filters（デバッグ）
+            # =========================
+            debug_lines.append("[REGIME_FILTER_DEBUG]")
+            debug_lines.append("")
+            for rr in run_summaries:
+                rep = rr.get("report") or {}
+                rf = ((rep.get("overall_summary") or {}).get("regime_filters")) or {}
+                run_no = int(rr.get("run_no") or 0)
+                if not isinstance(rf, dict):
+                    debug_lines.append(f"run{run_no:02d}: (no regime_filters)")
+                    continue
+                debug_lines.append(
+                    f"run{run_no:02d}: "
+                    f"disable_morning_weak={bool(rf.get('disable_morning_weak', False))} "
+                    f"disable_rising_ratio_lt50={bool(rf.get('disable_rising_ratio_lt50', False))} "
+                    f"disable_topix_weak={bool(rf.get('disable_topix_weak', False))} "
+                    f"skipped_signals={int(rf.get('skipped_signals_count') or 0)}"
+                )
+                src = rf.get("skip_reason_counts") or {}
+                if isinstance(src, dict) and src:
+                    debug_lines.append("  skip_reason_counts:")
+                    for k in sorted(src.keys()):
+                        debug_lines.append(f"    - {k}: {int(src.get(k) or 0)}")
+            debug_lines.append("")
+
+            # =========================
+            # TIME_BUCKET_ANALYSIS（デバッグ: runごと）
+            # =========================
+            debug_lines.append("[TIME_BUCKET_ANALYSIS]")
+            debug_lines.append("")
+            for rr in run_summaries:
+                rep = rr.get("report") or {}
+                run_no = int(rr.get("run_no") or 0)
+                tba = rep.get("time_bucket_analysis") or {}
+                if not isinstance(tba, dict) or not tba:
+                    continue
+                debug_lines.append(f"run{run_no:02d}:")
+                for b in [
+                    "09:00-09:30",
+                    "09:30-10:00",
+                    "10:00-10:30",
+                    "10:30-11:00",
+                    "11:00-11:30",
+                    "12:30-13:00",
+                    "13:00-14:00",
+                    "14:00-15:00",
+                ]:
+                    row = tba.get(b)
+                    if not isinstance(row, dict):
+                        continue
+                    debug_lines.append(f"  bucket: {b}")
+                    debug_lines.append(f"    signals: {int(row.get('signals') or 0)}")
+                    debug_lines.append(f"    winrate: {float(row.get('winrate_pct') or 0.0):.1f}%")
+                    debug_lines.append(f"    expectancy: {float(row.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f}")
+                    debug_lines.append(f"    total_pnl: {float(row.get('total_pnl_yen_100_shares') or 0.0):+,.0f}")
+                    debug_lines.append(f"    lose_worst10_sum: {float(row.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}")
+                    debug_lines.append(f"    avg_hold_minutes: {float(row.get('avg_hold_minutes') or 0.0):.1f}")
+                debug_lines.append("")
+            debug_lines.append("")
+
+            debug_lines.append("[MARKET_REGIME_ANALYSIS]")
+            debug_lines.append("")
+            for rr in run_summaries:
+                rep = rr.get("report") or {}
+                run_no = int(rr.get("run_no") or 0)
+                mra = rep.get("market_regime_analysis") or {}
+                if not isinstance(mra, dict) or not mra:
+                    continue
+                debug_lines.append(f"run{run_no:02d}:")
+                for k in sorted(mra.keys()):
+                    row = mra.get(k) or {}
+                    if not isinstance(row, dict):
+                        continue
+                    debug_lines.append(
+                        f"  {k}: signals={int(row.get('signals') or 0)} "
+                        f"winrate={float(row.get('winrate_pct') or 0.0):.1f}% "
+                        f"exp={float(row.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                        f"pnl={float(row.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                        f"lw10={float(row.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f} "
+                        f"max_dd={float(row.get('max_drawdown_yen_100_shares_est') or 0.0):+,.0f}"
+                    )
+                debug_lines.append("")
+            debug_lines.append("")
+
             # =========================
             # REJECT理由ランキング（ユーザー要望）
-            # - Replayで「候補が reject された理由」を合算して可視化します
             # =========================
             rej_total: dict[str, int] = {}
             for rr in run_summaries:
@@ -7838,15 +10838,14 @@ def main(argv: list[str]) -> int:
                 key=lambda x: int(x.get("count") or 0),
                 reverse=True,
             )
-            lines.append("[REJECT_REASON_RANKING]")
-            lines.append("")
+            debug_lines.append("[REJECT_REASON_RANKING]")
+            debug_lines.append("")
             for it in rej_rank[:30]:
-                lines.append(f"{it['reason']}: {int(it['count'])}")
-            lines.append("")
+                debug_lines.append(f"{it['reason']}: {int(it['count'])}")
+            debug_lines.append("")
 
             # =========================
             # PIPELINE_DEBUG（ユーザー要望）
-            # - Replayパイプラインのどの段階で落ちているかを可視化
             # =========================
             pd_tot: dict[str, int] = {}
             cr_tot: dict[str, int] = {}
@@ -7868,8 +10867,8 @@ def main(argv: list[str]) -> int:
                                 cr_tot[kk] = int(cr_tot.get(kk, 0)) + int(v)
                         except Exception:
                             continue
-            lines.append("[PIPELINE_DEBUG]")
-            lines.append("")
+            debug_lines.append("[PIPELINE_DEBUG]")
+            debug_lines.append("")
             for k in [
                 "market_debug_count",
                 "candidate_loop_entered",
@@ -7889,14 +10888,13 @@ def main(argv: list[str]) -> int:
                 "post_signal_object_count",
             ]:
                 if k in pd_tot:
-                    lines.append(f"{k}={int(pd_tot.get(k) or 0)}")
-            lines.append("")
-            lines.append("continue_reason_counts:")
+                    debug_lines.append(f"{k}={int(pd_tot.get(k) or 0)}")
+            debug_lines.append("")
+            debug_lines.append("continue_reason_counts:")
             for it in sorted(cr_tot.items(), key=lambda kv: int(kv[1]), reverse=True)[:30]:
-                lines.append(f"{it[0]}: {int(it[1])}")
-            lines.append("")
+                debug_lines.append(f"{it[0]}: {int(it[1])}")
+            debug_lines.append("")
 
-            # generated/replay_signals/eval_signals の段階別合算（ユーザー要望）
             gen_total = 0
             rep_total = 0
             eval_total = 0
@@ -7909,26 +10907,18 @@ def main(argv: list[str]) -> int:
                 if isinstance(efd, dict):
                     rep_total += int(efd.get("before_count") or 0)
                     eval_total += int(efd.get("after_count") or 0)
-            lines.append("generated_signal_count=" + str(int(gen_total)))
-            lines.append("replay_signals_count=" + str(int(rep_total)))
-            lines.append("eval_signals_count=" + str(int(eval_total)))
-            lines.append("")
-
-            lines.append("【銘柄別 期待値ランキング（合算）】")
-            for it in agg["by_symbol_expectancy_ranking"][:10]:
-                lines.append(
-                    f"- {it['symbol']}: signals={int(it['signals'])}  expectancy={float(it['expectancy_yen_100_shares']):+,.0f}円  "
-                    f"100株損益={float(it['pnl_yen_100_shares']):+,.0f}円"
-                )
-            lines.append("")
+            debug_lines.append("[EVAL_FILTER / SIGNAL_STAGE]")
+            debug_lines.append("")
+            debug_lines.append("generated_signal_count=" + str(int(gen_total)))
+            debug_lines.append("replay_signals_count=" + str(int(rep_total)))
+            debug_lines.append("eval_signals_count=" + str(int(eval_total)))
+            debug_lines.append("")
 
             # =========================
-            # MARKET_DEBUG（ユーザー要望）
-            # - Replay summaryではなく all_runs.txt に「signal候補時」の地合いデバッグを必ず残す
-            # - 各runの report["signals"]（検出されたsignal候補）から抽出
+            # MARKET_DEBUG
             # =========================
-            lines.append("[MARKET_DEBUG]")
-            lines.append("")
+            debug_lines.append("[MARKET_DEBUG]")
+            debug_lines.append("")
             for rr in run_summaries:
                 rep = rr.get("report") or {}
                 run_no = int(rr.get("run_no") or 0)
@@ -7937,51 +10927,50 @@ def main(argv: list[str]) -> int:
                 rows_total = int(md.get("rows_total") or 0)
                 truncated = bool(md.get("truncated", False))
                 if not isinstance(rows, list) or not rows:
-                    lines.append(f"run{run_no:02d}: (no market_debug rows)")
-                    lines.append("")
+                    debug_lines.append(f"run{run_no:02d}: (no market_debug rows)")
+                    debug_lines.append("")
                     continue
-                lines.append(f"run{run_no:02d}: market_debug_rows={rows_total}{' (truncated)' if truncated else ''}")
-                lines.append("")
+                debug_lines.append(f"run{run_no:02d}: market_debug_rows={rows_total}{' (truncated)' if truncated else ''}")
+                debug_lines.append("")
                 for r2 in rows:
                     if not isinstance(r2, dict):
                         continue
-                    lines.append(str(r2.get("timestamp_jst") or ""))
-                    lines.append(f"symbol={str(r2.get('symbol') or '')}")
-                    lines.append("")
-                    lines.append(f"topix_fetch_ok={bool(r2.get('topix_fetch_ok', False))}")
+                    debug_lines.append(str(r2.get("timestamp_jst") or ""))
+                    debug_lines.append(f"symbol={str(r2.get('symbol') or '')}")
+                    debug_lines.append("")
+                    debug_lines.append(f"topix_fetch_ok={bool(r2.get('topix_fetch_ok', False))}")
                     tr = r2.get("topix_raw")
                     if isinstance(tr, (int, float)):
-                        lines.append(f"topix_raw={float(tr):.2f}")
+                        debug_lines.append(f"topix_raw={float(tr):.2f}")
                     else:
-                        lines.append("topix_raw=N/A")
+                        debug_lines.append("topix_raw=N/A")
                     pc2 = r2.get("topix_prev_close")
                     if isinstance(pc2, (int, float)):
-                        lines.append(f"topix_prev_close={float(pc2):.2f}")
+                        debug_lines.append(f"topix_prev_close={float(pc2):.2f}")
                     else:
-                        lines.append("topix_prev_close=N/A")
+                        debug_lines.append("topix_prev_close=N/A")
                     tp = r2.get("topix_pct")
                     if isinstance(tp, (int, float)):
-                        lines.append(f"topix_pct={float(tp):+.2f}")
+                        debug_lines.append(f"topix_pct={float(tp):+.2f}")
                     else:
-                        lines.append("topix_pct=N/A")
-                    lines.append(f"market_state={str(r2.get('market_state') or '')}")
-                    lines.append(f"entry_allowed={bool(r2.get('entry_allowed', True))}")
+                        debug_lines.append("topix_pct=N/A")
+                    debug_lines.append(f"market_state={str(r2.get('market_state') or '')}")
+                    debug_lines.append(f"entry_allowed={bool(r2.get('entry_allowed', True))}")
                     br = r2.get("blocked_reason") or []
                     if isinstance(br, list):
                         br_s = ",".join([str(x) for x in br if str(x).strip()])
                     else:
                         br_s = str(br)
-                    lines.append(f"blocked_reason=[{br_s}]")
-                    lines.append("")
-                lines.append("")
+                    debug_lines.append(f"blocked_reason=[{br_s}]")
+                    debug_lines.append("")
+                debug_lines.append("")
                 continue
 
             # =========================
             # CROSSED_DEBUG（ユーザー要望）
-            # - candidates到達後に crossed が成立しない原因を切り分けます
             # =========================
-            lines.append("[CROSSED_DEBUG]")
-            lines.append("")
+            debug_lines.append("[CROSSED_DEBUG]")
+            debug_lines.append("")
             for rr in run_summaries:
                 rep = rr.get("report") or {}
                 run_no = int(rr.get("run_no") or 0)
@@ -7990,70 +10979,73 @@ def main(argv: list[str]) -> int:
                 rows_total = int(cd.get("rows_total") or 0)
                 truncated = bool(cd.get("truncated", False))
                 if not isinstance(rows, list) or not rows:
-                    lines.append(f"run{run_no:02d}: (no crossed_debug rows)")
-                    lines.append("")
+                    debug_lines.append(f"run{run_no:02d}: (no crossed_debug rows)")
+                    debug_lines.append("")
                     continue
-                lines.append(f"run{run_no:02d}: crossed_debug_rows={rows_total}{' (truncated)' if truncated else ''}")
-                lines.append("")
+                debug_lines.append(f"run{run_no:02d}: crossed_debug_rows={rows_total}{' (truncated)' if truncated else ''}")
+                debug_lines.append("")
                 for r2 in rows:
                     if not isinstance(r2, dict):
                         continue
-                    lines.append(f"symbol={str(r2.get('symbol') or '')}")
-                    lines.append(f"time={str(r2.get('time_jst') or '')}")
+                    debug_lines.append(f"symbol={str(r2.get('symbol') or '')}")
+                    debug_lines.append(f"time={str(r2.get('time_jst') or '')}")
                     p = r2.get("price")
                     h5 = r2.get("high_5m")
                     cr = bool(r2.get("crossed", False))
                     df = r2.get("diff_pct")
                     if isinstance(p, (int, float)):
-                        lines.append(f"price={float(p):.2f}")
+                        debug_lines.append(f"price={float(p):.2f}")
                     else:
-                        lines.append("price=N/A")
+                        debug_lines.append("price=N/A")
                     if isinstance(h5, (int, float)):
-                        lines.append(f"high_5m={float(h5):.2f}")
+                        debug_lines.append(f"high_5m={float(h5):.2f}")
                     else:
-                        lines.append("high_5m=N/A")
-                    lines.append(f"crossed={cr}")
+                        debug_lines.append("high_5m=N/A")
+                    debug_lines.append(f"crossed={cr}")
                     if isinstance(df, (int, float)):
-                        lines.append(f"diff={float(df):+.2f}%")
+                        debug_lines.append(f"diff={float(df):+.2f}%")
                     else:
-                        lines.append("diff=N/A")
-                    lines.append("")
-                lines.append("")
+                        debug_lines.append("diff=N/A")
+                    debug_lines.append("")
+                debug_lines.append("")
 
-                # (legacy) signals[] ベースの出力（互換用。ここには通常到達しません）
+                # (legacy) signals[] ベースの出力（互換用）
                 sigs = rep.get("signals") or []
                 if not isinstance(sigs, list) or not sigs:
-                    lines.append(f"run{run_no:02d}: (no signals)")
-                    lines.append("")
+                    debug_lines.append(f"run{run_no:02d}: (no signals)")
+                    debug_lines.append("")
                     continue
                 for s2 in sigs:
                     if not isinstance(s2, dict):
                         continue
-                    lines.append(f"run{run_no:02d} {str(s2.get('symbol') or '')} {str(s2.get('signal_time_jst') or '')}")
-                    lines.append(f"topix_fetch_ok={bool(s2.get('topix_fetch_ok', False))}")
-                    # topix_raw は TOPIX価格レベル（例: 2783.52）
+                    debug_lines.append(f"run{run_no:02d} {str(s2.get('symbol') or '')} {str(s2.get('signal_time_jst') or '')}")
+                    debug_lines.append(f"topix_fetch_ok={bool(s2.get('topix_fetch_ok', False))}")
                     tr = s2.get("topix_raw")
                     if isinstance(tr, (int, float)):
-                        lines.append(f"topix_raw={float(tr):.2f}")
+                        debug_lines.append(f"topix_raw={float(tr):.2f}")
                     else:
-                        lines.append("topix_raw=N/A")
+                        debug_lines.append("topix_raw=N/A")
                     tp = s2.get("topix_pct")
                     if isinstance(tp, (int, float)):
-                        lines.append(f"topix_pct={float(tp):+.2f}")
+                        debug_lines.append(f"topix_pct={float(tp):+.2f}")
                     else:
-                        lines.append("topix_pct=N/A")
-                    lines.append(f"market_state={str(s2.get('market_state') or s2.get('market_regime') or '')}")
-                    lines.append(f"entry_allowed={bool(s2.get('entry_allowed', True))}")
+                        debug_lines.append("topix_pct=N/A")
+                    debug_lines.append(f"market_state={str(s2.get('market_state') or s2.get('market_regime') or '')}")
+                    debug_lines.append(f"entry_allowed={bool(s2.get('entry_allowed', True))}")
                     br2 = str(s2.get('blocked_reason') or "")
-                    lines.append(f"blocked_reason=[{br2}]")
-                    lines.append("")
+                    debug_lines.append(f"blocked_reason=[{br2}]")
+                    debug_lines.append("")
 
             txt_path = os.path.join(results_dir, f"{name_base}.txt")
+            debug_txt_path = os.path.join(results_dir, f"{name_base}_debug.txt")
             with open(txt_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines) + "\n")
+            with open(debug_txt_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(debug_lines) + "\n")
 
             print("\n".join(lines))
             print(f"[{now_str()}] 合算サマリーを保存しました: {txt_path}")
+            print(f"[{now_str()}] デバッグ詳細を保存しました: {debug_txt_path}")
             print(f"[{now_str()}] 合算サマリーを保存しました: {json_path}")
         except Exception as e:
             print(f"[{now_str()}] 合算サマリーの作成に失敗しました: {e}")

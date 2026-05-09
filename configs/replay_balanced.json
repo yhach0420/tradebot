@@ -1,0 +1,13 @@
+{
+  "name": "replay_balanced",
+  "early_exit": true,
+  "vwap_break_exit": true,
+  "recent_5m_low_break_exit": false,
+  "strict_afternoon": true,
+  "topix_weak_block": false,
+  "afternoon_strict": {
+    "volume_spike_ratio_min": 1.5,
+    "vwap_dist_pct_max": 1.8,
+    "rebreak_mult": 1.001
+  }
+}

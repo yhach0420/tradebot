@@ -1,0 +1,27 @@
+{
+  "name": "replay_safe_vwap_sweep_3",
+  "early_exit": true,
+  "vwap_break_exit": true,
+  "recent_5m_low_break_exit": true,
+  "strict_afternoon": true,
+  "topix_weak_block": true,
+  "afternoon_strict": {
+    "volume_spike_ratio_min": 2.0,
+    "vwap_dist_pct_max": 1.0,
+    "rebreak_mult": 1.0015
+  },
+  "entry_filters": {
+    "rsi": {
+      "enabled": false,
+      "exclude_above": 75.0
+    },
+    "vwap_distance_pct": {
+      "enabled": true,
+      "exclude_above": 3.0
+    },
+    "atr_pct": {
+      "enabled": false,
+      "exclude_above": 4.0
+    }
+  }
+}

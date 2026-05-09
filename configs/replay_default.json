@@ -1,0 +1,6 @@
+{
+  "name": "replay_default",
+  "early_exit": false,
+  "strict_afternoon": false,
+  "topix_weak_block": false
+}

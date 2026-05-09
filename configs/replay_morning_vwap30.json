@@ -1,0 +1,23 @@
+{
+  "name": "replay_morning_vwap30",
+  "early_exit": true,
+  "vwap_break_exit": true,
+  "recent_5m_low_break_exit": true,
+  "strict_afternoon": true,
+  "topix_weak_block": true,
+  "disable_afternoon_entry": true,
+  "entry_filters": {
+    "rsi": {
+      "enabled": false,
+      "exclude_above": 75.0
+    },
+    "vwap_distance_pct": {
+      "enabled": true,
+      "exclude_above": 3.0
+    },
+    "atr_pct": {
+      "enabled": false,
+      "exclude_above": 4.0
+    }
+  }
+}

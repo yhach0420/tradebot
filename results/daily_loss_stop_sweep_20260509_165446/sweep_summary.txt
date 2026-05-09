@@ -1,0 +1,24 @@
+=== daily_loss_stop sweep ===
+saved_at_jst: 2026-05-09 17:14:50
+sweep_stamp: 20260509_165446
+repeat_per_cell: 10
+replay_mode: fast
+replay_seed: 12345
+
+configs:
+  - C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2.json
+  - C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2_dd30k.json
+  - C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2_dd50k.json
+  - C:\Users\yhach\Documents\tradebotfile\configs\replay_morning_vwap2_dd70k.json
+
+ソート: avg_expectancy_yen_100_shares（降順）
+
+rank	config_name	replay_range	avg_expectancy_yen	total_pnl_100_shares	max_lose_run_yen	plus_runs	minus_runs	lose_worst10_sum_yen	total_signals	daily_loss_stop_trigger_count	daily_loss_stop_skipped_entries	max_intraday_drawdown	avg_daily_drawdown	results_folder
+1	replay_morning_vwap2	random_60d	+1818.39	+867934.35	-18727.81	8	2	-512269.53	386	0	0	+48999.35	+5818.38	results/daily_loss_stop_sweep_20260509_165446\replay_morning_vwap2_random_60d/
+2	replay_morning_vwap2_dd50k	random_60d	+1818.39	+867934.35	-18727.81	8	2	-512269.53	386	0	0	+48999.35	+5818.38	results/daily_loss_stop_sweep_20260509_165446\replay_morning_vwap2_dd50k_random_60d/
+3	replay_morning_vwap2_dd70k	random_60d	+1818.39	+867934.35	-18727.81	8	2	-512269.53	386	0	0	+48999.35	+5818.38	results/daily_loss_stop_sweep_20260509_165446\replay_morning_vwap2_dd70k_random_60d/
+4	replay_morning_vwap2_dd30k	random_60d	+1815.37	+868203.71	-16370.41	8	2	-500597.30	371	3	15	+48999.35	+5714.43	results/daily_loss_stop_sweep_20260509_165446\replay_morning_vwap2_dd30k_random_60d/
+5	replay_morning_vwap2_dd30k	random_apr	+1742.18	+827386.11	-68372.73	7	3	-691545.91	379	6	29	+48999.35	+10106.69	results/daily_loss_stop_sweep_20260509_165446\replay_morning_vwap2_dd30k_random_apr/
+6	replay_morning_vwap2	random_apr	+1699.27	+826570.41	-64078.26	7	3	-712127.39	408	0	0	+48999.35	+10314.60	results/daily_loss_stop_sweep_20260509_165446\replay_morning_vwap2_random_apr/
+7	replay_morning_vwap2_dd50k	random_apr	+1699.27	+826570.41	-64078.26	7	3	-712127.39	408	0	0	+48999.35	+10314.60	results/daily_loss_stop_sweep_20260509_165446\replay_morning_vwap2_dd50k_random_apr/
+8	replay_morning_vwap2_dd70k	random_apr	+1699.27	+826570.41	-64078.26	7	3	-712127.39	408	0	0	+48999.35	+10314.60	results/daily_loss_stop_sweep_20260509_165446\replay_morning_vwap2_dd70k_random_apr/

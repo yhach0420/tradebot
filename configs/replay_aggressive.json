@@ -1,0 +1,11 @@
+{
+  "name": "replay_aggressive",
+  "early_exit": false,
+  "strict_afternoon": false,
+  "topix_weak_block": false,
+  "afternoon_strict": {
+    "volume_spike_ratio_min": 1.2,
+    "vwap_dist_pct_max": 3.0,
+    "rebreak_mult": 1.0005
+  }
+}

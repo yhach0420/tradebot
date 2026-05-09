@@ -1,0 +1,345 @@
+{
+  "meta": {
+    "saved_at_jst": "2026-05-09 08:33:03",
+    "repeat_label": "random_60d",
+    "repeat_runs": 10,
+    "output_folder": "replay_random_60d_20260509_082756"
+  },
+  "summary": {
+    "runs": 10,
+    "total_signals": 511,
+    "avg_win_rate_pct": 48.289780068869824,
+    "avg_pnl_yen_100_shares": 67240.6361650322,
+    "total_pnl_yen_100_shares": 672406.3616503221,
+    "avg_expectancy_yen_100_shares": 1151.2596079888326,
+    "add_on_total_pnl_yen_100_shares": 672406.3616503221,
+    "add_off_ref_total_pnl_yen_100_shares": 672406.3616503221,
+    "plus_runs": 8,
+    "minus_runs": 2,
+    "max_win_run_pnl_yen_100_shares": 281372.39799707686,
+    "max_lose_run_pnl_yen_100_shares": -72029.86068621468,
+    "sum_lose_worst10_yen_100_shares": -669320.0034651626
+  },
+  "by_position_kind": {
+    "BASE": {
+      "signals": 511,
+      "pnl_yen_100_shares": 672406.3616503221,
+      "expectancy_yen_100_shares": 1315.8637214292019
+    },
+    "ADD1": {
+      "signals": 0,
+      "pnl_yen_100_shares": 0.0,
+      "expectancy_yen_100_shares": 0.0
+    },
+    "ADD2": {
+      "signals": 0,
+      "pnl_yen_100_shares": 0.0,
+      "expectancy_yen_100_shares": 0.0
+    }
+  },
+  "market_filter": {
+    "blocked_entry_total": 22,
+    "blocked_reason_ranking": [
+      {
+        "reason": "TOPIX_CRASH",
+        "count": 22
+      },
+      {
+        "reason": "rising<40%",
+        "count": 18
+      },
+      {
+        "reason": "high_update_low",
+        "count": 12
+      },
+      {
+        "reason": "afternoon_weak",
+        "count": 4
+      },
+      {
+        "reason": "BREADTH_WEAK",
+        "count": 3
+      }
+    ]
+  },
+  "by_symbol_expectancy_ranking": [
+    {
+      "symbol": "6920.T",
+      "signals": 31,
+      "pnl_yen_100_shares": 233889.76053725652,
+      "expectancy_yen_100_shares": 7544.830985072791
+    },
+    {
+      "symbol": "6857.T",
+      "signals": 36,
+      "pnl_yen_100_shares": 166783.6820696044,
+      "expectancy_yen_100_shares": 4632.880057489011
+    },
+    {
+      "symbol": "6526.T",
+      "signals": 13,
+      "pnl_yen_100_shares": 52049.84517508506,
+      "expectancy_yen_100_shares": 4003.8342442373123
+    },
+    {
+      "symbol": "6890.T",
+      "signals": 25,
+      "pnl_yen_100_shares": 52822.878037440525,
+      "expectancy_yen_100_shares": 2112.915121497621
+    },
+    {
+      "symbol": "6315.T",
+      "signals": 38,
+      "pnl_yen_100_shares": 60642.76427315016,
+      "expectancy_yen_100_shares": 1595.862217714478
+    },
+    {
+      "symbol": "7012.T",
+      "signals": 13,
+      "pnl_yen_100_shares": 18316.32717515764,
+      "expectancy_yen_100_shares": 1408.9482442428953
+    },
+    {
+      "symbol": "9412.T",
+      "signals": 31,
+      "pnl_yen_100_shares": 35304.976340213056,
+      "expectancy_yen_100_shares": 1138.8702045230018
+    },
+    {
+      "symbol": "7011.T",
+      "signals": 29,
+      "pnl_yen_100_shares": 31740.503145024202,
+      "expectancy_yen_100_shares": 1094.5001084491105
+    },
+    {
+      "symbol": "9984.T",
+      "signals": 44,
+      "pnl_yen_100_shares": 47497.437888347944,
+      "expectancy_yen_100_shares": 1079.4872247351805
+    },
+    {
+      "symbol": "8002.T",
+      "signals": 11,
+      "pnl_yen_100_shares": 9107.484155354206,
+      "expectancy_yen_100_shares": 827.9531050322006
+    },
+    {
+      "symbol": "5016.T",
+      "signals": 36,
+      "pnl_yen_100_shares": 24809.60455076278,
+      "expectancy_yen_100_shares": 689.1556819656328
+    },
+    {
+      "symbol": "8306.T",
+      "signals": 13,
+      "pnl_yen_100_shares": 8641.086255130927,
+      "expectancy_yen_100_shares": 664.698942702379
+    },
+    {
+      "symbol": "6501.T",
+      "signals": 33,
+      "pnl_yen_100_shares": 16422.472749601395,
+      "expectancy_yen_100_shares": 497.65068938186045
+    },
+    {
+      "symbol": "8473.T",
+      "signals": 7,
+      "pnl_yen_100_shares": 3214.988547252472,
+      "expectancy_yen_100_shares": 459.2840781789246
+    },
+    {
+      "symbol": "9434.T",
+      "signals": 2,
+      "pnl_yen_100_shares": 116.65521872778801,
+      "expectancy_yen_100_shares": 58.327609363894005
+    },
+    {
+      "symbol": "8136.T",
+      "signals": 37,
+      "pnl_yen_100_shares": -1285.7824202545125,
+      "expectancy_yen_100_shares": -34.750876223094934
+    },
+    {
+      "symbol": "5803.T",
+      "signals": 95,
+      "pnl_yen_100_shares": -56126.7582385868,
+      "expectancy_yen_100_shares": -590.8079814588084
+    },
+    {
+      "symbol": "7013.T",
+      "signals": 8,
+      "pnl_yen_100_shares": -7560.529200011299,
+      "expectancy_yen_100_shares": -945.0661500014123
+    },
+    {
+      "symbol": "7003.T",
+      "signals": 4,
+      "pnl_yen_100_shares": -6361.591045134139,
+      "expectancy_yen_100_shares": -1590.3977612835347
+    },
+    {
+      "symbol": "8031.T",
+      "signals": 2,
+      "pnl_yen_100_shares": -3397.9125706261175,
+      "expectancy_yen_100_shares": -1698.9562853130587
+    },
+    {
+      "symbol": "7974.T",
+      "signals": 3,
+      "pnl_yen_100_shares": -14221.530993174089,
+      "expectancy_yen_100_shares": -4740.51033105803
+    }
+  ],
+  "runs": [
+    {
+      "run_no": 1,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_60d_20260509_082756\\replay_summary_random_60d_20260509_082756_run01.json",
+      "replay_dates": [
+        "2026-04-10",
+        "2026-04-13",
+        "2026-04-27",
+        "2026-04-28",
+        "2026-04-30"
+      ],
+      "replay_seed": null,
+      "signals": 32,
+      "win_rate_pct": 59.375,
+      "pnl_yen_100_shares": 20420.368388957264
+    },
+    {
+      "run_no": 2,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_60d_20260509_082756\\replay_summary_random_60d_20260509_082756_run02.json",
+      "replay_dates": [
+        "2026-04-10",
+        "2026-04-17",
+        "2026-04-23",
+        "2026-04-24",
+        "2026-04-27"
+      ],
+      "replay_seed": null,
+      "signals": 57,
+      "win_rate_pct": 49.122807017543856,
+      "pnl_yen_100_shares": 39628.06029729237
+    },
+    {
+      "run_no": 3,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_60d_20260509_082756\\replay_summary_random_60d_20260509_082756_run03.json",
+      "replay_dates": [
+        "2026-04-17",
+        "2026-04-22",
+        "2026-04-23",
+        "2026-04-27",
+        "2026-04-28"
+      ],
+      "replay_seed": null,
+      "signals": 53,
+      "win_rate_pct": 49.056603773584904,
+      "pnl_yen_100_shares": 2902.9005961355215
+    },
+    {
+      "run_no": 4,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_60d_20260509_082756\\replay_summary_random_60d_20260509_082756_run04.json",
+      "replay_dates": [
+        "2026-04-15",
+        "2026-04-17",
+        "2026-04-21",
+        "2026-04-22",
+        "2026-04-24"
+      ],
+      "replay_seed": null,
+      "signals": 54,
+      "win_rate_pct": 46.2962962962963,
+      "pnl_yen_100_shares": -582.8121302141568
+    },
+    {
+      "run_no": 5,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_60d_20260509_082756\\replay_summary_random_60d_20260509_082756_run05.json",
+      "replay_dates": [
+        "2026-04-14",
+        "2026-04-21",
+        "2026-04-23",
+        "2026-04-27",
+        "2026-04-30"
+      ],
+      "replay_seed": null,
+      "signals": 63,
+      "win_rate_pct": 57.14285714285714,
+      "pnl_yen_100_shares": 260078.5023141305
+    },
+    {
+      "run_no": 6,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_60d_20260509_082756\\replay_summary_random_60d_20260509_082756_run06.json",
+      "replay_dates": [
+        "2026-04-10",
+        "2026-04-16",
+        "2026-04-21",
+        "2026-04-24",
+        "2026-04-28"
+      ],
+      "replay_seed": null,
+      "signals": 36,
+      "win_rate_pct": 44.44444444444444,
+      "pnl_yen_100_shares": 24867.692022452167
+    },
+    {
+      "run_no": 7,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_60d_20260509_082756\\replay_summary_random_60d_20260509_082756_run07.json",
+      "replay_dates": [
+        "2026-04-13",
+        "2026-04-15",
+        "2026-04-16",
+        "2026-04-23",
+        "2026-04-28"
+      ],
+      "replay_seed": null,
+      "signals": 52,
+      "win_rate_pct": 48.07692307692308,
+      "pnl_yen_100_shares": 25663.26006436217
+    },
+    {
+      "run_no": 8,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_60d_20260509_082756\\replay_summary_random_60d_20260509_082756_run08.json",
+      "replay_dates": [
+        "2026-04-16",
+        "2026-04-23",
+        "2026-04-24",
+        "2026-04-27",
+        "2026-04-28"
+      ],
+      "replay_seed": null,
+      "signals": 75,
+      "win_rate_pct": 54.666666666666664,
+      "pnl_yen_100_shares": 90085.8527863441
+    },
+    {
+      "run_no": 9,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_60d_20260509_082756\\replay_summary_random_60d_20260509_082756_run09.json",
+      "replay_dates": [
+        "2026-04-10",
+        "2026-04-15",
+        "2026-04-17",
+        "2026-04-22",
+        "2026-04-30"
+      ],
+      "replay_seed": null,
+      "signals": 38,
+      "win_rate_pct": 31.57894736842105,
+      "pnl_yen_100_shares": -72029.86068621468
+    },
+    {
+      "run_no": 10,
+      "json_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\results\\replay_random_60d_20260509_082756\\replay_summary_random_60d_20260509_082756_run10.json",
+      "replay_dates": [
+        "2026-04-13",
+        "2026-04-14",
+        "2026-04-15",
+        "2026-04-17",
+        "2026-04-23"
+      ],
+      "replay_seed": null,
+      "signals": 51,
+      "win_rate_pct": 43.13725490196079,
+      "pnl_yen_100_shares": 281372.39799707686
+    }
+  ]
+}
