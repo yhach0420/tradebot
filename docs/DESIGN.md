@@ -17,6 +17,7 @@
 7. [環境変数・外部連携](#7-環境変数外部連携)
 8. [依存関係・実行](#8-依存関係実行)
 9. [設計上の注意](#9-設計上の注意)
+10. [実装工程のトピック（これまでの経緯）](#10-実装工程のトピック)
 
 ---
 
@@ -41,11 +42,13 @@
 | `discord_issue_bot.py` | `discord.py` ベースの Bot（Issue 作成、`!watch` 等） |
 | `watchlist.json` | 監視銘柄の「正」（存在すれば毎ループ読み直し） |
 | `symbols.csv` | 銘柄一覧（朝スクリーニングでは最優先で読む） |
-| `configs/*.json` | Replay 用戦略（早期撤退・後場・`entry_filters` / `regime_filters` / `signal_filters` 等） |
+| `configs/*.json` | Replay 用戦略（早期撤退・後場・`entry_filters` / `regime_filters` / `signal_filters` / `composite_signal_filters` / `regime_controls` 等） |
 | `configs/regime_filter_sweep/` | `--regime-filter-sweep` / `--topix-weak-threshold-sweep` が自動生成する比較用 JSON |
 | `configs/signal_filter_sweep/` | `--signal-filter-sweep` が自動生成する比較用 JSON |
+| `configs/composite_filter_sweep/` 他 | `--composite-filter-sweep` 等の各 sweep が出力する比較用 JSON（`weak_combo_filter_sweep` / `strong_risk_filter_sweep` / `rising_ratio_threshold_sweep` / `auto_block_momentum_sweep` 等） |
+| `configs/forward_split_periods.json` | `--replay-range forward_split` 用の **train / validation / forward** の日付集合（`--forward-split-periods-path` で上書き可） |
 | `data/intraday_1m/` | 日付・銘柄別 1分足 CSV（Replay・検証） |
-| `results/` | Replay サマリ、`vwap_sweep_*`、`daily_loss_stop_sweep_*`、`regime_filter_sweep_*`、`signal_filter_sweep_*`、`topix_weak_threshold_sweep_*`、`symbol_scores_latest.json` 等 |
+| `results/` | Replay サマリ（`replay_*_<時刻>/` バッチ）、`paper_trade/YYYYMMDD/`、`vwap_sweep_summary_*.txt`、各種 `*_sweep_<時刻>/sweep_summary.txt`、`symbol_scores_latest.json` 等 |
 
 ---
 
@@ -71,14 +74,38 @@
 | リアルタイム監視 | `python yahoo_kabu_watch.py` | 既定間隔（デフォルト 1秒）で取得・判定・（任意で）Discord 通知 |
 | 朝スクリーニング | `--morning-screen` | 寄り前の候補スコアリング、上位10銘柄を出力 |
 | Replay | `--replay` | 1分足を再生し判定・期待値集計・結果ファイル出力 |
-| 1分足 EOD 保存 | `--save-intraday-1m-eod` | 当日 1分足を `data/intraday_1m/` に CSV 保存 |
+| 1分足 EOD 保存 | `--save-intraday-1m-eod` | 当日（または `--intraday-1m-eod-date`）の 1分足を `data/intraday_1m/` に保存。`--force-intraday-1m-eod-time` で引け前検証可 |
 | キャッシュレポート | `--intraday-1m-cache-report-only` | ローカル CSV のカバレッジのみ集計 |
+| Replay（モード） | `--replay-mode` | `normal`（従来・待機あり）または `fast`（待機なし・集計優先）。`--replay-fast-discord` / `--replay-fast-verbose` / `--replay-fast-print-signal-details` で詳細度を上書き |
+| Replay（日付範囲） | `--replay-range …` | `1d`〜`60d`、**`random_5d` / `random_feb` / `random_mar` / `random_apr` / `random_mar_cache_only` / `random_60d`** 等のランダム営業日抽出、**`forward_split`**（`forward_split_periods.json` の全日候補＋`--replay-random-days` でサブサンプル可） |
+| Forward 分割検証 | `--forward-split-validation` | train のみから危険核を抽出し validation/forward で再登場分析（**AUTO_BLOCK や `excluded_from_eval` は変更しない**）。`--replay-range forward_split` 推奨 |
+| ペーパートレード | `--paper-trade` | 実注文なしで仮想 signal/exit/PnL。`results/paper_trade/YYYYMMDD/paper_trade_log.csv` 等へ出力（`--paper-trade-interval`） |
 | VWAP sweep | `--vwap-distance-sweep` | VWAP 乖離 `entry_filters` 閾値グリッドで Replay を回し比較表を保存 |
 | daily_loss_stop sweep | `--daily-loss-stop-sweep` | 当日損失ストップ ON/OFF・閾値（例: 30k/50k/70k 円/100株）を比較 |
 | regime filter sweep | `--regime-filter-sweep` | `regime_filters`（朝弱・上昇銘柄割合・TOPIX_WEAK）の組合せを比較 |
 | TOPIX WEAK 閾値 sweep | `--topix-weak-threshold-sweep` | `TOPIX_WEAK` 判定の `topix_weak_threshold_pct`（例: −0.2〜−0.7%）を比較 |
 | signal filter sweep | `--signal-filter-sweep` | `signal_filters`（ギャップ・VWAP乖離・時刻）の AB 比較 |
+| その他 sweep（一覧） | 下表 **§4.1** | composite / STRONG 系 / rising 閾値 / weak combo / AUTO_BLOCK 拡張などを一括比較 |
 | Discord Issue Bot | `discord_issue_bot.py` | `!issue` / `!watch` 等（別プロセス） |
+
+### 4.1 一括比較（sweep）CLI と出力先
+
+多くの sweep は内部で **`random_apr`** を用いる（コード上 `SWEEP_REPLAY_RANGES`）。`--replay-repeat`・`--replay-seed` で回数と再現性を制御。例外として **`--strong-trend-quality-validation-sweep`** は `random_apr` / `random_mar` / `random_60d` を跨いで検証する。
+
+| CLI フラグ | `results/` 直下の出力の目安 |
+|------------|------------------------------|
+| `--composite-filter-sweep` | `composite_filter_sweep_<時刻>/` |
+| `--regime-control-sweep` | `regime_control_sweep_<時刻>/` |
+| `--weak-risk-filter-sweep` | `weak_risk_filter_sweep_<時刻>/` |
+| `--strong-risk-filter-sweep` | `strong_risk_filter_sweep_<時刻>/` |
+| `--strong-combo-filter-sweep` | `strong_combo_filter_sweep_<時刻>/` |
+| `--strong-trend-quality-sweep` | `strong_trend_quality_sweep_<時刻>/` |
+| `--strong-trend-quality-validation-sweep` | `strong_trend_quality_validation_sweep_<時刻>/` |
+| `--rising-lt50-validation-sweep` | `rising_lt50_validation_sweep_<時刻>/` |
+| `--rising-ratio-threshold-sweep` | `rising_ratio_threshold_sweep_<時刻>/` |
+| `--weak-combo-filter-sweep` | `weak_combo_filter_sweep_<時刻>/` |
+| `--auto-block-momentum-sweep` | `auto_block_momentum_sweep_<時刻>/` |
+| `--strong-extension-threshold-sweep` | `strong_extension_threshold_sweep_<時刻>/`（JSON 併記。通常 Replay 合算 JSON にも `extension_robustness_metrics` 等が付く経路あり） |
 
 **Discord 通知の運用方針（監視側）**
 
@@ -133,7 +160,7 @@
 
 **Replay の候補ブロックでは、実時間にある「出来高増加（3分 vs 前3分）必須」「Entry 接近率 0.996」は要求していない。** その後の **`crossed`（Entry ライン実体上抜け）** でシグナル記録に進む。
 
-### 5.5 Replay — 地合いレジーム（`NORMAL` / `WEAK` / `CRASH`）
+### 5.5 Replay — 地合いレジーム（`STRONG` / `NORMAL` / `WEAK` / `CRASH`）
 
 各ステップでウォッチ全体に対し 1 回判定する。
 
@@ -148,8 +175,9 @@
 
 **レジーム決定（実装）**
 
-- **`CRASH`:** TOPIX が **−1.5% 以下** かつ異常値ガード（|変動|≤20%）を満たすときのみ。
-- **`WEAK`:** `CRASH` でなく `market_reasons` が空でないとき。
+- **`CRASH`:** TOPIX が **−1.5% 以下**（異常値ガード: 騰落率の絶対値が **20% 以下** のときのみ採用）かつ `crash` フラグ。
+- **`WEAK`:** `CRASH` でなく、`market_reasons` が **空でない** とき。
+- **`STRONG`:** `CRASH`/`WEAK` でなく、TOPIX 騰落率（再計算）が **`STRONG_TOPIX_CHG_PCT_MIN`（0.30%）以上** かつ **fallback 未使用**などコード上の条件を満たすとき。
 - **`NORMAL`:** 上記以外。
 
 極端な breadth（上昇銘柄割合 ≤0.25 かつ高値付近 ≤0.03）は **`BREADTH_WEAK`** として理由に加わり、**単独では `CRASH` にならない**。
@@ -163,12 +191,14 @@
 - **`entry_filters`（config）:** RSI / VWAP 乖離 / ATR の「exclude_above」を有効化すると集計対象外（`excluded_from_eval`）。
 - **`regime_filters`（config・Replay）:** `crossed` 後・シグナルオブジェクト生成 **直前** に評価され、条件に当たると **`exclude`（集計対象外）** になる。
   - `disable_morning_weak`: **true** のとき、JST **11:30 前** かつ（`CRASH` または TOPIX/BREADTH/日経VWAP/失敗率/`rising<` 等の明確な弱材料）なら `REGIME_FILTER_MORNING_WEAK` でスキップ。
-  - `disable_rising_ratio_lt50`: **true** かつ上昇銘柄割合が **50%未満**（コード上 `rising_ratio < 0.5`）なら `REGIME_FILTER_RISING_LT50`。
+  - `rising_ratio_threshold_pct` **指定時**: 上昇銘柄割合がその値**未満**なら `REGIME_FILTER_RISING_LT_THR`（`disable_rising_ratio_lt50` とは独立に評価）。
+  - **未指定**かつ `disable_rising_ratio_lt50` が **true**: 上昇銘柄割合 **50%未満** で `REGIME_FILTER_RISING_LT50`。
   - `disable_topix_weak`: **true** かつ（`topix_chg ≤ topix_weak_threshold_pct` **または** `market_reasons` に `TOPIX_WEAK`）なら `REGIME_FILTER_TOPIX_WEAK`。
 - **`signal_filters`（config・Replay）:** 同様に `crossed` 後に評価され、該当すれば集計対象外。
   - `disable_entry_after_hhmm` + `entry_after_hhmm`（既定 **10:30**）: **true** のとき、シグナル時刻がその **JST 時刻以降** なら `SIGNAL_FILTER_ENTRY_AFTER_HHMM`。
   - `disable_gap_ge_pct` + `gap_ge_threshold_pct`（既定 **3.0%**）: **true** のとき、当日始値ギャップ（前日終値比）が **閾値以上** なら `SIGNAL_FILTER_GAP_GE`。
   - `disable_vwap_distance_ge_pct` + `vwap_distance_ge_threshold_pct`（既定 **1.5%**）: **true** のとき、VWAP 乖離率 **≥ 閾値** なら `SIGNAL_FILTER_VWAP_DIST_GE`（`entry_filters` の絶対値上限とは別ルート）。
+- **`composite_signal_filters`（config・Replay）:** `crossed` 後に評価。**`weak_combo_filter` / `weak_risk_filter` / `strong_risk_filter` / `strong_combo_filter`** 等でマッチすれば集計対象外（理由タグ・仮想PnL分析用メタが付く）。詳細は **§6.13**。
 - **`--one-trade-per-symbol-per-day`:** 同一銘柄は JST 1 日 1 回まで採用。
 - **`risk_controls.daily_loss_stop`:** 当日累積損益（100株換算）が **−閾値円以下** になったら、その日の新規 ENTRY/ADD を停止（シグナルは記録しつつ `exclude` 扱いになる経路あり）。
 
@@ -230,6 +260,7 @@
 | `INDEX_NIKKEI_ETF` | **1321.T** | 日経225連動 ETF（代用指数）。**価格 < 日中VWAP** 等で地合い理由に加わる。 |
 | `INDEX_TOPIX_ETF` | **1306.T** | TOPIX 連動 ETF。前日終値から再計算した騰落率で CRASH/WEAK 理由を付与。 |
 | `CRASH_TOPIX_CHG_PCT_MAX` | **−1.5** | TOPIX が **−1.5% 以下** のとき **`CRASH`**（ただし下記の異常値ガードあり）。 |
+| `STRONG_TOPIX_CHG_PCT_MIN` | **0.30** | **弱理由が空**で TOPIX が **0.30% 以上** のとき **`STRONG`** レジーム判定に使う（§5.5）。 |
 | `WEAK_TOPIX_CHG_PCT_MAX` | **−0.5** | **`regime_filters.topix_weak_threshold_pct` 未指定時**の `TOPIX_WEAK` 帯の上限（%）。指定時はその値が上限になる（`--topix-weak-threshold-sweep` で探索）。 |
 | TOPIX 異常値ガード | **±20%** 以内 | 欠損や単位崩れで ±20% を超える変化は CRASH/WEAK の TOPIX 判定に **使わない**。 |
 | `MARKET_RISING_RATIO_MIN` | **0.40** | 前日比プラスの銘柄割合が **40%未満** なら地合い弱理由。 |
@@ -241,7 +272,7 @@
 | `AFTERNOON_BREAK_MORNING_HIGH_RATIO_MIN` | **0.10** | 各銘柄の **前場中に記録した前場高値** を、現在値が **上回っている**（`price > morning_high × 1.000`）銘柄の割合が **10%未満** で、かつ VWAP 下が多い／指数弱いときに **後場弱** 理由へ（他定数と組合せ）。 |
 | `MARKET_VWAP_BELOW_RATIO_MAX` | **0.60** | VWAP より下の銘柄が **60%超** などの条件の一部（後場弱フィルタ）。 |
 
-**レジーム集約:** **`CRASH`** は **TOPIX ≤ −1.5%**（異常値ガードあり）のとき。**`WEAK`** はそれ以外で `market_reasons` が空でないとき。`TOPIX_WEAK` の帯の上限は **`regime_filters.topix_weak_threshold_pct`** があればそれ、なければ **`WEAK_TOPIX_CHG_PCT_MAX`（−0.5%）**。
+**レジーム集約:** **`CRASH`** は **TOPIX ≤ −1.5%**（異常値ガードあり）のとき。**`WEAK`** はそれ以外で `market_reasons` が空でないとき。**`STRONG`** / **`NORMAL`** は §5.5 の優先順位に従う。`TOPIX_WEAK` の帯の上限は **`regime_filters.topix_weak_threshold_pct`** があればそれ、なければ **`WEAK_TOPIX_CHG_PCT_MAX`（−0.5%）**。
 
 ### 6.5 Replay：シグナル品質（RSI / ATR% / 対TOPIX）
 
@@ -328,8 +359,7 @@
 | `disable_rising_ratio_lt50` | bool, **false** | **true** かつ上昇銘柄割合 **50%未満** でスキップ。 |
 | `disable_topix_weak` | bool, **false** | **true** かつ TOPIX 弱い（閾値以下または `TOPIX_WEAK` 理由）でスキップ。 |
 | `topix_weak_threshold_pct` | number または省略 | **`TOPIX_WEAK` の上限（%）** および `disable_topix_weak` 判定に使用。省略時は **`WEAK_TOPIX_CHG_PCT_MAX`（−0.5）** と同じ。 |
-
-### 6.12 Replay config — `signal_filters`（任意）
+| `rising_ratio_threshold_pct` | number または省略 | 指定時は上昇銘柄割合がこの値（**% または小数**、実装で正規化）**未満**なら `REGIME_FILTER_RISING_LT_THR`（`disable_rising_ratio_lt50` とは独立）。**省略時**はこの経路は使わず、`disable_rising_ratio_lt50` のみが **50%未満**判定に効く（§5.6）。 |
 
 | キー | 型・既定 | 意味 |
 |------|----------|------|
@@ -341,6 +371,25 @@
 | `entry_after_hhmm` | string, **"10:30"** | 例: `"10:30"`。 |
 
 **命名の注意:** キー名は `disable_*` だが、値が **true** のとき **フィルタが掛かり** 該当シグナルは **`excluded_from_eval`** になる（「disable = その特徴を無効化するのではなく、その条件のエントリーを止める」意味合いに近い）。
+
+### 6.13 Replay config — `composite_signal_filters`（任意）
+
+Replay JSON 直下の **`composite_signal_filters`**（省略可）。**`enabled: true`** なサブブロックのみ有効。代表例:
+
+| サブキー | 概要 |
+|----------|------|
+| `weak_combo_filter` | `market_regime` 別に、VWAP 乖離下限・高値更新回数（entry 直前）等の **AND 条件**を `block_conditions` で列挙。**いずれかの行がマッチしたら除外（OR）**。 |
+| `weak_risk_filter` | **WEAK** 時に VWAP 距離・ギャップの「危険帯」だけを除外する複合。 |
+| `strong_risk_filter` | **STRONG** 時に VWAP 乖離が閾値以上の ENTRY を除外。 |
+| `strong_combo_filter` | **STRONG** 時に高値更新回数 × VWAP 距離などの組合せで除外。 |
+
+AUTO_BLOCK 系（`auto_block_strong_chase_after_extension_enabled` 等）は **既定 OFF** とし、sweep・`extension_*` 分析で効果を見てから有効化する想定（§10.7 参照）。
+
+### 6.14 Replay config — `regime_controls`（任意）
+
+| キー | 概要 |
+|------|------|
+| `enabled` | **true** のときのみ、`STRONG` / `NORMAL` / `WEAK` / `CRASH` 各キー配下の **`entry_enabled`**、**`max_gap_pct`**、**`max_vwap_distance_pct`**、**`exit_mode`**（`normal` / `fast`）を Replay のエントリー・ADD 判断に反映。 |
 
 ---
 
@@ -362,29 +411,141 @@
 
 - Python **3.10+** 想定、`requests` 必須。Issue Bot は `discord.py` 等（`requirements.txt` に従う）。
 
+**監視・データ・Replay（抜粋）**
+
 ```text
 python yahoo_kabu_watch.py
 python yahoo_kabu_watch.py --morning-screen
 python yahoo_kabu_watch.py --replay --replay-config configs/replay_safe.json
+python yahoo_kabu_watch.py --replay --replay-mode fast --replay-range random_apr --replay-repeat 10 --replay-seed 1
+python yahoo_kabu_watch.py --replay --replay-range forward_split --replay-random-days 5 --forward-split-periods-path configs/forward_split_periods.json
+python yahoo_kabu_watch.py --replay --replay-range forward_split --forward-split-validation
+python yahoo_kabu_watch.py --paper-trade --paper-trade-interval 60
+python yahoo_kabu_watch.py --save-intraday-1m-eod
 python yahoo_kabu_watch.py --intraday-1m-cache-report-only
+```
+
+**一括 sweep（§4.1 参照）**
+
+```text
 python yahoo_kabu_watch.py --vwap-distance-sweep
 python yahoo_kabu_watch.py --daily-loss-stop-sweep
 python yahoo_kabu_watch.py --regime-filter-sweep
 python yahoo_kabu_watch.py --topix-weak-threshold-sweep
 python yahoo_kabu_watch.py --signal-filter-sweep
+python yahoo_kabu_watch.py --composite-filter-sweep
+python yahoo_kabu_watch.py --regime-control-sweep
+python yahoo_kabu_watch.py --weak-risk-filter-sweep
+python yahoo_kabu_watch.py --strong-risk-filter-sweep
+python yahoo_kabu_watch.py --strong-combo-filter-sweep
+python yahoo_kabu_watch.py --strong-trend-quality-sweep
+python yahoo_kabu_watch.py --strong-trend-quality-validation-sweep
+python yahoo_kabu_watch.py --rising-lt50-validation-sweep
+python yahoo_kabu_watch.py --rising-ratio-threshold-sweep
+python yahoo_kabu_watch.py --weak-combo-filter-sweep
+python yahoo_kabu_watch.py --auto-block-momentum-sweep
+python yahoo_kabu_watch.py --strong-extension-threshold-sweep
 ```
 
-一括比較系は内部で **`random_apr`×N** と **`random_60d`×N**（N は多くの sweep で **10**、`--regime-filter-sweep` / `--signal-filter-sweep` は **`--replay-repeat` 未指定時のみ 10**、指定時はその整数）を連続実行し、`results/<sweep名>_<時刻>/sweep_summary.txt` にまとめる。再現性が必要なら **`--replay-seed`** を併用する。
+一括比較の多くは内部で **`random_apr`×N**（`N` は **`--replay-repeat`**、多くの sweep で未指定時 **10**）を用いる。`--regime-filter-sweep` / `--signal-filter-sweep` も同様に **`--replay-repeat` 未指定時のみ 10**、指定時はその整数を使う例がある。再現性が必要なら **`--replay-seed`** を併用する。
+
+通常の **`--replay`**（バッチ・複数日）では、サマリ等を **`results/replay_<range>_<batch_stamp>/`** にまとめる経路がある（コンソールの `output_subdir` ログで確認）。
 
 ---
 
 ## 9. 設計上の注意 {#9-設計上の注意}
 
 1. **実時間の候補条件と Replay の候補条件は完全一致しない**（Replay は「出来高増加必須」「Entry 接近率」まで要求しないブロックがある）。検証結果と実アラートの差に注意すること。
-2. **地合い NORMAL/WEAK/CRASH は Replay 中心**であり、実時間メインループには組み込まれていない。
+2. **地合い `STRONG` / `NORMAL` / `WEAK` / `CRASH` は Replay 中心**であり、実時間メインループには組み込まれていない。
 3. **非公式 API** 依存のため、欠損フィールド・レート制限への耐性が運用上重要。
 4. ファイル先頭の **`WEAK_ENTRY_*` 等**は意図としての定数が残る一方、現行の `_quality_rejects` 経路では **WEAK 時は RSI/ATR/前場限定**などが中心である。
-5. **`regime_filters` / `signal_filters`** のキー名 `disable_*` は直感と逆に感じることがある。**true = その条件でシグナルを除外（集計対象外）** という意味で読む（詳細は **§6.11・§6.12**）。
+5. **`regime_filters` / `signal_filters` / `composite_signal_filters`** のキー名 `disable_*`（signal/regime 系）は直感と逆に感じることがある。**true = その条件でシグナルを除外（集計対象外）** という意味で読む（詳細は **§6.11・§6.12**）。`composite_signal_filters` 側は **`enabled: true`** が明示的ブロックのオンになる。
+
+---
+
+## 10. 実装工程のトピック（これまでの経緯） {#10-実装工程のトピック}
+
+本章は **「何のために」「どう実装し」「何が得られたか」** を、主要な実装トピックごとに整理したものである（時系列の厳密なコミットログではなく、設計書としての要約）。
+
+### 10.1 リアルタイム監視と Discord 通知
+
+| | 内容 |
+|---|------|
+| **目的** | Yahoo 非公式 API 由来のデータで銘柄を継続評価し、条件一致・突破・水準変化を運用者に伝える。 |
+| **手段** | `yahoo_kabu_watch.py` のメインループ、`requests` によるクォート取得（v7 失敗時の chart フォールバック等）、`DISCORD_WEBHOOK_URL` による Embed 通知、候補・突破状態のスパム抑制ロジック。 |
+| **結果** | 監視銘柄の「候補」「Entry 上抜け」「条件外れ」を Discord で追跡可能。**発注は行わない**（通知・判断支援）。 |
+
+### 10.2 Replay・1分足キャッシュ・再現性
+
+| | 内容 |
+|---|------|
+| **目的** | 同一ルールで過去の 1 分足を再生し、期待値・トレード統計を積み、実時間との差を意識したうえでルールを磨く。 |
+| **手段** | `--replay` / `--replay-range`（**`forward_split`** 含む）/ `--replay-config` / `--replay-repeat` / `--replay-seed` / **`--forward-split-validation`**、`data/intraday_1m/` の CSV キャッシュ、`--save-intraday-1m-eod`、`--intraday-1m-cache-report-only`。 |
+| **結果** | オフラインでも日次・銘柄単位で再生可能。`results/` にサマリ・ランダムプール結果を蓄積し、以降の sweep・銘柄スコアの入力になる。 |
+
+### 10.3 `entry_filters` と閾値 sweep（VWAP / RSI / ATR）
+
+| | 内容 |
+|---|------|
+| **目的** | 「追い過ぎ」「過熱」「ボラ過大」など、エントリー直後の不利を減らす閾値をデータで選ぶ。 |
+| **手段** | Replay 用 JSON の `entry_filters`（`vwap_distance_pct` / `rsi` / `atr_pct` 等）、`--vwap-distance-sweep` 等でグリッド実行し `results/` に比較表を保存。 |
+| **結果** | 朝枠＋ VWAP 乖離など **ベースラインに近い設定族**が定まり、sweep 結果を見ながら保守的〜攻めの帯を選べる。 |
+
+### 10.4 地合い・朝のレジーム（`market_regime` / `regime_filters`）
+
+| | 内容 |
+|---|------|
+| **目的** | TOPIX・上昇銘柄割合・朝の弱さ等で「戦わない局面」を Replay 上で除外し、全体 expectancy を安定させる。 |
+| **手段** | `market_regime` 判定（TOPIX 代用 ETF・上昇比率等）、Replay config の `regime_filters`（`disable_morning_weak` / `disable_rising_ratio_lt50` / `disable_topix_weak` / `topix_weak_threshold_pct`）、`_apply_replay_config_to_flags`、`--regime-filter-sweep` / `--topix-weak-threshold-sweep` / `--rising-ratio-threshold-sweep` 等。 |
+| **結果** | 地合い・朝弱・TOPIX_WEAK 帯を **ON/OFF や閾値で比較**でき、`configs/regime_filter_sweep/` と `results/regime_filter_sweep_*` で判断材料が揃う。 |
+
+### 10.5 シグナル前段のフィルタ（`signal_filters` と品質ゲート）
+
+| | 内容 |
+|---|------|
+| **目的** | ギャップ過大・VWAP 乖離過大・時間帯以降のエントリー、および RSI/ATR/TOPIX 相対弱さ等で「事故りやすい一本足」を Replay 集計から外す（実時間では別経路の品質指摘も併用）。 |
+| **手段** | `signal_filters`（`disable_gap_ge_pct` / `disable_vwap_distance_ge_pct` / `disable_entry_after_hhmm` 等）、定数ベースのシグナル品質（`SIGNAL_FILTER_*` / `WEAK_SIGNAL_FILTER_*`）、`--signal-filter-sweep`。 |
+| **結果** | gap / VWAP 距離 / 時間帯 の **AB 比較**が可能になり、単独 feature に加えて運用方針と数値の対応が取りやすい。 |
+
+### 10.6 当日損失上限・早期撤退・1 日 1 トレード等のリスク制御
+
+| | 内容 |
+|---|------|
+| **目的** | 連敗・単日ドローダウンを抑え、Replay 上で「止めたときにどうなるか」を見える化する。 |
+| **手段** | Replay config の `risk_controls.daily_loss_stop`、`--replay-early-exit` 系、`--one-trade-per-symbol-per-day`、`--daily-loss-stop-sweep`。 |
+| **結果** | 例: **DD30k（100 株換算）** 等の帯が sweep で比較され、expectancy とトレード数のトレードオフを数値で議論できる。 |
+
+### 10.7 Replay サマリの forward 軸（extension / HU / 銘柄ロバスト）
+
+| | 内容 |
+|---|------|
+| **目的** | 「何回目 entry」より **前回シグナルからの騰落（伸びすぎ追撃）・高値更新差分・地合い**の相互作用で、forward で壊れにくいかを見る。 |
+| **手段** | `extension_sweep_analysis`（`price_change_pct_from_prev_signal` の閾値ごとに「>= を仮想除外」）、`extension_hu_interaction_analysis`（`market_regime` × 騰落 bucket × `delta_high_update_count_before_entry` bucket）、`robustness_symbol_removal_analysis`（期待値上位銘柄を除外したときの expectancy / PnL / 連敗ドローダウン）。合算 TXT では `replay_summary_*_all_runs.txt` に **【EXTENSION_SWEEP_ANALYSIS】** 等として追記。 |
+| **結果** | JSON の `report` 直下（および run 合算 dict）から同一キーで参照可能。**`symbol_daily_entry_index` は同日約定順の代理＝疲労の補助指標**であり、主判定・AUTO_BLOCK の第一候補からは外す。**`auto_block_strong_chase_after_extension_enabled` / `auto_block_strong_extension_hu_plus1_enabled` は既定 OFF**（分析で効果を確認してから）。 |
+
+### 10.8 銘柄スコア・ブラックリスト・品質ブロック
+
+| | 内容 |
+|---|------|
+| **目的** | Replay 実績の悪い銘柄を実時間の候補から外し、監視リソースと通知ノイズを減らす。 |
+| **手段** | Replay 終了時の集計で `results/symbol_scores_latest.json` を更新、`_load_symbol_scoring_latest` で `blacklist_symbols` / `quality_blocked_symbols` を参照。 |
+| **結果** | スコアファイルが存在する環境では、**候補ゲートに自動的に反映**され、継続的に「当たり外れ銘柄」を抑制しやすい。 |
+
+### 10.9 複合条件（`composite_signal_filters`・combo sweep）
+
+| | 内容 |
+|---|------|
+| **目的** | 単独 feature では見えにくい **「弱い組み合わせ」** を列挙・ブロック条件として扱い、事故パターンの削減に寄与する。 |
+| **手段** | `composite_signal_filters`（例: `weak_combo_filter`）の正規化・一致判定、Replay メタへのスナップショット、`--weak-combo-filter-sweep` / `--strong-combo-filter-sweep` / `--composite-filter-sweep` 等と `results/*_sweep_*/sweep_summary.txt`。 |
+| **結果** | 複数因子の組み合わせを **設定＋ sweep** で回せるようになり、`docs/TODO.md` でいう「事故る条件の組み合わせ」分析の足場になった（継続改善対象）。 |
+
+### 10.10 ペーパートレード（仮想執行）
+
+| | 内容 |
+|---|------|
+| **目的** | 実注文なしで、採用中の Replay ルールに近い条件で **仮想 Entry/Exit・PnL・DD** を日次で残し、実運用前の挙動を確認する。 |
+| **手段** | `--paper-trade` / `--paper-trade-interval`、既定 Replay config 集合（`PAPER_TRADE_REPLAY_CONFIG_FILENAMES`）、`results/paper_trade/YYYYMMDD/paper_trade_log.csv` 等。 |
+| **結果** | Discord 通知とログの双方から、**その日のシグナル品質と損益イメージ**を追跡できる（証券 API との発注連携は別フェーズ）。 |
 
 ---
 
@@ -403,3 +564,5 @@ TODO は設計仕様書とは別ファイルで管理する。
 | 2026-05-09 | TODOランキングと戦略評価メモを追記 |
 | 2026-05-09 | §6「売買判断指標の数値と説明」を追加（定数・朝スクリ・Replay 専用指標）。章番号繰り下げ（環境変数=§7〜）。 |
 | 2026-05-09 | 現行コードに合わせ更新：`regime_filters` / `signal_filters`、`TOPIX_WEAK` 可変閾値、各種 sweep CLI・出力パス、§5.6 の ENTRY 前ゲート説明。 |
+| 2026-05-10 | §10「実装工程のトピック（これまでの経緯）」を追加（目的・手段・結果）。目次に §10 を追記。 |
+| 2026-05-11 | 現行コードに同期：§2 構成・§4（Replay モード・`forward_split`/検証・paper trade・§4.1 sweep 表）・§5.5 `STRONG`・§5.6 `composite_signal_filters`・§6.11 `rising_ratio_threshold_pct`・§6.13 複合フィルタ・§8 CLI・§9 注意書き・改訂履歴の整合。 |

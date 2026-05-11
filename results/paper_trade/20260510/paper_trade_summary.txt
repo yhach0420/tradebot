@@ -1,4 +1,4 @@
-paper_trade_summary (poll=2026-05-10 07:55:05)
+paper_trade_summary (poll=2026-05-10 15:30:47)
 
 signals_detected: 49
 signals_in_eval (entries): 2

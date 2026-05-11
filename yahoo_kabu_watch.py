@@ -36,9 +36,17 @@ import time
 import math
 import logging
 import traceback
+from itertools import combinations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
+
+from dotenv import load_dotenv
+from pathlib import Path
+
+# .env は「このプロジェクト直下」だけ読む（親ディレクトリ探索はしない）
+_DOTENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=str(_DOTENV_PATH), override=False)
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +374,128 @@ def _resolve_replay_config_path(path: str) -> str:
     return os.path.normpath(os.path.join(script_dir, p))
 
 
+def _results_root_abs(script_dir: Optional[str] = None) -> str:
+    """プロジェクト直下の results/（symbol_scores_latest.json 等・従来互換のルート）"""
+    sd = script_dir or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(sd, "results")
+
+
+def _results_run_date_folder_from_timestamp(timestamp: str) -> str:
+    """
+    タイムスタンプから run 日付フォルダ名 YYYYMMDD を得る。
+    例: 20260511_023212 -> 20260511
+    """
+    ts = str(timestamp or "").strip().replace("-", "").replace(":", "")
+    if len(ts) >= 8 and ts[:8].isdigit():
+        return ts[:8]
+    return datetime.now(JST).strftime("%Y%m%d")
+
+
+def _split_compound_results_slug(compound: str) -> tuple[str, str]:
+    """'replay_random_apr_20260511_014041' -> (replay_random_apr, 20260511_014041)"""
+    import re
+
+    s = str(compound or "").strip()
+    m = re.match(r"^(.+)_(\d{8}_\d{6})$", s)
+    if m:
+        return str(m.group(1)).strip(), str(m.group(2)).strip()
+    return s, ""
+
+
+def _build_results_output_dir(
+    category_slug: str,
+    timestamp: str,
+    *,
+    script_dir: Optional[str] = None,
+    mkdir: bool = True,
+) -> str:
+    """
+    replay / sweep 系: results/YYYYMMDD/<category_slug>_<timestamp>/
+    （単発検証用。paper_trade は _build_paper_trade_output_dir を使う）
+    同一 run の txt/json/csv/debug はこのディレクトリにまとめる。
+    """
+    ymd = _results_run_date_folder_from_timestamp(timestamp)
+    cat = str(category_slug or "").strip().rstrip("_")
+    ts = str(timestamp or "").strip()
+    folder = f"{cat}_{ts}" if ts else cat
+    base = os.path.join(_results_root_abs(script_dir), ymd, folder)
+    if mkdir:
+        os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _build_results_path_under_run_date(
+    timestamp: str,
+    *path_segments: str,
+    script_dir: Optional[str] = None,
+    mkdir: bool = True,
+) -> str:
+    """
+    replay / sweep 系: results/YYYYMMDD/<path_segments...>/ （スイープのセルネスト等）
+    """
+    ymd = _results_run_date_folder_from_timestamp(timestamp)
+    base = os.path.join(_results_root_abs(script_dir), ymd, *[str(x) for x in path_segments if str(x).strip()])
+    if mkdir:
+        os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _build_results_dir_from_output_subdir(
+    timestamp: str,
+    output_subdir: str,
+    *,
+    script_dir: Optional[str] = None,
+    mkdir: bool = True,
+) -> str:
+    """replay/sweep: output_subdir を 'a/b' → results/YYYYMMDD/a/b/"""
+    parts = [p for p in str(output_subdir or "").replace("\\", "/").split("/") if str(p).strip()]
+    return _build_results_path_under_run_date(timestamp, *parts, script_dir=script_dir, mkdir=mkdir)
+
+
+def _build_paper_trade_output_dir(
+    day_yyyymmdd: str,
+    *,
+    script_dir: Optional[str] = None,
+    mkdir: bool = True,
+) -> str:
+    """
+    継続ログ用（replay/sweep とは別ツリー）: results/paper_trade/YYYYMMDD/
+    旧 results/paper_trade/20260510/ 形式と同一。
+    """
+    ymd = str(day_yyyymmdd or "").strip()[:8]
+    if len(ymd) < 8 or (not ymd.isdigit()):
+        ymd = datetime.now(JST).strftime("%Y%m%d")
+    base = os.path.join(_results_root_abs(script_dir), "paper_trade", ymd)
+    if mkdir:
+        os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _resolve_replay_results_dir(
+    *,
+    script_dir: str,
+    replay_output_subdir: str,
+    replay_range_label: str,
+    batch_stamp: str,
+) -> str:
+    """
+    run_replay 用: replay_output_subdir 省略時は replay_<label>_<batch>。
+    1 セグメントなら末尾 YYYYMMDD_HHMMSS で category/ts に分割、
+    複数セグメントは日付配下に連結（スイープネスト）。
+    """
+    sub = str(replay_output_subdir or "").strip().replace("\\", "/")
+    if not sub:
+        return _build_results_output_dir(f"replay_{replay_range_label}", batch_stamp, script_dir=script_dir)
+    parts = [p for p in sub.split("/") if p]
+    ts_for_day = str(batch_stamp or "").strip() or datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    if len(parts) >= 2:
+        return _build_results_path_under_run_date(ts_for_day, *parts, script_dir=script_dir)
+    cat, ts = _split_compound_results_slug(parts[0])
+    if ts:
+        return _build_results_output_dir(cat, ts, script_dir=script_dir)
+    return _build_results_output_dir(parts[0], ts_for_day, script_dir=script_dir)
+
+
 def _merge_preset_config_defaults(cfg: dict[str, Any], *, resolved_path: str) -> dict[str, Any]:
     """
     既知プリセット（replay_default.json 等）のデフォルトとマージします。
@@ -483,6 +613,11 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
     topix_weak_threshold_pct = (
         float(rf.get("topix_weak_threshold_pct")) if isinstance(rf, dict) and isinstance(rf.get("topix_weak_threshold_pct"), (int, float)) else None
     )
+    rising_ratio_threshold_pct = (
+        float(rf["rising_ratio_threshold_pct"])
+        if isinstance(rf, dict) and isinstance(rf.get("rising_ratio_threshold_pct"), (int, float))
+        else None
+    )
 
     # signal filters（任意）
     sf = cfg.get("signal_filters") if isinstance(cfg.get("signal_filters"), dict) else {}
@@ -505,6 +640,9 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
     sc_enabled = False
     sc_conditions: list[dict[str, Any]] = []
     sc_snap: dict[str, Any] = {}
+    wc_enabled = False
+    wc_conditions: list[dict[str, Any]] = []
+    wc_snap: dict[str, Any] = {}
     if isinstance(csf, dict):
         wrf0 = csf.get("weak_risk_filter")
         if isinstance(wrf0, str):
@@ -529,6 +667,7 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
         if isinstance(csf.get("strong_vwap_ge_threshold_pct"), (int, float)):
             strong_vwap_ge_thr = float(csf.get("strong_vwap_ge_threshold_pct"))
         sc_enabled, sc_conditions, sc_snap = _normalize_strong_combo_filter_from_csf(csf)
+        wc_enabled, wc_conditions, wc_snap = _normalize_weak_combo_filter_from_csf(csf)
 
     rc_root = cfg.get("regime_controls") if isinstance(cfg.get("regime_controls"), dict) else {}
     regime_control_enabled = False
@@ -537,6 +676,10 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
     if isinstance(rc_root, dict):
         regime_control_snapshot = dict(rc_root)
         regime_control_enabled, regime_control_profiles = _normalize_regime_control_profiles_from_cfg(rc_root)
+
+    # AUTO_BLOCK（構造系 ENTRY_BLOCK）: config トップレベルで experimental ルール ON/OFF
+    auto_block_strong_chase_after_extension_enabled = bool(cfg.get("auto_block_strong_chase_after_extension_enabled", False))
+    auto_block_strong_extension_hu_plus1_enabled = bool(cfg.get("auto_block_strong_extension_hu_plus1_enabled", False))
 
     return {
         "replay_config_path": str(cfg.get("_path") or ""),
@@ -562,6 +705,7 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
         "regime_filter_disable_rising_ratio_lt50": bool(disable_rising_ratio_lt50),
         "regime_filter_disable_topix_weak": bool(disable_topix_weak),
         "regime_filter_topix_weak_threshold_pct": topix_weak_threshold_pct,
+        "regime_filter_rising_ratio_threshold_pct": rising_ratio_threshold_pct,
         "signal_filter_disable_gap_ge_pct": bool(disable_gap_ge_pct),
         "signal_filter_gap_ge_threshold_pct": float(gap_ge_threshold_pct),
         "signal_filter_disable_vwap_distance_ge_pct": bool(disable_vwap_distance_ge_pct),
@@ -578,9 +722,14 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
         "composite_signal_filter_strong_combo_enabled": bool(sc_enabled),
         "composite_signal_filter_strong_combo_block_conditions": list(sc_conditions),
         "composite_signal_filter_strong_combo_snapshot": dict(sc_snap),
+        "composite_signal_filter_weak_combo_enabled": bool(wc_enabled),
+        "composite_signal_filter_weak_combo_block_conditions": list(wc_conditions),
+        "composite_signal_filter_weak_combo_snapshot": dict(wc_snap),
         "regime_control_enabled": bool(regime_control_enabled),
         "regime_control_profiles": dict(regime_control_profiles),
         "regime_control_snapshot": regime_control_snapshot,
+        "auto_block_strong_chase_after_extension_enabled": bool(auto_block_strong_chase_after_extension_enabled),
+        "auto_block_strong_extension_hu_plus1_enabled": bool(auto_block_strong_extension_hu_plus1_enabled),
     }
 
 
@@ -605,6 +754,11 @@ def _replay_composite_signal_filter_kwargs_from_flags(cfg_flags: dict[str, Any])
             cfg_flags.get("composite_signal_filter_strong_combo_block_conditions") or []
         ),
         "composite_signal_filter_strong_combo_snapshot": dict(cfg_flags.get("composite_signal_filter_strong_combo_snapshot") or {}),
+        "composite_signal_filter_weak_combo_enabled": bool(cfg_flags.get("composite_signal_filter_weak_combo_enabled", False)),
+        "composite_signal_filter_weak_combo_block_conditions": list(
+            cfg_flags.get("composite_signal_filter_weak_combo_block_conditions") or []
+        ),
+        "composite_signal_filter_weak_combo_snapshot": dict(cfg_flags.get("composite_signal_filter_weak_combo_snapshot") or {}),
     }
 
 
@@ -629,6 +783,95 @@ def _strong_combo_virtual_exclude_reason(exclude_reason: str, known_reasons: fro
         if p and p in known_reasons:
             return True
     return False
+
+
+def _auto_block_reason_token_set(excluded_reason: Any) -> set[str]:
+    return {p.strip() for p in str(excluded_reason or "").split(" / ") if p.strip()}
+
+
+def _signal_row_is_base(ss: Any) -> bool:
+    if isinstance(ss, dict):
+        return str(ss.get("position_kind") or "BASE").strip().upper() == "BASE"
+    return str(getattr(ss, "position_kind", "BASE") or "BASE") == "BASE"
+
+
+def _signal_row_excluded_from_eval(ss: Any) -> bool:
+    if isinstance(ss, dict):
+        return bool(ss.get("excluded_from_eval", False))
+    return bool(getattr(ss, "excluded_from_eval", False))
+
+
+def _signal_row_excluded_reason(ss: Any) -> str:
+    if isinstance(ss, dict):
+        return str(ss.get("excluded_reason") or "")
+    return str(getattr(ss, "excluded_reason", "") or "")
+
+
+def _pnl_yen_100_shares_replay_signal_eval(s: Any) -> float:
+    """ReplaySignalEval 損益（100株・円）。run_replay 内クロージャと同式。"""
+    try:
+        fp = getattr(s, "final_profit_pct", None)
+        if isinstance(fp, (int, float)):
+            return float(getattr(s, "signal_price", 0.0)) * 100.0 * (float(fp) / 100.0)
+        r = str(getattr(s, "result", "") or "")
+        if r == "WIN":
+            return (float(getattr(s, "take_price", 0.0)) - float(getattr(s, "entry_price", 0.0))) * 100.0
+        if r == "LOSE":
+            return (float(getattr(s, "stop_price", 0.0)) - float(getattr(s, "entry_price", 0.0))) * 100.0
+    except Exception:
+        return 0.0
+    return 0.0
+
+
+def _signal_row_pnl_yen_100_shares(ss: Any) -> float:
+    if isinstance(ss, dict):
+        return float(ss.get("pnl_yen_100_shares") or 0.0)
+    return float(_pnl_yen_100_shares_replay_signal_eval(ss))
+
+
+def build_auto_block_effect_analysis_rows(signals: list[Any]) -> list[dict[str, Any]]:
+    """
+    構造系 AUTO ENTRY_BLOCK の効果（BASE のみ）。
+    excluded_reason に rule トークンが含まれる signal を「その rule でブロックされた」とみなす。
+    """
+    base_all = [s for s in signals if _signal_row_is_base(s)]
+    eval_pnl = float(
+        sum(_signal_row_pnl_yen_100_shares(s) for s in base_all if not _signal_row_excluded_from_eval(s))
+    )
+    rules_set = set(AUTO_BLOCK_RULE_NAMES)
+    rows_out: list[dict[str, Any]] = []
+
+    def _push_row(rule_name: str, blocked_src: list[Any]) -> None:
+        bn = int(len(blocked_src))
+        btpnl = float(sum(_signal_row_pnl_yen_100_shares(s) for s in blocked_src))
+        bexp = (btpnl / float(bn)) if bn > 0 else 0.0
+        rows_out.append(
+            {
+                "block_rule_name": str(rule_name),
+                "blocked_signals": bn,
+                "blocked_total_pnl": float(btpnl),
+                "blocked_expectancy": float(bexp),
+                "pnl_after_block": float(eval_pnl),
+                "pnl_improvement": float(-btpnl),
+            }
+        )
+
+    for rn in AUTO_BLOCK_RULE_NAMES:
+        blk = [
+            s
+            for s in base_all
+            if _signal_row_excluded_from_eval(s) and rn in _auto_block_reason_token_set(_signal_row_excluded_reason(s))
+        ]
+        _push_row(rn, blk)
+
+    blocked_union: list[Any] = []
+    for s in base_all:
+        if not _signal_row_excluded_from_eval(s):
+            continue
+        if _auto_block_reason_token_set(_signal_row_excluded_reason(s)) & rules_set:
+            blocked_union.append(s)
+    _push_row("ALL_AUTO_BLOCKS", blocked_union)
+    return rows_out
 
 
 def _normalize_strong_combo_filter_from_csf(csf: Any) -> tuple[bool, list[dict[str, Any]], dict[str, Any]]:
@@ -669,6 +912,65 @@ def _normalize_strong_combo_filter_from_csf(csf: Any) -> tuple[bool, list[dict[s
             block_conditions.append(rec)
     snap = {"enabled": enabled, "block_conditions": list(block_conditions)}
     return enabled, block_conditions, snap
+
+
+def _normalize_weak_combo_filter_from_csf(csf: Any) -> tuple[bool, list[dict[str, Any]], dict[str, Any]]:
+    """
+    composite_signal_filters.weak_combo_filter を正規化。
+    各 block_condition は market_regime に一致し、(任意) entry_vwap_distance_pct_ge および/または
+    high_update_count_before_entry_eq を指定。指定された条件はすべて満たしたときマッチ（AND）。
+    複数行は「どれかがマッチしたら除外」（OR）として先頭から評価。
+    """
+    wcf = csf.get("weak_combo_filter") if isinstance(csf, dict) and isinstance(csf.get("weak_combo_filter"), dict) else {}
+    if not wcf:
+        return False, [], {}
+    enabled = bool(wcf.get("enabled", False))
+    block_conditions: list[dict[str, Any]] = []
+    raw_list = wcf.get("block_conditions")
+    if isinstance(raw_list, list):
+        for item in raw_list:
+            if not isinstance(item, dict):
+                continue
+            mr = str(item.get("market_regime") or "").strip().upper()
+            if mr not in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+                continue
+            v_ge = item.get("entry_vwap_distance_pct_ge")
+            hu_eq = item.get("high_update_count_before_entry_eq")
+            if v_ge is None and hu_eq is None:
+                continue
+            reason = str(item.get("reason") or "").strip() or "WEAK_COMBO"
+            rec: dict[str, Any] = {"market_regime": mr, "reason": reason}
+            if isinstance(v_ge, (int, float)):
+                rec["entry_vwap_distance_pct_ge"] = float(v_ge)
+            if isinstance(hu_eq, (int, float)):
+                rec["high_update_count_before_entry_eq"] = int(hu_eq)
+            block_conditions.append(rec)
+    snap = {"enabled": enabled, "block_conditions": list(block_conditions)}
+    return enabled, block_conditions, snap
+
+
+def _weak_combo_match_reason(
+    cond: dict[str, Any],
+    *,
+    market_regime: str,
+    vwap_dist_pct: Any,
+    hu_now: Any,
+) -> bool:
+    """1件の block_condition が満たされるか（指定されたフィールドのみ評価）。"""
+    try:
+        if str(market_regime) != str(cond.get("market_regime")):
+            return False
+        v_ge = cond.get("entry_vwap_distance_pct_ge")
+        hu_eq = cond.get("high_update_count_before_entry_eq")
+        if v_ge is not None:
+            if not (isinstance(vwap_dist_pct, (int, float)) and float(vwap_dist_pct) >= float(v_ge)):
+                return False
+        if hu_eq is not None:
+            if hu_now is None or int(hu_now) != int(hu_eq):
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def _build_combo_filter_analysis_report_payload(
@@ -736,49 +1038,50 @@ def _combo_filter_analysis_dict_from_report(rep: Any) -> dict[str, Any]:
 
 
 def _aggregate_combo_filter_analysis_from_run_summaries(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
-    """複数 run の combo_filter_analysis（strong_combo）を合算。"""
-    skipped_grand = 0
-    skip_rc: dict[str, int] = {}
-    vpn_sum = 0.0
-    vcnt_sum = 0
-    vpn_by: dict[str, float] = {}
-    vcn_by: dict[str, int] = {}
-    enabled_any = False
-    snap_cond: list[dict[str, Any]] = []
-    for rr in run_summaries:
-        rep = rr.get("report") or {}
-        cf = _combo_filter_analysis_dict_from_report(rep)
-        sc = cf.get("strong_combo_filter") if isinstance(cf.get("strong_combo_filter"), dict) else {}
-        if not sc:
-            continue
-        enabled_any = enabled_any or bool(sc.get("enabled", False))
-        if isinstance(sc.get("block_conditions"), list) and sc.get("block_conditions"):
-            snap_cond = list(sc.get("block_conditions") or [])
-        skipped_grand += int(sc.get("skipped_signals_count") or 0)
-        for k, v in (sc.get("skip_reason_counts") or {}).items():
+    """複数 run の combo_filter_analysis（strong_combo / weak_combo）を合算。"""
+
+    def _agg_combo_key(sub_key: str) -> dict[str, Any]:
+        skipped_grand = 0
+        skip_rc: dict[str, int] = {}
+        vpn_sum = 0.0
+        vcnt_sum = 0
+        vpn_by: dict[str, float] = {}
+        vcn_by: dict[str, int] = {}
+        enabled_any = False
+        snap_cond: list[dict[str, Any]] = []
+        for rr in run_summaries:
+            rep = rr.get("report") or {}
+            cf = _combo_filter_analysis_dict_from_report(rep)
+            sc = cf.get(sub_key) if isinstance(cf.get(sub_key), dict) else {}
+            if not sc:
+                continue
+            enabled_any = enabled_any or bool(sc.get("enabled", False))
+            if isinstance(sc.get("block_conditions"), list) and sc.get("block_conditions"):
+                snap_cond = list(sc.get("block_conditions") or [])
+            skipped_grand += int(sc.get("skipped_signals_count") or 0)
+            for k, v in (sc.get("skip_reason_counts") or {}).items():
+                try:
+                    kk = str(k)
+                    if kk:
+                        skip_rc[kk] = int(skip_rc.get(kk, 0)) + int(v or 0)
+                except Exception:
+                    continue
+            vpa = sc.get("virtual_pnl_analysis") if isinstance(sc.get("virtual_pnl_analysis"), dict) else {}
+            vpn_sum += float(vpa.get("total_pnl_yen_100_shares") or 0.0)
+            br = vpa.get("by_reason") if isinstance(vpa.get("by_reason"), dict) else {}
+            for rk, row in br.items():
+                if not isinstance(row, dict):
+                    continue
+                ks = str(rk)
+                vpn_by[ks] = float(vpn_by.get(ks, 0.0)) + float(row.get("total_pnl_yen_100_shares") or 0.0)
+                vcn_by[ks] = int(vcn_by.get(ks, 0)) + int(row.get("virtual_resolved_count") or 0)
             try:
-                kk = str(k)
-                if kk:
-                    skip_rc[kk] = int(skip_rc.get(kk, 0)) + int(v or 0)
+                vcnt_sum += int(
+                    sum(int(row.get("virtual_resolved_count") or 0) for row in br.values() if isinstance(row, dict))
+                )
             except Exception:
-                continue
-        vpa = sc.get("virtual_pnl_analysis") if isinstance(sc.get("virtual_pnl_analysis"), dict) else {}
-        vpn_sum += float(vpa.get("total_pnl_yen_100_shares") or 0.0)
-        br = vpa.get("by_reason") if isinstance(vpa.get("by_reason"), dict) else {}
-        for rk, row in br.items():
-            if not isinstance(row, dict):
-                continue
-            ks = str(rk)
-            vpn_by[ks] = float(vpn_by.get(ks, 0.0)) + float(row.get("total_pnl_yen_100_shares") or 0.0)
-            vcn_by[ks] = int(vcn_by.get(ks, 0)) + int(row.get("virtual_resolved_count") or 0)
-        try:
-            vcnt_sum += int(
-                sum(int(row.get("virtual_resolved_count") or 0) for row in br.values() if isinstance(row, dict))
-            )
-        except Exception:
-            pass
-    return {
-        "strong_combo_filter": _build_combo_filter_analysis_report_payload(
+                pass
+        return _build_combo_filter_analysis_report_payload(
             enabled=bool(enabled_any),
             block_conditions_snapshot=list(snap_cond),
             skipped_total=int(skipped_grand),
@@ -788,6 +1091,10 @@ def _aggregate_combo_filter_analysis_from_run_summaries(run_summaries: list[dict
             virtual_pnl_by_reason=dict(vpn_by),
             virtual_count_by_reason=dict(vcn_by),
         )
+
+    return {
+        "strong_combo_filter": _agg_combo_key("strong_combo_filter"),
+        "weak_combo_filter": _agg_combo_key("weak_combo_filter"),
     }
 
 
@@ -1432,6 +1739,18 @@ WEAK_ENTRY_VWAP_DIST_PCT_MAX = 1.5      # VWAP乖離率の上限（高値掴み�
 WEAK_VOLUME_SPIKE_RATIO_MIN = 1.5       # 出来高倍率（5日平均比）の下限
 WEAK_REBREAK_MULT = 1.002               # 直近5分高値更新をより厳格化（例: *1.002）
 
+# Replay: 構造ベースの自動 ENTRY_BLOCK（時間帯ではなく HU×VWAP / 同日再エntry 回数）
+AUTO_BLOCK_WEAK_HU1_VWAP_DISTANCE_PCT_GE = 1.5
+AUTO_BLOCK_REASON_WEAK_HU1_VWAP15 = "BLOCK_WEAK_HU1_VWAP15"
+AUTO_BLOCK_STRONG_CHASE_AFTER_EXTENSION_PCT_GE = 0.5
+AUTO_BLOCK_REASON_STRONG_CHASE_AFTER_EXTENSION = "BLOCK_STRONG_CHASE_AFTER_EXTENSION"
+AUTO_BLOCK_REASON_STRONG_EXTENSION_HU_PLUS1 = "BLOCK_STRONG_EXTENSION_HU_PLUS1"
+AUTO_BLOCK_RULE_NAMES: tuple[str, ...] = (
+    AUTO_BLOCK_REASON_WEAK_HU1_VWAP15,
+    AUTO_BLOCK_REASON_STRONG_CHASE_AFTER_EXTENSION,
+    AUTO_BLOCK_REASON_STRONG_EXTENSION_HU_PLUS1,
+)
+
 # =========================
 # 後場Entry 厳格化（Replay比較用）
 # =========================
@@ -1484,7 +1803,7 @@ def _load_symbol_scoring_latest() -> dict[str, Any]:
     """
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        p = os.path.join(script_dir, "results", "symbol_scores_latest.json")
+        p = os.path.join(_results_root_abs(script_dir), "symbol_scores_latest.json")
         if not os.path.exists(p):
             return {}
         mtime = os.path.getmtime(p)
@@ -2683,6 +3002,36 @@ def fetch_intraday_1m_series(
     return closes2, highs2, vols2
 
 
+def fetch_latest_intraday_data_for_paper_trade(
+    session: requests.Session,
+    symbol: str,
+    *,
+    timeout_sec: float = 20.0,
+) -> tuple[Quote, IntradaySignals, Optional[float]]:
+    """
+    paper_trade 専用の live fetch 経路。
+    - replay cache / replay timestamp / candle gating / future candle filter を使わない
+    - 現在時刻(JST) と Yahoo chart(1m, 1d) の最新系列のみを使用
+    Returns:
+      (quote, intraday_signals, vwap)
+    """
+    q = fetch_quote(session, symbol)
+    vwap: Optional[float] = None
+    try:
+        vwap = fetch_vwap(session, symbol)
+    except Exception:
+        vwap = None
+    closes_1m, highs_1m, vols_1m = fetch_intraday_1m_series(session, symbol, timeout_sec=timeout_sec)
+    intr = calc_intraday_signals_from_series(
+        price=float(q.price),
+        closes=list(closes_1m),
+        highs=list(highs_1m),
+        vols=list(vols_1m),
+        vwap=vwap,
+    )
+    return q, intr, vwap
+
+
 def calc_intraday_signals_from_series(
     *,
     price: float,
@@ -2831,6 +3180,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "random_mar",
             "random_mar_cache_only",
             "random_apr",
+            "forward_split",
         ],
         help=(
             "リプレイで取得する期間。1d/5d/10d/20d/60d。"
@@ -2838,6 +3188,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             " random_60d は『2026-02-01〜2026-04-30 の平日候補からランダムに5営業日抽出』。"
             " random_feb/mar/apr は各月の全日付ウィンドウの平日候補から同様に抽出。"
             " random_mar_cache_only は『random_mar と同じ日付プールだが、キャッシュがある日だけから抽出（Yahoo取得しない）』。"
+            " forward_split は configs/forward_split_periods.json の train/validation/forward の並集合を全日候補にし、(オプションで)"
+            " --replay-random-days が候補数未満ならその数だけ曜日shuffle後に抽出。"
             " デフォルト 1d"
         ),
     )
@@ -2861,6 +3213,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=int,
         default=3,
         help="ランダム抽出の対象期間（月）。デフォルト 3（過去3か月）",
+    )
+    p.add_argument(
+        "--forward-split-validation",
+        action="store_true",
+        help=(
+            "train/validation/forward を day_jst で分割し train のみから危険核クラスタを抽出、"
+            " validation/forward で virtual_block_cluster_match と再登場分析(analysis only。"
+            " --replay-range forward_split 推奨。configs/forward_split_periods.json（または --forward-split-periods-path）。"
+            " AUTO_BLOCK・excluded_from_eval は変更しない。"
+        ),
+    )
+    p.add_argument(
+        "--forward-split-periods-path",
+        type=str,
+        default="",
+        help="periods JSON のパス（空なら configs/forward_split_periods.json をスクリプト基準で使用）",
     )
     p.add_argument(
         "--replay-seed",
@@ -3104,6 +3472,71 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "baseline と strong_vwap_ge_15_and_hu_le2_skip を random_apr / random_mar / random_60d で検証します。"
             " 既定 replay_repeat=20、run_i の seed は replay_seed+i-1。"
             " results/strong_trend_quality_validation_sweep_<時刻>/sweep_summary.txt に Delta vs baseline を出力します。"
+        ),
+    )
+    p.add_argument(
+        "--rising-lt50-validation-sweep",
+        action="store_true",
+        help=(
+            "regime_filters.disable_rising_ratio_lt50 の A/B 検証。baseline / True / False を"
+            " random_apr・random_60d で比較します。replay は fast 固定、replay_repeat は --replay-repeat で指定（既定10）。"
+            " configs/rising_lt50_validation_sweep/ に比較用 JSON を書き出し、"
+            " results/rising_lt50_validation_sweep_<時刻>/sweep_summary.txt に保存します。"
+        ),
+    )
+    p.add_argument(
+        "--rising-ratio-threshold-sweep",
+        action="store_true",
+        help=(
+            "現行 hu2_vwap15 を baseline とし、disable_rising_ratio_lt50=False で"
+            " regime_filters.rising_ratio_threshold_pct を 30〜55%% で sweep します。"
+            " replay_mode=fast 固定、replay_repeat は --replay-repeat（既定10）。"
+            " configs/rising_ratio_threshold_sweep/ に JSON を書き出し、"
+            " results/rising_ratio_threshold_sweep_<時刻>/sweep_summary.txt に保存します。"
+        ),
+    )
+    p.add_argument(
+        "--weak-combo-filter-sweep",
+        action="store_true",
+        help=(
+            "rrthr_45 をベースに composite_signal_filters.weak_combo_filter を比較します。"
+            " baseline / WEAK×VWAP≥1.5 / WEAK×HU1 / OR を random_apr のみ・fast で実行。"
+            " replay_repeat は --replay-repeat（既定10）。"
+            " configs/weak_combo_filter_sweep/ に JSON を書き出し、"
+            " results/weak_combo_filter_sweep_<時刻>/sweep_summary.txt に保存します。"
+        ),
+    )
+    p.add_argument(
+        "--auto-block-momentum-sweep",
+        action="store_true",
+        help=(
+            "rrthr45 ベースで STRONG chase extension の AUTO_BLOCK を比較します。"
+            " baseline（両方OFF）/ strong_extension_hu_plus1_on / old_chase_extension_on（旧単独ON）。"
+            " random_apr・replay_mode=fast、replay_repeat は --replay-repeat（既定10）、seed は --replay-seed と同規則。"
+            " configs/auto_block_momentum_sweep/ に JSON を書き出し、"
+            " results/auto_block_momentum_sweep_<時刻>/sweep_summary.txt に保存します。"
+        ),
+    )
+    p.add_argument(
+        "--strong-extension-threshold-sweep",
+        action="store_true",
+        help=(
+            "STRONG×騰落%%×（任意）HU+1 の AUTO_BLOCK 候補 isolation（仮想集計のみ・symbol_daily 不使用）。"
+            " rrthr45 baseline で random_apr×--replay-repeat（明示なし既定10）、"
+            " 閾値 0.3/0.5/0.8/1.0 で baseline / rule_a / rule_b の3セル比較。"
+            " results/strong_extension_threshold_sweep_<時刻>/sweep_summary.txt と JSON を出力。"
+            " （通常の replay 合算 JSON にも extension_robustness_metrics を付与します）"
+        ),
+    )
+    p.add_argument(
+        "--forward-risk-virtual-block-sweep",
+        action="store_true",
+        help=(
+            "random_apr 等で再現した forward risk 構造に対し、STRONG 系仮想ブロック候補を analysis-only で比較"
+            "（AUTO_BLOCK 本実装・excluded_from_eval 変更なし）。"
+            " --replay-range / --replay-repeat（未指定なら10）/ --replay-mode / --replay-config を使用。"
+            " results/YYYYMMDD/forward_risk_virtual_block_sweep_<時刻>/sweep_summary.txt と"
+            " forward_risk_virtual_block_sweep.json を出力。"
         ),
     )
     return p.parse_args(argv)
@@ -4015,6 +4448,7 @@ def run_replay(
     regime_filter_disable_rising_ratio_lt50: bool = False,
     regime_filter_disable_topix_weak: bool = False,
     regime_filter_topix_weak_threshold_pct: Optional[float] = None,
+    regime_filter_rising_ratio_threshold_pct: Optional[float] = None,
     signal_filter_disable_gap_ge_pct: bool = False,
     signal_filter_gap_ge_threshold_pct: float = 3.0,
     signal_filter_disable_vwap_distance_ge_pct: bool = False,
@@ -4031,12 +4465,17 @@ def run_replay(
     composite_signal_filter_strong_combo_enabled: bool = False,
     composite_signal_filter_strong_combo_block_conditions: Optional[list[dict[str, Any]]] = None,
     composite_signal_filter_strong_combo_snapshot: Optional[dict[str, Any]] = None,
+    composite_signal_filter_weak_combo_enabled: bool = False,
+    composite_signal_filter_weak_combo_block_conditions: Optional[list[dict[str, Any]]] = None,
+    composite_signal_filter_weak_combo_snapshot: Optional[dict[str, Any]] = None,
     regime_control_enabled: bool = False,
     regime_control_profiles: Optional[dict[str, dict[str, Any]]] = None,
     regime_control_config_snapshot: Optional[dict[str, Any]] = None,
     replay_settings: Optional[dict[str, Any]] = None,
     paper_trade_mode: bool = False,
     paper_trade_collect: Optional[dict[str, Any]] = None,
+    forward_split_validation: bool = False,
+    forward_split_periods_path: str = "",
 ) -> int:
     """
     過去データの仮想リプレイ（テストモード）。
@@ -4062,10 +4501,11 @@ def run_replay(
         "random_mar",
         "random_mar_cache_only",
         "random_apr",
+        "forward_split",
     ):
         print(
             "--replay-range は 1d/5d/10d/20d/60d と "
-            "random_5d / random_60d / random_feb / random_mar / random_apr を指定してください。"
+            "random_5d / random_60d / random_feb / random_mar / random_apr / forward_split を指定してください。"
         )
         return 2
 
@@ -4285,8 +4725,14 @@ def run_replay(
     except Exception:
         pass
 
+    # Replay config 由来のフラグ（AUTO_BLOCK 等）。main から渡された replay_config_path を読み直す。
+    _rcp = str(replay_config_path or "").strip()
+    _cfg_for_flags = _load_replay_config(_resolve_replay_config_path(_rcp)) if _rcp else {}
+    cfg_flags: dict[str, Any] = dict(_apply_replay_config_to_flags(cfg=_cfg_for_flags))
+
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
     alert_channel_id = _parse_channel_id(os.getenv("ALERT_CHANNEL_ID", ""))
+    paper_alert_channel_id = _parse_channel_id(os.getenv("PAPER_ALERT_CHANNEL_ID", ""))
     # Bot送信用トークンは DISCORD_TOKEN に統一します（旧: DISCORD_BOT_TOKEN は互換で吸収）
     bot_token = _get_discord_token_with_compat_warning()
     fast_mode = (str(replay_mode) == "fast")
@@ -4298,6 +4744,17 @@ def run_replay(
         # Paper trade: 仮想検証のみ。DiscordのReplay通知・実発注系とも無関係にします。
         discord_enabled = False
         fast_mode = True
+
+    # paper_trade mode の embed routing（要件）:
+    # - paper_trade 実行中だけ、signal embed を PAPER_ALERT_CHANNEL_ID へ送る
+    # - 未設定なら既存 ALERT_CHANNEL_ID にフォールバック
+    embed_alert_channel_id = alert_channel_id
+    if paper_trade_mode:
+        embed_alert_channel_id = paper_alert_channel_id if paper_alert_channel_id is not None else alert_channel_id
+        try:
+            print(f"[{now_str()}] [PAPER] signal embeds routed to PAPER_ALERT_CHANNEL_ID")
+        except Exception:
+            pass
 
     if webhook_url:
         print(f"[{now_str()}] Discord通知: DISCORD_WEBHOOK_URL が設定されています（Webhookの送信先チャンネルに送られます）")
@@ -4335,6 +4792,8 @@ def run_replay(
     blocked_reason_counts: dict[str, int] = {}
     # Replay中に「候補が reject された理由」を累積集計します（ユーザー要望）
     reject_reason_counts: dict[str, int] = {}
+    # 構造系 AUTO ENTRY_BLOCK（BLOCK_*）の発生回数
+    entry_block_reason_counts: dict[str, int] = {}
 
     # 表示抑制用
     last_candidates: set[str] = set()
@@ -4417,6 +4876,18 @@ def run_replay(
     _strong_combo_reasons_frozen = frozenset(
         str(x.get("reason") or "").strip() for x in _strong_combo_conds_rt if str(x.get("reason") or "").strip()
     )
+    weak_combo_filter_virtual_active_indices_by_symbol: dict[str, list[int]] = {}
+    weak_combo_filter_virtual_pnl_sum = 0.0
+    weak_combo_filter_virtual_count = 0
+    weak_combo_filter_virtual_pnl_by_reason: dict[str, float] = {}
+    weak_combo_filter_virtual_count_by_reason: dict[str, int] = {}
+    weak_combo_filter_skipped_signals_count = 0
+    weak_combo_filter_skip_reason_counts: dict[str, int] = {}
+    resolved_counted_weak_combo_filter_virtual_indices: set[int] = set()
+    _weak_combo_conds_rt: list[dict[str, Any]] = list(composite_signal_filter_weak_combo_block_conditions or [])
+    _weak_combo_reasons_frozen = frozenset(
+        str(x.get("reason") or "").strip() for x in _weak_combo_conds_rt if str(x.get("reason") or "").strip()
+    )
     regime_control_virtual_active_indices_by_symbol: dict[str, list[int]] = {}
     regime_control_virtual_pnl_sum = 0.0
     regime_control_virtual_win = 0
@@ -4426,6 +4897,8 @@ def run_replay(
     regime_control_skip_reason_counts: dict[str, int] = {}
     resolved_counted_regime_control_virtual_indices: set[int] = set()
     resolved_counted_regime_topix_virtual_indices: set[int] = set()
+    # AUTO_BLOCK（構造系 ENTRY_BLOCK）の仮想PnL: excluded でも価格更新して損益推定する
+    auto_block_virtual_active_indices_by_symbol: dict[str, list[int]] = {}
 
     # market_regime / rising_ratio 分布（TODO-02/03 デバッグ用）
     market_regime_counts: dict[str, int] = {}
@@ -4617,6 +5090,10 @@ def run_replay(
     # - key: (JST日付, symbol)
     # - value: 直近のEntry価格（BASE/ADD含む“最後に建てたポジション”の価格）
     last_entry_price_by_day_symbol: dict[tuple[str, str], float] = {}
+    # - value: 直近のBASE Entry価格（excludeの有無に関係なく更新。勢い劣化の比較・AUTO_BLOCK用）
+    last_base_entry_price_by_day_symbol: dict[tuple[str, str], float] = {}
+    # - value: 直近のBASE high_update_count_before_entry（excludeの有無に関係なく更新）
+    last_base_high_update_count_by_day_symbol: dict[tuple[str, str], int] = {}
     # - value: 前回ADDの時刻（UTC datetime）。最低5分間隔を作るために使います。
     last_add_time_by_day_symbol: dict[tuple[str, str], datetime] = {}
     # - value: 出来高増加が「継続」しているかを見るための前回値
@@ -4684,7 +5161,7 @@ def run_replay(
         if replay_range_label in FIXED_RANDOM_REPLAY_LABELS and int(replay_random_days or 0) <= 0:
             replay_random_days = 5
         if int(replay_random_days or 0) > 0:
-            if replay_range_label not in FIXED_RANDOM_REPLAY_LABELS:
+            if replay_range_label not in FIXED_RANDOM_REPLAY_LABELS and replay_range_label != "forward_split":
                 replay_range_label = f"random_{int(replay_random_days)}d"
         if not paper_trade_mode:
             print(f"- replay_range: {replay_range_label}")
@@ -4707,7 +5184,12 @@ def run_replay(
         # random_5d は Replay制御用ラベルであり、Yahooのrange_strには渡さない
         # - 1分足取得は 60d を使い、その中からランダム営業日を抽出する
         fetch_range = str(replay_range)
-        if str(replay_range) == "random_5d" or str(replay_range) in FIXED_RANDOM_REPLAY_LABELS or int(replay_random_days or 0) > 0:
+        if (
+            str(replay_range) == "random_5d"
+            or str(replay_range) in FIXED_RANDOM_REPLAY_LABELS
+            or int(replay_random_days or 0) > 0
+            or str(replay_range).strip() == "forward_split"
+        ):
             fetch_range = "60d"
 
         # -----------------------------
@@ -4726,30 +5208,49 @@ def run_replay(
         replay_dates_jst: list[str] = []
         replay_random_pick_meta: dict[str, Any] = {}
         replay_cache_coverage_validator: dict[str, Any] = {}
-        if int(replay_random_days or 0) > 0:
+        _forward_split_rng = str(replay_range).strip() == "forward_split"
+        if int(replay_random_days or 0) > 0 or _forward_split_rng:
             months = int(replay_random_months or 3)
             if months <= 0:
                 months = 3
-            k = int(replay_random_days)
-            if k <= 0:
-                k = 5
 
             # 候補日（平日カレンダー）を作る（祝日はAPIでデータが無いので後で除外される）
             # cache_only は「キャッシュがある日だけ」で抽出する（Yahoo取得しない）
             cache_only = str(replay_range).strip().endswith("_cache_only")
-            _pool_dates = _replay_fixed_random_pool_dates(str(replay_range))
-            if _pool_dates:
-                candidates = _weekday_date_strings_between(_pool_dates[0], _pool_dates[1])
+            candidates: list[str]
+            k: int
+            if _forward_split_rng:
+                per_fs, err_fs = _forward_split_load_periods_json(
+                    _forward_split_resolve_periods_path(forward_split_periods_path)
+                )
+                if err_fs or not isinstance(per_fs, dict):
+                    print(f"[{now_str()}] forward_split: configs/periods の読込に失敗: {err_fs}")
+                    return 2
+                u0_fs, u1_fs = _forward_split_union_bounds(per_fs)
+                candidates = _weekday_date_strings_between(u0_fs, u1_fs)
+                nc_fs = len(candidates)
+                kr = int(replay_random_days or 0)
+                if kr <= 0 or kr >= nc_fs:
+                    k = nc_fs
+                else:
+                    k = kr
             else:
-                now_jst = datetime.now(JST)
-                start_jst = (now_jst - timedelta(days=months * 31)).date()
-                end_jst = now_jst.date()
-                candidates = []
-                d = start_jst
-                while d <= end_jst:
-                    if d.weekday() < 5:
-                        candidates.append(d.strftime("%Y-%m-%d"))
-                    d = d + timedelta(days=1)
+                k = int(replay_random_days)
+                if k <= 0:
+                    k = 5
+                _pool_dates = _replay_fixed_random_pool_dates(str(replay_range))
+                if _pool_dates:
+                    candidates = _weekday_date_strings_between(_pool_dates[0], _pool_dates[1])
+                else:
+                    now_jst = datetime.now(JST)
+                    start_jst = (now_jst - timedelta(days=months * 31)).date()
+                    end_jst = now_jst.date()
+                    candidates = []
+                    d = start_jst
+                    while d <= end_jst:
+                        if d.weekday() < 5:
+                            candidates.append(d.strftime("%Y-%m-%d"))
+                        d = d + timedelta(days=1)
 
             _today_ref = datetime.now(JST).date()
             _lo_ref, _hi_ref = _yahoo_1m_available_calendar_bounds_jst(_today_ref)
@@ -5629,16 +6130,14 @@ def run_replay(
                     try:
                         script_dir = os.path.dirname(os.path.abspath(__file__))
                         # =========================
-                        # results 保存先フォルダ（repeat時に整理）
+                        # results/YYYYMMDD/<category>_<timestamp>/ （共通 helper）
                         # =========================
-                        # 初心者向けポイント:
-                        # - --replay-repeat を使うとファイルが増えるので、
-                        #   「同じロット（同じrepeat実行）」の結果は1つのフォルダにまとめます。
-                        # - repeat時は必ず専用フォルダ results/replay_<range>_<batch_stamp>/ にまとめます（ユーザー要件）。
-                        #   ※repeatフォルダの生成は main(TEST_REPLAY_MODE) 側で行い、ここでは二重にネストしない。
-                        results_dir = os.path.join(script_dir, "results")
-                        if str(replay_output_subdir or "").strip():
-                            results_dir = os.path.join(results_dir, str(replay_output_subdir).strip())
+                        results_dir = _resolve_replay_results_dir(
+                            script_dir=script_dir,
+                            replay_output_subdir=str(replay_output_subdir or "").strip(),
+                            replay_range_label=str(replay_range_label),
+                            batch_stamp=str(batch_stamp or "").strip(),
+                        )
 
                         # ファイル名（JST）
                         saved_at_jst = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
@@ -5646,11 +6145,7 @@ def run_replay(
                         # NOTE: batch_stamp は run_replay 冒頭で必ず定義済み
                         start_jst = _fmt_dt_jst(start_utc) if start_utc else "NA"
                         end_jst = _fmt_dt_jst(end_utc) if end_utc else "NA"
-                        # 通常の 1d/5d Replay 表示には影響させない（ランダム時だけ切替）
-                        replay_range_label = str(replay_range)
-                        if int(replay_random_days or 0) > 0:
-                            if replay_range_label not in FIXED_RANDOM_REPLAY_LABELS:
-                                replay_range_label = f"random_{int(replay_random_days)}d"
+                        # replay_range_label は冒頭で確定済み（表示・集計と一致）
                         if replay_range_label.startswith("random_"):
                             # 例: replay_summary_random_5d_20260507_232500_run01
                             if int(replay_repeat_total or 0) > 1:
@@ -5659,9 +6154,13 @@ def run_replay(
                             else:
                                 name_base = f"replay_summary_{replay_range_label}_{saved_at_jst}"
                         else:
-                            name_base = f"replay_{saved_at_jst}_range-{replay_range_label}"
-
-                        os.makedirs(results_dir, exist_ok=True)
+                            # forward_split / 1d / 5d 等: --replay-repeat>1 時は runXX 接尾辞が無いと
+                            # main 側の all_runs 用 JSON 集約（*run{i:02d}.json 探索）と一致しない
+                            if int(replay_repeat_total or 0) > 1:
+                                run_s = f"run{int(replay_repeat_run_no):02d}"
+                                name_base = f"replay_summary_{replay_range_label}_{batch_stamp}_{run_s}"
+                            else:
+                                name_base = f"replay_{saved_at_jst}_range-{replay_range_label}"
 
                         def _dt_iso(dt: Optional[Any]) -> Optional[str]:
                             if dt is None:
@@ -5674,9 +6173,21 @@ def run_replay(
                                 t = t.replace(tzinfo=timezone.utc)
                             return t.isoformat()
 
+                        # 同一日・同一 symbol の BASE 通し番号（replay_signals 確定後に fill）。
+                        # 注: 「疲労」の代理指標（補助分析）。forward 主判定には price extension / HU delta / regime を用いる方針。
+                        _symbol_daily_entry_idx_map: dict[int, int] = {}
+                        # momentum_decay_features（replay_signals 確定後に fill）
+                        _momentum_decay_feat_map: dict[int, dict[str, Any]] = {}
+
                         def _signal_to_dict(s: ReplaySignalEval) -> dict[str, Any]:
                             bucket = _signal_time_bucket_jst(s.signal_time_utc)
                             day_jst = _day_jst_str(s.signal_time_utc)
+                            _pk_sde = str(getattr(s, "position_kind", "BASE") or "BASE")
+                            _sym_daily_ix: Optional[int] = None
+                            if _pk_sde == "BASE":
+                                _sid_map = _symbol_daily_entry_idx_map.get(id(s))
+                                if isinstance(_sid_map, int):
+                                    _sym_daily_ix = int(_sid_map)
                             # HOLDでfinalが無い場合は、ターミナル表示と同じ暫定計算に寄せる
                             if s.final_profit_pct is None and s.entry_price > 0:
                                 fp = ((float(s.last_price_after) - float(s.entry_price)) / float(s.entry_price)) * 100.0
@@ -5695,7 +6206,20 @@ def run_replay(
                                     hold_minutes = float((et - st).total_seconds() / 60.0)
                             except Exception:
                                 hold_minutes = None
-                            return {
+                            # structure risk score（analysis-only）
+                            _mdf_sd = _momentum_decay_feat_map.get(id(s)) or {"prev_signal_exists": False}
+                            _score_tmp = _structure_extension_risk_score_from_signal_dict(
+                                {
+                                    "market_regime": str(getattr(s, "market_regime", "") or ""),
+                                    "entry_vwap_distance_pct": (
+                                        float(getattr(s, "vwap_distance_pct", 0.0))
+                                        if isinstance(getattr(s, "vwap_distance_pct", None), (int, float))
+                                        else None
+                                    ),
+                                    "momentum_decay_features": dict(_mdf_sd) if isinstance(_mdf_sd, dict) else {"prev_signal_exists": False},
+                                }
+                            )
+                            out_d = {
                                 "signal_id": str(getattr(s, "signal_id", "") or ""),
                                 "symbol": s.symbol,
                                 "position_kind": str(getattr(s, "position_kind", "BASE") or "BASE"),
@@ -5751,6 +6275,10 @@ def run_replay(
                                 "signal_time_utc": _dt_iso(s.signal_time_utc),
                                 "signal_time_jst": _fmt_dt_jst_short(s.signal_time_utc),
                                 "day_jst": day_jst,
+                                # 同日・同銘柄の BASE 何本目か（疲労の代理指標。主判定への利用はしない方針）
+                                "symbol_daily_entry_index": _sym_daily_ix,
+                                "momentum_decay_features": dict(_momentum_decay_feat_map.get(id(s)) or {"prev_signal_exists": False}),
+                                "structure_extension_risk_score": int(_score_tmp),
                                 "time_bucket_jst": bucket,
                                 "entry_time_bucket": str(getattr(s, "time_bucket_jst", "") or bucket),
                                 "signal_price": float(s.signal_price),
@@ -5836,6 +6364,15 @@ def run_replay(
                                 ),
                                 "suggested_block_reasons": str(getattr(s, "suggested_block_reasons", "") or ""),
                             }
+                            # shadow block: analysis-only 観測フラグ（excluded_from_eval 等には影響させない）
+                            try:
+                                out_d["shadow_block_candidate_flags"] = dict(_shadow_block_candidate_flags_from_signal_dict(out_d))
+                            except Exception:
+                                out_d["shadow_block_candidate_flags"] = {
+                                    "STRONG_EXTENSION_GE_05": False,
+                                    "STRONG_DELTA_HU_MINUS1": False,
+                                }
+                            return out_d
 
                         def _agg_stats(xs: list[ReplaySignalEval]) -> dict[str, Any]:
                             t = len(xs)
@@ -6153,6 +6690,158 @@ def run_replay(
                             virtual_pnl_by_reason=dict(strong_combo_filter_virtual_pnl_by_reason),
                             virtual_count_by_reason=dict(strong_combo_filter_virtual_count_by_reason),
                         )
+                        _wc_snap_bc: list[dict[str, Any]] = []
+                        if isinstance(composite_signal_filter_weak_combo_snapshot, dict):
+                            _wc_snap_bc = list(composite_signal_filter_weak_combo_snapshot.get("block_conditions") or [])
+                        if not _wc_snap_bc:
+                            _wc_snap_bc = list(_weak_combo_conds_rt)
+                        _weak_combo_filter_payload = _build_combo_filter_analysis_report_payload(
+                            enabled=bool(composite_signal_filter_weak_combo_enabled),
+                            block_conditions_snapshot=list(_wc_snap_bc),
+                            skipped_total=int(weak_combo_filter_skipped_signals_count),
+                            skip_reason_counts=dict(weak_combo_filter_skip_reason_counts),
+                            virtual_pnl_sum_total=float(weak_combo_filter_virtual_pnl_sum),
+                            virtual_count_total=int(weak_combo_filter_virtual_count),
+                            virtual_pnl_by_reason=dict(weak_combo_filter_virtual_pnl_by_reason),
+                            virtual_count_by_reason=dict(weak_combo_filter_virtual_count_by_reason),
+                        )
+
+                        # 同一日・同一 symbol の BASE signal 通し番号（eval 除外に関係なく発生順）
+                        _symbol_daily_entry_idx_map.clear()
+                        _sde_by_day_sym: dict[tuple[str, str], list[tuple[int, ReplaySignalEval]]] = {}
+                        for _sde_ord, _sde_sig in enumerate(replay_signals):
+                            if str(getattr(_sde_sig, "position_kind", "BASE") or "BASE") != "BASE":
+                                continue
+                            _sde_day = _day_jst_str(_sde_sig.signal_time_utc)
+                            _sde_k = (_sde_day, str(_sde_sig.symbol))
+                            _sde_by_day_sym.setdefault(_sde_k, []).append((_sde_ord, _sde_sig))
+                        for _sde_grp in _sde_by_day_sym.values():
+                            _sde_grp.sort(
+                                key=lambda t: (
+                                    t[1].signal_time_utc
+                                    if isinstance(getattr(t[1], "signal_time_utc", None), datetime)
+                                    else datetime.min.replace(tzinfo=timezone.utc),
+                                    t[0],
+                                )
+                            )
+                            for _sde_nn, (_unused_o, _sde_one) in enumerate(_sde_grp, start=1):
+                                _symbol_daily_entry_idx_map[id(_sde_one)] = int(_sde_nn)
+
+                        # momentum_decay_features（同一 day_jst × symbol の直前 BASE と比較）
+                        _momentum_decay_feat_map.clear()
+                        _md_by_day_sym: dict[tuple[str, str], list[tuple[int, ReplaySignalEval]]] = {}
+                        for _md_ord, _md_sig in enumerate(replay_signals):
+                            if str(getattr(_md_sig, "position_kind", "BASE") or "BASE") != "BASE":
+                                continue
+                            _md_day = _day_jst_str(getattr(_md_sig, "signal_time_utc", None))
+                            _md_k = (_md_day, str(getattr(_md_sig, "symbol", "") or ""))
+                            _md_by_day_sym.setdefault(_md_k, []).append((_md_ord, _md_sig))
+
+                        def _as_f(x: Any) -> Optional[float]:
+                            return float(x) if isinstance(x, (int, float)) and math.isfinite(float(x)) else None
+
+                        def _as_i(x: Any) -> Optional[int]:
+                            try:
+                                if x is None:
+                                    return None
+                                return int(float(x))
+                            except Exception:
+                                return None
+
+                        for _md_grp in _md_by_day_sym.values():
+                            _md_grp.sort(
+                                key=lambda t: (
+                                    t[1].signal_time_utc
+                                    if isinstance(getattr(t[1], "signal_time_utc", None), datetime)
+                                    else datetime.min.replace(tzinfo=timezone.utc),
+                                    t[0],
+                                )
+                            )
+                            prev_sig: Optional[ReplaySignalEval] = None
+                            for _unused_o, cur in _md_grp:
+                                cur_id = id(cur)
+                                feat: dict[str, Any] = {"prev_signal_exists": bool(prev_sig is not None)}
+
+                                cur_vdw = _as_f(getattr(cur, "vwap_distance_pct", None))
+                                cur_v30 = _as_f(getattr(cur, "first_30m_volume_ratio", None))
+                                cur_rs = _as_f(getattr(cur, "relative_strength_vs_topix_pct", None))
+                                cur_gap = _as_f(getattr(cur, "gap_pct", None))
+                                cur_hu = _as_i(getattr(cur, "high_update_count_before_entry", None))
+
+                                # price reaction
+                                hi5 = _as_f(getattr(cur, "recent_5m_high_before_entry", None))
+                                lo5 = _as_f(getattr(cur, "recent_5m_low_before_entry", None))
+                                if isinstance(hi5, (int, float)) and float(hi5) > 0:
+                                    feat["breakout_extension_pct"] = float((float(getattr(cur, "entry_price", 0.0)) - float(hi5)) / float(hi5) * 100.0)
+                                    if isinstance(lo5, (int, float)):
+                                        feat["pullback_depth_pct"] = float((float(hi5) - float(lo5)) / float(hi5) * 100.0)
+                                    else:
+                                        feat["pullback_depth_pct"] = None
+                                else:
+                                    feat["breakout_extension_pct"] = None
+                                    feat["pullback_depth_pct"] = None
+
+                                if prev_sig is not None:
+                                    prev_vdw = _as_f(getattr(prev_sig, "vwap_distance_pct", None))
+                                    prev_v30 = _as_f(getattr(prev_sig, "first_30m_volume_ratio", None))
+                                    prev_rs = _as_f(getattr(prev_sig, "relative_strength_vs_topix_pct", None))
+                                    prev_gap = _as_f(getattr(prev_sig, "gap_pct", None))
+                                    prev_hu = _as_i(getattr(prev_sig, "high_update_count_before_entry", None))
+
+                                    feat["delta_entry_vwap_distance_pct"] = (
+                                        float(cur_vdw - prev_vdw) if (cur_vdw is not None and prev_vdw is not None) else None
+                                    )
+                                    feat["delta_first_30m_volume_ratio"] = (
+                                        float(cur_v30 - prev_v30) if (cur_v30 is not None and prev_v30 is not None) else None
+                                    )
+                                    feat["delta_rs_vs_topix_pct"] = (
+                                        float(cur_rs - prev_rs) if (cur_rs is not None and prev_rs is not None) else None
+                                    )
+                                    # alias: forward分析用（RS継続の符号/強さ）
+                                    feat["rs_change_from_prev_signal_pct"] = feat.get("delta_rs_vs_topix_pct")
+                                    feat["delta_gap_pct"] = (
+                                        float(cur_gap - prev_gap) if (cur_gap is not None and prev_gap is not None) else None
+                                    )
+                                    feat["delta_high_update_count_before_entry"] = (
+                                        int(cur_hu - prev_hu) if (cur_hu is not None and prev_hu is not None) else None
+                                    )
+
+                                    prev_ep = _as_f(getattr(prev_sig, "entry_price", None))
+                                    cur_ep = _as_f(getattr(cur, "entry_price", None))
+                                    if prev_ep is not None and float(prev_ep) > 0 and cur_ep is not None:
+                                        pc = float((float(cur_ep) - float(prev_ep)) / float(prev_ep) * 100.0)
+                                        feat["price_change_pct_from_prev_signal"] = float(pc)
+                                    else:
+                                        feat["price_change_pct_from_prev_signal"] = None
+
+                                    # volume_ratio_from_prev_signal: current/prev（※分母0/NoneならN/A）
+                                    if prev_v30 is not None and float(prev_v30) != 0.0 and cur_v30 is not None:
+                                        vr = float(float(cur_v30) / float(prev_v30))
+                                        feat["volume_ratio_from_prev_signal"] = float(vr)
+                                    else:
+                                        feat["volume_ratio_from_prev_signal"] = None
+
+                                    # volume_efficiency_pct = price_change_pct / volume_ratio_from_prev_signal
+                                    pc2 = feat.get("price_change_pct_from_prev_signal")
+                                    vr2 = feat.get("volume_ratio_from_prev_signal")
+                                    if isinstance(pc2, (int, float)) and isinstance(vr2, (int, float)) and float(vr2) != 0.0:
+                                        feat["volume_efficiency_pct"] = float(float(pc2) / float(vr2))
+                                    else:
+                                        feat["volume_efficiency_pct"] = None
+
+                                else:
+                                    feat["delta_entry_vwap_distance_pct"] = None
+                                    feat["delta_first_30m_volume_ratio"] = None
+                                    feat["delta_rs_vs_topix_pct"] = None
+                                    feat["rs_change_from_prev_signal_pct"] = None
+                                    feat["delta_gap_pct"] = None
+                                    feat["delta_high_update_count_before_entry"] = None
+                                    feat["price_change_pct_from_prev_signal"] = None
+                                    feat["volume_ratio_from_prev_signal"] = None
+                                    feat["volume_efficiency_pct"] = None
+
+                                _momentum_decay_feat_map[cur_id] = feat
+                                prev_sig = cur
 
                         # json
                         report: dict[str, Any] = {
@@ -6204,6 +6893,7 @@ def run_replay(
                                 "repeat_run_no": int(replay_repeat_run_no or 0),
                                 "repeat_total": int(replay_repeat_total or 0),
                                 "batch_stamp": str(batch_stamp),
+                                "results_output_dir": os.path.normpath(os.path.abspath(results_dir)),
                                 "morning_screen_hhmm_jst": (replay_morning_screen_hhmm or "").strip(),
                                 "one_trade_per_symbol_per_day": bool(one_trade_per_symbol_per_day),
                                 "market_regime_distribution": dict(market_regime_counts),
@@ -6325,6 +7015,11 @@ def run_replay(
                                 "regime_filters": {
                                     "disable_morning_weak": bool(regime_filter_disable_morning_weak),
                                     "disable_rising_ratio_lt50": bool(regime_filter_disable_rising_ratio_lt50),
+                                    "rising_ratio_threshold_pct": (
+                                        float(regime_filter_rising_ratio_threshold_pct)
+                                        if isinstance(regime_filter_rising_ratio_threshold_pct, (int, float))
+                                        else None
+                                    ),
                                     "disable_topix_weak": bool(regime_filter_disable_topix_weak),
                                     "topix_weak_threshold_pct": float(topix_weak_thr_pct),
                                     "skipped_signals_count": int(regime_filter_skipped_signals_count),
@@ -6333,6 +7028,7 @@ def run_replay(
                                         "filter_name": (
                                             f"mw={int(bool(regime_filter_disable_morning_weak))},"
                                             f"rlt50={int(bool(regime_filter_disable_rising_ratio_lt50))},"
+                                            f"rr_thr={regime_filter_rising_ratio_threshold_pct if isinstance(regime_filter_rising_ratio_threshold_pct, (int, float)) else '—'},"
                                             f"tw={int(bool(regime_filter_disable_topix_weak))},"
                                             f"tw_thr={float(topix_weak_thr_pct):g}"
                                         ),
@@ -6508,6 +7204,7 @@ def run_replay(
                                             ),
                                         },
                                         "strong_combo_filter": dict(_combo_filter_payload),
+                                        "weak_combo_filter": dict(_weak_combo_filter_payload),
                                     },
                                 },
                                 "regime_controls": {
@@ -6571,11 +7268,79 @@ def run_replay(
                             "signal_composite_feature_analysis": _build_composite_signal_feature_analysis_from_signal_dicts(
                                 [_signal_to_dict(x) for x in eval_signals]
                             ),
-                            "combo_filter_analysis": {"strong_combo_filter": dict(_combo_filter_payload)},
+                            "combo_filter_analysis": {
+                                "strong_combo_filter": dict(_combo_filter_payload),
+                                "weak_combo_filter": dict(_weak_combo_filter_payload),
+                            },
                             "strong_loser_analysis": _build_strong_loser_analysis_from_signal_dicts(
                                 [_signal_to_dict(x) for x in eval_signals]
                             ),
+                            "weak_regime_feature_analysis": _build_weak_regime_feature_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "weak_hu_cross_analysis": _build_weak_hu_cross_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
                             "signal_state_cross_analysis": _build_signal_state_cross_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "symbol_daily_entry_index_analysis": _build_symbol_daily_entry_index_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "symbol_daily_entry_index_x_market_regime": _build_symbol_daily_entry_index_x_market_regime_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "symbol_daily_entry_index_deep_analysis": _build_symbol_daily_entry_index_deep_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "symbol_daily_entry_index_deep_x_market_regime": _build_symbol_daily_entry_index_deep_x_market_regime_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "momentum_decay_analysis": _build_momentum_decay_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "momentum_decay_x_market_regime": _build_momentum_decay_x_market_regime_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "chase_extension_analysis": _build_chase_extension_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "chase_extension_x_market_regime": _build_chase_extension_x_market_regime_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "extension_sweep_analysis": _build_extension_sweep_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "extension_hu_interaction_analysis": _build_extension_hu_interaction_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "robustness_symbol_removal_analysis": _build_robustness_symbol_removal_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "extension_robustness_metrics": {
+                                "strong_extension_threshold_isolation_analysis": _build_strong_extension_threshold_isolation_analysis(
+                                    [_signal_to_dict(x) for x in eval_signals]
+                                ),
+                            },
+                            "structure_edge_analysis": _build_structure_edge_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "tail_risk_structure_analysis": _build_tail_risk_structure_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "robustness_generalization_analysis": _build_robustness_generalization_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "structure_risk_score_analysis": _build_structure_risk_score_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "structure_risk_score_x_market_regime": _build_structure_risk_score_x_market_regime_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "structure_risk_score_generalization_analysis": _build_structure_risk_score_generalization_analysis_from_signal_dicts(
+                                [_signal_to_dict(x) for x in eval_signals]
+                            ),
+                            "structure_generalization_core_analysis": _build_structure_generalization_core_analysis_from_signal_dicts(
                                 [_signal_to_dict(x) for x in eval_signals]
                             ),
                             "by_time_bucket_summary": {b: _agg_stats(by_bucket.get(b) or []) for b in bucket_order if (by_bucket.get(b) or [])},
@@ -6636,8 +7401,97 @@ def run_replay(
                                 key=lambda x: int(x.get("count") or 0),
                                 reverse=True,
                             ),
+                            "entry_block_reason_ranking": sorted(
+                                [{"reason": k, "count": int(v)} for k, v in entry_block_reason_counts.items()],
+                                key=lambda x: int(x.get("count") or 0),
+                                reverse=True,
+                            ),
+                            "auto_block_effect_analysis": build_auto_block_effect_analysis_rows(list(replay_signals)),
                             "signals": [_signal_to_dict(s) for s in replay_signals],
                         }
+                        try:
+                            report["shadow_block_analysis"] = _build_shadow_block_analysis_from_signal_dicts(
+                                report.get("signals") or []
+                            )
+                        except Exception:
+                            report["shadow_block_analysis"] = {}
+                        try:
+                            report["shadow_block_analysis_enhanced"] = _build_shadow_block_analysis_enhanced(
+                                signal_dicts=report.get("signals") or [],
+                                run_summaries=[
+                                    {
+                                        "run_no": int(replay_repeat_run_no or 0),
+                                        "report": {"signals": report.get("signals") or []},
+                                    }
+                                ],
+                            )
+                        except Exception:
+                            report["shadow_block_analysis_enhanced"] = {}
+                        try:
+                            report["shadow_block_context_analysis"] = _build_shadow_block_context_analysis_from_signal_dicts(
+                                report.get("signals") or []
+                            )
+                        except Exception:
+                            report["shadow_block_context_analysis"] = {}
+                        try:
+                            report["shadow_block_temporal_stability_analysis"] = _build_shadow_block_temporal_stability_analysis(
+                                signal_dicts=report.get("signals") or [],
+                                run_summaries=[
+                                    {
+                                        "run_no": int(replay_repeat_run_no or 0),
+                                        "report": {"signals": report.get("signals") or []},
+                                    }
+                                ],
+                            )
+                        except Exception:
+                            report["shadow_block_temporal_stability_analysis"] = {}
+                        try:
+                            sgc0 = report.get("structure_generalization_core_analysis") or {}
+                            if isinstance(sgc0, dict) and sgc0:
+                                report["forward_candidate_profile_analysis"] = _build_forward_candidate_profile_analysis_from_signal_dicts(
+                                    [_signal_to_dict(x) for x in eval_signals],
+                                    structure_generalization_core_analysis=sgc0,
+                                )
+                                report["forward_edge_breakdown_analysis"] = _build_forward_edge_breakdown_analysis_from_signal_dicts(
+                                    [_signal_to_dict(x) for x in eval_signals],
+                                    structure_generalization_core_analysis=sgc0,
+                                )
+                                report["forward_feature_interaction_analysis"] = _build_forward_feature_interaction_analysis_from_signal_dicts(
+                                    [_signal_to_dict(x) for x in eval_signals],
+                                    structure_generalization_core_analysis=sgc0,
+                                    forward_edge_breakdown_analysis=report.get("forward_edge_breakdown_analysis") or {},
+                                )
+                                report["forward_candidate_dispersion_screened_summary"] = (
+                                    _build_forward_candidate_dispersion_screened_summary_from_signal_dicts(
+                                        [_signal_to_dict(x) for x in eval_signals],
+                                        structure_generalization_core_analysis=sgc0,
+                                        forward_edge_breakdown_analysis=report.get("forward_edge_breakdown_analysis") or {},
+                                        forward_feature_interaction_analysis=report.get("forward_feature_interaction_analysis") or {},
+                                    )
+                                )
+                                ffi_r = report.get("forward_feature_interaction_analysis")
+                                if isinstance(ffi_r, dict):
+                                    ffi_r.update(
+                                        _forward_build_stable_negative_interaction_summary_tables(
+                                            report.get("forward_edge_breakdown_analysis") if isinstance(report.get("forward_edge_breakdown_analysis"), dict) else {},
+                                            ffi_r,
+                                        )
+                                    )
+                        except Exception:
+                            pass
+
+                        try:
+                            if bool(forward_split_validation):
+                                report["forward_split_validation_analysis"] = _build_forward_split_validation_analysis(
+                                    report.get("signals") or [],
+                                    enabled=True,
+                                    periods_path=str(forward_split_periods_path or ""),
+                                )
+                                _fsv = report.get("forward_split_validation_analysis")
+                                if isinstance(_fsv, dict):
+                                    report["cluster_lifecycle_analysis"] = _fsv.get("cluster_lifecycle_analysis")
+                        except Exception:
+                            pass
 
                         # =========================
                         # ADD ON/OFF 比較（OFFはBASEのみ参考集計）
@@ -6702,6 +7556,13 @@ def run_replay(
                                     "vol_spike_ratio": getattr(s, "vol_spike_ratio", None),
                                     "exit_reason": str(getattr(s, "exit_reason", "") or ""),
                                     "not_blocked_reason": str(getattr(s, "not_blocked_reason", "") or ""),
+                                    "high_update_count_before_entry": getattr(s, "high_update_count_before_entry", None),
+                                    "symbol_daily_entry_index": (
+                                        int(_symbol_daily_entry_idx_map[id(s)])
+                                        if str(getattr(s, "position_kind", "BASE") or "BASE") == "BASE"
+                                        and id(s) in _symbol_daily_entry_idx_map
+                                        else None
+                                    ),
                                 }
                                 for s in lose_sorted
                             ],
@@ -7097,6 +7958,7 @@ def run_replay(
                                         "position_closed",
                                         "excluded_from_eval",
                                         "excluded_reason",
+                                        "symbol_daily_entry_index",
                                     ]
                                 )
                                 csv_rows_written = 0
@@ -7131,6 +7993,12 @@ def run_replay(
                                             bool(_signal_closed(s)),
                                             bool(getattr(s, "excluded_from_eval", False)),
                                             str(getattr(s, "excluded_reason", "") or ""),
+                                            (
+                                                int(_symbol_daily_entry_idx_map[id(s)])
+                                                if str(getattr(s, "position_kind", "BASE") or "BASE") == "BASE"
+                                                and id(s) in _symbol_daily_entry_idx_map
+                                                else ""
+                                            ),
                                         ]
                                     )
                                     csv_rows_written += 1
@@ -7188,6 +8056,7 @@ def run_replay(
 
                         # txt
                         lines: list[str] = []
+                        lines.append(f"results_output_dir: {os.path.normpath(os.path.abspath(results_dir))}")
                         lines.append("=== Replay結果（自動保存） ===")
                         # 要件: 最上部に「今回どの設定で回したか」を必ず表示
                         try:
@@ -7238,6 +8107,12 @@ def run_replay(
                         lines.append("")
 
                         lines.append("【全体サマリー】")
+                        lines.append(
+                            "※ forward検証の主軸: market_regime × price_change_pct_from_prev_signal × "
+                            "delta_high_update_count_before_entry（`extension_*_analysis` 等参照）。"
+                            "`symbol_daily_entry_index` は疲労の代理（同日約定順）であり補助分析扱い。"
+                            "AUTO_BLOCK（price extension 系）は分析で効果確認してから検討（既定OFF）。"
+                        )
                         lines.append(f"総signal数(検出): {len(replay_signals)}")
                         lines.append(f"総signal数(集計対象): {total}")
                         if excluded_n > 0:
@@ -7481,6 +8356,13 @@ def run_replay(
                                 vwap_s = "N/A" if it.get("vwap_distance_pct") is None else f"{float(it.get('vwap_distance_pct')):.2f}%"
                                 rs_s = "N/A" if it.get("relative_strength_vs_topix_pct") is None else f"{float(it.get('relative_strength_vs_topix_pct')):.2f}%"
                                 volx_s = "N/A" if it.get("vol_spike_ratio") is None else f"{float(it.get('vol_spike_ratio')):.2f}x"
+                                hu_s = (
+                                    str(int(it.get("high_update_count_before_entry")))
+                                    if isinstance(it.get("high_update_count_before_entry"), (int, float))
+                                    else "N/A"
+                                )
+                                sde_raw = it.get("symbol_daily_entry_index")
+                                sde_s = str(int(sde_raw)) if isinstance(sde_raw, (int, float)) else "N/A"
                                 lines.append(
                                     "- "
                                     f"{it.get('symbol')} {it.get('signal_time_jst')} "
@@ -7494,6 +8376,8 @@ def run_replay(
                                     f"VWAP={vwap_s} "
                                     f"RS={rs_s} "
                                     f"volx={volx_s} "
+                                    f"HU={hu_s} "
+                                    f"sde_ix={sde_s} "
                                     f"exit_reason={it.get('exit_reason') or 'N/A'} "
                                     f"not_blocked={it.get('not_blocked_reason') or ''}"
                                 )
@@ -7548,6 +8432,240 @@ def run_replay(
                                 except Exception:
                                     continue
                             lines.append("")
+
+                        # ENTRY_BLOCK_REASON_RANKING（AUTO 構造系 BLOCK_*）
+                        ebr = report.get("entry_block_reason_ranking") or []
+                        if isinstance(ebr, list) and ebr:
+                            lines.append("[ENTRY_BLOCK_REASON_RANKING]")
+                            lines.append("")
+                            for it in ebr[:30]:
+                                try:
+                                    k = str(it.get("reason") or "")
+                                    v = int(it.get("count") or 0)
+                                    if k:
+                                        lines.append(f"{k}: {v}")
+                                except Exception:
+                                    continue
+                            lines.append("")
+
+                        # AUTO_BLOCK_EFFECT_ANALYSIS（BASE）
+                        abe = report.get("auto_block_effect_analysis") or []
+                        if isinstance(abe, list) and abe:
+                            lines.append("[AUTO_BLOCK_EFFECT_ANALYSIS]")
+                            lines.append("")
+                            for row in abe:
+                                if not isinstance(row, dict):
+                                    continue
+                                lines.append(
+                                    f"- {row.get('block_rule_name')}: "
+                                    f"blocked_signals={int(row.get('blocked_signals') or 0)} "
+                                    f"blocked_total_pnl={float(row.get('blocked_total_pnl') or 0.0):+,.0f} "
+                                    f"blocked_expectancy={float(row.get('blocked_expectancy') or 0.0):+,.0f} "
+                                    f"pnl_after_block={float(row.get('pnl_after_block') or 0.0):+,.0f} "
+                                    f"pnl_improvement={float(row.get('pnl_improvement') or 0.0):+,.0f}"
+                                )
+                            lines.append("")
+
+                        # forward 耐性（extension / HU interaction / 銘柄除外ロバスト）
+                        try:
+                            lines.extend(_replay_forward_extension_analysis_txt_lines(report, bracket_headings=False))
+                        except Exception:
+                            pass
+                        try:
+                            lines.extend(_replay_structure_tail_generalization_txt_lines(report, bracket_headings=False))
+                        except Exception:
+                            pass
+
+                        # shadow block（analysis-only）
+                        sbx = report.get("shadow_block_analysis_enhanced") if isinstance(report.get("shadow_block_analysis_enhanced"), dict) else {}
+                        sbx_rows = sbx.get("rows") if isinstance(sbx.get("rows"), list) else []
+                        if sbx_rows:
+                            # 表示順: tail risk優先
+                            def _sk(r: dict[str, Any]) -> tuple:
+                                return (
+                                    float(r.get("lose_worst10_sum") or 0.0),
+                                    float(r.get("max_losing_run") or 0.0),
+                                    float(r.get("expectancy") or 0.0),
+                                    float(r.get("pnl_improvement") or 0.0),
+                                )
+
+                            rows_sorted = sorted([r for r in sbx_rows if isinstance(r, dict)], key=_sk)
+
+                            lines.append("【SHADOW_BLOCK_ANALYSIS】")
+                            lines.append("")
+                            for r in rows_sorted:
+                                lines.append(
+                                    f"- {r.get('name')}: "
+                                    f"signals={int(r.get('signals') or 0)} "
+                                    f"lose_worst10_sum={float(r.get('lose_worst10_sum') or 0.0):+,.0f}円 "
+                                    f"max_losing_run={float(r.get('max_losing_run') or 0.0):+,.0f}円 "
+                                    f"expectancy={float(r.get('expectancy') or 0.0):+,.0f}円 "
+                                    f"winrate_pct={float(r.get('winrate_pct') or 0.0):.1f}% "
+                                    f"total_pnl={float(r.get('total_pnl') or 0.0):+,.0f}円 "
+                                    f"avg_loss={float(r.get('avg_loss') or 0.0):+,.0f}円 "
+                                    f"worst_loss={float(r.get('worst_loss') or 0.0):+,.0f}円 "
+                                    f"pos_run_ratio={float(r.get('positive_run_ratio') or 0.0):.3f} "
+                                    f"neg_run_ratio={float(r.get('negative_run_ratio') or 0.0):.3f}"
+                                )
+                            lines.append("")
+
+                            lines.append("【SHADOW_BLOCK_VIRTUAL_EXCLUDE_ANALYSIS】")
+                            lines.append("")
+                            for r in rows_sorted:
+                                lines.append(
+                                    f"- {r.get('name')}: "
+                                    f"baseline_signals={int(r.get('baseline_signals') or 0)} "
+                                    f"baseline_expectancy={float(r.get('baseline_expectancy') or 0.0):+,.0f}円 "
+                                    f"baseline_total_pnl={float(r.get('baseline_total_pnl') or 0.0):+,.0f}円 "
+                                    f"pnl_after_virtual_exclude={float(r.get('pnl_after_virtual_exclude') or 0.0):+,.0f}円 "
+                                    f"expectancy_after_virtual_exclude={float(r.get('expectancy_after_virtual_exclude') or 0.0):+,.0f}円 "
+                                    f"pnl_improvement={float(r.get('pnl_improvement') or 0.0):+,.0f}円 "
+                                    f"lose_worst10_after_virtual_exclude={float(r.get('lose_worst10_after_virtual_exclude') or 0.0):+,.0f}円 "
+                                    f"max_losing_run_after_virtual_exclude={float(r.get('max_losing_run_after_virtual_exclude') or 0.0):+,.0f}円"
+                                )
+                            lines.append("")
+
+                            lines.append("【SHADOW_BLOCK_SYMBOL_ROBUSTNESS】")
+                            lines.append("")
+                            for r in rows_sorted:
+                                lines.append(
+                                    f"- {r.get('name')}: "
+                                    f"sym_top1_abs_ratio={float(r.get('symbol_contribution_top1_abs_pnl_ratio') or 0.0):.6f} "
+                                    f"sym_top2_abs_ratio={float(r.get('symbol_contribution_top2_abs_pnl_ratio') or 0.0):.6f} "
+                                    f"exp_after_exclude_top1={float(r.get('expectancy_after_exclude_top1_symbol') or 0.0):+,.0f}円 "
+                                    f"exp_after_exclude_top2={float(r.get('expectancy_after_exclude_top2_symbols') or 0.0):+,.0f}円"
+                                )
+                            lines.append("")
+
+                        # shadow block context（analysis-only）
+                        try:
+                            sbc = report.get("shadow_block_context_analysis") if isinstance(report.get("shadow_block_context_analysis"), dict) else {}
+                            sbc_rules = sbc.get("rules") if isinstance(sbc.get("rules"), dict) else {}
+                            if sbc_rules:
+                                lines.append("【SHADOW_BLOCK_CONTEXT_ANALYSIS】")
+                                lines.append("")
+                                for rule_name in [
+                                    "STRONG_EXTENSION_GE_05",
+                                    "STRONG_DELTA_HU_MINUS1",
+                                    "STRONG_EXTENSION_GE_05_AND_STRONG_DELTA_HU_MINUS1",
+                                    "SHADOW_COMBO_ANY",
+                                ]:
+                                    rroot = sbc_rules.get(rule_name)
+                                    if not isinstance(rroot, dict):
+                                        continue
+                                    lines.append(f"- rule: {rule_name} (signals={int(rroot.get('signals') or 0)})")
+                                    feats = rroot.get("features") if isinstance(rroot.get("features"), dict) else {}
+                                    for feat in [
+                                        "entry_vwap_distance_pct",
+                                        "pullback_depth_pct",
+                                        "delta_rs_vs_topix_pct",
+                                        "delta_high_update_count_before_entry",
+                                        "volume_efficiency_pct",
+                                    ]:
+                                        fsec = feats.get(feat) if isinstance(feats.get(feat), dict) else {}
+                                        rows = fsec.get("rows") if isinstance(fsec.get("rows"), list) else []
+                                        if not rows:
+                                            continue
+                                        lines.append(f"  [{feat}] (tail-risk sorted)")
+                                        for row in rows:
+                                            if not isinstance(row, dict):
+                                                continue
+                                            danger = " *DANGER*" if bool(row.get("danger_sub_bucket_candidate", False)) else ""
+                                            lines.append(
+                                                f"    - bucket={row.get('bucket')}{danger}: "
+                                                f"signals={int(row.get('signals') or 0)} "
+                                                f"lw10={float(row.get('lose_worst10_sum') or 0.0):+,.0f} "
+                                                f"max_lose_run={float(row.get('max_losing_run') or 0.0):+,.0f} "
+                                                f"exp={float(row.get('expectancy') or 0.0):+,.0f} "
+                                                f"winrate={float(row.get('winrate_pct') or 0.0):.1f}% "
+                                                f"pnl={float(row.get('total_pnl') or 0.0):+,.0f} "
+                                                f"avg_loss={float(row.get('avg_loss') or 0.0):+,.0f} "
+                                                f"worst_loss={float(row.get('worst_loss') or 0.0):+,.0f}"
+                                            )
+                                        lines.append("")
+                                    lines.append("")
+                                lines.append("")
+                        except Exception:
+                            pass
+
+                        # shadow temporal stability（analysis-only）
+                        try:
+                            t = report.get("shadow_block_temporal_stability_analysis") if isinstance(report.get("shadow_block_temporal_stability_analysis"), dict) else {}
+                            trules = t.get("rules") if isinstance(t.get("rules"), dict) else {}
+                            if trules:
+                                lines.append("【SHADOW_BLOCK_TEMPORAL_STABILITY_ANALYSIS】")
+                                lines.append("")
+                                for rn in ["STRONG_EXTENSION_GE_05", "STRONG_DELTA_HU_MINUS1", "SHADOW_COMBO_ANY"]:
+                                    rr0 = trules.get(rn)
+                                    if not isinstance(rr0, dict):
+                                        continue
+                                    ov = rr0.get("overall") if isinstance(rr0.get("overall"), dict) else {}
+                                    lines.append(f"- rule: {rn}")
+                                    lines.append(
+                                        f"  overall: signals={int(ov.get('signals') or 0)} "
+                                        f"lw10={float(ov.get('lose_worst10_sum') or 0.0):+,.0f} "
+                                        f"max_lose_run={float(ov.get('max_losing_run') or 0.0):+,.0f} "
+                                        f"exp={float(ov.get('expectancy') or 0.0):+,.0f} "
+                                        f"pnl={float(ov.get('total_pnl') or 0.0):+,.0f} "
+                                        f"winrate={float(ov.get('winrate_pct') or 0.0):.1f}%"
+                                    )
+                                    lines.append(
+                                        f"  positive_period_ratio={float(rr0.get('positive_period_ratio') or 0.0):.3f} "
+                                        f"negative_period_ratio={float(rr0.get('negative_period_ratio') or 0.0):.3f}"
+                                    )
+                                    halves = rr0.get("halves") if isinstance(rr0.get("halves"), dict) else {}
+                                    fh = halves.get("first_half") if isinstance(halves.get("first_half"), dict) else {}
+                                    sh = halves.get("second_half") if isinstance(halves.get("second_half"), dict) else {}
+                                    lines.append(
+                                        f"  first_half: signals={int(fh.get('signals') or 0)} "
+                                        f"lw10={float(fh.get('lose_worst10_sum') or 0.0):+,.0f} "
+                                        f"max_lose_run={float(fh.get('max_losing_run') or 0.0):+,.0f} "
+                                        f"exp={float(fh.get('expectancy') or 0.0):+,.0f} "
+                                        f"pnl={float(fh.get('total_pnl') or 0.0):+,.0f} "
+                                        f"winrate={float(fh.get('winrate_pct') or 0.0):.1f}%"
+                                    )
+                                    lines.append(
+                                        f"  second_half: signals={int(sh.get('signals') or 0)} "
+                                        f"lw10={float(sh.get('lose_worst10_sum') or 0.0):+,.0f} "
+                                        f"max_lose_run={float(sh.get('max_losing_run') or 0.0):+,.0f} "
+                                        f"exp={float(sh.get('expectancy') or 0.0):+,.0f} "
+                                        f"pnl={float(sh.get('total_pnl') or 0.0):+,.0f} "
+                                        f"winrate={float(sh.get('winrate_pct') or 0.0):.1f}%"
+                                    )
+                                    # day top summary (show worst 3)
+                                    dts = rr0.get("daily_top_summary") if isinstance(rr0.get("daily_top_summary"), dict) else {}
+                                    worst_p = dts.get("worst_days_by_total_pnl") if isinstance(dts.get("worst_days_by_total_pnl"), list) else []
+                                    worst_l = dts.get("worst_days_by_lose_worst10_sum") if isinstance(dts.get("worst_days_by_lose_worst10_sum"), list) else []
+                                    if worst_p:
+                                        lines.append("  worst_days_by_total_pnl (top3):")
+                                        for r in worst_p[:3]:
+                                            if not isinstance(r, dict):
+                                                continue
+                                            lines.append(
+                                                f"    - {r.get('day_jst')}: "
+                                                f"signals={int(r.get('signals') or 0)} "
+                                                f"pnl={float(r.get('total_pnl') or 0.0):+,.0f} "
+                                                f"lw10={float(r.get('lose_worst10_sum') or 0.0):+,.0f} "
+                                                f"max_lose_run={float(r.get('max_losing_run') or 0.0):+,.0f} "
+                                                f"exp={float(r.get('expectancy') or 0.0):+,.0f}"
+                                            )
+                                    if worst_l:
+                                        lines.append("  worst_days_by_lose_worst10_sum (top3):")
+                                        for r in worst_l[:3]:
+                                            if not isinstance(r, dict):
+                                                continue
+                                            lines.append(
+                                                f"    - {r.get('day_jst')}: "
+                                                f"signals={int(r.get('signals') or 0)} "
+                                                f"lw10={float(r.get('lose_worst10_sum') or 0.0):+,.0f} "
+                                                f"pnl={float(r.get('total_pnl') or 0.0):+,.0f} "
+                                                f"max_lose_run={float(r.get('max_losing_run') or 0.0):+,.0f} "
+                                                f"exp={float(r.get('expectancy') or 0.0):+,.0f}"
+                                            )
+                                    lines.append("")
+                                lines.append("")
+                        except Exception:
+                            pass
 
                         # =========================
                         # PIPELINE_DEBUG（ユーザー要望）
@@ -7753,7 +8871,7 @@ def run_replay(
                             score_path = os.path.join(results_dir, f"{name_base}_symbol_scores.json")
                             with open(score_path, "w", encoding="utf-8") as f:
                                 json.dump(report.get("symbol_scoring") or {}, f, ensure_ascii=False, indent=2)
-                            latest_path = os.path.join(script_dir, "results", "symbol_scores_latest.json")
+                            latest_path = os.path.join(_results_root_abs(script_dir), "symbol_scores_latest.json")
                             with open(latest_path, "w", encoding="utf-8") as f:
                                 json.dump(report.get("symbol_scoring") or {}, f, ensure_ascii=False, indent=2)
                         except Exception:
@@ -8333,6 +9451,29 @@ def run_replay(
                     else:
                         signal_filters_virtual_active_indices_by_symbol.pop(q.symbol, None)
 
+                    # AUTO_BLOCK で除外された“仮想signal”も更新（損益推定に使う）
+                    abvidxs = auto_block_virtual_active_indices_by_symbol.get(q.symbol) or []
+                    for idx in list(abvidxs):
+                        s = replay_signals[idx]
+                        s.update_with_price(
+                            time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
+                            price=float(q.price),
+                            vwap=vwap_now,
+                            recent_5m_low=recent_5m_low,
+                            early_exit_before_partial_take=bool(replay_early_exit_before_stop),
+                            early_exit_vwap=bool(replay_early_exit_vwap),
+                            early_exit_recent_low=bool(replay_early_exit_recent_low),
+                        )
+                        if s.resolved:
+                            try:
+                                abvidxs.remove(idx)
+                            except Exception:
+                                pass
+                    if abvidxs:
+                        auto_block_virtual_active_indices_by_symbol[q.symbol] = abvidxs
+                    else:
+                        auto_block_virtual_active_indices_by_symbol.pop(q.symbol, None)
+
                     # composite_signal_filters で除外された“仮想signal”も更新
                     cfvidxs = composite_signal_filter_virtual_active_indices_by_symbol.get(q.symbol) or []
                     for idx in list(cfvidxs):
@@ -8404,6 +9545,47 @@ def run_replay(
                         strong_combo_filter_virtual_active_indices_by_symbol[q.symbol] = scfvidxs
                     else:
                         strong_combo_filter_virtual_active_indices_by_symbol.pop(q.symbol, None)
+
+                    # weak_combo_filter で除外された“仮想signal”
+                    wcfvidxs = weak_combo_filter_virtual_active_indices_by_symbol.get(q.symbol) or []
+                    for idx in list(wcfvidxs):
+                        s = replay_signals[idx]
+                        s.update_with_price(
+                            time_utc=(q.market_time_utc or datetime.now(tz=timezone.utc)),
+                            price=float(q.price),
+                            vwap=vwap_now,
+                            recent_5m_low=recent_5m_low,
+                            early_exit_before_partial_take=bool(replay_early_exit_before_stop),
+                            early_exit_vwap=bool(replay_early_exit_vwap),
+                            early_exit_recent_low=bool(replay_early_exit_recent_low),
+                        )
+                        if s.resolved:
+                            try:
+                                wcfvidxs.remove(idx)
+                            except Exception:
+                                pass
+                            if idx not in resolved_counted_weak_combo_filter_virtual_indices:
+                                resolved_counted_weak_combo_filter_virtual_indices.add(idx)
+                                pnl_v = float(_pnl_yen_100_shares_replay(s))
+                                weak_combo_filter_virtual_pnl_sum += pnl_v
+                                rk_wc = None
+                                er_w = str(getattr(s, "excluded_reason", "") or "")
+                                for part in er_w.split(" / "):
+                                    ps = str(part).strip()
+                                    if ps and ps in _weak_combo_reasons_frozen:
+                                        rk_wc = ps
+                                        break
+                                if rk_wc:
+                                    weak_combo_filter_virtual_pnl_by_reason[rk_wc] = float(
+                                        weak_combo_filter_virtual_pnl_by_reason.get(rk_wc, 0.0)
+                                    ) + float(pnl_v)
+                                    weak_combo_filter_virtual_count_by_reason[rk_wc] = int(
+                                        weak_combo_filter_virtual_count_by_reason.get(rk_wc, 0)
+                                    ) + 1
+                    if wcfvidxs:
+                        weak_combo_filter_virtual_active_indices_by_symbol[q.symbol] = wcfvidxs
+                    else:
+                        weak_combo_filter_virtual_active_indices_by_symbol.pop(q.symbol, None)
 
                     # regime_controls で除外された“仮想signal”（exit_mode は per-signal に反映済み）
                     rcfvidxs = regime_control_virtual_active_indices_by_symbol.get(q.symbol) or []
@@ -9270,6 +10452,21 @@ def run_replay(
 
                         # Discord通知（有効時のみ）
                         if discord_enabled:
+                            # shadow block tag（analysis-only。excluded_from_eval 等には影響しない）
+                            shadow_hits_notify: list[str] = []
+                            try:
+                                if str(market_regime) == "STRONG":
+                                    prev_ep = last_base_entry_price_by_day_symbol.get((str(day_jst), str(q.symbol)))
+                                    if isinstance(prev_ep, (int, float)) and float(prev_ep) > 0 and isinstance(entry, (int, float)):
+                                        pc_ext = (float(entry) - float(prev_ep)) / float(prev_ep) * 100.0
+                                        if float(pc_ext) >= 0.5:
+                                            shadow_hits_notify.append("STRONG_EXTENSION_GE_05")
+                                    prev_hu = last_base_high_update_count_by_day_symbol.get((str(day_jst), str(q.symbol)))
+                                    cur_hu = int(near_high) if isinstance(near_high, (int, float)) else None
+                                    if isinstance(prev_hu, int) and cur_hu is not None and int(cur_hu - int(prev_hu)) == -1:
+                                        shadow_hits_notify.append("STRONG_DELTA_HU_MINUS1")
+                            except Exception:
+                                shadow_hits_notify = []
                             if crossed:
                                 embed = build_embed_entry_cross(
                                     q,
@@ -9302,10 +10499,18 @@ def run_replay(
                                     entry_crossed=False,
                                     breakout_state=bool(breakout_state_by_symbol.get(q.symbol, False)),
                                 )
+                            if shadow_hits_notify and isinstance(embed, dict):
+                                try:
+                                    ttl = str(embed.get("title") or "")
+                                    tag = "[SHADOW:" + ",".join(shadow_hits_notify) + "]"
+                                    if ttl:
+                                        embed["title"] = f"{ttl} {tag}"
+                                except Exception:
+                                    pass
                             discord_notify(
                                 {"embeds": [embed]},
                                 webhook_url=webhook_url,
-                                alert_channel_id=alert_channel_id,
+                                alert_channel_id=embed_alert_channel_id,
                                 bot_token=bot_token,
                             )
                             last_notified_levels[q.symbol] = (float(entry), float(stop), float(take))
@@ -9530,14 +10735,19 @@ def run_replay(
                                             morning_weak_hit = True
                                     if morning_weak_hit:
                                         rf_reasons.append("REGIME_FILTER_MORNING_WEAK")
-                                if bool(regime_filter_disable_rising_ratio_lt50):
-                                    # rising_ratio は 0..1 を想定。0..100 で来た場合も吸収。
-                                    rr = rising_ratio
-                                    rr2 = None
-                                    if isinstance(rr, (int, float)):
-                                        rr2 = float(rr)
-                                        if rr2 > 1.0 and rr2 <= 100.0:
-                                            rr2 = rr2 / 100.0
+                                rr = rising_ratio
+                                rr2 = None
+                                if isinstance(rr, (int, float)):
+                                    rr2 = float(rr)
+                                    if rr2 > 1.0 and rr2 <= 100.0:
+                                        rr2 = rr2 / 100.0
+                                if isinstance(regime_filter_rising_ratio_threshold_pct, (int, float)):
+                                    thr_frac = float(regime_filter_rising_ratio_threshold_pct)
+                                    if thr_frac > 1.0:
+                                        thr_frac = thr_frac / 100.0
+                                    if rr2 is not None and rr2 < thr_frac:
+                                        rf_reasons.append("REGIME_FILTER_RISING_LT_THR")
+                                elif bool(regime_filter_disable_rising_ratio_lt50):
                                     if rr2 is not None and rr2 < 0.5:
                                         rf_reasons.append("REGIME_FILTER_RISING_LT50")
                                 if bool(regime_filter_disable_topix_weak):
@@ -9810,6 +11020,38 @@ def run_replay(
                                             signal_filters_skip_reason_counts.get(hit_reason_sc, 0)
                                         ) + 1
 
+                                # composite weak_combo_filter（market_regime 一致時に VWAP乖離 / 高値更新回数で除外）
+                                if (
+                                    not exclude
+                                    and bool(composite_signal_filter_weak_combo_enabled)
+                                    and _weak_combo_conds_rt
+                                ):
+                                    hu_now_wk = int(near_high) if isinstance(near_high, (int, float)) else None
+                                    hit_reason_wc: Optional[str] = None
+                                    for cond_w in _weak_combo_conds_rt:
+                                        if _weak_combo_match_reason(
+                                            cond_w,
+                                            market_regime=str(market_regime),
+                                            vwap_dist_pct=vwap_dist_pct,
+                                            hu_now=hu_now_wk,
+                                        ):
+                                            hit_reason_wc = str(cond_w.get("reason") or "").strip() or "WEAK_COMBO"
+                                            break
+                                    if hit_reason_wc:
+                                        exclude = True
+                                        exclude_reason = hit_reason_wc
+                                        weak_combo_filter_skipped_signals_count += 1
+                                        signal_filters_skipped_signals_count += 1
+                                        weak_combo_filter_skip_reason_counts[hit_reason_wc] = int(
+                                            weak_combo_filter_skip_reason_counts.get(hit_reason_wc, 0)
+                                        ) + 1
+                                        continue_reason_counts[hit_reason_wc] = int(
+                                            continue_reason_counts.get(hit_reason_wc, 0)
+                                        ) + 1
+                                        signal_filters_skip_reason_counts[hit_reason_wc] = int(
+                                            signal_filters_skip_reason_counts.get(hit_reason_wc, 0)
+                                        ) + 1
+
                                 # regime_controls（地合い適応 ENTRY: 許可フラグ・gap/VWAP 上限／時間帯禁止に依存しない）
                                 if not exclude and bool(regime_control_enabled):
                                     rprof = _regime_control_profile_for(_regime_profiles_rt, str(market_regime))
@@ -9881,6 +11123,48 @@ def run_replay(
                                 if ef_reasons:
                                     exclude = True
                                     exclude_reason = " / ".join(ef_reasons)
+
+                            # AUTO 構造系 ENTRY_BLOCK（WEAK×HU1×VWAP15、同一銘柄日4本目以降）
+                            if not exclude:
+                                auto_block_hits: list[str] = []
+                                hu_eq_1 = isinstance(near_high, (int, float)) and int(near_high) == 1
+                                if (
+                                    str(market_regime) == "WEAK"
+                                    and hu_eq_1
+                                    and isinstance(vwap_dist_pct, (int, float))
+                                    and float(vwap_dist_pct) >= float(AUTO_BLOCK_WEAK_HU1_VWAP_DISTANCE_PCT_GE)
+                                ):
+                                    auto_block_hits.append(str(AUTO_BLOCK_REASON_WEAK_HU1_VWAP15))
+
+                                # STRONG 伸びすぎ追いかけ（前回同一銘柄BASEからの伸びが大きい）
+                                if str(market_regime) == "STRONG":
+                                    prev_ep = last_base_entry_price_by_day_symbol.get((str(day_jst), str(q.symbol)))
+                                    if isinstance(prev_ep, (int, float)) and float(prev_ep) > 0 and isinstance(entry, (int, float)):
+                                        pc_ext = (float(entry) - float(prev_ep)) / float(prev_ep) * 100.0
+                                        # 単独条件（旧）: 一旦OFF可能にする（configで enabled の場合のみ）
+                                        if bool(cfg_flags.get("auto_block_strong_chase_after_extension_enabled", False)):
+                                            if float(pc_ext) >= float(AUTO_BLOCK_STRONG_CHASE_AFTER_EXTENSION_PCT_GE):
+                                                auto_block_hits.append(str(AUTO_BLOCK_REASON_STRONG_CHASE_AFTER_EXTENSION))
+
+                                        # 新候補: extension + HUの増加(+1)
+                                        if bool(cfg_flags.get("auto_block_strong_extension_hu_plus1_enabled", False)):
+                                            prev_hu = last_base_high_update_count_by_day_symbol.get((str(day_jst), str(q.symbol)))
+                                            cur_hu = int(near_high) if isinstance(near_high, (int, float)) else None
+                                            if (
+                                                float(pc_ext) >= float(AUTO_BLOCK_STRONG_CHASE_AFTER_EXTENSION_PCT_GE)
+                                                and cur_hu is not None
+                                                and isinstance(prev_hu, int)
+                                                and int(cur_hu - prev_hu) == 1
+                                            ):
+                                                auto_block_hits.append(str(AUTO_BLOCK_REASON_STRONG_EXTENSION_HU_PLUS1))
+
+                                if auto_block_hits:
+                                    exclude = True
+                                    exclude_reason = " / ".join(auto_block_hits)
+                                    for _abr in auto_block_hits:
+                                        entry_block_reason_counts[_abr] = int(entry_block_reason_counts.get(_abr, 0)) + 1
+                                        reject_reason_counts[_abr] = int(reject_reason_counts.get(_abr, 0)) + 1
+                                        continue_reason_counts[_abr] = int(continue_reason_counts.get(_abr, 0)) + 1
 
                             # PRE_SIGNAL_OBJECT_DEBUG（ユーザー要望）
                             try:
@@ -9997,7 +11281,21 @@ def run_replay(
                                 active_signal_indices_by_symbol.setdefault(q.symbol, []).append(idx)
                                 day_jst2 = _day_jst_str(sig_time)
                                 last_entry_price_by_day_symbol[(day_jst2, q.symbol)] = float(entry)
+                                # BASE の勢い比較用（exclude=Falseのときも必ず更新）
+                                if str(getattr(s, "position_kind", "BASE") or "BASE") == "BASE":
+                                    last_base_entry_price_by_day_symbol[(day_jst2, q.symbol)] = float(entry)
+                                    if isinstance(near_high, (int, float)):
+                                        last_base_high_update_count_by_day_symbol[(day_jst2, q.symbol)] = int(near_high)
                             else:
+                                # exclude でも BASE の直近価格は更新（次回signalの比較用）
+                                try:
+                                    day_jst2 = _day_jst_str(sig_time)
+                                    if str(getattr(s, "position_kind", "BASE") or "BASE") == "BASE":
+                                        last_base_entry_price_by_day_symbol[(day_jst2, q.symbol)] = float(entry)
+                                        if isinstance(near_high, (int, float)):
+                                            last_base_high_update_count_by_day_symbol[(day_jst2, q.symbol)] = int(near_high)
+                                except Exception:
+                                    pass
                                 # daily_loss_stop で除外された signal は「仮想PnL」を計算するため、別のactiveとして追跡
                                 if bool(excluded_by_daily_loss_stop):
                                     idx = len(replay_signals) - 1
@@ -10025,6 +11323,16 @@ def run_replay(
                                     idx = len(replay_signals) - 1
                                     strong_combo_filter_virtual_active_indices_by_symbol.setdefault(q.symbol, []).append(idx)
                                     strong_combo_filter_virtual_count += 1
+                                if _strong_combo_virtual_exclude_reason(str(exclude_reason), _weak_combo_reasons_frozen):
+                                    idx = len(replay_signals) - 1
+                                    weak_combo_filter_virtual_active_indices_by_symbol.setdefault(q.symbol, []).append(idx)
+                                    weak_combo_filter_virtual_count += 1
+                                # AUTO_BLOCK（今回追加）: excluded でも価格更新して仮想PnL推定に使う
+                                if isinstance(exclude_reason, str):
+                                    tok_ab = _auto_block_reason_token_set(exclude_reason)
+                                    if tok_ab and (tok_ab & set(AUTO_BLOCK_RULE_NAMES)):
+                                        idx = len(replay_signals) - 1
+                                        auto_block_virtual_active_indices_by_symbol.setdefault(q.symbol, []).append(idx)
 
                             # 補助属性（失敗しても継続）
                             try:
@@ -10051,6 +11359,16 @@ def run_replay(
                                 setattr(s, "brk_ratio", float(brk_ratio))
                                 setattr(s, "below_ratio", float(below_ratio))
                                 setattr(s, "hm_now", int(hm_now))
+                                # momentum_decay / price reaction 用（signal時点の直近5分高値/安値）
+                                try:
+                                    setattr(s, "recent_5m_high_before_entry", float(sig.recent_5m_high) if (sig and isinstance(sig.recent_5m_high, (int, float))) else None)
+                                except Exception:
+                                    setattr(s, "recent_5m_high_before_entry", None)
+                                try:
+                                    lows5 = [float(bb.low) for bb in (bars_played[-5:] if isinstance(bars_played, list) else []) if isinstance(getattr(bb, "low", None), (int, float))]
+                                    setattr(s, "recent_5m_low_before_entry", float(min(lows5)) if lows5 else None)
+                                except Exception:
+                                    setattr(s, "recent_5m_low_before_entry", None)
                                 setattr(s, "market_blocked", bool(crash_blocked))
                                 setattr(s, "blocked_reason", (",".join([str(x) for x in (market_reasons or [])]) if crash_blocked else ""))
                                 setattr(s, "entry_allowed_by_market", bool(not crash_blocked))
@@ -10226,7 +11544,7 @@ def run_replay(
                             discord_notify(
                                 msg_out,
                                 webhook_url=webhook_url,
-                                alert_channel_id=alert_channel_id,
+                                alert_channel_id=embed_alert_channel_id,
                                 bot_token=bot_token,
                             )
                             # 通知したらカウントをリセットし、候補集合からも外します（スパム防止）
@@ -10277,7 +11595,7 @@ def run_replay(
                             discord_notify(
                                 msg2,
                                 webhook_url=webhook_url,
-                                alert_channel_id=alert_channel_id,
+                                alert_channel_id=embed_alert_channel_id,
                                 bot_token=bot_token,
                             )
                             last_notified_levels[q.symbol] = (float(new_entry), float(new_stop), float(new_take))
@@ -10487,9 +11805,39 @@ def _paper_trade_write_summary_txt(*, path: str, report: dict[str, Any], poll_ts
             f"lose_worst10_sum_yen_100_shares: {float(lw_sum):+.2f}",
             f"max_intraday_drawdown_yen_100_shares: {float(rc_risk.get('max_intraday_drawdown_yen_100_shares') or 0.0):.2f}",
             "",
-            "regime_controls.eval_by_market_regime (expectancy / n):",
+            "shadow_block_summary:",
         ]
     )
+    # shadow block（analysis-only）
+    sigs = report.get("signals") if isinstance(report.get("signals"), list) else []
+    hit = 0
+    tp = 0.0
+    avoid_loser = 0
+    miss_winner = 0
+    for s in sigs:
+        if not isinstance(s, dict):
+            continue
+        fl = s.get("shadow_block_candidate_flags") if isinstance(s.get("shadow_block_candidate_flags"), dict) else {}
+        if not any(bool(fl.get(k, False)) for k in ("STRONG_EXTENSION_GE_05", "STRONG_DELTA_HU_MINUS1")):
+            continue
+        hit += 1
+        try:
+            pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        except Exception:
+            pnl = 0.0
+        tp += pnl
+        if pnl < 0:
+            avoid_loser += 1
+        if pnl > 0:
+            miss_winner += 1
+    exp = (tp / float(hit)) if hit > 0 else 0.0
+    lines.append(f"  shadow hit count: {int(hit)}")
+    lines.append(f"  shadow signal expectancy: {float(exp):+.2f}")
+    lines.append(f"  shadow avoided loser count: {int(avoid_loser)}")
+    lines.append(f"  shadow missed winner count: {int(miss_winner)}")
+    lines.append(f"  shadow signal total pnl: {float(tp):+.2f}")
+    lines.append("")
+    lines.append("regime_controls.eval_by_market_regime (expectancy / n):")
     if not ev_mr:
         lines.append("  (empty or regime_controls disabled)")
     else:
@@ -10525,9 +11873,9 @@ def _paper_trade_signal_stable_id(s: ReplaySignalEval, *, fallback: str) -> str:
     return f"{s.symbol}|{fallback}"
 
 
-def run_paper_trade(*, paper_trade_interval_sec: float, run_replay_kw: dict[str, Any]) -> int:
+def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[list[str]]) -> int:
     """
-    Yahoo 1d 1分足を一定間隔で取り直し、run_replay と同一ロジックで仮想signal/exit/PnLのみ記録します。
+    Yahoo 1d 1分足を一定間隔で取り直し、live fetch のみで「候補シグナル」を記録します（実注文なし）。
     実証券API・発注処理には接続しません。
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -10547,12 +11895,63 @@ def run_paper_trade(*, paper_trade_interval_sec: float, run_replay_kw: dict[str,
         "high_update_count_before_entry",
         "skipped",
         "skip_reason",
+        "shadow_block_hit",
+        "shadow_block_rule_names",
     ]
-    print(f"[{now_str()}] paper_trade: poll_interval={float(paper_trade_interval_sec):g}s（実注文なし） Ctrl+C で終了")
+    print(f"[{now_str()}] [PAPER] live market mode enabled")
+    print(f"[{now_str()}] [PAPER] replay cache disabled")
+    # Discord channel separation（paper_trade専用）
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+    bot_token = _get_discord_token_with_compat_warning()
+    _paper_alert_ch = _parse_channel_id(os.getenv("PAPER_ALERT_CHANNEL_ID", ""))
+    _paper_log_ch = _parse_channel_id(os.getenv("PAPER_LOG_CHANNEL_ID", ""))
+    # fallback: alert_channel 未設定なら既存 ALERT_CHANNEL_ID を使う
+    if _paper_alert_ch is None:
+        _paper_alert_ch = _parse_channel_id(os.getenv("ALERT_CHANNEL_ID", ""))
+
+    def _paper_send_alert(content: str) -> None:
+        c = str(content or "").strip()
+        if not c:
+            return
+        # PAPER_ALERT_CHANNEL_ID が無い場合でも、既存 ALERT_CHANNEL_ID / webhook にフォールバック
+        if (_paper_alert_ch is None or not bot_token) and (not webhook_url):
+            return
+        discord_notify(
+            {"content": c},
+            webhook_url=webhook_url,
+            alert_channel_id=_paper_alert_ch,
+            bot_token=bot_token,
+        )
+
+    def _paper_send_log(content: str) -> None:
+        c = str(content or "").strip()
+        if not c:
+            return
+        # PAPER_LOG_CHANNEL_ID が無い場合は terminal のみ（要件）
+        if _paper_log_ch is None or (not bot_token):
+            return
+        discord_notify(
+            {"content": c},
+            webhook_url="",
+            alert_channel_id=_paper_log_ch,
+            bot_token=bot_token,
+        )
+
+    print(f"[{now_str()}] [PAPER] alert_channel={_paper_alert_ch}")
+    print(f"[{now_str()}] [PAPER] log_channel={_paper_log_ch}")
+    print(f"[{now_str()}] [PAPER] poll_interval={float(paper_trade_interval_sec):g}s（実注文なし） Ctrl+C で終了")
+    try:
+        _paper_send_log(f"[PAPER] startup: poll_interval={float(paper_trade_interval_sec):g}s")
+    except Exception:
+        pass
     # 現物寄り前後の扱い: 09:00 未満は run_replay しない / 15:30 以降は当日1回だけ EOD summary の後は idle
     _HM_OPEN_MIN = 9 * 60
     _HM_CLOSE_MIN = 15 * 60 + 30
     eod_summary_day: Optional[str] = None
+    # MA25 / avg5 は必要になった銘柄だけ取得し、短時間キャッシュする
+    ma25_cache: dict[str, tuple[Optional[float], float]] = {}
+    avg5_cache: dict[str, tuple[Optional[float], float]] = {}
+
     try:
         n_poll = 0
         while True:
@@ -10561,23 +11960,32 @@ def run_paper_trade(*, paper_trade_interval_sec: float, run_replay_kw: dict[str,
             hm = now_loop_jst.hour * 60 + now_loop_jst.minute
 
             if hm < _HM_OPEN_MIN:
-                print(
+                msg_nopen = (
                     f"[{now_str()}] [paper_trade] market not open — sleeping "
                     f"{float(paper_trade_interval_sec):g}s"
                 )
+                print(msg_nopen)
+                try:
+                    _paper_send_log(msg_nopen)
+                except Exception:
+                    pass
                 time.sleep(max(0.5, float(paper_trade_interval_sec)))
                 continue
 
             if hm >= _HM_CLOSE_MIN and eod_summary_day == day_key:
-                print(f"[{now_str()}] [paper_trade] market closed — idle (no new signals)")
+                msg_closed = f"[{now_str()}] [paper_trade] market closed — idle (no new signals)"
+                print(msg_closed)
+                try:
+                    _paper_send_log(msg_closed)
+                except Exception:
+                    pass
                 time.sleep(max(0.5, float(paper_trade_interval_sec)))
                 continue
 
             n_poll += 1
             is_eod_summary_only = hm >= _HM_CLOSE_MIN and eod_summary_day != day_key
 
-            out_dir = os.path.join(script_dir, "results", "paper_trade", day_key)
-            os.makedirs(out_dir, exist_ok=True)
+            out_dir = _build_paper_trade_output_dir(day_key, script_dir=script_dir)
             state_path = os.path.join(out_dir, "paper_trade_seen_ids.json")
             try:
                 if os.path.isfile(state_path):
@@ -10589,20 +11997,6 @@ def run_paper_trade(*, paper_trade_interval_sec: float, run_replay_kw: dict[str,
             except Exception:
                 pass
 
-            coll: dict[str, Any] = {}
-            kw = dict(run_replay_kw)
-            kw["paper_trade_mode"] = True
-            kw["paper_trade_collect"] = coll
-            code = run_replay(**kw)
-            if int(code) != 0:
-                print(f"[{now_str()}] paper_trade: run_replay が失敗しました（exit={int(code)}）")
-                return int(code)
-            rep = coll.get("report")
-            rs_list = coll.get("replay_signals")
-            if not isinstance(rep, dict) or not isinstance(rs_list, list):
-                print(f"[{now_str()}] paper_trade: 内部エラー（report/signals が取得できません）")
-                return 2
-
             if is_eod_summary_only:
                 eod_summary_day = day_key
 
@@ -10610,18 +12004,137 @@ def run_paper_trade(*, paper_trade_interval_sec: float, run_replay_kw: dict[str,
             log_path = os.path.join(out_dir, "paper_trade_log.csv")
             summary_path = os.path.join(out_dir, "paper_trade_summary.txt")
 
+            # -----------------------------
+            # paper_trade: live fetch only
+            # -----------------------------
+            # watch は fixed_watch があれば固定、無ければ watchlist.json を毎回読む（通常モードと同じ）
+            watch: list[str] = []
+            if fixed_watch is not None:
+                watch = list(fixed_watch)
+            else:
+                if os.path.exists(WATCHLIST_JSON_PATH):
+                    w2, err = _load_watchlist_json(WATCHLIST_JSON_PATH)
+                    if err:
+                        print(f"[{now_str()}] [PAPER] watchlist.json 読み込みエラー: {err}")
+                        watch = []
+                    else:
+                        watch = list(w2)
+                else:
+                    loaded_symbols = _load_symbols_csv(SYMBOLS_CSV_PATH)
+                    watch = loaded_symbols if loaded_symbols else list(WATCH)
+
             new_rows: list[dict[str, str]] = []
-            if not is_eod_summary_only:
-                for i, s in enumerate(rs_list):
-                    if not isinstance(s, ReplaySignalEval):
-                        continue
-                    if not _paper_trade_should_emit_row(s):
-                        continue
-                    sid = _paper_trade_signal_stable_id(s, fallback=f"idx{i:05d}")
-                    if sid in seen_ids:
-                        continue
-                    seen_ids.add(sid)
-                    new_rows.append(_paper_trade_row_dict(s))
+            detected = 0
+            in_eval = 0
+            paper_signal_dicts: list[dict[str, Any]] = []
+            if (not is_eod_summary_only) and watch:
+                with requests.Session() as session:
+                    for sym in watch:
+                        try:
+                            q, intr, _vwap = fetch_latest_intraday_data_for_paper_trade(session, sym)
+                        except Exception as e:
+                            # paper_trade は replay 経路に入らないため、「リプレイ用」等の文言は出さない
+                            msg_ff = f"[{now_str()}] [PAPER] fetch_failed symbol={sym} err={e}"
+                            print(msg_ff)
+                            try:
+                                _paper_send_log(msg_ff)
+                            except Exception:
+                                pass
+                            continue
+
+                        detected += 1
+                        reasons: list[str] = []
+                        # 必須項目が欠けていると判定不能
+                        if q.change_percent is None:
+                            reasons.append("前日終値取得失敗")
+                        if q.day_high is None:
+                            reasons.append("当日高値が取得できない")
+                        if q.volume is None:
+                            reasons.append("出来高が取得できない")
+
+                        # 基本条件（通常スクリーニング相当）
+                        if q.change_percent is not None:
+                            if q.change_percent < MIN_CHANGE_PCT:
+                                reasons.append("前日比不足")
+                            if q.change_percent >= MAX_CHANGE_PCT:
+                                reasons.append("急騰しすぎ")
+                        if q.day_high is not None:
+                            if float(q.price) < (MIN_RATIO_TO_DAY_HIGH * float(q.day_high)):
+                                reasons.append("高値付近ではない")
+                        if q.volume is not None:
+                            if float(q.volume) < float(MIN_VOLUME):
+                                reasons.append("出来高不足")
+
+                        # MA25（取得できない場合は見送り理由）
+                        ma25: Optional[float] = None
+                        try:
+                            c = ma25_cache.get(sym)
+                            if c and (time.perf_counter() - float(c[1])) < MA25_CACHE_TTL_SEC:
+                                ma25 = c[0]
+                            if ma25 is None:
+                                ma25 = fetch_ma25(session, sym)
+                                ma25_cache[sym] = (ma25, time.perf_counter())
+                        except Exception:
+                            ma25 = None
+                        if isinstance(ma25, (int, float)):
+                            if float(q.price) <= float(ma25):
+                                reasons.append("MA25以下")
+                        else:
+                            reasons.append("MA25取得失敗")
+
+                        # entry_price は recent_5m_high を使う（無ければ空欄）
+                        entry_price: Optional[float] = None
+                        try:
+                            if isinstance(intr.recent_5m_high, (int, float)):
+                                entry_price = float(intr.recent_5m_high)
+                        except Exception:
+                            entry_price = None
+
+                        # 判定: reasons が空なら "entry allowed"
+                        entry_allowed = (len(reasons) == 0)
+                        if entry_allowed:
+                            in_eval += 1
+
+                        # 重複除外（poll時刻+symbol で十分安定）
+                        sid = f"{sym}|{now_loop_jst.strftime('%Y%m%dT%H%M')}"
+                        if sid in seen_ids:
+                            continue
+                        seen_ids.add(sid)
+
+                        skip_reason = " / ".join([x for x in reasons if x])
+                        row = {
+                            "datetime_jst": poll_ts,
+                            "symbol": str(sym),
+                            "signal_type": "LIVE",
+                            "entry_price": f"{float(entry_price):.2f}" if isinstance(entry_price, float) else "",
+                            "exit_price": "",
+                            "exit_reason": "",
+                            "pnl_yen_100_shares": "",
+                            "market_regime": "",
+                            "rising_ratio": "",
+                            "topix_pct": "",
+                            "entry_vwap_distance_pct": (
+                                f"{float(intr.vwap_distance_pct):.3f}" if isinstance(intr.vwap_distance_pct, (int, float)) else ""
+                            ),
+                            "high_update_count_before_entry": "",
+                            "skipped": "0" if entry_allowed else "1",
+                            "skip_reason": skip_reason,
+                            "shadow_block_hit": "0",
+                            "shadow_block_rule_names": "",
+                        }
+                        new_rows.append(row)
+                        # summary 用に dict も保持（shadow_block_candidate_flags は保持するだけで影響しない）
+                        try:
+                            _sig_d = {
+                                "symbol": str(sym),
+                                "pnl_yen_100_shares": 0.0,
+                                "market_regime": "",
+                                "momentum_decay_features": {"prev_signal_exists": False},
+                            }
+                            _sig_d["shadow_block_candidate_flags"] = dict(_shadow_block_candidate_flags_from_signal_dict(_sig_d))
+                            paper_signal_dicts.append(_sig_d)
+                        except Exception:
+                            pass
 
             if new_rows:
                 write_header = not os.path.isfile(log_path)
@@ -10637,44 +12150,62 @@ def run_paper_trade(*, paper_trade_interval_sec: float, run_replay_kw: dict[str,
                 except Exception:
                     pass
 
+            # summary は replay report に依存しない最小構造で出す（paper_trade 専用）
+            rep: dict[str, Any] = {
+                "overall_summary": {
+                    "all_signals_detected": int(detected),
+                    "signals_in_eval": int(in_eval),
+                    "signals_excluded": int(max(0, int(detected) - int(in_eval))),
+                    "stats": {
+                        "pnl_yen_100_shares": 0.0,
+                        "win_rate_pct": 0.0,
+                    },
+                    "risk_controls": {},
+                    "regime_controls": {"eval_by_market_regime": {}},
+                    "regime_filters": {"skipped_signals_count": 0},
+                    "signal_filters": {"skipped_signals_count": 0},
+                },
+                "accident_analysis": {"lose_worst10": []},
+                "combo_filter_analysis": {"strong_combo_filter": {"skipped_signals_count": 0}},
+                "replay_settings": {"paper_trade_live_fetch": True},
+                "signals": paper_signal_dicts,
+            }
             _paper_trade_write_summary_txt(path=summary_path, report=rep, poll_ts_jst=poll_ts)
 
             try:
-                webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
-                alert_channel_id = _parse_channel_id(os.getenv("ALERT_CHANNEL_ID", ""))
-                bot_token = _get_discord_token_with_compat_warning()
-                if (alert_channel_id is not None and bot_token) or webhook_url:
-                    ov = rep.get("overall_summary") if isinstance(rep.get("overall_summary"), dict) else {}
-                    st = ov.get("stats") if isinstance(ov.get("stats"), dict) else {}
-                    n_sig = int(ov.get("all_signals_detected") or 0)
-                    n_ev = int(ov.get("signals_in_eval") or 0)
-                    pnl = float(st.get("pnl_yen_100_shares") or 0.0)
-                    wr = float(st.get("win_rate_pct") or 0.0)
-                    tag = "eod_summary" if is_eod_summary_only else "poll"
-                    msg = {
-                        "content": (
-                            f"[paper_trade] {tag} #{n_poll} {poll_ts} JST\n"
-                            f"signals={n_sig} eval={n_ev} pnl_100sh={pnl:+.0f}円 win_rate={wr:.1f}%\n"
-                            f"+csv rows: {len(new_rows)}"
-                        )
-                    }
-                    discord_notify(
-                        msg,
-                        webhook_url=webhook_url,
-                        alert_channel_id=alert_channel_id,
-                        bot_token=bot_token,
-                    )
+                ov = rep.get("overall_summary") if isinstance(rep.get("overall_summary"), dict) else {}
+                st = ov.get("stats") if isinstance(ov.get("stats"), dict) else {}
+                n_sig = int(ov.get("all_signals_detected") or 0)
+                n_ev = int(ov.get("signals_in_eval") or 0)
+                pnl = float(st.get("pnl_yen_100_shares") or 0.0)
+                wr = float(st.get("win_rate_pct") or 0.0)
+                tag = "eod_summary" if is_eod_summary_only else "poll"
+                alert_msg = (
+                    f"[paper_trade] {tag} #{n_poll} {poll_ts} JST\n"
+                    f"signals={n_sig} eval={n_ev} pnl_100sh={pnl:+.0f}円 win_rate={wr:.1f}%\n"
+                    f"+csv rows: {len(new_rows)}"
+                )
+                _paper_send_alert(alert_msg)
             except Exception:
                 pass
 
             _suffix = " eod_summary" if is_eod_summary_only else ""
-            print(
-                f"[{now_str()}] paper_trade: poll#{n_poll} OK{_suffix} "
+            msg_ok = (
+                f"[{now_str()}] [PAPER] poll#{n_poll} OK{_suffix} "
                 f"(new_rows={len(new_rows)} signals_eval={int((rep.get('overall_summary') or {}).get('signals_in_eval') or 0)})"
             )
+            print(msg_ok)
+            try:
+                _paper_send_log(msg_ok)
+            except Exception:
+                pass
             time.sleep(max(0.5, float(paper_trade_interval_sec)))
     except KeyboardInterrupt:
         print("\nCtrl+C を検知しました。paper_trade を終了します。")
+        try:
+            _paper_send_log("[PAPER] shutdown: KeyboardInterrupt")
+        except Exception:
+            pass
         return 0
 
 
@@ -10891,8 +12422,7 @@ def run_vwap_distance_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             for i in range(1, int(n_repeat) + 1):
                 seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
@@ -10938,6 +12468,17 @@ def run_vwap_distance_sweep(
                     regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
                     **_replay_regime_control_kwargs_from_flags(f),
                     replay_settings=None,
                 )
@@ -11042,10 +12583,9 @@ def run_vwap_distance_sweep(
             f"results/{r.get('output_subdir')}/"
         )
 
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"vwap_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"vwap_sweep_{sweep_stamp}", script_dir=script_dir)
 
     out_path = os.path.join(sweep_root, f"vwap_sweep_summary_{sweep_stamp}.txt")
     out_compat_path = os.path.join(results_root, f"vwap_sweep_summary_{sweep_stamp}.txt")
@@ -11269,18 +12809,18 @@ def _build_symbol_contribution_analysis(
         pnl_after = float(total_pnl_yen_100_shares) - float(excl_pnl)
         sig_after = int(total_signals) - int(excl_sigs)
         exp_after = float(pnl_after / float(sig_after)) if int(sig_after) > 0 else 0.0
+        exp_before = float((float(total_pnl_yen_100_shares) / float(total_signals)) if int(total_signals) > 0 else 0.0)
         sims.append(
             {
                 "exclude_top_n_symbols": int(n),
                 "excluded_symbols": excluded_symbols,
                 "total_pnl_before_yen_100_shares": float(total_pnl_yen_100_shares),
                 "total_signals_before": int(total_signals),
-                "expectancy_before_yen_100_shares_per_signal": float(
-                    (float(total_pnl_yen_100_shares) / float(total_signals)) if int(total_signals) > 0 else 0.0
-                ),
+                "expectancy_before_yen_100_shares_per_signal": float(exp_before),
                 "total_pnl_after_yen_100_shares": float(pnl_after),
                 "total_signals_after": int(sig_after),
                 "expectancy_after_yen_100_shares_per_signal": float(exp_after),
+                "expectancy_drop_ratio": _expectancy_drop_ratio(exp_before, exp_after),
             }
         )
 
@@ -11302,6 +12842,3221 @@ def _lose_worst10_sum_yen_100_shares_from_pnls(pnls: list[float]) -> float:
         return float(sum(xs_sorted[:10]))
     except Exception:
         return 0.0
+
+
+def _signal_dict_sort_ts(s: dict[str, Any]) -> float:
+    raw = s.get("signal_time_utc") if isinstance(s, dict) else None
+    if isinstance(raw, str) and raw.strip():
+        try:
+            t = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            return float(t.timestamp())
+        except Exception:
+            pass
+    return 0.0
+
+
+def _pnls_ordered_by_signal_time(signals: list[dict[str, Any]]) -> list[float]:
+    if not signals:
+        return []
+    ordered = sorted([s for s in signals if isinstance(s, dict)], key=_signal_dict_sort_ts)
+    return [float(x.get("pnl_yen_100_shares") or 0.0) for x in ordered]
+
+
+def _max_equity_drawdown_yen_ordered(pnls: list[float]) -> float:
+    """累積損益系列の最大ドローダウン（円・負値）。"""
+    peak = 0.0
+    cum = 0.0
+    worst_dd = 0.0
+    for p in pnls:
+        cum += float(p)
+        if cum > peak:
+            peak = cum
+        dd = cum - peak
+        if dd < worst_dd:
+            worst_dd = dd
+    return float(worst_dd)
+
+
+def _rollup_eval_base_signal_dict_metrics(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """BASE eval signal dict の一覧から集計（robustness / extension sweep 用）。"""
+    xs = [s for s in signal_dicts if isinstance(s, dict)]
+    n = len(xs)
+    if n <= 0:
+        return {
+            "signals": 0,
+            "winrate_pct": 0.0,
+            "expectancy_yen_100_shares_per_signal": 0.0,
+            "total_pnl_yen_100_shares": 0.0,
+            "lose_worst10_sum_yen_100_shares": 0.0,
+            "max_losing_run_yen_100_shares": 0.0,
+        }
+    pnls = [float(s.get("pnl_yen_100_shares") or 0.0) for s in xs]
+    wins = sum(1 for s in xs if str(s.get("result") or "") == "WIN")
+    tot = float(sum(pnls))
+    ord_pnls = _pnls_ordered_by_signal_time(xs)
+    return {
+        "signals": int(n),
+        "winrate_pct": float(wins / float(n) * 100.0),
+        "expectancy_yen_100_shares_per_signal": float(tot / float(n)),
+        "total_pnl_yen_100_shares": float(tot),
+        "lose_worst10_sum_yen_100_shares": float(_lose_worst10_sum_yen_100_shares_from_pnls(pnls)),
+        "max_losing_run_yen_100_shares": float(_max_equity_drawdown_yen_ordered(ord_pnls)),
+    }
+
+
+def _symbol_dispersion_metrics_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    structure bucket 内の「銘柄分散」指標。
+    - effective_symbol_count: 1 / sum(share^2), share は symbol別 abs(pnl) / 全 abs(pnl)
+    - topK_symbol_abs_pnl_ratio: 上位K銘柄の abs(pnl) 比率
+    - positive/negative symbols count: symbol別 pnl の符号
+    - median_symbol_expectancy: symbol別 expectancy の中央値
+    - symbol_expectancy_stddev: symbol別 expectancy の標準偏差（母分散）
+    """
+    xs = [s for s in signal_dicts if isinstance(s, dict)]
+    if not xs:
+        return {
+            "effective_symbol_count": 0.0,
+            "top1_symbol_abs_pnl_ratio": 0.0,
+            "top2_symbol_abs_pnl_ratio": 0.0,
+            "top3_symbol_abs_pnl_ratio": 0.0,
+            "positive_symbols_count": 0,
+            "negative_symbols_count": 0,
+            "median_symbol_expectancy": 0.0,
+            "mean_symbol_expectancy": 0.0,
+            "symbol_expectancy_stddev": 0.0,
+        }
+
+    by_sym_pnl: dict[str, float] = {}
+    by_sym_cnt: dict[str, int] = {}
+    for s in xs:
+        sym = str(s.get("symbol") or "").strip()
+        if not sym:
+            continue
+        by_sym_pnl[sym] = float(by_sym_pnl.get(sym, 0.0)) + float(s.get("pnl_yen_100_shares") or 0.0)
+        by_sym_cnt[sym] = int(by_sym_cnt.get(sym, 0)) + 1
+
+    if not by_sym_pnl:
+        return {
+            "effective_symbol_count": 0.0,
+            "top1_symbol_abs_pnl_ratio": 0.0,
+            "top2_symbol_abs_pnl_ratio": 0.0,
+            "top3_symbol_abs_pnl_ratio": 0.0,
+            "positive_symbols_count": 0,
+            "negative_symbols_count": 0,
+            "median_symbol_expectancy": 0.0,
+            "mean_symbol_expectancy": 0.0,
+            "symbol_expectancy_stddev": 0.0,
+        }
+
+    abs_pnls = {sym: abs(float(p)) for sym, p in by_sym_pnl.items()}
+    denom = float(sum(abs_pnls.values()))
+    abs_sorted = sorted(abs_pnls.values(), reverse=True)
+
+    top1 = float(abs_sorted[0]) if len(abs_sorted) >= 1 else 0.0
+    top2 = float(sum(abs_sorted[:2])) if len(abs_sorted) >= 2 else float(sum(abs_sorted))
+    top3 = float(sum(abs_sorted[:3])) if len(abs_sorted) >= 3 else float(sum(abs_sorted))
+
+    top1_ratio = float(top1 / denom) if denom > 0 else 0.0
+    top2_ratio = float(top2 / denom) if denom > 0 else 0.0
+    top3_ratio = float(top3 / denom) if denom > 0 else 0.0
+
+    # effective symbol count
+    eff = 0.0
+    if denom > 0:
+        hhi = 0.0
+        for v in abs_pnls.values():
+            sh = float(v) / denom
+            hhi += float(sh * sh)
+        if hhi > 0:
+            eff = float(1.0 / hhi)
+
+    pos_syms = sum(1 for p in by_sym_pnl.values() if float(p) > 0.0)
+    neg_syms = sum(1 for p in by_sym_pnl.values() if float(p) < 0.0)
+
+    # symbol expectancy stats
+    exps: list[float] = []
+    for sym, pnl in by_sym_pnl.items():
+        n = int(by_sym_cnt.get(sym, 0))
+        if n <= 0:
+            continue
+        exps.append(float(float(pnl) / float(n)))
+    exps_sorted = sorted(exps)
+    if not exps_sorted:
+        med = 0.0
+        mean = 0.0
+        sd = 0.0
+    else:
+        mid = len(exps_sorted) // 2
+        med = float(exps_sorted[mid]) if (len(exps_sorted) % 2 == 1) else float((exps_sorted[mid - 1] + exps_sorted[mid]) / 2.0)
+        mean = float(sum(exps_sorted) / float(len(exps_sorted)))
+        mu = float(mean)
+        var = float(sum((x - mu) * (x - mu) for x in exps_sorted) / float(len(exps_sorted))) if len(exps_sorted) > 0 else 0.0
+        sd = float(math.sqrt(var))
+
+    return {
+        "effective_symbol_count": float(eff),
+        "top1_symbol_abs_pnl_ratio": float(top1_ratio),
+        "top2_symbol_abs_pnl_ratio": float(top2_ratio),
+        "top3_symbol_abs_pnl_ratio": float(top3_ratio),
+        "positive_symbols_count": int(pos_syms),
+        "negative_symbols_count": int(neg_syms),
+        "median_symbol_expectancy": float(med),
+        "mean_symbol_expectancy": float(mean),
+        "symbol_expectancy_stddev": float(sd),
+    }
+
+
+def _build_structure_generalization_core_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    目的: 銘柄名ではなく構造bucketで「横断して成立しているか」を確認する（analysis only）。
+    対象: excluded_from_eval=False / BASE / prev_signal_exists=True。
+    """
+    cohort: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        cohort.append(s)
+
+    pc_edges = [0.0, 0.5, 1.0]
+    pc_labels = ["<=0", "0~0.5", "0.5~1.0", ">=1.0"]
+
+    def _mdf(s: dict[str, Any]) -> dict[str, Any]:
+        return s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+
+    def _rollup_group(xs: list[dict[str, Any]]) -> dict[str, Any]:
+        base = dict(_rollup_eval_base_signal_dict_metrics(xs))
+        disp = dict(_symbol_dispersion_metrics_from_signal_dicts(xs))
+        ex1 = _exclude_top_symbols_by_expectancy(xs, exclude_top_n=1)
+        ex2 = _exclude_top_symbols_by_expectancy(xs, exclude_top_n=2)
+        ex3 = _exclude_top_symbols_by_expectancy(xs, exclude_top_n=3)
+        row = {
+            "signals": int(base.get("signals") or 0),
+            "winrate_pct": float(base.get("winrate_pct") or 0.0),
+            "avg_expectancy_yen_100_shares": float(base.get("expectancy_yen_100_shares_per_signal") or 0.0),
+            "total_pnl_yen_100_shares": float(base.get("total_pnl_yen_100_shares") or 0.0),
+            "lose_worst10_sum_yen_100_shares": float(base.get("lose_worst10_sum_yen_100_shares") or 0.0),
+            "max_losing_run_yen_100_shares": float(base.get("max_losing_run_yen_100_shares") or 0.0),
+            **disp,
+            "exclude_top1_symbol_expectancy": float(
+                ex1.get("expectancy_after_excluding_top_symbols_yen_100_shares_per_signal") or 0.0
+            ),
+            "exclude_top2_symbol_expectancy": float(
+                ex2.get("expectancy_after_excluding_top_symbols_yen_100_shares_per_signal") or 0.0
+            ),
+            "exclude_top3_symbol_expectancy": float(
+                ex3.get("expectancy_after_excluding_top_symbols_yen_100_shares_per_signal") or 0.0
+            ),
+            "excluded_symbols_top1": list(ex1.get("excluded_symbols") or []),
+            "excluded_symbols_top2": list(ex2.get("excluded_symbols") or []),
+            "excluded_symbols_top3": list(ex3.get("excluded_symbols") or []),
+        }
+
+        # forward_candidate flag
+        sigs = int(row.get("signals") or 0)
+        eff = float(row.get("effective_symbol_count") or 0.0)
+        med = float(row.get("median_symbol_expectancy") or 0.0)
+        ex2e = float(row.get("exclude_top2_symbol_expectancy") or 0.0)
+        top1 = float(row.get("top1_symbol_abs_pnl_ratio") or 0.0)
+        row["forward_candidate"] = bool(
+            (sigs >= 15)
+            and (eff >= 4.0)
+            and (med > 0.0)
+            and (ex2e > 0.0)
+            and (top1 <= 0.5)
+        )
+        return row
+
+    # A: market_regime × price_change bucket
+    acc_a: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for s in cohort:
+        mr = str(s.get("market_regime") or "").strip() or "N/A"
+        pcb = _bucket_label_by_edges(_mdf(s).get("price_change_pct_from_prev_signal"), pc_edges, pc_labels)
+        if pcb == "N/A":
+            continue
+        acc_a.setdefault((mr, pcb), []).append(s)
+    rows_a: list[dict[str, Any]] = []
+    for (mr, pcb), xs in acc_a.items():
+        rows_a.append({"market_regime": mr, "price_change_pct_from_prev_signal_bucket": pcb, **_rollup_group(xs)})
+    rows_a = sorted(rows_a, key=lambda r: int(r.get("signals") or 0), reverse=True)
+
+    # B: market_regime × delta HU bucket
+    acc_b: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for s in cohort:
+        mr = str(s.get("market_regime") or "").strip() or "N/A"
+        hub = _bucket_delta_high_update_count_before_entry(_mdf(s).get("delta_high_update_count_before_entry"))
+        if hub == "N/A":
+            continue
+        acc_b.setdefault((mr, hub), []).append(s)
+    rows_b: list[dict[str, Any]] = []
+    for (mr, hub), xs in acc_b.items():
+        rows_b.append({"market_regime": mr, "delta_high_update_count_before_entry_bucket": hub, **_rollup_group(xs)})
+    rows_b = sorted(rows_b, key=lambda r: int(r.get("signals") or 0), reverse=True)
+
+    # C: market_regime × price_change × delta HU
+    acc_c: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for s in cohort:
+        mr = str(s.get("market_regime") or "").strip() or "N/A"
+        pcb = _bucket_label_by_edges(_mdf(s).get("price_change_pct_from_prev_signal"), pc_edges, pc_labels)
+        hub = _bucket_delta_high_update_count_before_entry(_mdf(s).get("delta_high_update_count_before_entry"))
+        if pcb == "N/A" or hub == "N/A":
+            continue
+        acc_c.setdefault((mr, pcb, hub), []).append(s)
+    rows_c: list[dict[str, Any]] = []
+    for (mr, pcb, hub), xs in acc_c.items():
+        rows_c.append(
+            {
+                "market_regime": mr,
+                "price_change_pct_from_prev_signal_bucket": pcb,
+                "delta_high_update_count_before_entry_bucket": hub,
+                **_rollup_group(xs),
+            }
+        )
+    rows_c = sorted(rows_c, key=lambda r: int(r.get("signals") or 0), reverse=True)
+
+    return {
+        "note": (
+            "構造bucketごとに、銘柄横断で edge が成立しているかを確認。"
+            " symbol_daily_entry_index / 時間帯 bucket / entry回数系は使わない。AUTO_BLOCKなし。"
+        ),
+        "cohort_signals": int(len(cohort)),
+        "market_regime_x_price_change": rows_a,
+        "market_regime_x_delta_hu": rows_b,
+        "market_regime_x_price_change_x_delta_hu": rows_c,
+    }
+
+
+def _percentile_linear(xs_sorted: list[float], p: float) -> float:
+    """0<=p<=1 の分位点（線形補間）。xs_sorted は昇順・空でない前提。"""
+    if not xs_sorted:
+        return 0.0
+    if p <= 0.0:
+        return float(xs_sorted[0])
+    if p >= 1.0:
+        return float(xs_sorted[-1])
+    n = len(xs_sorted)
+    if n == 1:
+        return float(xs_sorted[0])
+    pos = float(p) * float(n - 1)
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return float(xs_sorted[lo])
+    w = float(pos - float(lo))
+    return float(xs_sorted[lo] * (1.0 - w) + xs_sorted[hi] * w)
+
+
+def _profile_stats(vals: list[Any]) -> dict[str, Any]:
+    xs = [float(v) for v in vals if isinstance(v, (int, float)) and math.isfinite(float(v))]
+    if not xs:
+        return {"count": 0, "mean": 0.0, "median": 0.0, "stddev": 0.0, "p10": 0.0, "p25": 0.0, "p75": 0.0, "p90": 0.0}
+    xs_sorted = sorted(xs)
+    n = len(xs_sorted)
+    mean = float(sum(xs_sorted) / float(n))
+    mid = n // 2
+    median = float(xs_sorted[mid]) if (n % 2 == 1) else float((xs_sorted[mid - 1] + xs_sorted[mid]) / 2.0)
+    var = float(sum((x - mean) * (x - mean) for x in xs_sorted) / float(n)) if n > 0 else 0.0
+    sd = float(math.sqrt(var))
+    return {
+        "count": int(n),
+        "mean": float(mean),
+        "median": float(median),
+        "stddev": float(sd),
+        "p10": float(_percentile_linear(xs_sorted, 0.10)),
+        "p25": float(_percentile_linear(xs_sorted, 0.25)),
+        "p75": float(_percentile_linear(xs_sorted, 0.75)),
+        "p90": float(_percentile_linear(xs_sorted, 0.90)),
+    }
+
+
+def _build_forward_candidate_profile_analysis_from_signal_dicts(
+    signal_dicts: list[dict[str, Any]],
+    *,
+    structure_generalization_core_analysis: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    STRUCTURE_GENERALIZATION_CORE_ANALYSIS の forward_candidate=true bucket 群に属する signals を集め、
+    feature 分布（WIN/LOSE別 + 差分）を集計する（analysis only）。
+    """
+    sgc = structure_generalization_core_analysis if isinstance(structure_generalization_core_analysis, dict) else {}
+    if not sgc:
+        return {"note": "structure_generalization_core_analysis missing", "buckets": [], "features": []}
+
+    # same cohort definition as core analysis
+    cohort: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        cohort.append(s)
+
+    pc_edges = [0.0, 0.5, 1.0]
+    pc_labels = ["<=0", "0~0.5", "0.5~1.0", ">=1.0"]
+
+    def _mdf(s: dict[str, Any]) -> dict[str, Any]:
+        return s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+
+    def _pc_bucket(s: dict[str, Any]) -> str:
+        return _bucket_label_by_edges(_mdf(s).get("price_change_pct_from_prev_signal"), pc_edges, pc_labels)
+
+    def _hu_bucket(s: dict[str, Any]) -> str:
+        return _bucket_delta_high_update_count_before_entry(_mdf(s).get("delta_high_update_count_before_entry"))
+
+    # collect candidate bucket definitions
+    bucket_defs: list[dict[str, Any]] = []
+    for sec_key, sec_kind in [
+        ("market_regime_x_price_change", "A"),
+        ("market_regime_x_delta_hu", "B"),
+        ("market_regime_x_price_change_x_delta_hu", "C"),
+    ]:
+        rows = sgc.get(sec_key) or []
+        if not isinstance(rows, list):
+            continue
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            if not bool(r.get("forward_candidate", False)):
+                continue
+            mr = str(r.get("market_regime") or "").strip() or "N/A"
+            pcb = r.get("price_change_pct_from_prev_signal_bucket")
+            hub = r.get("delta_high_update_count_before_entry_bucket")
+            bid = f"{sec_kind}|mr={mr}"
+            if pcb is not None:
+                bid += f"|pc={pcb}"
+            if hub is not None:
+                bid += f"|hu={hub}"
+            bucket_defs.append(
+                {
+                    "bucket_id": bid,
+                    "section": sec_kind,
+                    "market_regime": mr,
+                    "price_change_bucket": str(pcb) if pcb is not None else None,
+                    "delta_hu_bucket": str(hub) if hub is not None else None,
+                    "meta": {
+                        "signals": int(r.get("signals") or 0),
+                        "avg_expectancy_yen_100_shares": float(r.get("avg_expectancy_yen_100_shares") or 0.0),
+                        "effective_symbol_count": float(r.get("effective_symbol_count") or 0.0),
+                        "exclude_top2_symbol_expectancy": float(r.get("exclude_top2_symbol_expectancy") or 0.0),
+                        "top1_symbol_abs_pnl_ratio": float(r.get("top1_symbol_abs_pnl_ratio") or 0.0),
+                    },
+                }
+            )
+
+    # features to profile
+    feature_specs: list[tuple[str, str]] = [
+        ("entry_vwap_distance_pct", "top"),
+        ("pullback_depth_pct", "mdf"),
+        ("volume_efficiency_pct", "mdf"),
+        ("delta_rs_vs_topix_pct", "mdf"),
+        ("delta_first_30m_volume_ratio", "mdf"),
+        ("delta_gap_pct", "mdf"),
+        ("high_update_count_before_entry", "top"),
+        ("delta_high_update_count_before_entry", "mdf"),
+    ]
+
+    def _get_feat(s: dict[str, Any], name: str, where: str) -> Any:
+        if where == "top":
+            return s.get(name)
+        return _mdf(s).get(name)
+
+    out_buckets: list[dict[str, Any]] = []
+    for bd in bucket_defs:
+        mr = str(bd.get("market_regime") or "N/A")
+        pcb = bd.get("price_change_bucket")
+        hub = bd.get("delta_hu_bucket")
+        sec = str(bd.get("section") or "")
+
+        matched: list[dict[str, Any]] = []
+        for s in cohort:
+            if str(s.get("market_regime") or "").strip() != mr:
+                continue
+            if sec in ("A", "C"):
+                if _pc_bucket(s) != str(pcb):
+                    continue
+            if sec in ("B", "C"):
+                if _hu_bucket(s) != str(hub):
+                    continue
+            matched.append(s)
+
+        win_x = [s for s in matched if str(s.get("result") or "") == "WIN"]
+        lose_x = [s for s in matched if str(s.get("result") or "") == "LOSE"]
+
+        feat_profiles: dict[str, Any] = {}
+        for fname, where in feature_specs:
+            all_stats = _profile_stats([_get_feat(s, fname, where) for s in matched])
+            win_stats = _profile_stats([_get_feat(s, fname, where) for s in win_x])
+            lose_stats = _profile_stats([_get_feat(s, fname, where) for s in lose_x])
+            feat_profiles[fname] = {
+                "all": all_stats,
+                "win": win_stats,
+                "lose": lose_stats,
+                "diff": {
+                    "win_minus_lose_mean": float(win_stats.get("mean", 0.0) - lose_stats.get("mean", 0.0)),
+                    "win_minus_lose_median": float(win_stats.get("median", 0.0) - lose_stats.get("median", 0.0)),
+                },
+            }
+
+        out_buckets.append(
+            {
+                "bucket_id": str(bd.get("bucket_id") or ""),
+                "section": sec,
+                "market_regime": mr,
+                "price_change_bucket": pcb,
+                "delta_hu_bucket": hub,
+                "meta_from_core": dict(bd.get("meta") or {}),
+                "matched_signals": int(len(matched)),
+                "matched_expectancy_yen_100_shares": float(
+                    _rollup_eval_base_signal_dict_metrics(matched).get("expectancy_yen_100_shares_per_signal") or 0.0
+                ),
+                "feature_profiles": feat_profiles,
+            }
+        )
+
+    return {
+        "note": "forward_candidate=true bucket 群の signal を集め、feature 分布を WIN/LOSE 別に集計（差分付き）。",
+        "features": [f for f, _w in feature_specs],
+        "buckets": out_buckets,
+    }
+
+
+def _build_forward_edge_breakdown_analysis_from_signal_dicts(
+    signal_dicts: list[dict[str, Any]],
+    *,
+    structure_generalization_core_analysis: dict[str, Any],
+    neutral_diff_threshold: float = 1e-6,
+    danger_effect_size_threshold: float = 0.75,
+    danger_agreement_threshold: float = 0.70,
+) -> dict[str, Any]:
+    """
+    forward_candidate=true bucket 内で「edge崩壊要因」を feature レベルで定量化（analysis only）。
+    - effect_size_mean = abs(win_mean - lose_mean) / pooled_stddev
+    - tail_minus_all_mean = mean(LOSE worst20) - mean(ALL)
+    - symbol_direction_agreement_ratio: symbolごとの diff符号の多数派一致率
+    """
+    sgc = structure_generalization_core_analysis if isinstance(structure_generalization_core_analysis, dict) else {}
+    if not sgc:
+        return {"note": "structure_generalization_core_analysis missing", "buckets": [], "features": []}
+
+    # same cohort definition as core analysis
+    cohort: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        cohort.append(s)
+
+    pc_edges = [0.0, 0.5, 1.0]
+    pc_labels = ["<=0", "0~0.5", "0.5~1.0", ">=1.0"]
+
+    def _mdf(s: dict[str, Any]) -> dict[str, Any]:
+        return s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+
+    def _pc_bucket(s: dict[str, Any]) -> str:
+        return _bucket_label_by_edges(_mdf(s).get("price_change_pct_from_prev_signal"), pc_edges, pc_labels)
+
+    def _hu_bucket(s: dict[str, Any]) -> str:
+        return _bucket_delta_high_update_count_before_entry(_mdf(s).get("delta_high_update_count_before_entry"))
+
+    # candidate bucket defs (same semantics as profile analysis)
+    bucket_defs: list[dict[str, Any]] = []
+    for sec_key, sec_kind in [
+        ("market_regime_x_price_change", "A"),
+        ("market_regime_x_delta_hu", "B"),
+        ("market_regime_x_price_change_x_delta_hu", "C"),
+    ]:
+        rows = sgc.get(sec_key) or []
+        if not isinstance(rows, list):
+            continue
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            if not bool(r.get("forward_candidate", False)):
+                continue
+            mr = str(r.get("market_regime") or "").strip() or "N/A"
+            pcb = r.get("price_change_pct_from_prev_signal_bucket")
+            hub = r.get("delta_high_update_count_before_entry_bucket")
+            bid = f"{sec_kind}|mr={mr}"
+            if pcb is not None:
+                bid += f"|pc={pcb}"
+            if hub is not None:
+                bid += f"|hu={hub}"
+            bucket_defs.append(
+                {
+                    "bucket_id": bid,
+                    "section": sec_kind,
+                    "market_regime": mr,
+                    "price_change_bucket": str(pcb) if pcb is not None else None,
+                    "delta_hu_bucket": str(hub) if hub is not None else None,
+                }
+            )
+
+    feature_specs: list[tuple[str, str]] = [
+        ("entry_vwap_distance_pct", "top"),
+        ("pullback_depth_pct", "mdf"),
+        ("volume_efficiency_pct", "mdf"),
+        ("delta_rs_vs_topix_pct", "mdf"),
+        ("delta_first_30m_volume_ratio", "mdf"),
+        ("delta_gap_pct", "mdf"),
+        ("high_update_count_before_entry", "top"),
+        ("delta_high_update_count_before_entry", "mdf"),
+    ]
+
+    def _get_feat(s: dict[str, Any], name: str, where: str) -> Optional[float]:
+        v = s.get(name) if where == "top" else _mdf(s).get(name)
+        if isinstance(v, (int, float)) and math.isfinite(float(v)):
+            return float(v)
+        return None
+
+    def _mean_std(vals: list[Optional[float]]) -> tuple[Optional[float], Optional[float], int]:
+        xs = [float(v) for v in vals if isinstance(v, (int, float)) and math.isfinite(float(v))]
+        n = len(xs)
+        if n <= 0:
+            return None, None, 0
+        mu = float(sum(xs) / float(n))
+        var = float(sum((x - mu) * (x - mu) for x in xs) / float(n)) if n > 0 else 0.0
+        return float(mu), float(math.sqrt(var)), int(n)
+
+    def _pooled_std(sd_w: float, sd_l: float, n_w: int, n_l: int) -> Optional[float]:
+        if n_w <= 1 or n_l <= 1:
+            return None
+        if sd_w is None or sd_l is None:
+            return None
+        if (not math.isfinite(float(sd_w))) or (not math.isfinite(float(sd_l))):
+            return None
+        denom = (n_w + n_l - 2)
+        if denom <= 0:
+            return None
+        num = (float(n_w - 1) * float(sd_w) * float(sd_w)) + (float(n_l - 1) * float(sd_l) * float(sd_l))
+        pv = float(num / float(denom))
+        if pv <= 0.0 or (not math.isfinite(pv)):
+            return None
+        return float(math.sqrt(pv))
+
+    out_buckets: list[dict[str, Any]] = []
+    for bd in bucket_defs:
+        mr = str(bd.get("market_regime") or "N/A")
+        pcb = bd.get("price_change_bucket")
+        hub = bd.get("delta_hu_bucket")
+        sec = str(bd.get("section") or "")
+
+        matched: list[dict[str, Any]] = []
+        for s in cohort:
+            if str(s.get("market_regime") or "").strip() != mr:
+                continue
+            if sec in ("A", "C"):
+                if _pc_bucket(s) != str(pcb):
+                    continue
+            if sec in ("B", "C"):
+                if _hu_bucket(s) != str(hub):
+                    continue
+            matched.append(s)
+
+        win_x = [s for s in matched if str(s.get("result") or "") == "WIN"]
+        lose_x = [s for s in matched if str(s.get("result") or "") == "LOSE"]
+        lose_sorted = sorted(lose_x, key=lambda s: float(s.get("pnl_yen_100_shares") or 0.0))
+        lose_worst20 = lose_sorted[:20]
+
+        # per-feature breakdown rows
+        feat_rows: list[dict[str, Any]] = []
+        for fname, where in feature_specs:
+            w_mu, w_sd, w_n = _mean_std([_get_feat(s, fname, where) for s in win_x])
+            l_mu, l_sd, l_n = _mean_std([_get_feat(s, fname, where) for s in lose_x])
+            a_mu, a_sd, a_n = _mean_std([_get_feat(s, fname, where) for s in matched])
+            t_mu, _t_sd, t_n = _mean_std([_get_feat(s, fname, where) for s in lose_worst20])
+
+            diff = None if (w_mu is None or l_mu is None) else float(w_mu - l_mu)
+            pooled = _pooled_std(float(w_sd or 0.0), float(l_sd or 0.0), int(w_n), int(l_n)) if (w_sd is not None and l_sd is not None) else None
+            eff = None
+            if pooled is not None and pooled > 0 and diff is not None and math.isfinite(float(diff)):
+                eff = float(abs(float(diff)) / float(pooled))
+
+            # direction
+            direction = "NEUTRAL"
+            if diff is not None and math.isfinite(float(diff)) and abs(float(diff)) >= float(neutral_diff_threshold):
+                direction = "HIGHER_IN_WIN" if float(diff) > 0 else "HIGHER_IN_LOSE"
+
+            tail_minus_all = None
+            if t_mu is not None and a_mu is not None and math.isfinite(float(t_mu)) and math.isfinite(float(a_mu)):
+                tail_minus_all = float(float(t_mu) - float(a_mu))
+
+            # symbol_direction_agreement_ratio
+            sym_map_w: dict[str, list[float]] = {}
+            sym_map_l: dict[str, list[float]] = {}
+            for s in matched:
+                sym = str(s.get("symbol") or "").strip()
+                if not sym:
+                    continue
+                v = _get_feat(s, fname, where)
+                if v is None:
+                    continue
+                if str(s.get("result") or "") == "WIN":
+                    sym_map_w.setdefault(sym, []).append(float(v))
+                elif str(s.get("result") or "") == "LOSE":
+                    sym_map_l.setdefault(sym, []).append(float(v))
+
+            signs: list[int] = []
+            for sym in set(list(sym_map_w.keys()) + list(sym_map_l.keys())):
+                wv = sym_map_w.get(sym) or []
+                lv = sym_map_l.get(sym) or []
+                if not wv or not lv:
+                    continue
+                wsm = float(sum(wv) / float(len(wv)))
+                lsm = float(sum(lv) / float(len(lv)))
+                d0 = float(wsm - lsm)
+                if abs(d0) < float(neutral_diff_threshold):
+                    continue
+                signs.append(1 if d0 > 0 else -1)
+            agr = None
+            if signs:
+                maj = 1 if sum(signs) >= 0 else -1
+                agr = float(sum(1 for sgn in signs if sgn == maj) / float(len(signs)))
+
+            tail_worsens = False
+            if tail_minus_all is not None and direction != "NEUTRAL":
+                if direction == "HIGHER_IN_LOSE" and float(tail_minus_all) > 0:
+                    tail_worsens = True
+                if direction == "HIGHER_IN_WIN" and float(tail_minus_all) < 0:
+                    tail_worsens = True
+
+            danger = bool(
+                (eff is not None and float(eff) >= float(danger_effect_size_threshold))
+                and (agr is not None and float(agr) >= float(danger_agreement_threshold))
+                and bool(tail_worsens)
+            )
+
+            feat_rows.append(
+                {
+                    "feature": str(fname),
+                    "effect_size_mean": eff,
+                    "direction": str(direction),
+                    "win_mean": w_mu,
+                    "lose_mean": l_mu,
+                    "pooled_stddev": pooled,
+                    "tail_minus_all_mean": tail_minus_all,
+                    "symbol_direction_agreement_ratio": agr,
+                    "danger_feature_candidate": bool(danger),
+                    "n_win": int(w_n),
+                    "n_lose": int(l_n),
+                    "n_all": int(a_n),
+                    "n_tail": int(t_n),
+                }
+            )
+
+        feat_rows_sorted = sorted(
+            feat_rows,
+            key=lambda r: float(r.get("effect_size_mean")) if isinstance(r.get("effect_size_mean"), (int, float)) else -1.0,
+            reverse=True,
+        )
+
+        out_buckets.append(
+            {
+                "bucket_id": str(bd.get("bucket_id") or ""),
+                "section": sec,
+                "market_regime": mr,
+                "price_change_bucket": pcb,
+                "delta_hu_bucket": hub,
+                "matched_signals": int(len(matched)),
+                "matched_expectancy_yen_100_shares": float(
+                    _rollup_eval_base_signal_dict_metrics(matched).get("expectancy_yen_100_shares_per_signal") or 0.0
+                ),
+                "features_ranked": feat_rows_sorted,
+            }
+        )
+
+    return {
+        "note": "forward_candidate=true bucket 内で、WIN/LOSE分離の effect size・tail感度・symbol同方向性を算出しランキング化。",
+        "features": [f for f, _w in feature_specs],
+        "buckets": out_buckets,
+        "danger_thresholds": {
+            "effect_size_mean_ge": float(danger_effect_size_threshold),
+            "symbol_direction_agreement_ratio_ge": float(danger_agreement_threshold),
+            "tail_worsens_direction": True,
+            "neutral_diff_threshold": float(neutral_diff_threshold),
+        },
+    }
+
+
+FORWARD_FEATURE_INTERACTION_Z_HI: float = 0.5
+FORWARD_FEATURE_INTERACTION_Z_LO: float = -0.5
+FORWARD_FEATURE_INTERACTION_DANGER_TAIL_RATIO_GE: float = 1.5
+
+
+def _zscore_bucket_state(z: Optional[float]) -> str:
+    if z is None or (not math.isfinite(float(z))):
+        return "MID"
+    if float(z) >= float(FORWARD_FEATURE_INTERACTION_Z_HI):
+        return "HIGH"
+    if float(z) <= float(FORWARD_FEATURE_INTERACTION_Z_LO):
+        return "LOW"
+    return "MID"
+
+
+def _build_forward_feature_interaction_analysis_from_signal_dicts(
+    signal_dicts: list[dict[str, Any]],
+    *,
+    structure_generalization_core_analysis: dict[str, Any],
+    forward_edge_breakdown_analysis: dict[str, Any],
+    danger_tail_ratio_ge: float = FORWARD_FEATURE_INTERACTION_DANGER_TAIL_RATIO_GE,
+) -> dict[str, Any]:
+    """
+    danger_feature_candidate のみを対象に、forward_candidate bucket 内でペアinteractionを評価（analysis only）。
+    z-score は bucket 内の matched signal の分布で算出。
+    """
+    sgc = structure_generalization_core_analysis if isinstance(structure_generalization_core_analysis, dict) else {}
+    feb = forward_edge_breakdown_analysis if isinstance(forward_edge_breakdown_analysis, dict) else {}
+    if not sgc:
+        return {"note": "structure_generalization_core_analysis missing", "buckets": [], "features": []}
+    feb_buckets = feb.get("buckets") or []
+    if not isinstance(feb_buckets, list):
+        feb_buckets = []
+
+    cohort: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        cohort.append(s)
+
+    pc_edges = [0.0, 0.5, 1.0]
+    pc_labels = ["<=0", "0~0.5", "0.5~1.0", ">=1.0"]
+
+    def _mdf(s: dict[str, Any]) -> dict[str, Any]:
+        return s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+
+    def _pc_bucket(s: dict[str, Any]) -> str:
+        return _bucket_label_by_edges(_mdf(s).get("price_change_pct_from_prev_signal"), pc_edges, pc_labels)
+
+    def _hu_bucket(s: dict[str, Any]) -> str:
+        return _bucket_delta_high_update_count_before_entry(_mdf(s).get("delta_high_update_count_before_entry"))
+
+    bucket_defs: list[dict[str, Any]] = []
+    for sec_key, sec_kind in [
+        ("market_regime_x_price_change", "A"),
+        ("market_regime_x_delta_hu", "B"),
+        ("market_regime_x_price_change_x_delta_hu", "C"),
+    ]:
+        rows = sgc.get(sec_key) or []
+        if not isinstance(rows, list):
+            continue
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            if not bool(r.get("forward_candidate", False)):
+                continue
+            mr = str(r.get("market_regime") or "").strip() or "N/A"
+            pcb = r.get("price_change_pct_from_prev_signal_bucket")
+            hub = r.get("delta_high_update_count_before_entry_bucket")
+            bid = f"{sec_kind}|mr={mr}"
+            if pcb is not None:
+                bid += f"|pc={pcb}"
+            if hub is not None:
+                bid += f"|hu={hub}"
+            bucket_defs.append(
+                {
+                    "bucket_id": bid,
+                    "section": sec_kind,
+                    "market_regime": mr,
+                    "price_change_bucket": str(pcb) if pcb is not None else None,
+                    "delta_hu_bucket": str(hub) if hub is not None else None,
+                }
+            )
+
+    feature_specs: list[tuple[str, str]] = [
+        ("entry_vwap_distance_pct", "top"),
+        ("pullback_depth_pct", "mdf"),
+        ("volume_efficiency_pct", "mdf"),
+        ("delta_rs_vs_topix_pct", "mdf"),
+        ("delta_first_30m_volume_ratio", "mdf"),
+        ("delta_gap_pct", "mdf"),
+        ("high_update_count_before_entry", "top"),
+        ("delta_high_update_count_before_entry", "mdf"),
+    ]
+    feat_where = {fname: loc for fname, loc in feature_specs}
+
+    def _get_feat(s: dict[str, Any], name: str) -> Optional[float]:
+        loc = feat_where.get(name, "mdf")
+        v = s.get(name) if loc == "top" else _mdf(s).get(name)
+        if isinstance(v, (int, float)) and math.isfinite(float(v)):
+            return float(v)
+        return None
+
+    feb_by_id: dict[str, dict[str, Any]] = {}
+    for bx in feb_buckets:
+        if isinstance(bx, dict) and bx.get("bucket_id"):
+            feb_by_id[str(bx.get("bucket_id") or "")] = bx
+
+    out_buckets: list[dict[str, Any]] = []
+    states_order = ["HIGH", "MID", "LOW"]
+
+    for bd in bucket_defs:
+        bucket_id = str(bd.get("bucket_id") or "")
+        bx = feb_by_id.get(bucket_id) or {}
+        fr = bx.get("features_ranked") or []
+        if not isinstance(fr, list):
+            fr = []
+        danger_names = [
+            str(r.get("feature") or "").strip()
+            for r in fr
+            if isinstance(r, dict) and bool(r.get("danger_feature_candidate", False))
+        ]
+        danger_names = list(dict.fromkeys([x for x in danger_names if x]))
+
+        mr = str(bd.get("market_regime") or "N/A")
+        pcb = bd.get("price_change_bucket")
+        hub = bd.get("delta_hu_bucket")
+        sec = str(bd.get("section") or "")
+
+        matched: list[dict[str, Any]] = []
+        for s in cohort:
+            if str(s.get("market_regime") or "").strip() != mr:
+                continue
+            if sec in ("A", "C"):
+                if _pc_bucket(s) != str(pcb):
+                    continue
+            if sec in ("B", "C"):
+                if _hu_bucket(s) != str(hub):
+                    continue
+            matched.append(s)
+
+        baseline = dict(_rollup_eval_base_signal_dict_metrics(matched))
+        base_lw10 = float(baseline.get("lose_worst10_sum_yen_100_shares") or 0.0)
+
+        # z-params per danger feature (+ any feature needed for pairs)
+        z_params: dict[str, Any] = {}
+        for fname in sorted(set(danger_names)):
+            xs = [_get_feat(s, fname) for s in matched]
+            vals = [float(v) for v in xs if isinstance(v, (int, float)) and math.isfinite(float(v))]
+            n0 = len(vals)
+            if n0 <= 0:
+                mu = None
+                sd = None
+            else:
+                mu = float(sum(vals) / float(n0))
+                var = float(sum((float(x) - mu) * (float(x) - mu) for x in vals) / float(n0))
+                sd = float(math.sqrt(var)) if var > 0.0 else 0.0
+            z_params[fname] = {
+                "mean": mu,
+                "stddev": sd,
+                "n_finite_values": int(n0),
+                "z_hi_ge": float(FORWARD_FEATURE_INTERACTION_Z_HI),
+                "z_lo_le": float(FORWARD_FEATURE_INTERACTION_Z_LO),
+            }
+
+        def _feat_z(s: dict[str, Any], fname: str) -> Optional[float]:
+            xp = z_params.get(fname) if isinstance(z_params.get(fname), dict) else {}
+            mu = xp.get("mean")
+            sd = xp.get("stddev")
+            x = _get_feat(s, fname)
+            if x is None or mu is None or sd is None:
+                return None
+            if (not isinstance(sd, (int, float))) or (not math.isfinite(float(sd))) or float(sd) <= 0.0:
+                return None
+            return float((float(x) - float(mu)) / float(sd))
+
+        pair_sections: list[dict[str, Any]] = []
+        if len(danger_names) >= 2:
+            for fa, fb in combinations(danger_names, 2):
+                if feat_where.get(fa) is None or feat_where.get(fb) is None:
+                    continue
+
+                marginal: dict[tuple[str, str], Optional[float]] = {}
+                for f_name in (fa, fb):
+                    for st in states_order:
+                        sub = []
+                        for s in matched:
+                            zz = _feat_z(s, f_name)
+                            if zz is None:
+                                continue
+                            if _zscore_bucket_state(float(zz)) != st:
+                                continue
+                            sub.append(s)
+                        m = dict(_rollup_eval_base_signal_dict_metrics(sub))
+                        marginal[(f_name, st)] = float(m.get("expectancy_yen_100_shares_per_signal") or 0.0) if sub else None
+
+                inter_rows: list[dict[str, Any]] = []
+                for sta in states_order:
+                    for stb in states_order:
+                        subg: list[dict[str, Any]] = []
+                        for s in matched:
+                            za = _feat_z(s, fa)
+                            zb = _feat_z(s, fb)
+                            if za is None or zb is None:
+                                continue
+                            if _zscore_bucket_state(float(za)) != sta:
+                                continue
+                            if _zscore_bucket_state(float(zb)) != stb:
+                                continue
+                            subg.append(s)
+                        if not subg:
+                            continue
+                        m2 = dict(_rollup_eval_base_signal_dict_metrics(subg))
+                        exp_i = float(m2.get("expectancy_yen_100_shares_per_signal") or 0.0)
+                        lw_i = float(m2.get("lose_worst10_sum_yen_100_shares") or 0.0)
+
+                        ea = marginal.get((fa, sta))
+                        eb = marginal.get((fb, stb))
+
+                        singles: list[float] = []
+                        if ea is not None:
+                            singles.append(float(ea))
+                        if eb is not None:
+                            singles.append(float(eb))
+                        max_single = max(singles) if singles else None
+
+                        synergy = None
+                        if max_single is not None:
+                            synergy = float(exp_i - float(max_single))
+
+                        tail_ratio = None
+                        if base_lw10 != 0.0 and math.isfinite(base_lw10):
+                            tail_ratio = float(lw_i / float(base_lw10))
+
+                        disp = _symbol_dispersion_metrics_from_signal_dicts(subg)
+                        excl2 = _exclude_top_symbols_by_expectancy(subg, exclude_top_n=2)
+                        excl2_exp = excl2.get("expectancy_after_excluding_top_symbols_yen_100_shares_per_signal")
+                        eff_sym = float(disp.get("effective_symbol_count") or 0.0)
+                        top1r = float(disp.get("top1_symbol_abs_pnl_ratio") or 0.0)
+
+                        tail_hi = False
+                        if tail_ratio is not None and math.isfinite(float(tail_ratio)) and float(base_lw10) != 0.0:
+                            if float(base_lw10) < 0.0:
+                                tail_hi = abs(float(lw_i)) >= abs(float(base_lw10)) * float(danger_tail_ratio_ge)
+                            else:
+                                tail_hi = float(tail_ratio) >= float(danger_tail_ratio_ge)
+
+                        danger_ic = False
+                        if (
+                            float(exp_i) < 0.0
+                            and tail_hi
+                            and eff_sym >= 3.0
+                            and isinstance(excl2_exp, (int, float))
+                            and math.isfinite(float(excl2_exp))
+                            and float(excl2_exp) < 0.0
+                        ):
+                            danger_ic = True
+
+                        state_lbl = f"{fa}={sta} AND {fb}={stb}"
+                        inter_rows.append(
+                            {
+                                "feature_a": str(fa),
+                                "feature_b": str(fb),
+                                "interaction_state": str(state_lbl),
+                                "state_feature_a": str(sta),
+                                "state_feature_b": str(stb),
+                                "signals": int(m2.get("signals") or 0),
+                                "winrate_pct": float(m2.get("winrate_pct") or 0.0),
+                                "expectancy_yen_100_shares_per_signal": float(exp_i),
+                                "total_pnl_yen_100_shares": float(m2.get("total_pnl_yen_100_shares") or 0.0),
+                                "lose_worst10_sum_yen_100_shares": float(lw_i),
+                                "max_losing_run_yen_100_shares": float(m2.get("max_losing_run_yen_100_shares") or 0.0),
+                                "interaction_expectancy_delta_vs_feature_A": None
+                                if ea is None
+                                else float(exp_i - float(ea)),
+                                "interaction_expectancy_delta_vs_feature_B": None
+                                if eb is None
+                                else float(exp_i - float(eb)),
+                                "interaction_tail_risk_ratio": tail_ratio,
+                                "baseline_lose_worst10_sum_yen_100_shares": float(base_lw10),
+                                "interaction_effective_symbol_count": float(eff_sym),
+                                "interaction_top1_symbol_abs_pnl_ratio": float(top1r),
+                                "interaction_exclude_top2_symbol_expectancy": float(excl2_exp)
+                                if isinstance(excl2_exp, (int, float))
+                                else None,
+                                "single_feature_expectancy_A": float(ea) if ea is not None else None,
+                                "single_feature_expectancy_B": float(eb) if eb is not None else None,
+                                "synergy_score": synergy,
+                                "danger_interaction_candidate": bool(danger_ic),
+                            }
+                        )
+
+                def _syn_sort_key(rr: dict[str, Any]) -> float:
+                    v = rr.get("synergy_score")
+                    return float("inf") if v is None else float(v)
+
+                inter_sorted = sorted(
+                    inter_rows,
+                    key=lambda r: (
+                        _syn_sort_key(r),
+                        float(r.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                    ),
+                )
+                pair_sections.append({"feature_a": fa, "feature_b": fb, "interactions_ranked": inter_sorted})
+
+        out_buckets.append(
+            {
+                "bucket_id": bucket_id,
+                "section": sec,
+                "market_regime": mr,
+                "price_change_bucket": pcb,
+                "delta_hu_bucket": hub,
+                "matched_signals": int(len(matched)),
+                "matched_expectancy_yen_100_shares": float(
+                    baseline.get("expectancy_yen_100_shares_per_signal") or 0.0
+                ),
+                "baseline_metrics": baseline,
+                "danger_features": danger_names,
+                "z_bucket_boundary": {
+                    "z_hi_ge": float(FORWARD_FEATURE_INTERACTION_Z_HI),
+                    "z_lo_le": float(FORWARD_FEATURE_INTERACTION_Z_LO),
+                },
+                "z_bucket_params_per_feature": z_params,
+                "feature_pair_interactions": pair_sections,
+                "interaction_danger_rules": {
+                    "expectancy_lt_0": True,
+                    "tail_amplification_vs_baseline_abs_lose_worst10_ratio_ge": float(danger_tail_ratio_ge),
+                    "interaction_effective_symbol_count_ge": 3.0,
+                    "interaction_exclude_top2_symbol_expectancy_lt_0": True,
+                },
+            }
+        )
+
+    def _prioritized_combo_collapse_interactions(rows_in: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """
+        danger_interaction + eff_sym>=4 + excl_top2_exp<0 のセルのみ抽出し優先順位ソート。
+        戻り: (フラット一覧, interaction_state で代表1行だけ残した一覧 ※主要指標は同状態の最小 synergy / 最小 exp を優先)
+        """
+        flat: list[dict[str, Any]] = []
+        for bkt in rows_in:
+            if not isinstance(bkt, dict):
+                continue
+            bid = str(bkt.get("bucket_id") or "")
+            for pr in bkt.get("feature_pair_interactions") or []:
+                if not isinstance(pr, dict):
+                    continue
+                for r in pr.get("interactions_ranked") or []:
+                    if not isinstance(r, dict):
+                        continue
+                    if not bool(r.get("danger_interaction_candidate", False)):
+                        continue
+                    eff_i = float(r.get("interaction_effective_symbol_count") or 0.0)
+                    if eff_i < 4.0:
+                        continue
+                    excl2_raw = r.get("interaction_exclude_top2_symbol_expectancy")
+                    if (not isinstance(excl2_raw, (int, float))) or (not math.isfinite(float(excl2_raw))) or float(excl2_raw) >= 0.0:
+                        continue
+                    exp_i_f = float(r.get("expectancy_yen_100_shares_per_signal") or 0.0)
+                    ea_raw = r.get("single_feature_expectancy_A")
+                    eb_raw = r.get("single_feature_expectancy_B")
+                    singles_nn: list[float] = []
+                    if isinstance(ea_raw, (int, float)) and math.isfinite(float(ea_raw)):
+                        singles_nn.append(float(ea_raw))
+                    if isinstance(eb_raw, (int, float)) and math.isfinite(float(eb_raw)):
+                        singles_nn.append(float(eb_raw))
+                    max_single = max(singles_nn) if singles_nn else None
+
+                    syn_raw = r.get("synergy_score")
+                    synergy_f = float(syn_raw) if isinstance(syn_raw, (int, float)) and math.isfinite(float(syn_raw)) else None
+
+                    lw10_v = float(r.get("lose_worst10_sum_yen_100_shares") or 0.0)
+                    mxdd_v = float(r.get("max_losing_run_yen_100_shares") or 0.0)
+                    flat.append(
+                        {
+                            "bucket_id": bid,
+                            "feature_a": str(r.get("feature_a") or ""),
+                            "feature_b": str(r.get("feature_b") or ""),
+                            "interaction_state": str(r.get("interaction_state") or ""),
+                            "signals": int(r.get("signals") or 0),
+                            "expectancy": float(exp_i_f),
+                            "expectancy_yen_100_shares_per_signal": float(exp_i_f),
+                            "lose_worst10_sum": lw10_v,
+                            "lose_worst10_sum_yen_100_shares": lw10_v,
+                            "max_losing_run": mxdd_v,
+                            "max_losing_run_yen_100_shares": mxdd_v,
+                            "effective_symbol_count": float(eff_i),
+                            "top1_symbol_abs_pnl_ratio": float(r.get("interaction_top1_symbol_abs_pnl_ratio") or 0.0),
+                            "single_feature_expectancy_max_marginal": max_single,
+                            "single_feature_expectancy_A": float(ea_raw)
+                            if isinstance(ea_raw, (int, float)) and math.isfinite(float(ea_raw))
+                            else None,
+                            "single_feature_expectancy_B": float(eb_raw)
+                            if isinstance(eb_raw, (int, float)) and math.isfinite(float(eb_raw))
+                            else None,
+                            "single_feature_expectancy": max_single,
+                            "interaction_expectancy": float(exp_i_f),
+                            "interaction_expectancy_yen_100_shares_per_signal": float(exp_i_f),
+                            "synergy_score": synergy_f,
+                            "interaction_exclude_top2_symbol_expectancy": float(excl2_raw),
+                            "interaction_tail_risk_ratio": r.get("interaction_tail_risk_ratio"),
+                        }
+                    )
+
+        def _sort_key(rr: dict[str, Any]) -> tuple[float, float, float]:
+            sv = rr.get("synergy_score")
+            syn_k = float("inf") if sv is None else float(sv)
+            exp_k = float(
+                rr.get("interaction_expectancy")
+                or rr.get("expectancy")
+                or rr.get("expectancy_yen_100_shares_per_signal")
+                or rr.get("interaction_expectancy_yen_100_shares_per_signal")
+                or 0.0
+            )
+            eff_k = -float(rr.get("effective_symbol_count") or 0.0)
+            return (syn_k, exp_k, eff_k)
+
+        flat_sorted = sorted(flat, key=_sort_key)
+
+        by_state: dict[str, list[dict[str, Any]]] = {}
+        for row in flat_sorted:
+            st = str(row.get("interaction_state") or "")
+            by_state.setdefault(st, []).append(row)
+
+        one_per_state: list[dict[str, Any]] = []
+        for st, xs in by_state.items():
+            if not xs:
+                continue
+            best = min(xs, key=_sort_key)
+            merged = dict(best)
+            merged["interaction_state"] = st
+            merged["interaction_state_collision_count_across_buckets"] = int(len(xs))
+            merged["bucket_ids_collision_across_buckets"] = [str(x.get("bucket_id") or "") for x in xs]
+            one_per_state.append(merged)
+        one_per_state_sorted = sorted(one_per_state, key=_sort_key)
+
+        return flat_sorted, one_per_state_sorted
+
+    pri_flat, pri_by_state = _prioritized_combo_collapse_interactions(out_buckets)
+
+    return {
+        "note": (
+            "danger_feature_candidate 同士の z-score状態ペアごとに interaction を集計。"
+            " synergy_score = interaction_expectancy - max(single/state marginal expectancy)。AUTO_BLOCKなし。"
+        ),
+        "features": "FORWARD_EDGE_BREAKDOWN_ANALYSIS の danger_feature_candidate=true のみ（上記8 featureの部分集合）",
+        "z_thresholds": {
+            "HIGH_z_ge": float(FORWARD_FEATURE_INTERACTION_Z_HI),
+            "LOW_z_le": float(FORWARD_FEATURE_INTERACTION_Z_LO),
+        },
+        "combo_collapse_filtered_rules": {
+            "danger_interaction_candidate": True,
+            "effective_symbol_count_ge": 4.0,
+            "exclude_top2_symbol_expectancy_lt": 0.0,
+            "priority_sort": ["synergy_score asc", "expectancy asc", "effective_symbol_count desc"],
+            "explain": (
+                "単独 vs 相互作用: synergy_score は interaction_margin - max(単独状態期待値)。"
+                " 優先度は「組み合わせで崩れる」候補を先に並べるため synergy / exp の昇順、分散は eff desc。"
+            ),
+        },
+        "prioritized_combo_collapse_interactions_flat": pri_flat,
+        "prioritized_combo_collapse_interactions_one_row_per_interaction_state": pri_by_state,
+        "buckets": out_buckets,
+    }
+
+
+def _feb_symbol_direction_agreement_for_feature(
+    forward_edge_breakdown_analysis: dict[str, Any], *, bucket_id: str, feature: str
+) -> Optional[float]:
+    """同一 bucket の FORWARD_EDGE で features_ranked から symbol_direction_agreement_ratio を検索。"""
+    feb = forward_edge_breakdown_analysis if isinstance(forward_edge_breakdown_analysis, dict) else {}
+    for bx in feb.get("buckets") or []:
+        if not isinstance(bx, dict):
+            continue
+        if str(bx.get("bucket_id") or "") != str(bucket_id):
+            continue
+        for fr in bx.get("features_ranked") or []:
+            if not isinstance(fr, dict):
+                continue
+            if str(fr.get("feature") or "").strip() != str(feature).strip():
+                continue
+            agr = fr.get("symbol_direction_agreement_ratio")
+            if isinstance(agr, (int, float)) and math.isfinite(float(agr)):
+                return float(agr)
+        return None
+    return None
+
+
+def _feb_win_lose_direction_for_feature(
+    forward_edge_breakdown_analysis: dict[str, Any], *, bucket_id: str, feature: str
+) -> Optional[str]:
+    """FORWARD_EDGE features_ranked の direction（HIGHER_IN_WIN / HIGHER_IN_LOSE / NEUTRAL）。"""
+    feb = forward_edge_breakdown_analysis if isinstance(forward_edge_breakdown_analysis, dict) else {}
+    for bx in feb.get("buckets") or []:
+        if not isinstance(bx, dict):
+            continue
+        if str(bx.get("bucket_id") or "") != str(bucket_id):
+            continue
+        for fr in bx.get("features_ranked") or []:
+            if not isinstance(fr, dict):
+                continue
+            if str(fr.get("feature") or "").strip() != str(feature).strip():
+                continue
+            d = fr.get("direction")
+            return str(d) if d is not None else None
+        return None
+    return None
+
+
+FORWARD_REPRO_FEATURE_STATE_HIGHLIGHT_FEATURES: tuple[str, ...] = (
+    "price_change_pct_from_prev_signal",
+    "delta_high_update_count_before_entry",
+    "delta_rs_vs_topix_pct",
+    "entry_vwap_distance_pct",
+    "pullback_depth_pct",
+)
+
+
+def _parse_ff_interaction_state_to_feature_tokens(state_str: str) -> list[tuple[str, str]]:
+    """'a=HIGH AND b=LOW' → [('a','HIGH'), ('b','LOW')]"""
+    raw = str(state_str or "").strip()
+    if not raw:
+        return []
+    chunks = [x.strip() for x in raw.split(" AND ") if x.strip()]
+    out: list[tuple[str, str]] = []
+    for p in chunks:
+        if "=" not in p:
+            continue
+        k, _, v = p.partition("=")
+        fk = str(k).strip()
+        st = str(v).strip()
+        if fk and st:
+            out.append((fk, st))
+    return out
+
+
+def _build_forward_reproducibility_feature_state_frequency_analysis(
+    forward_edge_breakdown_analysis: dict[str, Any],
+    forward_reproducibility_candidate_interactions_table: list[Any],
+) -> dict[str, Any]:
+    """forward_reproducibility_candidate の interaction を feature=state に分解して frequency と平均指標。"""
+    feb = forward_edge_breakdown_analysis if isinstance(forward_edge_breakdown_analysis, dict) else {}
+    rows_in = forward_reproducibility_candidate_interactions_table or []
+    if not isinstance(rows_in, list):
+        rows_in = []
+
+    def _avg(xs: list[float]) -> Optional[float]:
+        ys = [float(x) for x in xs if isinstance(x, (int, float)) and math.isfinite(float(x))]
+        if not ys:
+            return None
+        return float(sum(ys) / float(len(ys)))
+
+    acc_bt: dict[tuple[str, str], dict[str, Any]] = {}
+
+    feat_dir_ctr: dict[str, dict[str, int]] = {}
+    for row in rows_in:
+        if not isinstance(row, dict):
+            continue
+        istate = str(row.get("interaction_state") or "")
+        toks = _parse_ff_interaction_state_to_feature_tokens(istate)
+        if not toks:
+            continue
+        bid = str(row.get("bucket_id") or "")
+        sigs_i = int(row.get("signals") or 0)
+        eff_i = float(row.get("effective_symbol_count") or 0.0)
+        x2_i = row.get("exclude_top2_symbol_expectancy")
+        x2_f = float(x2_i) if isinstance(x2_i, (int, float)) and math.isfinite(float(x2_i)) else None
+        nrr_i = row.get("negative_run_ratio")
+        nrr_f = float(nrr_i) if isinstance(nrr_i, (int, float)) and math.isfinite(float(nrr_i)) else None
+        exp_i = row.get("expectancy")
+        exp_f = float(exp_i) if isinstance(exp_i, (int, float)) and math.isfinite(float(exp_i)) else None
+
+        tri_raw = row.get("interaction_tail_risk_ratio")
+        tri_f = (
+            float(tri_raw)
+            if isinstance(tri_raw, (int, float)) and math.isfinite(float(tri_raw))
+            else None
+        )
+
+        for fk, st in toks:
+            key = (fk, st)
+            rec = acc_bt.setdefault(
+                key,
+                {
+                    "_nrr_vals": [],
+                    "_exp_vals": [],
+                    "_tail_vals": [],
+                    "_eff_vals": [],
+                    "_x2_vals": [],
+                    "_interaction_rows_seen": 0,
+                    "_signals_accum": 0,
+                },
+            )
+            rec["_interaction_rows_seen"] = int(rec.get("_interaction_rows_seen") or 0) + 1
+            rec["_signals_accum"] = int(rec.get("_signals_accum") or 0) + int(sigs_i)
+            rec["signals_sum"] = int(rec["_signals_accum"])
+            if nrr_f is not None:
+                rec["_nrr_vals"].append(float(nrr_f))
+            if exp_f is not None:
+                rec["_exp_vals"].append(float(exp_f))
+            if tri_f is not None:
+                rec["_tail_vals"].append(float(tri_f))
+            rec["_eff_vals"].append(float(eff_i))
+            if x2_f is not None:
+                rec["_x2_vals"].append(float(x2_f))
+
+        fa0 = str(row.get("feature_a") or "").strip()
+        fb0 = str(row.get("feature_b") or "").strip()
+        for fname in (fa0, fb0):
+            if not fname:
+                continue
+            d0 = _feb_win_lose_direction_for_feature(feb, bucket_id=bid, feature=fname)
+            dc = feat_dir_ctr.setdefault(
+                fname,
+                {"HIGHER_IN_LOSE": 0, "HIGHER_IN_WIN": 0, "NEUTRAL_OR_OTHER": 0},
+            )
+            if str(d0 or "") == "HIGHER_IN_LOSE":
+                dc["HIGHER_IN_LOSE"] = int(dc.get("HIGHER_IN_LOSE", 0)) + 1
+            elif str(d0 or "") == "HIGHER_IN_WIN":
+                dc["HIGHER_IN_WIN"] = int(dc.get("HIGHER_IN_WIN", 0)) + 1
+            else:
+                dc["NEUTRAL_OR_OTHER"] = int(dc.get("NEUTRAL_OR_OTHER", 0)) + 1
+
+    rollup: list[dict[str, Any]] = []
+    for (fk, st), rec in acc_bt.items():
+        rollup.append(
+            {
+                "feature": str(fk),
+                "state": str(st),
+                "feature_state_key": f"{fk}={st}",
+                "signals_sum": int(rec.get("signals_sum") or rec.get("_signals_accum") or 0),
+                "interaction_rows": int(rec.get("_interaction_rows_seen") or 0),
+                "negative_run_ratio_mean": _avg(list(rec.get("_nrr_vals") or [])),
+                "expectancy_mean": _avg(list(rec.get("_exp_vals") or [])),
+                "tail_risk_ratio_mean": _avg(list(rec.get("_tail_vals") or [])),
+                "effective_symbol_count_mean": _avg(list(rec.get("_eff_vals") or [])),
+                "exclude_top2_symbol_expectancy_mean": _avg(list(rec.get("_x2_vals") or [])),
+            }
+        )
+
+    rollup.sort(
+        key=lambda rr: (-int(rr.get("interaction_rows") or 0), -float(rr.get("signals_sum") or 0.0), str(rr.get("feature_state_key")))
+    )
+
+    hl_feats = frozenset(FORWARD_REPRO_FEATURE_STATE_HIGHLIGHT_FEATURES)
+    highlight_only = sorted(
+        [rr for rr in rollup if str(rr.get("feature") or "") in hl_feats],
+        key=lambda rr: (-int(rr.get("interaction_rows") or 0), -float(rr.get("signals_sum") or 0.0), str(rr.get("feature_state_key"))),
+    )
+
+    dir_rows: list[dict[str, Any]] = []
+    for fname, ctr in sorted(feat_dir_ctr.items(), key=lambda z: -int(z[1].get("HIGHER_IN_LOSE", 0))):
+        dct = ctr if isinstance(ctr, dict) else {}
+        dir_rows.append(
+            {
+                "feature": str(fname),
+                "HIGHER_IN_LOSE": int(dct.get("HIGHER_IN_LOSE", 0)),
+                "HIGHER_IN_WIN": int(dct.get("HIGHER_IN_WIN", 0)),
+                "NEUTRAL_OR_OTHER": int(dct.get("NEUTRAL_OR_OTHER", 0)),
+            }
+        )
+
+    return {
+        "note": (
+            "forward_reproducibility_candidate_interactions_table のみ。"
+            " interaction_state は 'feat=STATE' を ' AND ' で分解。"
+            " direction は EDGE の同名 feature と bucket_id で整合（interaction_state token とは別）。analysis only。"
+        ),
+        "cohort_interactions": int(len([x for x in rows_in if isinstance(x, dict)])),
+        "highlight_feature_names": list(FORWARD_REPRO_FEATURE_STATE_HIGHLIGHT_FEATURES),
+        "feature_state_rollups_sorted_by_interaction_rows_desc": rollup,
+        "feature_state_rollups_highlight_features_only_sorted": highlight_only,
+        "direction_counts_by_feature_sorted_hi_lose_desc": dir_rows,
+    }
+
+
+CORE_CLUSTER_WATCH_FEATURES: tuple[str, ...] = (
+    "price_change_pct_from_prev_signal",
+    "delta_high_update_count_before_entry",
+    "delta_rs_vs_topix_pct",
+)
+
+
+def _node_key_feat_state(ft: str, st: str) -> str:
+    return f"{str(ft).strip()}={str(st).strip()}"
+
+
+def _feat_from_node_key(node_key: str) -> str:
+    if "=" not in str(node_key):
+        return str(node_key).strip()
+    return str(node_key).split("=", 1)[0].strip()
+
+
+def _build_forward_reproducibility_core_cluster_analysis(
+    repro_rows_in: list[Any],
+    *,
+    edge_weight_percentile_ge: float = 0.60,
+    min_edge_co_occurrence: int = 1,
+    max_clusters_out: int = 8,
+) -> dict[str, Any]:
+    """
+    forward_reproducibility_candidate 行より feature=state グラフ→強エッジ誘導の連結成分を「共通核」とみなす。
+    銘柄名・時間帯・symbol_daily_entry_index は使わない。analysis only。
+    """
+    rows_in = repro_rows_in or []
+    if not isinstance(rows_in, list):
+        rows_in = []
+
+    node_acc: dict[str, dict[str, Any]] = {}
+    edge_acc: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _node_rec(nk: str) -> dict[str, Any]:
+        return node_acc.setdefault(
+            nk,
+            {
+                "occurrence_count": 0,
+                "_nrr": [],
+                "_exp": [],
+                "_tail": [],
+                "_eff": [],
+            },
+        )
+
+    def _edge_rec(a: str, b: str) -> dict[str, Any]:
+        u, v = (a, b) if a < b else (b, a)
+        return edge_acc.setdefault(
+            (u, v),
+            {
+                "co_occurrence_count": 0,
+                "_exp": [],
+                "_tail": [],
+                "node_u": u,
+                "node_v": v,
+            },
+        )
+
+    for row in rows_in:
+        if not isinstance(row, dict):
+            continue
+        ist = str(row.get("interaction_state") or "")
+        toks = _parse_ff_interaction_state_to_feature_tokens(ist)
+        if len(toks) < 1:
+            continue
+        nodes_row = sorted({_node_key_feat_state(f, s) for f, s in toks})
+        if not nodes_row:
+            continue
+
+        nrr_r = row.get("negative_run_ratio")
+        nrr_f = float(nrr_r) if isinstance(nrr_r, (int, float)) and math.isfinite(float(nrr_r)) else None
+        ex_r = row.get("expectancy")
+        ex_f = float(ex_r) if isinstance(ex_r, (int, float)) and math.isfinite(float(ex_r)) else None
+        tl_r = row.get("interaction_tail_risk_ratio")
+        tl_f = float(tl_r) if isinstance(tl_r, (int, float)) and math.isfinite(float(tl_r)) else None
+        eff_r = row.get("effective_symbol_count")
+        eff_f = float(eff_r) if isinstance(eff_r, (int, float)) and math.isfinite(float(eff_r)) else None
+
+        for nk in nodes_row:
+            r0 = _node_rec(nk)
+            r0["occurrence_count"] = int(r0.get("occurrence_count") or 0) + 1
+            if nrr_f is not None:
+                r0["_nrr"].append(float(nrr_f))
+            if ex_f is not None:
+                r0["_exp"].append(float(ex_f))
+            if tl_f is not None:
+                r0["_tail"].append(float(tl_f))
+            if eff_f is not None:
+                r0["_eff"].append(float(eff_f))
+
+        if len(nodes_row) >= 2:
+            for a, b in combinations(nodes_row, 2):
+                e0 = _edge_rec(a, b)
+                e0["co_occurrence_count"] = int(e0.get("co_occurrence_count") or 0) + 1
+                if ex_f is not None:
+                    e0["_exp"].append(float(ex_f))
+                if tl_f is not None:
+                    e0["_tail"].append(float(tl_f))
+
+    def _mean_list(xs: list[float]) -> Optional[float]:
+        ys = [float(x) for x in xs if isinstance(x, (int, float)) and math.isfinite(float(x))]
+        if not ys:
+            return None
+        return float(sum(ys) / float(len(ys)))
+
+    nodes_out: list[dict[str, Any]] = []
+    for nk, r0 in sorted(node_acc.items(), key=lambda z: -int(z[1].get("occurrence_count") or 0)):
+        nodes_out.append(
+            {
+                "node_key": str(nk),
+                "feature": _feat_from_node_key(nk),
+                "occurrence_count": int(r0.get("occurrence_count") or 0),
+                "avg_negative_run_ratio": _mean_list(list(r0.get("_nrr") or [])),
+                "avg_expectancy": _mean_list(list(r0.get("_exp") or [])),
+                "avg_tail_risk_ratio": _mean_list(list(r0.get("_tail") or [])),
+                "effective_symbol_count_mean": _mean_list(list(r0.get("_eff") or [])),
+            }
+        )
+
+    edges_out: list[dict[str, Any]] = []
+    edge_weights: list[float] = []
+    for (u, v), e0 in edge_acc.items():
+        cc = int(e0.get("co_occurrence_count") or 0)
+        jexp = _mean_list(list(e0.get("_exp") or []))
+        jtail = _mean_list(list(e0.get("_tail") or []))
+        jt = float(jtail) if jtail is not None and math.isfinite(float(jtail)) else 1.0
+        if jt <= 0.0 or (not math.isfinite(jt)):
+            jt = 1.0
+        w = float(cc) * float(jt) * (1.0 + abs(float(jexp)) if jexp is not None and math.isfinite(float(jexp)) else 1.0)
+        edge_weights.append(float(w))
+        edges_out.append(
+            {
+                "node_u": str(u),
+                "node_v": str(v),
+                "co_occurrence_count": int(cc),
+                "joint_expectancy_mean": jexp,
+                "joint_tail_risk_ratio_mean": jtail,
+                "edge_weight_score": float(w),
+            }
+        )
+
+    edges_out.sort(key=lambda e: -float(e.get("edge_weight_score") or 0.0))
+
+    thr_w = 0.0
+    if edge_weights:
+        xs = sorted(edge_weights)
+        idx = int(math.floor(float(edge_weight_percentile_ge) * float(len(xs) - 1)))
+        idx = max(0, min(idx, len(xs) - 1))
+        thr_w = float(xs[idx])
+
+    parent: dict[str, str] = {}
+
+    def _find(x: str) -> str:
+        parent.setdefault(x, x)
+        if parent[x] != x:
+            parent[x] = _find(parent[x])
+        return parent[x]
+
+    def _union(x: str, y: str) -> None:
+        rx, ry = _find(x), _find(y)
+        if rx != ry:
+            parent[rx] = ry
+
+    strong_edges: list[dict[str, Any]] = []
+    for e in edges_out:
+        cc = int(e.get("co_occurrence_count") or 0)
+        if cc < int(min_edge_co_occurrence):
+            continue
+        if float(e.get("edge_weight_score") or 0.0) < float(thr_w):
+            continue
+        strong_edges.append(e)
+        _union(str(e.get("node_u")), str(e.get("node_v")))
+
+    nodes_in_any_strong: set[str] = set()
+    for e in strong_edges:
+        nodes_in_any_strong.add(str(e.get("node_u")))
+        nodes_in_any_strong.add(str(e.get("node_v")))
+
+    comp_nodes: dict[str, set[str]] = {}
+    for nk in sorted(node_acc.keys()):
+        nk_s = str(nk)
+        if nk_s not in nodes_in_any_strong:
+            comp_nodes.setdefault(f"isol::{nk_s}", {nk_s})
+            continue
+        r = _find(nk_s)
+        comp_nodes.setdefault(r, set()).add(nk_s)
+
+    comp_scores: list[tuple[float, int, str, set[str]]] = []
+    for root, nset in comp_nodes.items():
+        occ_sum = 0
+        tail_list: list[float] = []
+        nrr_list: list[float] = []
+        for nk in nset:
+            r0 = node_acc.get(nk) or {}
+            occ_sum += int(r0.get("occurrence_count") or 0)
+            m = _mean_list(list(r0.get("_tail") or []))
+            if m is not None:
+                tail_list.append(float(m))
+            m2 = _mean_list(list(r0.get("_nrr") or []))
+            if m2 is not None:
+                nrr_list.append(float(m2))
+        mean_tail = float(sum(tail_list) / float(len(tail_list))) if tail_list else 1.0
+        mean_nrr = float(sum(nrr_list) / float(len(nrr_list))) if nrr_list else 0.0
+        qual = float(occ_sum) * float(mean_tail) * (1.0 + float(mean_nrr))
+        comp_scores.append((float(qual), int(len(nset)), str(root), set(nset)))
+
+    multi = [(q, ln, rr, ss) for q, ln, rr, ss in comp_scores if int(ln) >= 2]
+    single = [(q, ln, rr, ss) for q, ln, rr, ss in comp_scores if int(ln) == 1]
+
+    ranked_multi = sorted(multi, key=lambda z: (-z[0], -z[1]))
+    ranked_single = sorted(single, key=lambda z: -z[0])
+
+    merged_rank: list[tuple[float, str, set[str]]] = [(q, r, ss) for q, _ln, r, ss in ranked_multi]
+    merged_rank += [(q, r, ss) for q, _ln, r, ss in ranked_single[: max(0, int(max_clusters_out))]]
+    merged_rank.sort(key=lambda z: (-z[0], -len(z[2])))
+    merged_rank = merged_rank[: int(max_clusters_out)]
+
+    clusters_out: list[dict[str, Any]] = []
+    cluster_idx = 0
+    for _qual, _root, nset in merged_rank:
+        if len(nset) <= 0:
+            continue
+        touch_rows = 0
+        eff_vals_c: list[float] = []
+        nrr_vals_c: list[float] = []
+        tail_vals_c: list[float] = []
+        exp_vals_c: list[float] = []
+        for row in rows_in:
+            if not isinstance(row, dict):
+                continue
+            ist = str(row.get("interaction_state") or "")
+            toks = _parse_ff_interaction_state_to_feature_tokens(ist)
+            nks = {_node_key_feat_state(f, s) for f, s in toks}
+            if nks & nset:
+                touch_rows += 1
+                er = row.get("effective_symbol_count")
+                if isinstance(er, (int, float)) and math.isfinite(float(er)):
+                    eff_vals_c.append(float(er))
+                nr = row.get("negative_run_ratio")
+                if isinstance(nr, (int, float)) and math.isfinite(float(nr)):
+                    nrr_vals_c.append(float(nr))
+                tr = row.get("interaction_tail_risk_ratio")
+                if isinstance(tr, (int, float)) and math.isfinite(float(tr)):
+                    tail_vals_c.append(float(tr))
+                ex = row.get("expectancy")
+                if isinstance(ex, (int, float)) and math.isfinite(float(ex)):
+                    exp_vals_c.append(float(ex))
+
+        occ_sum_c = sum(int(node_acc[nk].get("occurrence_count") or 0) for nk in nset)
+
+        feats_in = {_feat_from_node_key(nk) for nk in nset}
+        watch_hits = {wf: bool(wf in feats_in) for wf in CORE_CLUSTER_WATCH_FEATURES}
+
+        clusters_out.append(
+            {
+                "cluster_id": int(cluster_idx),
+                "states": sorted(nset),
+                "frequency": int(touch_rows),
+                "frequency_touching_interactions": int(touch_rows),
+                "node_occurrence_sum": int(occ_sum_c),
+                "cluster_quality_score": float(_qual),
+                "avg_negative_run_ratio": _mean_list(nrr_vals_c),
+                "avg_tail_risk_ratio": _mean_list(tail_vals_c),
+                "avg_expectancy": _mean_list(exp_vals_c),
+                "effective_symbol_count_mean": _mean_list(eff_vals_c),
+                "CORE_CLUSTER_WATCH_FEATURES_present": watch_hits,
+                "explain": (
+                    "連結成分は強エッジ（co_occurrence>=min かつ edge_weight が分位 thr 以上）で union。"
+                    " weight=co_occur*joint_tail*(1+|joint_exp|)。"
+                ),
+            }
+        )
+        cluster_idx += 1
+
+    if not clusters_out and nodes_out:
+        nk0 = str(nodes_out[0].get("node_key") or "")
+        nset0 = {nk0}
+        r0 = node_acc.get(nk0) or {}
+        clusters_out.append(
+            {
+                "cluster_id": 0,
+                "states": sorted(nset0),
+                "frequency": int(r0.get("occurrence_count") or 0),
+                "frequency_touching_interactions": int(r0.get("occurrence_count") or 0),
+                "node_occurrence_sum": int(r0.get("occurrence_count") or 0),
+                "cluster_quality_score": float(r0.get("occurrence_count") or 0),
+                "avg_negative_run_ratio": _mean_list(list(r0.get("_nrr") or [])),
+                "avg_tail_risk_ratio": _mean_list(list(r0.get("_tail") or [])),
+                "avg_expectancy": _mean_list(list(r0.get("_exp") or [])),
+                "effective_symbol_count_mean": _mean_list(list(r0.get("_eff") or [])),
+                "CORE_CLUSTER_WATCH_FEATURES_present": {wf: (wf == _feat_from_node_key(nk0)) for wf in CORE_CLUSTER_WATCH_FEATURES},
+                "explain": "フォールバック: 強エッジなし時は occurrence 最大単一ノードを核とする。",
+            }
+        )
+
+    top_feats_rank: dict[str, Any] = {}
+    if nodes_out:
+        for wf in CORE_CLUSTER_WATCH_FEATURES:
+            hits = [(i, n) for i, n in enumerate(nodes_out) if str(n.get("feature") or "") == wf]
+            top_feats_rank[wf] = {
+                "max_occurrenceAmong_nodes_rank0best": int(hits[0][1].get("occurrence_count") or 0) if hits else 0,
+                "rankAmong_all_nodes_occurrence_sorted": int(hits[0][0]) if hits else None,
+                "in_largest_quality_cluster": bool(
+                    clusters_out and any(wf in {_feat_from_node_key(s) for s in (clusters_out[0].get("states") or [])})
+                ),
+            }
+
+    return {
+        "note": (
+            "forward_reproducibility_candidate_interactions_table 由来の共通核。"
+            " node=feature=state edge=同一 interaction_state 内共起。"
+            " 連結クラスタが「危険状態の共通核」候補。analysis only。"
+        ),
+        "parameters": {
+            "edge_weight_percentile_ge": float(edge_weight_percentile_ge),
+            "min_edge_co_occurrence": int(min_edge_co_occurrence),
+            "max_clusters_out": int(max_clusters_out),
+        },
+        "nodes_sorted_by_occurrence_desc": nodes_out[:80],
+        "edges_sorted_by_weight_desc": edges_out[:120],
+        "strong_edges_kept": strong_edges[:120],
+        "edge_weight_threshold_used": float(thr_w),
+        "clusters": clusters_out,
+        "core_watch_feature_summary": {"watch_features": list(CORE_CLUSTER_WATCH_FEATURES), "per_feature": top_feats_rank},
+    }
+
+
+FORWARD_SPLIT_Z_FEATURE_SOURCES: tuple[tuple[str, str], ...] = (
+    ("price_change_pct_from_prev_signal", "mdf"),
+    ("delta_high_update_count_before_entry", "mdf"),
+    ("delta_rs_vs_topix_pct", "mdf"),
+    ("pullback_depth_pct", "mdf"),
+    ("volume_efficiency_pct", "mdf"),
+    ("entry_vwap_distance_pct", "top"),
+    ("high_update_count_before_entry", "top"),
+    ("delta_entry_vwap_distance_pct", "mdf"),
+    ("delta_first_30m_volume_ratio", "mdf"),
+    ("delta_gap_pct", "mdf"),
+)
+
+_FWD_SPL_FEAT_LOC: dict[str, str] = {f: loc for f, loc in FORWARD_SPLIT_Z_FEATURE_SOURCES}
+
+
+def _forward_split_resolve_periods_path(forward_split_periods_path: str) -> str:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    rel = str(forward_split_periods_path or "").strip()
+    if not rel:
+        rel = os.path.join("configs", "forward_split_periods.json")
+    if os.path.isabs(rel):
+        return rel
+    return os.path.join(script_dir, rel)
+
+
+def _forward_split_iso_date_parse(s: str) -> Optional[date]:
+    raw = str(s or "").strip()[:10]
+    if len(raw) < 10:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _forward_split_load_periods_json(path: str) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """
+    configs/forward_split_periods.json を読み込み。
+    期待形: {\"train\":{\"start\":\"...\",\"end\":\"...\"}, \"validation\":... , \"forward\":...}
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+    if not isinstance(raw, dict):
+        return None, "root must be object"
+    for phase in ("train", "validation", "forward"):
+        blk = raw.get(phase)
+        if not isinstance(blk, dict):
+            return None, f"missing or invalid [{phase}]"
+        sd = _forward_split_iso_date_parse(str(blk.get("start") or ""))
+        ed = _forward_split_iso_date_parse(str(blk.get("end") or ""))
+        if sd is None or ed is None:
+            return None, f"invalid dates in [{phase}]"
+        if sd > ed:
+            return None, f"[{phase}]: start after end"
+    return raw, None
+
+
+def _forward_split_phase_bounds(per: dict[str, Any], phase: str) -> Optional[tuple[date, date]]:
+    blk = per.get(phase)
+    if not isinstance(blk, dict):
+        return None
+    sd = _forward_split_iso_date_parse(str(blk.get("start") or ""))
+    ed = _forward_split_iso_date_parse(str(blk.get("end") or ""))
+    if sd is None or ed is None:
+        return None
+    return sd, ed
+
+
+def _forward_split_union_bounds(per: dict[str, Any]) -> tuple[date, date]:
+    spans: list[tuple[date, date]] = []
+    for ph in ("train", "validation", "forward"):
+        b = _forward_split_phase_bounds(per, ph)
+        if b:
+            spans.append(b)
+    if not spans:
+        return date(2099, 1, 1), date(1970, 1, 1)
+    lo = min(a for a, _ in spans)
+    hi = max(b for _, b in spans)
+    return lo, hi
+
+
+def _forward_split_phase_of_day(day_s: Optional[str], per: dict[str, Any]) -> Optional[str]:
+    d = _forward_split_iso_date_parse(str(day_s or ""))
+    if d is None:
+        return None
+    order = ["train", "validation", "forward"]
+    for ph in order:
+        b = _forward_split_phase_bounds(per, ph)
+        if not b:
+            continue
+        sd, ed = b
+        if sd <= d <= ed:
+            return ph
+    return None
+
+
+def _forward_split_signal_feature_value(signal: dict[str, Any], fname: str) -> Optional[float]:
+    loc = _FWD_SPL_FEAT_LOC.get(str(fname))
+    if loc is None:
+        return None
+    mdf = signal.get("momentum_decay_features") if isinstance(signal.get("momentum_decay_features"), dict) else {}
+    v = signal.get(fname) if loc == "top" else mdf.get(fname)
+    if isinstance(v, (int, float)) and math.isfinite(float(v)):
+        return float(v)
+    return None
+
+
+def _forward_split_mu_sd(vals: list[float]) -> tuple[Optional[float], Optional[float]]:
+    xs = [float(x) for x in vals if isinstance(x, (int, float)) and math.isfinite(float(x))]
+    n0 = len(xs)
+    if n0 <= 0:
+        return None, None
+    mu = float(sum(xs) / float(n0))
+    var = float(sum((float(x) - mu) * (float(x) - mu) for x in xs) / float(n0))
+    sd = float(math.sqrt(var))
+    return float(mu), (float(sd) if sd > 0.0 and math.isfinite(sd) else None)
+
+
+def _forward_split_z_bucket_train(
+    signal: dict[str, Any],
+    fname: str,
+    mu: Any,
+    sd: Any,
+) -> str:
+    x = _forward_split_signal_feature_value(signal, fname)
+    if x is None or mu is None or sd is None or (not math.isfinite(float(sd))) or float(sd) <= 0.0:
+        return "N/A"
+    z = float((float(x) - float(mu)) / float(sd))
+    return _zscore_bucket_state(float(z))
+
+
+def _forward_split_train_z_params(
+    train_cohort: list[dict[str, Any]],
+    features_needed: set[str],
+) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for fname in sorted(features_needed):
+        xs = [_forward_split_signal_feature_value(s, fname) for s in train_cohort]
+        vals = [float(v) for v in xs if isinstance(v, (int, float)) and math.isfinite(float(v))]
+        mu, sd = _forward_split_mu_sd(vals)
+        out[str(fname)] = {
+            "mean": mu,
+            "stddev": sd,
+            "n_finite_train": int(len(vals)),
+            "z_hi_ge": float(FORWARD_FEATURE_INTERACTION_Z_HI),
+            "z_lo_le": float(FORWARD_FEATURE_INTERACTION_Z_LO),
+        }
+    return out
+
+
+def _forward_split_cluster_node_features(cluster_states: list[str]) -> set[str]:
+    feats: set[str] = set()
+    for nk in cluster_states:
+        fk, _, _st = str(nk).partition("=")
+        fk = fk.strip()
+        if fk:
+            feats.add(fk)
+    return feats
+
+
+def _forward_split_signal_matches_cluster(
+    signal: dict[str, Any],
+    *,
+    cluster_node_keys: frozenset[str],
+    z_params_by_feature: dict[str, dict[str, Any]],
+) -> bool:
+    if not cluster_node_keys:
+        return False
+    for nk in cluster_node_keys:
+        fname, _, want = str(nk).partition("=")
+        fname = fname.strip()
+        want = want.strip()
+        if not fname or not want:
+            return False
+        zp = z_params_by_feature.get(fname) if isinstance(z_params_by_feature.get(fname), dict) else {}
+        mu = zp.get("mean")
+        sd = zp.get("stddev")
+        got = _forward_split_z_bucket_train(signal, fname, mu, sd)
+        if got == "N/A" or str(got) != str(want):
+            return False
+    return True
+
+
+def _forward_split_cohort_base_prev(signal_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        out.append(s)
+    return out
+
+
+def _forward_split_metrics_pack(
+    xs: list[dict[str, Any]],
+    *,
+    blocked_signals: int = 0,
+) -> dict[str, Any]:
+    base = dict(_rollup_eval_base_signal_dict_metrics(xs))
+    disp = dict(_symbol_dispersion_metrics_from_signal_dicts(xs))
+    n = int(base.get("signals") or 0)
+    pnls = [float(s.get("pnl_yen_100_shares") or 0.0) for s in xs if isinstance(s, dict)]
+    neg_ct = sum(1 for p in pnls if float(p) < 0.0)
+    return {
+        "signals": int(n),
+        "blocked_signals": int(blocked_signals),
+        "expectancy": float(base.get("expectancy_yen_100_shares_per_signal") or 0.0),
+        "total_pnl": float(base.get("total_pnl_yen_100_shares") or 0.0),
+        "lose_worst10_sum": float(base.get("lose_worst10_sum_yen_100_shares") or 0.0),
+        "max_losing_run": float(base.get("max_losing_run_yen_100_shares") or 0.0),
+        "negative_run_ratio": float(neg_ct / float(n)) if n > 0 else None,
+        "negative_run_ratio_note": "single_split_proxy: fraction of signals with pnl_yen_100_shares<0",
+        "effective_symbol_count": float(disp.get("effective_symbol_count") or 0.0),
+        "run_dispersion_score": None,
+        "run_dispersion_score_note": "replay-repeat run_stability 由来の値は split 単体実行では未定義(null)",
+    }
+
+
+def _forward_split_tail_delta(b0: dict[str, Any], b1: dict[str, Any]) -> dict[str, Any]:
+    def _pick(d: dict[str, Any]) -> tuple[float, float, Optional[float]]:
+        return (
+            float(d.get("lose_worst10_sum") or 0.0),
+            float(d.get("max_losing_run") or 0.0),
+            d.get("negative_run_ratio"),
+        )
+
+    lw0, mr0, nrr0 = _pick(b0)
+    lw1, mr1, nrr1 = _pick(b1)
+    out_nrr = None
+    if isinstance(nrr0, (int, float)) and isinstance(nrr1, (int, float)):
+        out_nrr = float(nrr1) - float(nrr0)
+    return {
+        "lose_worst10_sum_delta": float(lw1 - lw0),
+        "max_losing_run_delta": float(mr1 - mr0),
+        "negative_run_ratio_delta": out_nrr,
+        "principal_eval_note": "主評価は tail risk（lw10・max_losing_run・negative_run_ratio）側の変化優先で見る",
+    }
+
+
+def _forward_split_cluster_reappearance_for_phase(
+    phase: str,
+    phase_cohort: list[dict[str, Any]],
+    *,
+    cluster_node_keys: frozenset[str],
+    z_params_by_feature: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    matched = [
+        s
+        for s in phase_cohort
+        if _forward_split_signal_matches_cluster(s, cluster_node_keys=cluster_node_keys, z_params_by_feature=z_params_by_feature)
+    ]
+    n0 = len(phase_cohort)
+    mcount = len(matched)
+    mm = _forward_split_metrics_pack(matched)
+    overlap = None
+    if cluster_node_keys:
+        hit_nodes = 0
+        nodes_list = list(cluster_node_keys)
+        for nk in nodes_list:
+            fname, _, st = str(nk).partition("=")
+            fname = fname.strip()
+            st = st.strip()
+            zp = z_params_by_feature.get(fname) if isinstance(z_params_by_feature.get(fname), dict) else {}
+            mu = zp.get("mean")
+            sd = zp.get("stddev")
+            ok = False
+            for s in phase_cohort:
+                if _forward_split_z_bucket_train(s, fname, mu, sd) == st:
+                    ok = True
+                    break
+            if ok:
+                hit_nodes += 1
+        overlap = float(hit_nodes) / float(len(nodes_list))
+    ratio = float(mcount) / float(n0) if n0 > 0 else None
+    return {
+        "phase": str(phase),
+        "cluster_match_count": int(mcount),
+        "cluster_match_signal_ratio": ratio,
+        "cluster_match_expectancy": float(mm.get("expectancy") or 0.0) if mcount > 0 else None,
+        "cluster_match_tail_risk": {
+            "lose_worst10_sum": float(mm.get("lose_worst10_sum") or 0.0) if mcount > 0 else None,
+            "max_losing_run": float(mm.get("max_losing_run") or 0.0) if mcount > 0 else None,
+            "negative_run_ratio": mm.get("negative_run_ratio"),
+        },
+        "cluster_state_overlap_ratio": overlap,
+        "overlap_note": "train由来z閾値で各ノード状態がフェーズcohortに1本以上現れるノード割合",
+    }
+
+
+def _build_forward_split_virtual_block_pair(
+    phase_cohort: list[dict[str, Any]],
+    *,
+    cluster_node_keys: frozenset[str],
+    z_params_by_feature: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    matched_idx: set[int] = set()
+    sid_matched = 0
+    for i, s in enumerate(phase_cohort):
+        if _forward_split_signal_matches_cluster(s, cluster_node_keys=cluster_node_keys, z_params_by_feature=z_params_by_feature):
+            matched_idx.add(i)
+            sid_matched += 1
+    virtual_kept = [s for i, s in enumerate(phase_cohort) if i not in matched_idx]
+    baseline = _forward_split_metrics_pack(phase_cohort, blocked_signals=0)
+    vb = _forward_split_metrics_pack(virtual_kept, blocked_signals=int(sid_matched))
+    return {
+        "baseline": baseline,
+        "virtual_block": vb,
+        "tail_risk_comparison": _forward_split_tail_delta(baseline, vb),
+        "explain": (
+            "virtual_block は train 抽出クラスタノードすべてに z一致したシグナルを除外したときのカウンター実験。"
+            " excluded_from_eval は変更しない(analysis only)。"
+        ),
+    }
+
+
+def _forward_split_collect_unique_sorted_days(cohort: list[dict[str, Any]]) -> list[date]:
+    xs: set[date] = set()
+    for s in cohort:
+        if not isinstance(s, dict):
+            continue
+        d = _forward_split_iso_date_parse(str(s.get("day_jst") or ""))
+        if d is not None:
+            xs.add(d)
+    return sorted(xs)
+
+
+def _build_cluster_lifecycle_analysis(
+    train_cohort: list[dict[str, Any]],
+    val_cohort: list[dict[str, Any]],
+    fwd_cohort: list[dict[str, Any]],
+    *,
+    cluster_node_keys: frozenset[str],
+    z_params_by_feature: dict[str, dict[str, Any]],
+    window_business_days: int = 5,
+    tail_explosion_vs_train_multiplier: float = 1.5,
+    coverage_collapse_relative_threshold: float = 0.4,
+    dead_match_signals_max: int = 2,
+    eff_sym_min_healthy: float = 3.0,
+    eff_sym_collapse_below: float = 3.0,
+    expect_eps: float = 1e-6,
+) -> dict[str, Any]:
+    """
+    train 固定クラスタについて validation/forward を営業日チャンクでライフサイクル追跡（analysis only）。
+    """
+    wbd = max(1, int(window_business_days))
+
+    train_matched_full = [
+        s
+        for s in train_cohort
+        if _forward_split_signal_matches_cluster(
+            s, cluster_node_keys=cluster_node_keys, z_params_by_feature=z_params_by_feature
+        )
+    ]
+    train_ref = _forward_split_metrics_pack(train_matched_full)
+    train_lw10 = float(train_ref.get("lose_worst10_sum") or 0.0)
+    train_mt = int(train_ref.get("signals") or 0)
+    train_den_mag = max(1.0, abs(train_lw10))
+
+    def _windows_for_phase(phase_label: str, cohort: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        days_sorted = _forward_split_collect_unique_sorted_days(cohort)
+        if not days_sorted:
+            return []
+
+        chunks: list[list[date]] = []
+        i0 = 0
+        while i0 < len(days_sorted):
+            chunks.append(days_sorted[i0 : i0 + wbd])
+            i0 += wbd
+
+        day_to_sigs: dict[date, list[dict[str, Any]]] = {}
+        for s in cohort:
+            if not isinstance(s, dict):
+                continue
+            d = _forward_split_iso_date_parse(str(s.get("day_jst") or ""))
+            if d is None:
+                continue
+            day_to_sigs.setdefault(d, []).append(s)
+
+        prev_ratio: Optional[float] = None
+        prev_exp: Optional[float] = None
+        out_rows: list[dict[str, Any]] = []
+
+        for wi, dchunk in enumerate(chunks):
+            win_sigs: list[dict[str, Any]] = []
+            for d in dchunk:
+                win_sigs.extend(day_to_sigs.get(d, []))
+            cohort_n = len(win_sigs)
+
+            matched = [
+                x
+                for x in win_sigs
+                if _forward_split_signal_matches_cluster(
+                    x, cluster_node_keys=cluster_node_keys, z_params_by_feature=z_params_by_feature
+                )
+            ]
+            nm = len(matched)
+            pack = _forward_split_metrics_pack(matched)
+            exp_m = float(pack.get("expectancy") or 0.0) if nm > 0 else None
+            ratio = float(nm) / float(cohort_n) if cohort_n > 0 else None
+            lw_m = float(pack.get("lose_worst10_sum") or 0.0) if nm > 0 else None
+            mdd_m = float(pack.get("max_losing_run") or 0.0) if nm > 0 else None
+            nrr_m = pack.get("negative_run_ratio") if nm > 0 else None
+            eff_m = float(pack.get("effective_symbol_count") or 0.0) if nm > 0 else None
+
+            detections: dict[str, bool] = {}
+            explanations: dict[str, str] = {}
+
+            # A expectancy sign flip (matched)
+            if prev_exp is not None and exp_m is not None:
+                detections["expectancy_sign_flip_plus_to_minus"] = bool(float(prev_exp) > expect_eps and float(exp_m) < -expect_eps)
+            else:
+                detections["expectancy_sign_flip_plus_to_minus"] = False
+            explanations["expectancy_sign_flip_plus_to_minus"] = "直前ウィンドウ matched expectancy>0 から <0"
+
+            # B tail explosion vs train matched lw10 magnitude
+            if nm > 0 and lw_m is not None and train_mt >= 3:
+                detections["tail_risk_explosion_vs_train"] = bool(
+                    abs(float(lw_m)) >= float(tail_explosion_vs_train_multiplier) * float(train_den_mag)
+                )
+            else:
+                detections["tail_risk_explosion_vs_train"] = False
+            explanations["tail_risk_explosion_vs_train"] = (
+                f"|lose_worst10| が train matched の {tail_explosion_vs_train_multiplier:g}x 以上 "
+                f"(train_matched n={train_mt}, denom=max(1,|lw10_ref|)={train_den_mag:.1f})"
+            )
+
+            detections["symbol_collapse_eff_lt3"] = bool(nm >= 3 and eff_m is not None and float(eff_m) < float(eff_sym_collapse_below))
+            explanations["symbol_collapse_eff_lt3"] = f"effective_symbol_count < {eff_sym_collapse_below:g}（matched_signals>=3）"
+
+            cov_col = False
+            if ratio is not None and prev_ratio is not None and float(prev_ratio) > 0.05:
+                cov_col = bool(float(ratio) < float(prev_ratio) * float(coverage_collapse_relative_threshold))
+            if ratio is not None and prev_ratio is not None:
+                cov_col = cov_col or (float(prev_ratio) > 0.10 and float(ratio) < 0.02)
+            detections["coverage_collapse_signal_ratio_drop"] = bool(cov_col)
+            explanations["coverage_collapse_signal_ratio_drop"] = (
+                "cluster_match_signal_ratio が前窓対比で急落（または高比率→極低）"
+            )
+
+            lifecycle_phase = "WEAKENING"
+            if nm <= dead_match_signals_max or cohort_n <= 0:
+                lifecycle_phase = "DEAD"
+            elif exp_m is not None and float(exp_m) < -expect_eps:
+                lifecycle_phase = "COLLAPSING"
+            elif detections["tail_risk_explosion_vs_train"]:
+                lifecycle_phase = "COLLAPSING"
+            elif nm >= 3 and detections["symbol_collapse_eff_lt3"]:
+                lifecycle_phase = "COLLAPSING"
+            elif (
+                nm >= max(3, dead_match_signals_max + 1)
+                and exp_m is not None
+                and float(exp_m) > expect_eps
+                and not detections["tail_risk_explosion_vs_train"]
+                and eff_m is not None
+                and float(eff_m) >= float(eff_sym_min_healthy)
+                and not cov_col
+            ):
+                lifecycle_phase = "HEALTHY"
+                if prev_exp is not None and exp_m is not None and float(exp_m) < float(prev_exp) * 0.6:
+                    lifecycle_phase = "WEAKENING"
+            elif lifecycle_phase != "DEAD":
+                lifecycle_phase = "WEAKENING"
+
+            row = {
+                "phase_calendar": phase_label,
+                "window_index_in_phase": int(wi),
+                "window_dates_start": dchunk[0].strftime("%Y-%m-%d") if dchunk else None,
+                "window_dates_end": dchunk[-1].strftime("%Y-%m-%d") if dchunk else None,
+                "business_days_span": len(dchunk),
+                "cohort_signals_in_window": int(cohort_n),
+                "cluster_match_signals": int(nm),
+                "cluster_match_expectancy": exp_m,
+                "cluster_match_signal_ratio": ratio,
+                "cluster_match_negative_ratio": nrr_m,
+                "cluster_match_effective_symbol_count": eff_m,
+                "cluster_match_tail_risk": {
+                    "lose_worst10_sum": lw_m if nm > 0 else None,
+                    "max_losing_run": mdd_m if nm > 0 else None,
+                },
+                "lifecycle_phase": str(lifecycle_phase),
+                "deterioration_flags": detections,
+                "deterioration_notes": explanations,
+            }
+            out_rows.append(row)
+            prev_ratio = ratio if ratio is not None else prev_ratio
+            prev_exp = exp_m if exp_m is not None else prev_exp
+
+        return out_rows
+
+    def _half_life(ws: list[dict[str, Any]]) -> int:
+        n = 0
+        for r in ws:
+            if not isinstance(r, dict):
+                continue
+            if str(r.get("lifecycle_phase")) != "HEALTHY":
+                break
+            n += 1
+        return int(n)
+
+    def _transitions(ws: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out_tr: list[dict[str, Any]] = []
+        prev_p: Optional[str] = None
+        for i, r in enumerate(ws):
+            if not isinstance(r, dict):
+                continue
+            p = str(r.get("lifecycle_phase") or "")
+            if prev_p is not None and p != prev_p:
+                out_tr.append(
+                    {
+                        "at_window_index": int(r.get("window_index_in_phase") or i),
+                        "from_phase": prev_p,
+                        "to_phase": p,
+                        "week_start": r.get("window_dates_start"),
+                    }
+                )
+            prev_p = p
+        return out_tr
+
+    v_win = _windows_for_phase("validation", val_cohort)
+    f_win = _windows_for_phase("forward", fwd_cohort)
+
+    return {
+        "note": (
+            "train 上位クラスタを固定し validation/forward を営業日チャンクで追跡。"
+            " deterioration / phase は heuristic。AUTO_BLOCK なし。analysis only。"
+        ),
+        "window_business_days": int(wbd),
+        "train_reference_cluster_matched": {**dict(train_ref), "train_matched_signals": int(train_mt)},
+        "thresholds_used": {
+            "tail_explosion_vs_train_multiplier": float(tail_explosion_vs_train_multiplier),
+            "coverage_collapse_relative_threshold": float(coverage_collapse_relative_threshold),
+            "dead_match_signals_max": int(dead_match_signals_max),
+            "eff_symbol_min_for_healthy": float(eff_sym_min_healthy),
+            "effective_symbol_count_collapse_lt": float(eff_sym_collapse_below),
+            "principal_display_priority": "tail risk > coverage (ratio, collapse) > effective_symbol_count > expectancy",
+        },
+        "validation": {
+            "windows": v_win,
+            "cluster_half_life_windows": _half_life(v_win),
+            "phase_transitions": _transitions(v_win),
+        },
+        "forward": {
+            "windows": f_win,
+            "cluster_half_life_windows": _half_life(f_win),
+            "phase_transitions": _transitions(f_win),
+        },
+    }
+
+
+def _build_forward_split_validation_analysis(
+    signal_dicts_in: list[Any],
+    *,
+    enabled: bool,
+    periods_path: str,
+) -> dict[str, Any]:
+    if not enabled:
+        return {"enabled": False, "note": "--forward-split-validation 未指定。analysis は生成しない。"}
+    path_abs = _forward_split_resolve_periods_path(periods_path)
+    per, err = _forward_split_load_periods_json(path_abs)
+    if err or not isinstance(per, dict):
+        return {"enabled": True, "error": str(err or "periods_missing"), "periods_path": path_abs}
+
+    sigs_raw = signal_dicts_in if isinstance(signal_dicts_in, list) else []
+
+    cohort_by: dict[str, list[dict[str, Any]]] = {"train": [], "validation": [], "forward": []}
+    other_n = 0
+    unk_day = 0
+    for s in sigs_raw:
+        if not isinstance(s, dict):
+            continue
+        day = s.get("day_jst")
+        ph = _forward_split_phase_of_day(str(day) if day is not None else "", per)
+        if ph is None:
+            if isinstance(day, str) and day.strip():
+                other_n += 1
+            else:
+                unk_day += 1
+            continue
+        cohort_by.setdefault(ph, []).append(s)
+
+    train_cohort = _forward_split_cohort_base_prev(cohort_by.get("train") or [])
+    val_cohort = _forward_split_cohort_base_prev(cohort_by.get("validation") or [])
+    fwd_cohort = _forward_split_cohort_base_prev(cohort_by.get("forward") or [])
+
+    sgc_train = _build_structure_generalization_core_analysis_from_signal_dicts(train_cohort)
+    feb_train = _build_forward_edge_breakdown_analysis_from_signal_dicts(
+        train_cohort,
+        structure_generalization_core_analysis=sgc_train,
+    )
+    ffi_train = _build_forward_feature_interaction_analysis_from_signal_dicts(
+        train_cohort,
+        structure_generalization_core_analysis=sgc_train,
+        forward_edge_breakdown_analysis=feb_train,
+    )
+    stable_tables = _forward_build_stable_negative_interaction_summary_tables(
+        forward_edge_breakdown_analysis=feb_train,
+        forward_feature_interaction_analysis=ffi_train,
+    )
+
+    sns = stable_tables.get("stable_negative_interaction_summaries") if isinstance(stable_tables, dict) else None
+    cca_blob: dict[str, Any] = {}
+    if isinstance(sns, dict):
+        raw_cc = sns.get("FORWARD_REPRODUCIBILITY_CORE_CLUSTER_ANALYSIS")
+        if isinstance(raw_cc, dict):
+            cca_blob = dict(raw_cc)
+
+    clusters = cca_blob.get("clusters") if isinstance(cca_blob.get("clusters"), list) else []
+    top_cluster: dict[str, Any] = dict(clusters[0]) if clusters and isinstance(clusters[0], dict) else {}
+
+    cluster_states_li = top_cluster.get("states") if isinstance(top_cluster.get("states"), list) else []
+    cluster_keys = frozenset(str(x).strip() for x in cluster_states_li if str(x).strip())
+
+    feats_needed = _forward_split_cluster_node_features(list(cluster_keys))
+    z_params = _forward_split_train_z_params(train_cohort, feats_needed)
+
+    virtual_block_analysis: dict[str, Any] = {
+        "train_note": (
+            "virtual_block は未学習期間でのみ差分があるため train 側はカウンター不要。"
+            " baseline のみ。"
+        ),
+        "train_baseline": _forward_split_metrics_pack(train_cohort),
+        "validation": _build_forward_split_virtual_block_pair(
+            val_cohort, cluster_node_keys=cluster_keys, z_params_by_feature=z_params
+        )
+        if val_cohort
+        else {"note": "validation cohort が空"},
+        "forward": _build_forward_split_virtual_block_pair(
+            fwd_cohort, cluster_node_keys=cluster_keys, z_params_by_feature=z_params
+        )
+        if fwd_cohort
+        else {"note": "forward cohort が空"},
+    }
+
+    cra = {
+        "validation": _forward_split_cluster_reappearance_for_phase(
+            "validation",
+            val_cohort,
+            cluster_node_keys=cluster_keys,
+            z_params_by_feature=z_params,
+        ),
+        "forward": _forward_split_cluster_reappearance_for_phase(
+            "forward",
+            fwd_cohort,
+            cluster_node_keys=cluster_keys,
+            z_params_by_feature=z_params,
+        ),
+        "explain": (
+            "再登場確認: validation/forward の cohort に対し train 上位クラスタ全ノード条件を適用。"
+            " symbol_daily_entry_index / 時間帯 / entry回数フィルタは使わない。"
+        ),
+    }
+
+    def _split_summary_row(label: str, xs: list[dict[str, Any]]) -> dict[str, Any]:
+        m = _forward_split_metrics_pack(xs)
+        return {
+            "split": label,
+            "signals": m.get("signals"),
+            "lose_worst10_sum": m.get("lose_worst10_sum"),
+            "max_losing_run": m.get("max_losing_run"),
+            "negative_run_ratio": m.get("negative_run_ratio"),
+            "expectancy": m.get("expectancy"),
+            "effective_symbol_count": m.get("effective_symbol_count"),
+        }
+
+    tbl = [
+        _split_summary_row("train", train_cohort),
+        _split_summary_row("validation", val_cohort),
+        _split_summary_row("forward", fwd_cohort),
+    ]
+
+    clc = _build_cluster_lifecycle_analysis(
+        train_cohort,
+        val_cohort,
+        fwd_cohort,
+        cluster_node_keys=cluster_keys,
+        z_params_by_feature=z_params,
+    )
+
+    return {
+        "enabled": True,
+        "periods_path": path_abs,
+        "periods_config": per,
+        "signals_partition_note": (
+            "day_jst が train/validation/forward の各レンジに落ちないシグナルはカウントだけ保持し "
+            "主分析cohortには含めない。"
+        ),
+        "signals_other_period_outside_ranges": int(other_n),
+        "signals_missing_day_jst": int(unk_day),
+        "feature_z_calibration": {"source": "train_cohort_ONLY", "z_params_by_feature": z_params},
+        "train_only_forward_pipeline_note": (
+            "structure_generalization → forward_edge → forward_feature_interaction → stable_negative は train のみ。"
+            " validation/forward ではクラスタ再計算しない。"
+        ),
+        "train_only_core_cluster": top_cluster if top_cluster else {"note": "train で再現クラスタ無し・空interaction"},
+        "virtual_block_cluster_match_analysis": virtual_block_analysis,
+        "cluster_reappearance_analysis": cra,
+        "split_tail_first_table": tbl,
+        "tail_metrics_priority_note": (
+            "主評価: lose_worst10_sum, max_losing_run, negative_run_ratio（単期 proxy）。"
+            " expectancy / total_pnl は補助。"
+        ),
+        "cluster_lifecycle_analysis": clc,
+    }
+
+
+def _forward_build_stable_negative_interaction_summary_tables(
+    forward_edge_breakdown_analysis: dict[str, Any],
+    forward_feature_interaction_analysis: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    stable_negative_interaction_candidate=true に絞って一覧化。
+    「forward で再現性あり候補」は dispersion / cross-run negativity / EDGE agreement を同時満たすサブセット。
+    """
+    ffi = forward_feature_interaction_analysis if isinstance(forward_feature_interaction_analysis, dict) else {}
+    feb = forward_edge_breakdown_analysis if isinstance(forward_edge_breakdown_analysis, dict) else {}
+    pflat = ffi.get("prioritized_combo_collapse_interactions_flat") or []
+    if not isinstance(pflat, list):
+        pflat = []
+
+    def _row_digest(r: dict[str, Any]) -> dict[str, Any]:
+        bucket_id = str(r.get("bucket_id") or "")
+        fa = str(r.get("feature_a") or "")
+        fb = str(r.get("feature_b") or "")
+        agr_a = _feb_symbol_direction_agreement_for_feature(feb, bucket_id=bucket_id, feature=fa)
+        agr_b = _feb_symbol_direction_agreement_for_feature(feb, bucket_id=bucket_id, feature=fb)
+        ags_nonnull = [x for x in (agr_a, agr_b) if x is not None]
+        agr_pair_min = float(min(ags_nonnull)) if ags_nonnull else None
+
+        x2_raw = r.get("interaction_exclude_top2_symbol_expectancy")
+        exclude_top2: Optional[float]
+        if isinstance(x2_raw, (int, float)) and math.isfinite(float(x2_raw)):
+            exclude_top2 = float(x2_raw)
+        else:
+            exclude_top2 = None
+
+        rs = r.get("run_stability") if isinstance(r.get("run_stability"), dict) else {}
+        nrr_raw = rs.get("negative_run_ratio")
+        negative_run_ratio: Optional[float] = None
+        if isinstance(nrr_raw, (int, float)) and math.isfinite(float(nrr_raw)):
+            negative_run_ratio = float(nrr_raw)
+
+        sigs = int(r.get("signals") or 0)
+        effsym = float(r.get("effective_symbol_count") or 0.0)
+
+        exp_x = r.get("expectancy")
+        if isinstance(exp_x, (int, float)) and math.isfinite(float(exp_x)):
+            expectancy = float(exp_x)
+        else:
+            exp2 = r.get("expectancy_yen_100_shares_per_signal")
+            expectancy = float(exp2) if isinstance(exp2, (int, float)) and math.isfinite(float(exp2)) else None
+        tt = r.get("interaction_tail_risk_ratio")
+        tail_rr = (
+            float(tt)
+            if isinstance(tt, (int, float)) and math.isfinite(float(tt))
+            else None
+        )
+
+        out = {
+            "bucket_id": bucket_id,
+            "feature_a": fa,
+            "feature_b": fb,
+            "interaction_state": str(r.get("interaction_state") or ""),
+            "effective_symbol_count": float(effsym),
+            "exclude_top2_symbol_expectancy": exclude_top2,
+            "negative_run_ratio": negative_run_ratio,
+            "symbol_direction_agreement_ratio": agr_pair_min,
+            "signals": int(sigs),
+            "symbol_direction_agreement_ratio_feature_a": agr_a,
+            "symbol_direction_agreement_ratio_feature_b": agr_b,
+            "expectancy": expectancy,
+            "interaction_tail_risk_ratio": tail_rr,
+        }
+        return out
+
+    stable_rows: list[dict[str, Any]] = []
+    for r in pflat:
+        if not isinstance(r, dict):
+            continue
+        if not bool(r.get("stable_negative_interaction_candidate")):
+            continue
+        stable_rows.append(_row_digest(r))
+
+    def _sort_pri(x: dict[str, Any]) -> tuple[float, float, float, float]:
+        s = float(x.get("signals") or 0.0)
+        nr = float(x.get("negative_run_ratio") or 0.0) if isinstance(x.get("negative_run_ratio"), (int, float)) else float("-inf")
+        agr_v = x.get("symbol_direction_agreement_ratio")
+        agr_k = float(agr_v) if isinstance(agr_v, (int, float)) and math.isfinite(float(agr_v)) else float("-inf")
+        ex2_v = x.get("exclude_top2_symbol_expectancy")
+        ex2_k = float(ex2_v) if isinstance(ex2_v, (int, float)) and math.isfinite(float(ex2_v)) else float("-inf")
+        return (-s, -nr, -agr_k, -ex2_k)
+
+    stable_rows_sorted = sorted(stable_rows, key=_sort_pri)
+
+    repro_thresholds = {
+        "effective_symbol_count_ge": 5.0,
+        "exclude_top2_symbol_expectancy_lt": 0.0,
+        "negative_run_ratio_ge": 0.7,
+        "symbol_direction_agreement_ratio_ge": 0.7,
+        "explain": (
+            "特定銘柄ではなく複数銘柄で繰り返す崩れを見るために、"
+            "銘柄分散(eff≥5・excl2<0)・複数種子でマイナス寄り(run neg ratio)・"
+            "EDGE 上の同名 feature の symbol 同方向一致(agr min) を同時に要求。"
+        ),
+    }
+
+    repro_rows: list[dict[str, Any]] = []
+    for x in stable_rows_sorted:
+        eff = float(x.get("effective_symbol_count") or 0.0)
+        excl2_v = x.get("exclude_top2_symbol_expectancy")
+        agr = x.get("symbol_direction_agreement_ratio")
+        nrr = x.get("negative_run_ratio")
+        if (
+            eff >= float(repro_thresholds["effective_symbol_count_ge"])
+            and isinstance(excl2_v, (int, float))
+            and float(excl2_v) < float(repro_thresholds["exclude_top2_symbol_expectancy_lt"])
+            and isinstance(nrr, (int, float))
+            and float(nrr) >= float(repro_thresholds["negative_run_ratio_ge"])
+            and isinstance(agr, (int, float))
+            and math.isfinite(float(agr))
+            and float(agr) >= float(repro_thresholds["symbol_direction_agreement_ratio_ge"])
+        ):
+            repro_rows.append(dict(x))
+
+    fs_analysis = _build_forward_reproducibility_feature_state_frequency_analysis(feb, repro_rows)
+    core_cluster_analysis = _build_forward_reproducibility_core_cluster_analysis(repro_rows)
+
+    return {
+        "stable_negative_interaction_summaries": {
+            "note": (
+                "prioritized_combo_collapse_interactions_flat の stable_negative_interaction_candidate=true のみ。"
+                " symbol_direction_agreement_ratio は EDGE の同名 feature で min(feature_a_agr,feature_b_agr)。"
+                " analysis only。"
+            ),
+            "reproducibility_forward_candidate_rules": repro_thresholds,
+            "stable_negative_interactions_table": stable_rows_sorted,
+            "forward_reproducibility_candidate_interactions_table": repro_rows,
+            "feature_state_frequency_analysis": fs_analysis,
+            "FORWARD_REPRODUCIBILITY_CORE_CLUSTER_ANALYSIS": core_cluster_analysis,
+        }
+    }
+
+
+def _build_forward_candidate_dispersion_screened_summary_from_signal_dicts(
+    signal_dicts: list[dict[str, Any]],
+    *,
+    structure_generalization_core_analysis: dict[str, Any],
+    forward_edge_breakdown_analysis: dict[str, Any],
+    forward_feature_interaction_analysis: dict[str, Any],
+    min_effective_symbol_count: float = 4.0,
+    min_exclude_top2_symbol_expectancy: float = 0.0,
+    max_top1_symbol_abs_pnl_ratio: float = 0.5,
+) -> dict[str, Any]:
+    """
+    PROFILE / EDGE / INTERACTION の対象 bucket のうち、
+    「matched」単位で銘柄分散フィルタ（eff>=4, excl_top2_exp>0, top1_abs<=0.5）を通過したものだけを抽出。
+    danger_feature / danger_interaction を列挙し、特に direction=HIGHER_IN_LOSE の feature を「危険方向」frequency でも集計。
+    """
+    sgc = structure_generalization_core_analysis if isinstance(structure_generalization_core_analysis, dict) else {}
+    feb = forward_edge_breakdown_analysis if isinstance(forward_edge_breakdown_analysis, dict) else {}
+    ffi = forward_feature_interaction_analysis if isinstance(forward_feature_interaction_analysis, dict) else {}
+    if not sgc:
+        return {"note": "structure_generalization_core_analysis missing", "filtered_buckets": []}
+
+    cohort: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        cohort.append(s)
+
+    pc_edges = [0.0, 0.5, 1.0]
+    pc_labels = ["<=0", "0~0.5", "0.5~1.0", ">=1.0"]
+
+    def _mdf(s: dict[str, Any]) -> dict[str, Any]:
+        return s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+
+    def _pc_bucket(s: dict[str, Any]) -> str:
+        return _bucket_label_by_edges(_mdf(s).get("price_change_pct_from_prev_signal"), pc_edges, pc_labels)
+
+    def _hu_bucket(s: dict[str, Any]) -> str:
+        return _bucket_delta_high_update_count_before_entry(_mdf(s).get("delta_high_update_count_before_entry"))
+
+    bucket_defs: list[dict[str, Any]] = []
+    for sec_key, sec_kind in [
+        ("market_regime_x_price_change", "A"),
+        ("market_regime_x_delta_hu", "B"),
+        ("market_regime_x_price_change_x_delta_hu", "C"),
+    ]:
+        rows = sgc.get(sec_key) or []
+        if not isinstance(rows, list):
+            continue
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            if not bool(r.get("forward_candidate", False)):
+                continue
+            mr = str(r.get("market_regime") or "").strip() or "N/A"
+            pcb = r.get("price_change_pct_from_prev_signal_bucket")
+            hub = r.get("delta_high_update_count_before_entry_bucket")
+            bid = f"{sec_kind}|mr={mr}"
+            if pcb is not None:
+                bid += f"|pc={pcb}"
+            if hub is not None:
+                bid += f"|hu={hub}"
+            bucket_defs.append({"bucket_id": bid, "section": sec_kind, "market_regime": mr, "pcb": pcb, "hub": hub})
+
+    feb_by_id: dict[str, dict[str, Any]] = {}
+    for bx in feb.get("buckets") or []:
+        if isinstance(bx, dict) and bx.get("bucket_id"):
+            feb_by_id[str(bx.get("bucket_id") or "")] = bx
+    ffi_by_id: dict[str, dict[str, Any]] = {}
+    for bx in ffi.get("buckets") or []:
+        if isinstance(bx, dict) and bx.get("bucket_id"):
+            ffi_by_id[str(bx.get("bucket_id") or "")] = bx
+
+    feat_danger_buckets: dict[str, int] = {}
+    feat_danger_hi_lose_buckets: dict[str, int] = {}
+    inter_pair_row_hits: dict[str, int] = {}
+    inter_feat_buckets: dict[str, int] = {}
+    inter_feat_row_hits: dict[str, int] = {}
+
+    filtered_buckets: list[dict[str, Any]] = []
+
+    for bd in bucket_defs:
+        bid = str(bd.get("bucket_id") or "")
+        mr = str(bd.get("market_regime") or "N/A")
+        pcb = bd.get("pcb")
+        hub = bd.get("hub")
+        sec = str(bd.get("section") or "")
+
+        matched: list[dict[str, Any]] = []
+        for s in cohort:
+            if str(s.get("market_regime") or "").strip() != mr:
+                continue
+            if sec in ("A", "C"):
+                if _pc_bucket(s) != str(pcb):
+                    continue
+            if sec in ("B", "C"):
+                if _hu_bucket(s) != str(hub):
+                    continue
+            matched.append(s)
+
+        base = dict(_rollup_eval_base_signal_dict_metrics(matched))
+        disp = dict(_symbol_dispersion_metrics_from_signal_dicts(matched))
+        ex2 = _exclude_top_symbols_by_expectancy(matched, exclude_top_n=2)
+        eff = float(disp.get("effective_symbol_count") or 0.0)
+        ex2e_raw = ex2.get("expectancy_after_excluding_top_symbols_yen_100_shares_per_signal")
+        ex2e = float(ex2e_raw) if isinstance(ex2e_raw, (int, float)) and math.isfinite(float(ex2e_raw)) else None
+        top1 = float(disp.get("top1_symbol_abs_pnl_ratio") or 0.0)
+
+        if (
+            float(eff) < float(min_effective_symbol_count)
+            or ex2e is None
+            or float(ex2e) <= float(min_exclude_top2_symbol_expectancy)
+            or float(top1) > float(max_top1_symbol_abs_pnl_ratio)
+        ):
+            continue
+
+        bfeb = feb_by_id.get(bid) or {}
+        bffi = ffi_by_id.get(bid) or {}
+        dangers: list[dict[str, Any]] = []
+        for r in bfeb.get("features_ranked") or []:
+            if not isinstance(r, dict):
+                continue
+            if not bool(r.get("danger_feature_candidate", False)):
+                continue
+            fn = str(r.get("feature") or "").strip()
+            if not fn:
+                continue
+            direction = str(r.get("direction") or "")
+            dangers.append(
+                {
+                    "feature": fn,
+                    "direction": direction,
+                    "effect_size_mean": r.get("effect_size_mean"),
+                    "tail_minus_all_mean": r.get("tail_minus_all_mean"),
+                    "symbol_direction_agreement_ratio": r.get("symbol_direction_agreement_ratio"),
+                    "danger_feature_candidate": True,
+                }
+            )
+            feat_danger_buckets[fn] = int(feat_danger_buckets.get(fn, 0)) + 1
+            if direction == "HIGHER_IN_LOSE":
+                feat_danger_hi_lose_buckets[fn] = int(feat_danger_hi_lose_buckets.get(fn, 0)) + 1
+
+        dinters: list[dict[str, Any]] = []
+        touched_syms_this_bucket: set[str] = set()
+        for pr in bffi.get("feature_pair_interactions") or []:
+            if not isinstance(pr, dict):
+                continue
+            fa0 = str(pr.get("feature_a") or "").strip()
+            fb0 = str(pr.get("feature_b") or "").strip()
+            for rr in pr.get("interactions_ranked") or []:
+                if not isinstance(rr, dict):
+                    continue
+                if not bool(rr.get("danger_interaction_candidate", False)):
+                    continue
+                dinters.append(
+                    {
+                        "feature_a": fa0,
+                        "feature_b": fb0,
+                        "interaction_state": str(rr.get("interaction_state") or ""),
+                        "signals": int(rr.get("signals") or 0),
+                        "expectancy_yen_100_shares_per_signal": rr.get("expectancy_yen_100_shares_per_signal"),
+                        "interaction_tail_risk_ratio": rr.get("interaction_tail_risk_ratio"),
+                        "synergy_score": rr.get("synergy_score"),
+                        "interaction_effective_symbol_count": rr.get("interaction_effective_symbol_count"),
+                        "danger_interaction_candidate": True,
+                    }
+                )
+                pkey = f"{fa0}||{fb0}||{rr.get('interaction_state')}"
+                inter_pair_row_hits[pkey] = int(inter_pair_row_hits.get(pkey, 0)) + 1
+                for fn2 in (fa0, fb0):
+                    if not fn2:
+                        continue
+                    inter_feat_row_hits[fn2] = int(inter_feat_row_hits.get(fn2, 0)) + 1
+                    if fn2 not in touched_syms_this_bucket:
+                        touched_syms_this_bucket.add(fn2)
+        for fn2 in touched_syms_this_bucket:
+            inter_feat_buckets[fn2] = int(inter_feat_buckets.get(fn2, 0)) + 1
+
+        filtered_buckets.append(
+            {
+                "bucket_id": bid,
+                "section": sec,
+                "market_regime": mr,
+                "price_change_bucket": str(pcb) if pcb is not None else None,
+                "delta_hu_bucket": str(hub) if hub is not None else None,
+                "signals": int(base.get("signals") or 0),
+                "expectancy_yen_100_shares_per_signal": float(base.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                "lose_worst10_sum_yen_100_shares": float(base.get("lose_worst10_sum_yen_100_shares") or 0.0),
+                "max_losing_run_yen_100_shares": float(base.get("max_losing_run_yen_100_shares") or 0.0),
+                "median_symbol_expectancy": float(disp.get("median_symbol_expectancy") or 0.0),
+                "symbol_expectancy_stddev": float(disp.get("symbol_expectancy_stddev") or 0.0),
+                "effective_symbol_count": float(eff),
+                "exclude_top2_symbol_expectancy": float(ex2e),
+                "top1_symbol_abs_pnl_ratio": float(top1),
+                "danger_feature_candidates": dangers,
+                "danger_interaction_candidates": dinters,
+            }
+        )
+
+    filtered_buckets = sorted(filtered_buckets, key=lambda x: int(x.get("signals") or 0), reverse=True)
+
+    freq_rows_feat = sorted(
+        [{"feature": k, "bucket_hits": int(v)} for k, v in feat_danger_buckets.items()],
+        key=lambda z: (-int(z["bucket_hits"]), str(z["feature"])),
+    )
+    freq_rows_hi_lose = sorted(
+        [{"feature": k, "bucket_hits": int(v)} for k, v in feat_danger_hi_lose_buckets.items()],
+        key=lambda z: (-int(z["bucket_hits"]), str(z["feature"])),
+    )
+    inter_pair_rows_build: list[dict[str, Any]] = []
+    for k, v in inter_pair_row_hits.items():
+        parts = str(k).split("||")
+        ia = parts[0] if len(parts) > 0 else ""
+        ib = parts[1] if len(parts) > 1 else ""
+        istate = parts[2] if len(parts) > 2 else ""
+        inter_pair_rows_build.append(
+            {
+                "feature_a": str(ia),
+                "feature_b": str(ib),
+                "interaction_state": str(istate),
+                "row_hits": int(v),
+            }
+        )
+    inter_pair_sorted = sorted(
+        inter_pair_rows_build,
+        key=lambda z: (-int(z["row_hits"]), str(z["feature_a"]), str(z["feature_b"]), str(z["interaction_state"])),
+    )
+    inter_feat_b_sorted = sorted(
+        [{"feature": k, "bucket_reach": int(v)} for k, v in inter_feat_buckets.items()],
+        key=lambda z: (-int(z["bucket_reach"]), str(z["feature"])),
+    )
+    inter_feat_row_sorted = sorted(
+        [{"feature": k, "interaction_row_hits": int(v)} for k, v in inter_feat_row_hits.items()],
+        key=lambda z: (-int(z["interaction_row_hits"]), str(z["feature"])),
+    )
+
+    return {
+        "note": (
+            "FORWARD_CANDIDATE bucket の matched 単位で eff>=4 / excl_top2_exp>0 / top1_abs<=0.5 を適用。"
+            " danger enumerations と frequency（共通の危険 feature / interaction）を付与。"
+        ),
+        "screen_rules": {
+            "effective_symbol_count_ge": float(min_effective_symbol_count),
+            "exclude_top2_symbol_expectancy_gt": float(min_exclude_top2_symbol_expectancy),
+            "top1_symbol_abs_pnl_ratio_max": float(max_top1_symbol_abs_pnl_ratio),
+        },
+        "filtered_bucket_count": int(len(filtered_buckets)),
+        "filtered_buckets": filtered_buckets,
+        "frequency": {
+            "danger_feature_candidate_bucket_hits_by_feature_sorted": freq_rows_feat,
+            "danger_feature_HIGHER_IN_LOSE_bucket_hits_by_feature_sorted": freq_rows_hi_lose,
+            "danger_interaction_pair_state_row_hits_sorted": inter_pair_sorted,
+            "danger_interaction_component_bucket_reach_by_feature_sorted": inter_feat_b_sorted,
+            "danger_interaction_component_interaction_row_hits_by_feature_sorted": inter_feat_row_sorted,
+            "explain": {
+                "danger_feature_bucket_hits": "当該 feature が danger_feature_candidate=true だった filtered bucket 数",
+                "danger_feature_HIGHER_IN_LOSE": "上記のうち edge direction が HIGHER_IN_LOSE のもののみ（テール劣化との組合せ済み danger）",
+                "interaction_pair_row_hits": "filtered bucket を横断した danger_interaction セル総数（同型セル複数カウント）",
+                "interaction_bucket_reach": "少なくとも1件の danger interaction にその feature が現れた filtered bucket 数",
+            },
+        },
+    }
+
+
+def _expectancy_drop_ratio(before_exp: float, after_exp: float) -> Optional[float]:
+    if before_exp is None or (not isinstance(before_exp, (int, float))) or (not math.isfinite(float(before_exp))):
+        return None
+    b = float(before_exp)
+    if abs(b) <= 1e-12:
+        return None
+    return float((float(before_exp) - float(after_exp)) / abs(float(before_exp)))
+
+
+def _bucket_hu_transition_delta(n: Any) -> str:
+    """delta_high_update_count_before_entry 用（STRUCTURE/Tail 用の粗いbucket）。"""
+    if n is None:
+        return "N/A"
+    try:
+        v = int(float(n))
+    except Exception:
+        return "N/A"
+    if v <= -1:
+        return "<=-1"
+    if v == 0:
+        return "0"
+    if v == 1:
+        return "+1"
+    return ">=+2"
+
+
+def _bucket_extension_bucket_for_tail(x: Any) -> str:
+    """TAIL_RISK 用の extension bucket（0〜想定。負値は 0 扱い）。"""
+    if x is None or (not isinstance(x, (int, float))) or (not math.isfinite(float(x))):
+        return "N/A"
+    v = float(x)
+    if v < 0.0:
+        v = 0.0
+    if v < 0.3:
+        return "0~0.3"
+    if v < 0.5:
+        return "0.3~0.5"
+    if v < 0.8:
+        return "0.5~0.8"
+    if v < 1.2:
+        return "0.8~1.2"
+    return ">=1.2"
+
+
+def _bucket_extension_vs_pullback(ext: Any, pb: Any) -> str:
+    """STRUCTURE 用: extension (>=0.5) × pullback_depth_pct (<=0.2) の2値×2値bucket。"""
+    if ext is None or pb is None:
+        return "N/A"
+    if (not isinstance(ext, (int, float))) or (not math.isfinite(float(ext))):
+        return "N/A"
+    if (not isinstance(pb, (int, float))) or (not math.isfinite(float(pb))):
+        return "N/A"
+    ext_ge = float(ext) >= 0.5
+    pb_le = float(pb) <= 0.2
+    return f"EXT{'>=' if ext_ge else '<'}0.5 & PB{'<=' if pb_le else '>'}0.2"
+
+
+def _bucket_rs_continuation(drs: Any) -> str:
+    edges = [-1.0, 0.0, 1.0]
+    labels = ["<=-1", "-1~0", "0~+1", ">=+1"]
+    return _bucket_label_by_edges(drs if isinstance(drs, (int, float)) else None, edges, labels)
+
+
+def _bucket_entry_vwap_distance_tail(x: Any) -> str:
+    vdist_edges = [0.5, 1.0, 1.5, 2.0]
+    vdist_labels = ["<=0.5", "0.5~1.0", "1.0~1.5", "1.5~2.0", ">=2.0"]
+    return _bucket_label_by_edges(x if isinstance(x, (int, float)) else None, vdist_edges, vdist_labels)
+
+
+def _structure_extension_risk_score_from_signal_dict(s: dict[str, Any]) -> int:
+    """
+    analysis-only の合成スコア。symbol / 時間帯 / 何本目系は参照しない。
+    forward leak 防止: signal dict の当該時点特徴量のみを使用する。
+    """
+    if not isinstance(s, dict):
+        return 0
+    score = 0
+    try:
+        mr = str(s.get("market_regime") or "").strip().upper()
+        if mr != "STRONG":
+            return 0
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        pc = mdf.get("price_change_pct_from_prev_signal")
+        if not isinstance(pc, (int, float)) or (not math.isfinite(float(pc))):
+            return 0
+        vpc = float(pc)
+        if not (0.5 <= vpc < 1.0):
+            return 0
+        score += 2
+
+        dh = mdf.get("delta_high_update_count_before_entry")
+        try:
+            if int(float(dh)) == 1:
+                score += 2
+        except Exception:
+            pass
+
+        vdw = s.get("entry_vwap_distance_pct")
+        if isinstance(vdw, (int, float)) and math.isfinite(float(vdw)) and float(vdw) >= 1.0:
+            score += 1
+
+        drs = mdf.get("delta_rs_vs_topix_pct")
+        if isinstance(drs, (int, float)) and math.isfinite(float(drs)) and float(drs) <= 0.0:
+            score += 1
+
+        pb = mdf.get("pullback_depth_pct")
+        if isinstance(pb, (int, float)) and math.isfinite(float(pb)) and float(pb) <= 0.2:
+            score += 1
+    except Exception:
+        return int(score)
+    return int(score)
+
+
+def _bucket_structure_risk_score(n: Any) -> str:
+    if n is None:
+        return "N/A"
+    try:
+        v = int(float(n))
+    except Exception:
+        return "N/A"
+    if v <= 0:
+        return "0"
+    if v == 1:
+        return "1"
+    if v == 2:
+        return "2"
+    if v == 3:
+        return "3"
+    if v == 4:
+        return "4"
+    return "5+"
+
+
+def _group_rollup_base_eval_rows(
+    signal_dicts: list[dict[str, Any]],
+    *,
+    bucket_key_name: str,
+    bucket_fn,
+    include_symbol_dispersion: bool = False,
+) -> list[dict[str, Any]]:
+    """BASE eval signal dict を bucket_fn で group し、必要指標を rollup して signals desc で返す。"""
+    acc: dict[str, list[dict[str, Any]]] = {}
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        b = str(bucket_fn(s) or "N/A")
+        if not b or b == "N/A":
+            continue
+        acc.setdefault(b, []).append(s)
+
+    rows: list[dict[str, Any]] = []
+    for b, xs in acc.items():
+        m = dict(_rollup_eval_base_signal_dict_metrics(xs))
+        row = {
+            bucket_key_name: str(b),
+            "signals": int(m.get("signals") or 0),
+            "winrate_pct": float(m.get("winrate_pct") or 0.0),
+            "avg_expectancy_yen_100_shares": float(m.get("expectancy_yen_100_shares_per_signal") or 0.0),
+            "total_pnl_yen_100_shares": float(m.get("total_pnl_yen_100_shares") or 0.0),
+            "lose_worst10_sum_yen_100_shares": float(m.get("lose_worst10_sum_yen_100_shares") or 0.0),
+            "max_losing_run_yen_100_shares": float(m.get("max_losing_run_yen_100_shares") or 0.0),
+        }
+        if bool(include_symbol_dispersion):
+            row.update(_symbol_dispersion_metrics_from_signal_dicts(xs))
+        rows.append(row)
+    return sorted(rows, key=lambda x: int(x.get("signals") or 0), reverse=True)
+
+
+def _exclude_top_symbols_by_expectancy(
+    signal_dicts: list[dict[str, Any]],
+    *,
+    exclude_top_n: int,
+) -> dict[str, Any]:
+    """
+    与えられた signal dict 集合の中で、銘柄別期待値が上位の銘柄を exclude_top_n 個除外した後の expectancy。
+    （min_signals の制約は設けず、bucket が小さくても出せるようにする）
+    """
+    base = dict(_rollup_eval_base_signal_dict_metrics(signal_dicts))
+    exp_before = float(base.get("expectancy_yen_100_shares_per_signal") or 0.0)
+    by_sym: dict[str, list[dict[str, Any]]] = {}
+    for s in signal_dicts:
+        sym = str(s.get("symbol") or "").strip()
+        if not sym:
+            continue
+        by_sym.setdefault(sym, []).append(s)
+
+    sym_rows: list[dict[str, Any]] = []
+    for sym, xs in by_sym.items():
+        m = dict(_rollup_eval_base_signal_dict_metrics(xs))
+        sym_rows.append(
+            {
+                "symbol": sym,
+                "signals": int(m.get("signals") or 0),
+                "expectancy": float(m.get("expectancy_yen_100_shares_per_signal") or 0.0),
+            }
+        )
+    ranked = sorted(sym_rows, key=lambda r: float(r.get("expectancy") or 0.0), reverse=True)
+    excl = [str(r.get("symbol") or "") for r in ranked[: max(0, int(exclude_top_n))] if str(r.get("symbol") or "")]
+    excl_set = set(excl)
+    kept = [s for s in signal_dicts if str(s.get("symbol") or "") not in excl_set]
+    after = dict(_rollup_eval_base_signal_dict_metrics(kept))
+    exp_after = float(after.get("expectancy_yen_100_shares_per_signal") or 0.0)
+    return {
+        "excluded_symbols": list(excl),
+        "expectancy_before_yen_100_shares_per_signal": float(exp_before),
+        "expectancy_after_excluding_top_symbols_yen_100_shares_per_signal": float(exp_after),
+        "expectancy_drop_ratio": _expectancy_drop_ratio(exp_before, exp_after),
+        "signals_after": int(after.get("signals") or 0),
+        "total_pnl_after_yen_100_shares": float(after.get("total_pnl_yen_100_shares") or 0.0),
+    }
+
+
+def _build_structure_risk_score_generalization_analysis_from_signal_dicts(
+    signal_dicts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    STRUCTURE_RISK_SCORE の bucket ごとに、
+    「スクリーニングが “銘柄名ではなく再現可能な構造” を拾えているか」を確認するための分析（analysis only）。
+
+    観点:
+    - 高成績銘柄（例: 6920.T / 6857.T）が高成績なのは、scoreや feature 状態で説明できるか
+    - 高成績 bucket に他銘柄も（少数でも）含まれているか
+    - top2 を除くと expectancy が崩壊するなら “銘柄固有依存” の疑い
+    - top2 を除いても expectancy が残るなら “構造再現” の可能性
+
+    対象: excluded_from_eval=False, BASE（prev_signal_exists 条件は付けない）。
+    """
+    cohort: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        cohort.append(s)
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for s in cohort:
+        b = _bucket_structure_risk_score(s.get("structure_extension_risk_score"))
+        if b == "N/A":
+            continue
+        groups.setdefault(b, []).append(s)
+
+    out_rows: list[dict[str, Any]] = []
+    for b, xs in groups.items():
+        m = dict(_rollup_eval_base_signal_dict_metrics(xs))
+
+        ex1 = _exclude_top_symbols_by_expectancy(xs, exclude_top_n=1)
+        ex2 = _exclude_top_symbols_by_expectancy(xs, exclude_top_n=2)
+        ex3 = _exclude_top_symbols_by_expectancy(xs, exclude_top_n=3)
+
+        # bucket内 symbol別（expectancy desc top5）
+        by_sym: dict[str, list[dict[str, Any]]] = {}
+        for s in xs:
+            sym = str(s.get("symbol") or "").strip()
+            if not sym:
+                continue
+            by_sym.setdefault(sym, []).append(s)
+        sym_rows: list[dict[str, Any]] = []
+        for sym, ys in by_sym.items():
+            mm = dict(_rollup_eval_base_signal_dict_metrics(ys))
+            sym_rows.append(
+                {
+                    "symbol": str(sym),
+                    "signals": int(mm.get("signals") or 0),
+                    "expectancy_yen_100_shares_per_signal": float(
+                        mm.get("expectancy_yen_100_shares_per_signal") or 0.0
+                    ),
+                    "total_pnl_yen_100_shares": float(mm.get("total_pnl_yen_100_shares") or 0.0),
+                }
+            )
+        sym_rows_sorted = sorted(
+            sym_rows,
+            key=lambda r: float(r.get("expectancy_yen_100_shares_per_signal") or 0.0),
+            reverse=True,
+        )[:5]
+
+        # screening sanity helpers
+        uniq_symbols = sorted([str(k) for k in by_sym.keys() if str(k)])
+        top2_syms = list(ex2.get("excluded_symbols") or [])
+        top2_set = set([str(x) for x in top2_syms if str(x)])
+        other_symbols = [s for s in uniq_symbols if s not in top2_set]
+        key_syms = ["6920.T", "6857.T"]
+        present_key_syms = [k for k in key_syms if k in set(uniq_symbols)]
+
+        out_rows.append(
+            {
+                "structure_risk_score_bucket": str(b),
+                "unique_symbols": int(len(uniq_symbols)),
+                "unique_symbols_list_top10": list(uniq_symbols[:10]),
+                "other_symbols_count_excluding_top2": int(len(other_symbols)),
+                "contains_key_symbols": bool(len(present_key_syms) > 0),
+                "present_key_symbols": list(present_key_syms),
+                **_symbol_dispersion_metrics_from_signal_dicts(xs),
+                # 1) stats
+                "signals": int(m.get("signals") or 0),
+                "winrate_pct": float(m.get("winrate_pct") or 0.0),
+                "avg_expectancy_yen_100_shares": float(m.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                "total_pnl_yen_100_shares": float(m.get("total_pnl_yen_100_shares") or 0.0),
+                "lose_worst10_sum_yen_100_shares": float(m.get("lose_worst10_sum_yen_100_shares") or 0.0),
+                "max_losing_run_yen_100_shares": float(m.get("max_losing_run_yen_100_shares") or 0.0),
+                # 2) exclude topN expectancy symbols (within bucket)
+                "exclude_top1_symbol_expectancy": float(
+                    ex1.get("expectancy_after_excluding_top_symbols_yen_100_shares_per_signal") or 0.0
+                ),
+                "exclude_top2_symbol_expectancy": float(
+                    ex2.get("expectancy_after_excluding_top_symbols_yen_100_shares_per_signal") or 0.0
+                ),
+                "exclude_top3_symbol_expectancy": float(
+                    ex3.get("expectancy_after_excluding_top_symbols_yen_100_shares_per_signal") or 0.0
+                ),
+                # 3) excluded symbols
+                "excluded_symbols_top1": list(ex1.get("excluded_symbols") or []),
+                "excluded_symbols_top2": list(ex2.get("excluded_symbols") or []),
+                "excluded_symbols_top3": list(ex3.get("excluded_symbols") or []),
+                # 4) concentration
+                "symbol_contribution_top2_abs_pnl_ratio": float(
+                    _symbol_contribution_top2_abs_pnl_ratio_from_signal_dicts(xs)
+                ),
+                "symbol_contribution_top3_abs_pnl_ratio": float(
+                    _symbol_contribution_top3_abs_pnl_ratio_from_signal_dicts(xs)
+                ),
+                # 5) top symbols in bucket
+                "top_symbols_by_expectancy": list(sym_rows_sorted),
+            }
+        )
+
+    return sorted(out_rows, key=lambda r: int(r.get("signals") or 0), reverse=True)
 
 
 def _parse_hhmm_to_minutes(hhmm: str) -> Optional[int]:
@@ -11483,10 +16238,9 @@ def run_signal_filter_sweep(
         print(f"[{now_str()}] signal_filter sweep: config生成に失敗しました。")
         return 2
 
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"signal_filter_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"signal_filter_sweep_{sweep_stamp}", script_dir=script_dir)
 
     print(f"[{now_str()}] signal_filter sweep: configs={len(cfg_paths)} ranges={ranges} repeat={n_repeat}")
     print(f"[{now_str()}] sweep_root: {sweep_root}")
@@ -11534,8 +16288,7 @@ def run_signal_filter_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             for i in range(1, int(n_repeat) + 1):
                 seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
@@ -11582,6 +16335,7 @@ def run_signal_filter_sweep(
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
                     regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
                     signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
                     signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
                     signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
@@ -11880,10 +16634,9 @@ def run_composite_filter_sweep(
         print(f"[{now_str()}] composite_filter sweep: config生成に失敗しました。")
         return 2
 
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"composite_filter_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"composite_filter_sweep_{sweep_stamp}", script_dir=script_dir)
 
     print(f"[{now_str()}] composite_filter sweep: configs={len(cfg_paths)} ranges={ranges} repeat={n_repeat}")
     print(f"[{now_str()}] sweep_root: {sweep_root}")
@@ -11926,8 +16679,7 @@ def run_composite_filter_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             for i in range(1, int(n_repeat) + 1):
                 seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
@@ -11974,6 +16726,7 @@ def run_composite_filter_sweep(
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
                     regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
                     signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
                     signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
                     signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
@@ -12169,10 +16922,9 @@ def run_regime_control_sweep(
     script_dir = os.path.dirname(os.path.abspath(__file__))
     ranges = list(SWEEP_REPLAY_RANGES)
     sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"regime_control_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"regime_control_sweep_{sweep_stamp}", script_dir=script_dir)
 
     cells: list[tuple[str, str, str]] = [
         ("mb", "morning_baseline", os.path.join("configs", "replay_morning_vwap2_dd30k_rlt50.json")),
@@ -12209,8 +16961,7 @@ def run_regime_control_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             for i in range(1, int(n_repeat) + 1):
                 seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
@@ -12259,6 +17010,7 @@ def run_regime_control_sweep(
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
                     regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
                     signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
                     signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
                     signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
@@ -12536,10 +17288,9 @@ def run_weak_risk_filter_sweep(
     script_dir = os.path.dirname(os.path.abspath(__file__))
     ranges = list(SWEEP_REPLAY_RANGES)
     sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"weak_risk_filter_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"weak_risk_filter_sweep_{sweep_stamp}", script_dir=script_dir)
 
     p_morning = _resolve_replay_config_path(os.path.join("configs", "replay_morning_vwap2_dd30k_rlt50.json"))
     p_full = _resolve_replay_config_path(os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json"))
@@ -12579,8 +17330,7 @@ def run_weak_risk_filter_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             for i in range(1, int(n_repeat) + 1):
                 seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
@@ -12629,6 +17379,7 @@ def run_weak_risk_filter_sweep(
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
                     regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
                     signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
                     signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
                     signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
@@ -12863,10 +17614,9 @@ def run_strong_risk_filter_sweep(
     script_dir = os.path.dirname(os.path.abspath(__file__))
     ranges: tuple[str, ...] = ("random_apr",)
     sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"strong_risk_filter_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"strong_risk_filter_sweep_{sweep_stamp}", script_dir=script_dir)
 
     p_full = _resolve_replay_config_path(os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json"))
     mode_paths = _write_strong_risk_filter_sweep_configs(script_dir)
@@ -12904,8 +17654,7 @@ def run_strong_risk_filter_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             for i in range(1, int(n_repeat) + 1):
                 seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
@@ -12954,6 +17703,7 @@ def run_strong_risk_filter_sweep(
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
                     regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
                     signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
                     signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
                     signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
@@ -13140,6 +17890,64 @@ def _aggregate_strong_combo_filter_sweep_summaries(run_summaries: list[dict[str,
     return out
 
 
+def _aggregate_weak_combo_filter_sweep_summaries(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    weak_combo_filter sweep 用: weak_combo の skip/virtual と eval_by_market_regime を run 合算。
+    """
+    base = _aggregate_replay_repeat_run_summaries(run_summaries)
+    combo_skip = 0
+    combo_virt_pnl = 0.0
+    combo_virt_resolved = 0
+    mr_acc: dict[str, dict[str, float]] = {
+        rk: {"signals": 0.0, "pnl_sum": 0.0, "lw10_sum": 0.0} for rk in ("STRONG", "NORMAL", "WEAK", "CRASH")
+    }
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        cf = _combo_filter_analysis_dict_from_report(rep)
+        wc = cf.get("weak_combo_filter") if isinstance(cf.get("weak_combo_filter"), dict) else {}
+        combo_skip += int(wc.get("skipped_signals_count") or 0)
+        vpa = wc.get("virtual_pnl_analysis") if isinstance(wc.get("virtual_pnl_analysis"), dict) else {}
+        combo_virt_pnl += float(vpa.get("total_pnl_yen_100_shares") or 0.0)
+        br = vpa.get("by_reason") if isinstance(vpa.get("by_reason"), dict) else {}
+        for row in br.values():
+            if isinstance(row, dict):
+                combo_virt_resolved += int(row.get("virtual_resolved_count") or 0)
+        ov = rep.get("overall_summary") or {}
+        rc = ov.get("regime_controls") if isinstance(ov.get("regime_controls"), dict) else {}
+        evmr = rc.get("eval_by_market_regime") if isinstance(rc.get("eval_by_market_regime"), dict) else {}
+        if evmr:
+            for rk in mr_acc:
+                row = evmr.get(rk)
+                if not isinstance(row, dict):
+                    continue
+                mr_acc[rk]["signals"] += float(row.get("signals") or 0)
+                mr_acc[rk]["pnl_sum"] += float(row.get("total_pnl_yen_100_shares") or 0.0)
+                mr_acc[rk]["lw10_sum"] += float(row.get("lose_worst10_sum_yen_100_shares") or 0.0)
+
+    mr_out: dict[str, dict[str, Any]] = {}
+    for rk, acc in mr_acc.items():
+        n_sig = int(acc["signals"])
+        pnl_tot = float(acc["pnl_sum"])
+        mr_out[rk] = {
+            "signals": int(n_sig),
+            "total_pnl_yen_100_shares": float(pnl_tot),
+            "avg_expectancy_yen_100_shares": float(pnl_tot / float(n_sig)) if n_sig > 0 else 0.0,
+            "lose_worst10_sum_yen_100_shares": float(acc["lw10_sum"]),
+        }
+
+    out = dict(base)
+    out["weak_combo_filter_cell_aggregate"] = {
+        "combo_skipped_signals_total": int(combo_skip),
+        "combo_virtual_resolved_total": int(combo_virt_resolved),
+        "combo_virtual_pnl_sum": float(combo_virt_pnl),
+        "combo_virtual_avg_expectancy_if_skipped": (
+            float(combo_virt_pnl / float(combo_virt_resolved)) if int(combo_virt_resolved) > 0 else 0.0
+        ),
+        "eval_by_market_regime_summed_over_runs": dict(mr_out),
+    }
+    return out
+
+
 def _write_strong_combo_filter_sweep_configs(script_dir: str) -> dict[str, str]:
     """
     configs/strong_combo_filter_sweep/ に HU2 / HU1or2 の strong_combo_filter を書き出す。
@@ -13215,10 +18023,9 @@ def run_strong_combo_filter_sweep(
     script_dir = os.path.dirname(os.path.abspath(__file__))
     ranges: tuple[str, ...] = ("random_apr",)
     sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"strong_combo_filter_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"strong_combo_filter_sweep_{sweep_stamp}", script_dir=script_dir)
 
     p_full = _resolve_replay_config_path(os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json"))
     mode_paths = _write_strong_combo_filter_sweep_configs(script_dir)
@@ -13253,8 +18060,7 @@ def run_strong_combo_filter_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             for i in range(1, int(n_repeat) + 1):
                 seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
@@ -13303,6 +18109,7 @@ def run_strong_combo_filter_sweep(
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
                     regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
                     signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
                     signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
                     signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
@@ -13431,6 +18238,1333 @@ def run_strong_combo_filter_sweep(
     return 0
 
 
+def _write_weak_combo_filter_sweep_configs(script_dir: str) -> dict[str, str]:
+    """
+    configs/weak_combo_filter_sweep/ に rrthr_45 ベースと WEAK 用 weak_combo_filter バリアントを書き出す。
+    """
+    base_rel = os.path.join(
+        "configs",
+        "rising_ratio_threshold_sweep",
+        "replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15_rrthr_45.json",
+    )
+    base_path = _resolve_replay_config_path(base_rel)
+    base_cfg = _load_replay_config(base_path) if base_path else {}
+    if not base_cfg:
+        return {}
+    sweep_dir = os.path.join(script_dir, "configs", "weak_combo_filter_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+    bn = str(base_cfg.get("name") or "replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15_rrthr_45")
+    out_paths: dict[str, str] = {}
+
+    cfg_bl = json.loads(json.dumps(base_cfg))
+    cfg_bl.pop("_path", None)
+    cfg_bl["name"] = f"{bn}_wcf_baseline"
+    path_bl = os.path.join(sweep_dir, f"{bn}_wcf_baseline.json")
+    with open(path_bl, "w", encoding="utf-8") as fw:
+        json.dump(cfg_bl, fw, ensure_ascii=False, indent=2)
+    out_paths["baseline"] = os.path.abspath(path_bl)
+
+    variants: dict[str, dict[str, Any]] = {
+        "w_vwap15": {
+            "enabled": True,
+            "block_conditions": [
+                {
+                    "market_regime": "WEAK",
+                    "entry_vwap_distance_pct_ge": 1.5,
+                    "reason": "WEAK_VWAP15_SKIP",
+                }
+            ],
+        },
+        "w_hu1": {
+            "enabled": True,
+            "block_conditions": [
+                {
+                    "market_regime": "WEAK",
+                    "high_update_count_before_entry_eq": 1,
+                    "reason": "WEAK_HU1_SKIP",
+                }
+            ],
+        },
+        "w_or": {
+            "enabled": True,
+            "block_conditions": [
+                {
+                    "market_regime": "WEAK",
+                    "entry_vwap_distance_pct_ge": 1.5,
+                    "reason": "WEAK_VWAP15_SKIP",
+                },
+                {
+                    "market_regime": "WEAK",
+                    "high_update_count_before_entry_eq": 1,
+                    "reason": "WEAK_HU1_SKIP",
+                },
+            ],
+        },
+    }
+    for slug, wcf_body in variants.items():
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        cfg["name"] = f"{bn}_wcf_{slug}"
+        csf0 = cfg.get("composite_signal_filters") if isinstance(cfg.get("composite_signal_filters"), dict) else {}
+        csf_m = dict(csf0)
+        csf_m["weak_combo_filter"] = dict(wcf_body)
+        cfg["composite_signal_filters"] = csf_m
+        path = os.path.join(sweep_dir, f"{bn}_wcf_{slug}.json")
+        with open(path, "w", encoding="utf-8") as fw:
+            json.dump(cfg, fw, ensure_ascii=False, indent=2)
+        out_paths[str(slug)] = os.path.abspath(path)
+    return out_paths
+
+
+def run_weak_combo_filter_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    WEAK 地合いの危険形だけを weak_combo_filter で除外する比較（random_apr・fast）。
+    cells: baseline / WEAK_VWAP15 / WEAK_HU1 / OR。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges: tuple[str, ...] = ("random_apr",)
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    results_root = _results_root_abs(script_dir)
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"weak_combo_filter_sweep_{sweep_stamp}", script_dir=script_dir)
+
+    mode_paths = _write_weak_combo_filter_sweep_configs(script_dir)
+    p_bl = str(mode_paths.get("baseline") or "")
+    if not p_bl:
+        print(f"[{now_str()}] weak_combo_filter sweep: ベースconfigの読込または書き出しに失敗しました。")
+        return 2
+
+    cells: list[tuple[str, str, str]] = [
+        ("bl", "baseline", p_bl),
+        ("v15", "weak_vwap_ge_15_skip", str(mode_paths.get("w_vwap15") or "")),
+        ("hu1", "weak_hu1_skip", str(mode_paths.get("w_hu1") or "")),
+        ("or", "weak_vwap_ge_15_or_hu1_skip", str(mode_paths.get("w_or") or "")),
+    ]
+
+    print(f"[{now_str()}] weak_combo_filter sweep: cells={len(cells)} ranges={ranges} repeat={int(n_repeat)}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] replay_mode={str(replay_mode or 'normal')}")
+    print(f"[{now_str()}] replay_seed(base): {replay_seed}")
+
+    rows: list[dict[str, Any]] = []
+    for slug, label, cfg_abs in cells:
+        if not cfg_abs:
+            continue
+        cfg_raw = _load_replay_config(cfg_abs)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{slug}_{rng}"
+            output_subdir = os.path.join(f"weak_combo_filter_sweep_{sweep_stamp}", f"{slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {label} ({slug})  {rng}  ({int(n_repeat)} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_abs),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = (
+                        [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                        if int(n_repeat) > 1
+                        else [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    )
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        pjson = os.path.join(results_dir, candidates_sorted[0])
+                        with open(pjson, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": pjson, "report": rep})
+                except Exception:
+                    pass
+
+            summ = _aggregate_weak_combo_filter_sweep_summaries(run_summaries)
+            wcagg = summ.get("weak_combo_filter_cell_aggregate") if isinstance(summ.get("weak_combo_filter_cell_aggregate"), dict) else {}
+            rows.append(
+                {
+                    "cell_slug": str(slug),
+                    "cell_label": str(label),
+                    "config_name": str(cfg_name),
+                    "replay_range": str(rng),
+                    "replay_output_subdir": str(output_subdir),
+                    "summary": summ,
+                    "combo_skipped": int(wcagg.get("combo_skipped_signals_total") or 0),
+                    "combo_virt_pnl": float(wcagg.get("combo_virtual_pnl_sum") or 0.0),
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float((((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0)),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== weak_combo_filter sweep（WEAK×VWAP乖離 / 高値更新） ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_mode: {str(replay_mode or 'normal')}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    hdr = (
+        "rank\tcell_label\tavg_expectancy_yen\ttotal_pnl_yen\tlose_worst10_sum\tmax_lose_run_yen\t"
+        "plus_runs\tminus_runs\tskipped_signals(combo)\tvirtual_skipped_pnl(combo)\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('cell_label')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.4f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{int(r.get('combo_skipped') or 0)}\t{float(r.get('combo_virt_pnl') or 0.0):+.2f}\t"
+            f"results/{r.get('replay_output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append("[WEAK regime · focus]（eval_by_market_regime の WEAK 行 + weak_combo の skip/virtual）")
+    for r in rows_sorted:
+        s = r.get("summary") or {}
+        wcagg = s.get("weak_combo_filter_cell_aggregate") if isinstance(s.get("weak_combo_filter_cell_aggregate"), dict) else {}
+        emr = wcagg.get("eval_by_market_regime_summed_over_runs") if isinstance(wcagg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        wr = emr.get("WEAK") if isinstance(emr.get("WEAK"), dict) else {}
+        out_lines.append(
+            f"cell={r.get('cell_label')}\t"
+            f"WEAK_exp={float(wr.get('avg_expectancy_yen_100_shares') or 0.0):+.4f}\t"
+            f"WEAK_total_pnl={float(wr.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"WEAK_lose_w10_sum={float(wr.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}\t"
+            f"WEAK_signals={int(wr.get('signals') or 0)}\t"
+            f"skipped_signals(combo)={int(wcagg.get('combo_skipped_signals_total') or 0)}\t"
+            f"virtual_skipped_pnl(combo)={float(wcagg.get('combo_virtual_pnl_sum') or 0.0):+.2f}\t"
+            f"results/{r.get('replay_output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append("[EVAL_BY_MARKET_REGIME] ※各cell・複数runの eval を単純合算（参考）")
+    for r in rows_sorted:
+        s = r.get("summary") or {}
+        agg = s.get("weak_combo_filter_cell_aggregate") if isinstance(s.get("weak_combo_filter_cell_aggregate"), dict) else {}
+        emr = agg.get("eval_by_market_regime_summed_over_runs") if isinstance(agg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        out_lines.append(f"cell={r.get('cell_label')}")
+        if not emr:
+            out_lines.append("  (empty)")
+            out_lines.append("")
+            continue
+        for rk in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+            row = emr.get(rk)
+            if not isinstance(row, dict):
+                continue
+            out_lines.append(
+                f"  {rk}: signals={int(row.get('signals') or 0)} "
+                f"exp={float(row.get('avg_expectancy_yen_100_shares') or 0.0):+.4f} "
+                f"total_pnl={float(row.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                f"lose_w10_sum={float(row.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+            )
+        out_lines.append("")
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] weak_combo_filter sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def _aggregate_auto_block_momentum_sweep_summaries(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    AUTO_BLOCK momentum sweep 用: repeat を合成し ENTRY_BLOCK と auto_block_effect を run 単位で単純合算。
+    """
+    base = _aggregate_replay_repeat_run_summaries(run_summaries)
+    ebm: dict[str, int] = {}
+    ab_accum: dict[str, dict[str, float]] = {}
+
+    for rr in run_summaries:
+        rep = rr.get("report") or {}
+        for it in rep.get("entry_block_reason_ranking") or []:
+            if isinstance(it, dict):
+                r_eb = str(it.get("reason") or "").strip()
+                try:
+                    c_eb = int(it.get("count") or 0)
+                except Exception:
+                    c_eb = 0
+                if r_eb:
+                    ebm[r_eb] = int(ebm.get(r_eb, 0)) + c_eb
+
+        for row in rep.get("auto_block_effect_analysis") or []:
+            if not isinstance(row, dict):
+                continue
+            rn = str(row.get("block_rule_name") or "").strip()
+            if not rn:
+                continue
+            acc = ab_accum.setdefault(rn, {"blocked_signals": 0.0, "blocked_total_pnl": 0.0})
+            try:
+                acc["blocked_signals"] += float(row.get("blocked_signals") or 0)
+            except Exception:
+                pass
+            try:
+                acc["blocked_total_pnl"] += float(row.get("blocked_total_pnl") or 0.0)
+            except Exception:
+                pass
+
+    entry_block_sorted = [{"reason": k, "count": int(v)} for k, v in sorted(ebm.items(), key=lambda x: (-int(x[1]), str(x[0])))]
+    ordered_rules = tuple(AUTO_BLOCK_RULE_NAMES) + ("ALL_AUTO_BLOCKS",)
+    ab_merged: list[dict[str, Any]] = []
+    for rn in ordered_rules:
+        acc = ab_accum.get(str(rn))
+        if acc is None:
+            ab_merged.append(
+                {
+                    "block_rule_name": str(rn),
+                    "blocked_signals": 0,
+                    "blocked_total_pnl": 0.0,
+                    "blocked_expectancy": 0.0,
+                    "pnl_improvement": 0.0,
+                }
+            )
+            continue
+        ns = int(acc["blocked_signals"])
+        btp = float(acc["blocked_total_pnl"])
+        bexp = (btp / float(ns)) if ns > 0 else 0.0
+        ab_merged.append(
+            {
+                "block_rule_name": str(rn),
+                "blocked_signals": ns,
+                "blocked_total_pnl": btp,
+                "blocked_expectancy": float(bexp),
+                "pnl_improvement": float(-btp),
+            }
+        )
+
+    out = dict(base)
+    out["entry_block_reason_counts_merged"] = entry_block_sorted
+    out["auto_block_effect_analysis_merged"] = ab_merged
+    return out
+
+
+def _write_auto_block_momentum_sweep_configs(script_dir: str) -> dict[str, str]:
+    """
+    configs/auto_block_momentum_sweep/ に rrthr45 ベースの AUTO_BLOCK 比較用 JSON を書き出す。
+    """
+    base_rel = os.path.join(
+        "configs",
+        "rising_ratio_threshold_sweep",
+        "replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15_rrthr_45.json",
+    )
+    base_path = _resolve_replay_config_path(base_rel)
+    base_cfg = _load_replay_config(base_path) if base_path else {}
+    if not base_cfg:
+        return {}
+    sweep_dir = os.path.join(script_dir, "configs", "auto_block_momentum_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+    bn = str(base_cfg.get("name") or "replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15_rrthr_45")
+
+    defs: tuple[tuple[str, bool, bool], ...] = (
+        ("baseline", False, False),
+        ("strong_extension_hu_plus1_on", False, True),
+        ("old_chase_extension_on", True, False),
+    )
+    out_paths: dict[str, str] = {}
+    for slug, chase_ext_en, hu_plus1_en in defs:
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        cfg["name"] = f"{bn}_abmom_{slug}"
+        cfg["auto_block_strong_chase_after_extension_enabled"] = bool(chase_ext_en)
+        cfg["auto_block_strong_extension_hu_plus1_enabled"] = bool(hu_plus1_en)
+        path = os.path.join(sweep_dir, f"{bn}_abmom_{slug}.json")
+        with open(path, "w", encoding="utf-8") as fw:
+            json.dump(cfg, fw, ensure_ascii=False, indent=2)
+        out_paths[str(slug)] = os.path.abspath(path)
+    return out_paths
+
+
+def run_auto_block_momentum_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    STRONG chase extension の AUTO_BLOCK を baseline / HU+1 候補 / 旧単独ブロック で比較（random_apr・fast）。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges: tuple[str, ...] = ("random_apr",)
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    results_root = _results_root_abs(script_dir)
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"auto_block_momentum_sweep_{sweep_stamp}", script_dir=script_dir)
+
+    mode_paths = _write_auto_block_momentum_sweep_configs(script_dir)
+    cells: list[tuple[str, str, str]] = [
+        ("bl", "baseline", str(mode_paths.get("baseline") or "")),
+        ("ext_hu1", "strong_extension_hu_plus1_on", str(mode_paths.get("strong_extension_hu_plus1_on") or "")),
+        ("old_chase", "old_chase_extension_on", str(mode_paths.get("old_chase_extension_on") or "")),
+    ]
+
+    missing = [(lab, str(p)) for _s, lab, p in cells if not str(p)]
+    if missing:
+        for lab, pp in missing:
+            print(f"[{now_str()}] auto_block_momentum sweep: config missing ({lab}): {pp!r}")
+        return 2
+
+    print(f"[{now_str()}] auto_block_momentum sweep: cells={len(cells)} ranges={ranges} repeat={int(n_repeat)}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] replay_mode={str(replay_mode or 'normal')}")
+    print(f"[{now_str()}] replay_seed(base): {replay_seed}")
+
+    rows: list[dict[str, Any]] = []
+    for slug, label, cfg_abs in cells:
+        cfg_raw = _load_replay_config(cfg_abs)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{slug}_{rng}"
+            output_subdir = os.path.join(f"auto_block_momentum_sweep_{sweep_stamp}", f"{slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {label} ({slug})  {rng}  ({int(n_repeat)} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
+
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_abs),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                if int(code) != 0:
+                    print(f"[{now_str()}] sweep 中断: run_replay exit={int(code)} (run={i})")
+                    return int(code)
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = (
+                        [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                        if int(n_repeat) > 1
+                        else [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    )
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        pjson = os.path.join(results_dir, candidates_sorted[0])
+                        with open(pjson, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": pjson, "report": rep})
+                except Exception:
+                    pass
+
+            summ = _aggregate_auto_block_momentum_sweep_summaries(run_summaries)
+            eb_m = summ.get("entry_block_reason_counts_merged") if isinstance(summ.get("entry_block_reason_counts_merged"), list) else []
+            ab_m = (
+                summ.get("auto_block_effect_analysis_merged")
+                if isinstance(summ.get("auto_block_effect_analysis_merged"), list)
+                else []
+            )
+            rows.append(
+                {
+                    "cell_slug": str(slug),
+                    "cell_label": str(label),
+                    "config_name": str(cfg_name),
+                    "replay_range": str(rng),
+                    "replay_output_subdir": str(output_subdir),
+                    "summary": summ,
+                    "entry_block_json": json.dumps(eb_m, ensure_ascii=False, separators=(",", ":")),
+                    "auto_block_json": json.dumps(ab_m, ensure_ascii=False, separators=(",", ":")),
+                }
+            )
+
+    out_lines: list[str] = []
+    out_lines.append("=== AUTO_BLOCK momentum sweep（STRONG chase extension の比較） ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_mode: {str(replay_mode or 'normal')}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    hdr = (
+        "cell_slug\tcell_label\tavg_expectancy_yen\ttotal_pnl_yen\tlose_worst10_sum\tmax_lose_run_yen\t"
+        "plus_runs\tminus_runs\tentry_block_reason_counts_json\tauto_block_effect_analysis_json\tresults_folder"
+    )
+    out_lines.append(hdr)
+    out_lines.append("※ 順序: baseline → strong_extension_hu_plus1_on → old_chase_extension_on（比較用固定並び）")
+    for r in rows:
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{r.get('cell_slug')}\t{r.get('cell_label')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.4f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"{str(r.get('entry_block_json') or '')}\t"
+            f"{str(r.get('auto_block_json') or '')}\t"
+            f"results/{r.get('replay_output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append("[BLOCK EFFECT FOCUS]（各 block_rule・run合成。blocked_* と pnl_improvement は仮想ブロックPnLより）")
+    for r in rows:
+        lab = str(r.get("cell_label") or "")
+        s = r.get("summary") or {}
+        ab_m = (
+            s.get("auto_block_effect_analysis_merged")
+            if isinstance(s.get("auto_block_effect_analysis_merged"), list)
+            else []
+        )
+        out_lines.append(f"cell_slug={r.get('cell_slug')} cell_label={lab}")
+        if not ab_m:
+            out_lines.append("  (empty)")
+            out_lines.append("")
+            continue
+        for row_ab in ab_m:
+            if not isinstance(row_ab, dict):
+                continue
+            rn0 = str(row_ab.get("block_rule_name") or "")
+            bs0 = int(row_ab.get("blocked_signals") or 0)
+            btp0 = float(row_ab.get("blocked_total_pnl") or 0.0)
+            bexp0 = float(row_ab.get("blocked_expectancy") or 0.0)
+            pim0 = float(row_ab.get("pnl_improvement") or 0.0)
+            out_lines.append(
+                f"  {rn0}: blocked_signals={bs0} blocked_total_pnl={btp0:+.2f} "
+                f"blocked_expectancy={bexp0:+.4f} pnl_improvement={pim0:+.2f}"
+            )
+        out_lines.append("")
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] auto_block_momentum sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+def _write_rising_lt50_validation_sweep_configs(script_dir: str) -> dict[str, str]:
+    """
+    configs/rising_lt50_validation_sweep/ に baseline / RISING_LT50 の ON/OFF 比較用 JSON を書き出す。
+    ベース: replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json
+    """
+    base_rel = os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json")
+    base_path = _resolve_replay_config_path(base_rel)
+    base_cfg = _load_replay_config(base_path) if base_path else {}
+    if not base_cfg:
+        return {}
+    sweep_dir = os.path.join(script_dir, "configs", "rising_lt50_validation_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+    bn = str(base_cfg.get("name") or "replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15")
+    out_paths: dict[str, str] = {}
+
+    def _one(slug: str, rlt50_val: Optional[bool]) -> None:
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        rf = cfg.get("regime_filters") if isinstance(cfg.get("regime_filters"), dict) else {}
+        rf_m = dict(rf)
+        if rlt50_val is not None:
+            rf_m["disable_rising_ratio_lt50"] = bool(rlt50_val)
+        cfg["regime_filters"] = rf_m
+        cfg["name"] = f"{bn}_rlt50val_{slug}"
+        fn = f"{bn}_rlt50val_{slug}.json"
+        path = os.path.join(sweep_dir, fn)
+        with open(path, "w", encoding="utf-8") as fw:
+            json.dump(cfg, fw, ensure_ascii=False, indent=2)
+        out_paths[str(slug)] = os.path.abspath(path)
+
+    _one("baseline", None)
+    _one("rlt50_true", True)
+    _one("rlt50_false", False)
+    return out_paths
+
+
+def run_rising_lt50_validation_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    regime_filters.disable_rising_ratio_lt50（RISING_LT50）の有効性検証。
+    cells: baseline / True / False を random_apr と random_60d で比較。
+    集計は repeat run を合成し、market regime 別 expectancy は eval_by_market_regime を run 合算。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges: tuple[str, ...] = ("random_apr", "random_60d")
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    results_root = _results_root_abs(script_dir)
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"rising_lt50_validation_sweep_{sweep_stamp}", script_dir=script_dir)
+
+    mode_paths = _write_rising_lt50_validation_sweep_configs(script_dir)
+    p_bl = str(mode_paths.get("baseline") or "")
+    p_t = str(mode_paths.get("rlt50_true") or "")
+    p_f = str(mode_paths.get("rlt50_false") or "")
+    if not p_bl or not p_t or not p_f:
+        print(f"[{now_str()}] rising_lt50_validation sweep: ベースconfigの読込または書き出しに失敗しました。")
+        return 2
+
+    cells: list[tuple[str, str, str]] = [
+        ("bl", "baseline", p_bl),
+        ("t50", "disable_rising_ratio_lt50=True", p_t),
+        ("f50", "disable_rising_ratio_lt50=False", p_f),
+    ]
+
+    print(f"[{now_str()}] rising_lt50_validation sweep: cells={len(cells)} ranges={ranges} repeat={int(n_repeat)}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] replay_mode={str(replay_mode or 'normal')}  replay_seed(base): {replay_seed}")
+
+    rows: list[dict[str, Any]] = []
+    for slug, label, cfg_abs in cells:
+        if not cfg_abs:
+            continue
+        cfg_raw = _load_replay_config(cfg_abs)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{slug}_{rng}"
+            output_subdir = os.path.join(f"rising_lt50_validation_sweep_{sweep_stamp}", f"{slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep cell: {label} ({slug})  {rng}  ({int(n_repeat)} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
+
+            cr_status = "OK"
+            cr_reason = ""
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_abs),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                ic = int(code)
+                if ic != 0:
+                    cr_reason = f"run_replay exit={ic} (run={i})"
+                    if ic == 2:
+                        cr_status = "SKIPPED_NO_DATA"
+                        print(
+                            f"[{now_str()}] rising_lt50_validation SKIP: replay_range={rng} "
+                            f"cell_label={label} reason={cr_reason}"
+                        )
+                    else:
+                        cr_status = "ERROR"
+                        print(f"[{now_str()}] rising_lt50_validation ERROR: replay_range={rng} cell_label={label} reason={cr_reason}")
+                    break
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = (
+                        [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                        if int(n_repeat) > 1
+                        else [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    )
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        pjson = os.path.join(results_dir, candidates_sorted[0])
+                        with open(pjson, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": pjson, "report": rep})
+                except Exception:
+                    pass
+
+            if cr_status != "OK":
+                rows.append(
+                    {
+                        "cell_slug": str(slug),
+                        "cell_label": str(label),
+                        "config_name": str(cfg_name),
+                        "replay_range": str(rng),
+                        "replay_output_subdir": str(output_subdir),
+                        "summary": {},
+                        "status": str(cr_status),
+                        "skip_reason": str(cr_reason),
+                    }
+                )
+                continue
+
+            summ = _aggregate_regime_control_sweep_summaries(run_summaries)
+            rows.append(
+                {
+                    "cell_slug": str(slug),
+                    "cell_label": str(label),
+                    "config_name": str(cfg_name),
+                    "replay_range": str(rng),
+                    "replay_output_subdir": str(output_subdir),
+                    "summary": summ,
+                    "status": "OK",
+                    "skip_reason": "",
+                }
+            )
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: float((((r.get("summary") or {}).get("avg_expectancy_yen_100_shares")) or 0.0)),
+        reverse=True,
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== rising_lt50_validation sweep（regime_filters.disable_rising_ratio_lt50） ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_mode: {str(replay_mode or 'normal')}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    hdr = (
+        "rank\tcell_label\treplay_range\tavg_expectancy_yen\ttotal_pnl_yen\tlose_worst10_sum\tmax_lose_run_yen\t"
+        "plus_runs\tminus_runs\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for idx, r in enumerate(rows_sorted, start=1):
+        if str(r.get("status") or "") != "OK":
+            out_lines.append(
+                f"{idx}\t{r.get('cell_label')}\t{r.get('replay_range')}\t"
+                f"(skip)\t{r.get('status')}\t{r.get('skip_reason')}\t\t\t\t\t"
+                f"results/{r.get('replay_output_subdir')}/"
+            )
+            continue
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{idx}\t{r.get('cell_label')}\t{r.get('replay_range')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.4f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"results/{r.get('replay_output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append("[EVAL_BY_MARKET_REGIME] ※各cell・複数runの eval を単純合算（BASE採用信号・参考）")
+    for r in rows_sorted:
+        if str(r.get("status") or "") != "OK":
+            out_lines.append(f"cell={r.get('cell_label')} range={r.get('replay_range')} (skipped)")
+            out_lines.append("")
+            continue
+        s = r.get("summary") or {}
+        rc_agg = s.get("regime_controls_cell_aggregate") if isinstance(s.get("regime_controls_cell_aggregate"), dict) else {}
+        emr = rc_agg.get("eval_by_market_regime_summed_over_runs") if isinstance(rc_agg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        out_lines.append(f"cell={r.get('cell_label')} range={r.get('replay_range')}")
+        if not emr:
+            out_lines.append("  (empty)")
+            out_lines.append("")
+            continue
+        for rk in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+            row = emr.get(rk)
+            if not isinstance(row, dict):
+                continue
+            out_lines.append(
+                f"  {rk}: signals={int(row.get('signals') or 0)} "
+                f"exp={float(row.get('avg_expectancy_yen_100_shares') or 0.0):+.4f} "
+                f"total_pnl={float(row.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                f"lose_w10_sum={float(row.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+            )
+        out_lines.append("")
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] rising_lt50_validation sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
+RISING_RATIO_THRESHOLD_SWEEP_PCTS: tuple[int, ...] = (30, 35, 40, 45, 50, 55)
+
+
+def _write_rising_ratio_threshold_sweep_configs(script_dir: str) -> dict[str, str]:
+    """
+    configs/rising_ratio_threshold_sweep/ に baseline（現行 hu2_vwap15）と
+    disable_rising_ratio_lt50=False + rising_ratio_threshold_pct の各閾値用 JSON を書き出す。
+    """
+    base_rel = os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json")
+    base_path = _resolve_replay_config_path(base_rel)
+    base_cfg = _load_replay_config(base_path) if base_path else {}
+    if not base_cfg:
+        return {}
+    sweep_dir = os.path.join(script_dir, "configs", "rising_ratio_threshold_sweep")
+    os.makedirs(sweep_dir, exist_ok=True)
+    bn = str(base_cfg.get("name") or "replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15")
+    out: dict[str, str] = {}
+
+    cfg_bl = json.loads(json.dumps(base_cfg))
+    cfg_bl.pop("_path", None)
+    cfg_bl["name"] = f"{bn}_rrthr_baseline"
+    path_bl = os.path.join(sweep_dir, f"{bn}_rrthr_baseline.json")
+    with open(path_bl, "w", encoding="utf-8") as fw:
+        json.dump(cfg_bl, fw, ensure_ascii=False, indent=2)
+    out["baseline"] = os.path.abspath(path_bl)
+
+    for p in RISING_RATIO_THRESHOLD_SWEEP_PCTS:
+        cfg = json.loads(json.dumps(base_cfg))
+        cfg.pop("_path", None)
+        rf0 = cfg.get("regime_filters") if isinstance(cfg.get("regime_filters"), dict) else {}
+        rf = dict(rf0)
+        rf["disable_rising_ratio_lt50"] = False
+        rf["rising_ratio_threshold_pct"] = float(p)
+        cfg["regime_filters"] = rf
+        cfg["name"] = f"{bn}_rrthr_{p}"
+        slug = f"t{p}"
+        path = os.path.join(sweep_dir, f"{bn}_rrthr_{p}.json")
+        with open(path, "w", encoding="utf-8") as fw:
+            json.dump(cfg, fw, ensure_ascii=False, indent=2)
+        out[slug] = os.path.abspath(path)
+    return out
+
+
+def run_rising_ratio_threshold_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    rising_ratio の下限閾値（%%）を sweep。baseline は現行 hu2_vwap15（disable_rising_ratio_lt50 既定）。
+    閾値セルは disable_rising_ratio_lt50=False + regime_filters.rising_ratio_threshold_pct。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ranges: tuple[str, ...] = ("random_apr", "random_60d")
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    results_root = _results_root_abs(script_dir)
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"rising_ratio_threshold_sweep_{sweep_stamp}", script_dir=script_dir)
+
+    mode_paths = _write_rising_ratio_threshold_sweep_configs(script_dir)
+    if not mode_paths.get("baseline"):
+        print(f"[{now_str()}] rising_ratio_threshold sweep: baseline の書き出しに失敗しました。")
+        return 2
+    for p in RISING_RATIO_THRESHOLD_SWEEP_PCTS:
+        if not mode_paths.get(f"t{p}"):
+            print(f"[{now_str()}] rising_ratio_threshold sweep: threshold={p} の config が欠けています。")
+            return 2
+
+    cells: list[tuple[str, str, str]] = [("bl", "baseline", str(mode_paths["baseline"]))]
+    for p in RISING_RATIO_THRESHOLD_SWEEP_PCTS:
+        slug = f"t{p}"
+        cells.append((slug, str(int(p)), str(mode_paths.get(slug) or "")))
+
+    print(f"[{now_str()}] rising_ratio_threshold sweep: cells={len(cells)} ranges={ranges} repeat={int(n_repeat)}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] replay_mode={str(replay_mode or 'normal')}  thresholds={list(RISING_RATIO_THRESHOLD_SWEEP_PCTS)}")
+    print(f"[{now_str()}] replay_seed(base): {replay_seed}")
+
+    rows: list[dict[str, Any]] = []
+    for slug, threshold_label, cfg_abs in cells:
+        if not cfg_abs:
+            continue
+        cfg_raw = _load_replay_config(cfg_abs)
+        f = _apply_replay_config_to_flags(cfg=cfg_raw)
+        cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+        for rng in ranges:
+            replay_random_days = 5
+            batch_stamp = f"{sweep_stamp}_{slug}_{rng}"
+            output_subdir = os.path.join(f"rising_ratio_threshold_sweep_{sweep_stamp}", f"{slug}_{rng}")
+
+            print("")
+            print(f"[{now_str()}] --- sweep: threshold={threshold_label} ({slug})  {rng}  ({int(n_repeat)} runs) ---")
+            print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+            run_summaries: list[dict[str, Any]] = []
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
+
+            cr_status = "OK"
+            cr_reason = ""
+            for i in range(1, int(n_repeat) + 1):
+                seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+                code = run_replay(
+                    interval_sec=float(interval_sec),
+                    only_changes=bool(only_changes),
+                    fixed_watch=fixed_watch,
+                    replay_range=str(rng),
+                    replay_random_days=int(replay_random_days),
+                    replay_random_months=3,
+                    replay_seed=seed_run,
+                    replay_mode=str(replay_mode or "normal"),
+                    replay_fast_discord=False,
+                    replay_fast_verbose=False,
+                    replay_fast_print_signal_details=False,
+                    replay_market_debug=False,
+                    replay_repeat_run_no=i,
+                    replay_repeat_total=int(n_repeat),
+                    replay_output_subdir=output_subdir,
+                    replay_batch_stamp=batch_stamp,
+                    replay_morning_screen_hhmm="",
+                    one_trade_per_symbol_per_day=False,
+                    enable_add=False,
+                    replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+                    replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+                    replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+                    replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+                    replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+                    replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+                    replay_config_name=str(f.get("replay_config_name") or ""),
+                    replay_config_path=str(cfg_abs),
+                    aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+                    aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+                    aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+                    entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+                    entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+                    entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+                    entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+                    entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+                    entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+                    daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+                    daily_loss_stop_threshold_yen_100_shares=float(
+                        f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+                    ),
+                    regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+                    regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+                    regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+                    regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
+                    **_replay_regime_control_kwargs_from_flags(f),
+                    replay_settings=None,
+                )
+                ic = int(code)
+                if ic != 0:
+                    cr_reason = f"run_replay exit={ic} (run={i})"
+                    if ic == 2:
+                        cr_status = "SKIPPED_NO_DATA"
+                        print(
+                            f"[{now_str()}] rising_ratio_threshold SKIP: replay_range={rng} "
+                            f"threshold={threshold_label} reason={cr_reason}"
+                        )
+                    else:
+                        cr_status = "ERROR"
+                        print(f"[{now_str()}] rising_ratio_threshold ERROR: replay_range={rng} threshold={threshold_label} reason={cr_reason}")
+                    break
+
+                try:
+                    run_tag = f"run{i:02d}"
+                    candidates = (
+                        [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                            and (f"_{run_tag}.json" in fn)
+                        ]
+                        if int(n_repeat) > 1
+                        else [
+                            fn
+                            for fn in os.listdir(results_dir)
+                            if fn.endswith(".json")
+                            and ("replay_summary_" in fn)
+                            and (not fn.endswith("_symbol_scores.json"))
+                        ]
+                    )
+                    candidates_sorted = sorted(
+                        candidates,
+                        key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                        reverse=True,
+                    )
+                    if candidates_sorted:
+                        pjson = os.path.join(results_dir, candidates_sorted[0])
+                        with open(pjson, "r", encoding="utf-8") as fp:
+                            rep = json.load(fp)
+                        run_summaries.append({"run_no": i, "json_path": pjson, "report": rep})
+                except Exception:
+                    pass
+
+            if cr_status != "OK":
+                rows.append(
+                    {
+                        "cell_slug": str(slug),
+                        "threshold_label": str(threshold_label),
+                        "config_name": str(cfg_name),
+                        "replay_range": str(rng),
+                        "replay_output_subdir": str(output_subdir),
+                        "summary": {},
+                        "status": str(cr_status),
+                        "skip_reason": str(cr_reason),
+                    }
+                )
+                continue
+
+            summ = _aggregate_regime_control_sweep_summaries(run_summaries)
+            rows.append(
+                {
+                    "cell_slug": str(slug),
+                    "threshold_label": str(threshold_label),
+                    "config_name": str(cfg_name),
+                    "replay_range": str(rng),
+                    "replay_output_subdir": str(output_subdir),
+                    "summary": summ,
+                    "status": "OK",
+                    "skip_reason": "",
+                }
+            )
+
+    rng_order = {"random_apr": 0, "random_60d": 1}
+    thr_order: dict[str, float] = {"baseline": -1.0}
+    for _p in RISING_RATIO_THRESHOLD_SWEEP_PCTS:
+        thr_order[str(int(_p))] = float(_p)
+
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: (
+            int(rng_order.get(str(r.get("replay_range")), 99)),
+            float(thr_order.get(str(r.get("threshold_label")), 999.0)),
+        ),
+    )
+
+    out_lines: list[str] = []
+    out_lines.append("=== rising_ratio_threshold sweep（regime_filters.rising_ratio_threshold_pct） ===")
+    out_lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out_lines.append(f"sweep_stamp: {sweep_stamp}")
+    out_lines.append(f"repeat_per_cell: {int(n_repeat)}")
+    out_lines.append(f"replay_mode: {str(replay_mode or 'normal')}")
+    out_lines.append(f"replay_seed: {replay_seed}")
+    out_lines.append("")
+    hdr = (
+        "replay_range\tthreshold\tavg_expectancy_yen\ttotal_pnl_yen\tlose_worst10_sum\tmax_lose_run_yen\t"
+        "plus_runs\tminus_runs\tresults_folder"
+    )
+    out_lines.append(hdr)
+    for r in rows_sorted:
+        if str(r.get("status") or "") != "OK":
+            out_lines.append(
+                f"{r.get('replay_range')}\t{r.get('threshold_label')}\t"
+                f"(skip)\t{r.get('status')}\t{r.get('skip_reason')}\t\t\t\t"
+                f"results/{r.get('replay_output_subdir')}/"
+            )
+            continue
+        s = r.get("summary") or {}
+        out_lines.append(
+            f"{r.get('replay_range')}\t{r.get('threshold_label')}\t"
+            f"{float(s.get('avg_expectancy_yen_100_shares') or 0.0):+.4f}\t"
+            f"{float(s.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('sum_lose_worst10_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(s.get('max_lose_run_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{int(s.get('plus_runs') or 0)}\t{int(s.get('minus_runs') or 0)}\t"
+            f"results/{r.get('replay_output_subdir')}/"
+        )
+
+    out_lines.append("")
+    out_lines.append("[EVAL_BY_MARKET_REGIME] ※各閾値・複数runの eval を単純合算（BASE採用信号・参考）")
+    for r in rows_sorted:
+        if str(r.get("status") or "") != "OK":
+            out_lines.append(
+                f"threshold={r.get('threshold_label')} range={r.get('replay_range')} (skipped: {r.get('status')})"
+            )
+            out_lines.append("")
+            continue
+        s = r.get("summary") or {}
+        rc_agg = s.get("regime_controls_cell_aggregate") if isinstance(s.get("regime_controls_cell_aggregate"), dict) else {}
+        emr = rc_agg.get("eval_by_market_regime_summed_over_runs") if isinstance(rc_agg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        out_lines.append(f"threshold={r.get('threshold_label')} range={r.get('replay_range')}")
+        if not emr:
+            out_lines.append("  (empty)")
+            out_lines.append("")
+            continue
+        for rk in ("STRONG", "NORMAL", "WEAK", "CRASH"):
+            row = emr.get(rk)
+            if not isinstance(row, dict):
+                continue
+            out_lines.append(
+                f"  {rk}: signals={int(row.get('signals') or 0)} "
+                f"exp={float(row.get('avg_expectancy_yen_100_shares') or 0.0):+.4f} "
+                f"total_pnl={float(row.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                f"lose_w10_sum={float(row.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+            )
+        out_lines.append("")
+
+    out_lines.append("")
+    out_lines.append("[WEAK / CRASH focus] tail risk 比較（expectancy と lose_w10_sum）")
+    for r in rows_sorted:
+        if str(r.get("status") or "") != "OK":
+            continue
+        s = r.get("summary") or {}
+        rc_agg = s.get("regime_controls_cell_aggregate") if isinstance(s.get("regime_controls_cell_aggregate"), dict) else {}
+        emr = rc_agg.get("eval_by_market_regime_summed_over_runs") if isinstance(rc_agg.get("eval_by_market_regime_summed_over_runs"), dict) else {}
+        parts: list[str] = []
+        for rk in ("WEAK", "CRASH"):
+            row = emr.get(rk)
+            if not isinstance(row, dict):
+                continue
+            parts.append(
+                f"{rk}: exp={float(row.get('avg_expectancy_yen_100_shares') or 0.0):+.4f} "
+                f"lose_w10_sum={float(row.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f} "
+                f"n={int(row.get('signals') or 0)}"
+            )
+        out_lines.append(
+            f"threshold={r.get('threshold_label')} range={r.get('replay_range')}\t" + (" | ".join(parts) if parts else "(empty)")
+        )
+
+    out_path = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(out_path, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] rising_ratio_threshold sweep summary_path: {out_path}")
+    print("\n".join(out_lines))
+    return 0
+
+
 def _write_strong_trend_quality_sweep_configs(script_dir: str) -> dict[str, str]:
     """
     configs/strong_trend_quality_sweep/ に STRONG×VWAP≥1.5×高値更新（le / ge6のみ許可）用 strong_combo_filter を書き出す。
@@ -13511,10 +19645,9 @@ def run_strong_trend_quality_sweep(
     script_dir = os.path.dirname(os.path.abspath(__file__))
     ranges: tuple[str, ...] = ("random_apr",)
     sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"strong_trend_quality_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"strong_trend_quality_sweep_{sweep_stamp}", script_dir=script_dir)
 
     p_full = _resolve_replay_config_path(os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json"))
     mode_paths = _write_strong_trend_quality_sweep_configs(script_dir)
@@ -13550,8 +19683,7 @@ def run_strong_trend_quality_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             for i in range(1, int(n_repeat) + 1):
                 seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
@@ -13600,6 +19732,7 @@ def run_strong_trend_quality_sweep(
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
                     regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
                     signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
                     signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
                     signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
@@ -13759,10 +19892,9 @@ def run_strong_trend_quality_validation_sweep(
     script_dir = os.path.dirname(os.path.abspath(__file__))
     ranges: tuple[str, ...] = ("random_apr", "random_mar", "random_60d")
     sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"strong_trend_quality_validation_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"strong_trend_quality_validation_sweep_{sweep_stamp}", script_dir=script_dir)
 
     p_full = _resolve_replay_config_path(os.path.join("configs", "replay_full_day_vwap2_dd30k_rlt50.json"))
     mode_paths = _write_strong_trend_quality_sweep_configs(script_dir)
@@ -13798,8 +19930,7 @@ def run_strong_trend_quality_validation_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             cr_status = "OK"
             cr_reason = ""
@@ -13850,6 +19981,7 @@ def run_strong_trend_quality_validation_sweep(
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
                     regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
                     signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
                     signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
                     signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
@@ -14389,6 +20521,3985 @@ def _build_signal_state_cross_analysis_from_signal_dicts(signal_dicts: list[dict
     }
 
 
+def _build_weak_hu_cross_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    market_regime == WEAK かつ eval 対象（excluded_from_eval=False）のみ。
+    high_update_count_before_entry（0 / 1 / 2 / 3~5 / >=6 / N/A）× 時間帯・gap・VWAP距離・symbol の2次元集計。
+    """
+    gap_edges = [-3.0, -1.0, 1.0, 3.0]
+    gap_labels = ["<=-3", "-3~-1", "-1~1", "1~3", ">=3"]
+    vdist_edges = [0.5, 1.0, 1.5, 2.0]
+    vdist_labels = ["<=0.5", "0.5~1.0", "1.0~1.5", "1.5~2.0", ">=2.0"]
+
+    acc: dict[str, dict[tuple[str, str], dict[str, Any]]] = {}
+
+    def _add_cross(name: str, k1: str, k2: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        acc.setdefault(name, {})
+        key = (str(k1), str(k2))
+        a = acc[name].setdefault(key, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("market_regime") or "").strip().upper() != "WEAK":
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        is_win = res == "WIN"
+        is_lose = res == "LOSE"
+        huc_b = _bucket_high_update_count_before_entry(s.get("high_update_count_before_entry"))
+        gap_b = _bucket_label_by_edges(s.get("gap_pct"), gap_edges, gap_labels)
+        vdist_b = _bucket_label_by_edges(s.get("entry_vwap_distance_pct"), vdist_edges, vdist_labels)
+        etb = str(s.get("entry_time_bucket") or "").strip() or "N/A"
+        sym = str(s.get("symbol") or "").strip() or "N/A"
+
+        _add_cross("high_update_count_before_entry_x_entry_time_bucket", huc_b, etb, pnl, is_win, is_lose)
+        _add_cross("high_update_count_before_entry_x_gap_pct_bucket", huc_b, gap_b, pnl, is_win, is_lose)
+        _add_cross(
+            "high_update_count_before_entry_x_entry_vwap_distance_pct_bucket",
+            huc_b,
+            vdist_b,
+            pnl,
+            is_win,
+            is_lose,
+        )
+        _add_cross("high_update_count_before_entry_x_symbol", huc_b, sym, pnl, is_win, is_lose)
+
+    def _rows_for_name(name: str, field1: str, field2: str) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for (b1, b2), a in (acc.get(name) or {}).items():
+            sigs = int(a.get("signals", 0))
+            win = int(a.get("win", 0))
+            pnl_sum = float(a.get("pnl_sum", 0.0))
+            winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+            exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+            pnls = a.get("pnls") or []
+            rows.append(
+                {
+                    field1: str(b1),
+                    field2: str(b2),
+                    "signals": int(sigs),
+                    "winrate_pct": float(winrate),
+                    "avg_expectancy_yen_100_shares": float(exp),
+                    "total_pnl_yen_100_shares": float(pnl_sum),
+                    "lose_worst10_sum_yen_100_shares": float(
+                        _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                    ),
+                }
+            )
+        return sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+
+    return {
+        "high_update_count_before_entry_x_entry_time_bucket": _rows_for_name(
+            "high_update_count_before_entry_x_entry_time_bucket",
+            "high_update_count_before_entry_bucket",
+            "entry_time_bucket",
+        ),
+        "high_update_count_before_entry_x_gap_pct_bucket": _rows_for_name(
+            "high_update_count_before_entry_x_gap_pct_bucket",
+            "high_update_count_before_entry_bucket",
+            "gap_pct_bucket",
+        ),
+        "high_update_count_before_entry_x_entry_vwap_distance_pct_bucket": _rows_for_name(
+            "high_update_count_before_entry_x_entry_vwap_distance_pct_bucket",
+            "high_update_count_before_entry_bucket",
+            "entry_vwap_distance_pct_bucket",
+        ),
+        "high_update_count_before_entry_x_symbol": _rows_for_name(
+            "high_update_count_before_entry_x_symbol",
+            "high_update_count_before_entry_bucket",
+            "symbol",
+        ),
+    }
+
+
+def _bucket_symbol_daily_entry_index(n: Any) -> str:
+    """集計用 bucket: 1 / 2 / 3 / 4+ / N/A"""
+    if n is None:
+        return "N/A"
+    try:
+        v = int(float(n))
+    except Exception:
+        return "N/A"
+    if v <= 0:
+        return "N/A"
+    if v == 1:
+        return "1"
+    if v == 2:
+        return "2"
+    if v == 3:
+        return "3"
+    return "4+"
+
+
+def _bucket_symbol_daily_entry_index_deep(n: Any) -> str:
+    """集計用 bucket: 1 / 2 / 3 / 4 / 5+ / N/A"""
+    if n is None:
+        return "N/A"
+    try:
+        v = int(float(n))
+    except Exception:
+        return "N/A"
+    if v <= 0:
+        return "N/A"
+    if v == 1:
+        return "1"
+    if v == 2:
+        return "2"
+    if v == 3:
+        return "3"
+    if v == 4:
+        return "4"
+    return "5+"
+
+
+def _build_symbol_daily_entry_index_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    excluded_from_eval=False かつ BASE のみ。symbol_daily_entry_index を 1/2/3/4+ で bucket。
+
+    補助分析: 「何回目 entry か」の代理（疲労の目安）。forward の主判定・AUTO_BLOCK は price extension 系へ寄せる。
+    """
+    acc: dict[str, dict[str, Any]] = {}
+
+    def _add(bucket: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        a = acc.setdefault(bucket, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        b = _bucket_symbol_daily_entry_index(s.get("symbol_daily_entry_index"))
+        if b == "N/A":
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        _add(b, pnl, res == "WIN", res == "LOSE")
+
+    rows: list[dict[str, Any]] = []
+    for bkt, a in acc.items():
+        sigs = int(a.get("signals", 0))
+        win = int(a.get("win", 0))
+        pnl_sum = float(a.get("pnl_sum", 0.0))
+        winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+        exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+        pnls = a.get("pnls") or []
+        rows.append(
+            {
+                "bucket": str(bkt),
+                "signals": int(sigs),
+                "winrate_pct": float(winrate),
+                "avg_expectancy_yen_100_shares": float(exp),
+                "total_pnl_yen_100_shares": float(pnl_sum),
+                "lose_worst10_sum_yen_100_shares": float(
+                    _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                ),
+            }
+        )
+    return sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+
+
+def _build_symbol_daily_entry_index_deep_analysis_from_signal_dicts(
+    signal_dicts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    excluded_from_eval=False かつ BASE のみ。
+    symbol_daily_entry_index を 1/2/3/4/5+ で bucket（4+ を分離して深掘り）。
+    補助分析（疲労の代理）。主軸は extension / momentum interaction。
+    """
+    acc: dict[str, dict[str, Any]] = {}
+
+    def _add(bucket: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        a = acc.setdefault(bucket, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        b = _bucket_symbol_daily_entry_index_deep(s.get("symbol_daily_entry_index"))
+        if b == "N/A":
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        _add(b, pnl, res == "WIN", res == "LOSE")
+
+    rows: list[dict[str, Any]] = []
+    for bkt, a in acc.items():
+        sigs = int(a.get("signals", 0))
+        win = int(a.get("win", 0))
+        pnl_sum = float(a.get("pnl_sum", 0.0))
+        winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+        exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+        pnls = a.get("pnls") or []
+        rows.append(
+            {
+                "bucket": str(bkt),
+                "signals": int(sigs),
+                "winrate_pct": float(winrate),
+                "avg_expectancy_yen_100_shares": float(exp),
+                "total_pnl_yen_100_shares": float(pnl_sum),
+                "lose_worst10_sum_yen_100_shares": float(
+                    _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                ),
+            }
+        )
+    return sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+
+
+def _build_symbol_daily_entry_index_x_market_regime_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """補助: 回数インデックス × regime（forward 主判定には用いない）。"""
+    acc: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _add_cross(idx_b: str, regime_b: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        key = (str(idx_b), str(regime_b))
+        a = acc.setdefault(key, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        idx_b = _bucket_symbol_daily_entry_index(s.get("symbol_daily_entry_index"))
+        if idx_b == "N/A":
+            continue
+        regime_b = str(s.get("market_regime") or "").strip() or "N/A"
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        _add_cross(idx_b, regime_b, pnl, res == "WIN", res == "LOSE")
+
+    rows_out: list[dict[str, Any]] = []
+    for (ib, rb), a in acc.items():
+        sigs = int(a.get("signals", 0))
+        win = int(a.get("win", 0))
+        pnl_sum = float(a.get("pnl_sum", 0.0))
+        winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+        exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+        pnls = a.get("pnls") or []
+        rows_out.append(
+            {
+                "symbol_daily_entry_index_bucket": str(ib),
+                "market_regime": str(rb),
+                "signals": int(sigs),
+                "winrate_pct": float(winrate),
+                "avg_expectancy_yen_100_shares": float(exp),
+                "total_pnl_yen_100_shares": float(pnl_sum),
+                "lose_worst10_sum_yen_100_shares": float(
+                    _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                ),
+            }
+        )
+    return sorted(rows_out, key=lambda x: int(x.get("signals", 0)), reverse=True)
+
+
+def _build_symbol_daily_entry_index_deep_x_market_regime_from_signal_dicts(
+    signal_dicts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """補助: 深い回数インデックス × regime（疲労の代理指標）。"""
+    acc: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _add_cross(idx_b: str, regime_b: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        key = (str(idx_b), str(regime_b))
+        a = acc.setdefault(key, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        idx_b = _bucket_symbol_daily_entry_index_deep(s.get("symbol_daily_entry_index"))
+        if idx_b == "N/A":
+            continue
+        regime_b = str(s.get("market_regime") or "").strip() or "N/A"
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        _add_cross(idx_b, regime_b, pnl, res == "WIN", res == "LOSE")
+
+    rows_out: list[dict[str, Any]] = []
+    for (ib, rb), a in acc.items():
+        sigs = int(a.get("signals", 0))
+        win = int(a.get("win", 0))
+        pnl_sum = float(a.get("pnl_sum", 0.0))
+        winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+        exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+        pnls = a.get("pnls") or []
+        rows_out.append(
+            {
+                "symbol_daily_entry_index_bucket": str(ib),
+                "market_regime": str(rb),
+                "signals": int(sigs),
+                "winrate_pct": float(winrate),
+                "avg_expectancy_yen_100_shares": float(exp),
+                "total_pnl_yen_100_shares": float(pnl_sum),
+                "lose_worst10_sum_yen_100_shares": float(
+                    _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                ),
+            }
+        )
+    return sorted(rows_out, key=lambda x: int(x.get("signals", 0)), reverse=True)
+
+
+def _bucket_delta_high_update_count_before_entry(n: Any) -> str:
+    if n is None:
+        return "N/A"
+    try:
+        v = int(float(n))
+    except Exception:
+        return "N/A"
+    if v <= -2:
+        return "<=-2"
+    if v == -1:
+        return "-1"
+    if v == 0:
+        return "0"
+    if v == 1:
+        return "+1"
+    return ">=+2"
+
+
+def _bucket_volume_efficiency_pct(x: Any) -> str:
+    if x is None or (not isinstance(x, (int, float))) or (not math.isfinite(float(x))):
+        return "N/A"
+    v = float(x)
+    # <=0 / 0~0.5 / 0.5~1.0 / >=1.0
+    if v <= 0.0:
+        return "<=0"
+    if v <= 0.5:
+        return "0~0.5"
+    if v <= 1.0:
+        return "0.5~1.0"
+    return ">=1.0"
+
+
+def _build_momentum_decay_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    excluded_from_eval=False の BASE かつ prev_signal_exists=True のみ。
+    momentum_decay_features の各特徴量を bucket 集計する。
+    """
+    acc: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def _add(feature: str, bucket: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        acc.setdefault(feature, {})
+        a = acc[feature].setdefault(bucket, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    # bucket definitions
+    dvw_edges = [-0.5, 0.0, 0.5]
+    dvw_labels = ["<=-0.5", "-0.5~0", "0~0.5", ">=0.5"]
+    dvol_edges = [-0.5, 0.0, 0.5]
+    dvol_labels = ["<=-0.5", "-0.5~0", "0~0.5", ">=0.5"]
+    drs_edges = [-1.0, 0.0, 1.0]
+    drs_labels = ["<=-1", "-1~0", "0~1", ">=1"]
+    pc_edges = [0.0, 0.5, 1.0]
+    pc_labels = ["<=0", "0~0.5", "0.5~1.0", ">=1.0"]
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        is_win = res == "WIN"
+        is_lose = res == "LOSE"
+
+        _add(
+            "delta_entry_vwap_distance_pct",
+            _bucket_label_by_edges(mdf.get("delta_entry_vwap_distance_pct"), dvw_edges, dvw_labels),
+            pnl,
+            is_win,
+            is_lose,
+        )
+        _add(
+            "delta_first_30m_volume_ratio",
+            _bucket_label_by_edges(mdf.get("delta_first_30m_volume_ratio"), dvol_edges, dvol_labels),
+            pnl,
+            is_win,
+            is_lose,
+        )
+        _add(
+            "delta_rs_vs_topix_pct",
+            _bucket_label_by_edges(mdf.get("delta_rs_vs_topix_pct"), drs_edges, drs_labels),
+            pnl,
+            is_win,
+            is_lose,
+        )
+        _add(
+            "delta_high_update_count_before_entry",
+            _bucket_delta_high_update_count_before_entry(mdf.get("delta_high_update_count_before_entry")),
+            pnl,
+            is_win,
+            is_lose,
+        )
+        _add(
+            "price_change_pct_from_prev_signal",
+            _bucket_label_by_edges(mdf.get("price_change_pct_from_prev_signal"), pc_edges, pc_labels),
+            pnl,
+            is_win,
+            is_lose,
+        )
+        _add(
+            "volume_efficiency_pct",
+            _bucket_volume_efficiency_pct(mdf.get("volume_efficiency_pct")),
+            pnl,
+            is_win,
+            is_lose,
+        )
+
+    feat_order = [
+        "delta_entry_vwap_distance_pct",
+        "delta_first_30m_volume_ratio",
+        "delta_rs_vs_topix_pct",
+        "delta_high_update_count_before_entry",
+        "price_change_pct_from_prev_signal",
+        "volume_efficiency_pct",
+    ]
+    out: dict[str, Any] = {}
+    for feat in feat_order:
+        buckets = acc.get(feat) or {}
+        rows: list[dict[str, Any]] = []
+        for b, a in buckets.items():
+            sigs = int(a.get("signals", 0))
+            win = int(a.get("win", 0))
+            pnl_sum = float(a.get("pnl_sum", 0.0))
+            winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+            exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+            pnls = a.get("pnls") or []
+            rows.append(
+                {
+                    "bucket": str(b),
+                    "signals": int(sigs),
+                    "winrate_pct": float(winrate),
+                    "total_pnl_yen_100_shares": float(pnl_sum),
+                    "avg_expectancy_yen_100_shares": float(exp),
+                    "lose_worst10_sum_yen_100_shares": float(
+                        _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                    ),
+                }
+            )
+        out[feat] = sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+    return out
+
+
+def _build_momentum_decay_x_market_regime_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    excluded_from_eval=False の BASE かつ prev_signal_exists=True のみ。
+    指定特徴量bucket × market_regime の cross。
+    """
+    acc: dict[str, dict[tuple[str, str], dict[str, Any]]] = {}
+
+    def _add_cross(name: str, k1: str, k2: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        acc.setdefault(name, {})
+        key = (str(k1), str(k2))
+        a = acc[name].setdefault(key, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    dvw_edges = [-0.5, 0.0, 0.5]
+    dvw_labels = ["<=-0.5", "-0.5~0", "0~0.5", ">=0.5"]
+    pc_edges = [0.0, 0.5, 1.0]
+    pc_labels = ["<=0", "0~0.5", "0.5~1.0", ">=1.0"]
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        is_win = res == "WIN"
+        is_lose = res == "LOSE"
+        regime_b = str(s.get("market_regime") or "").strip() or "N/A"
+
+        _add_cross(
+            "delta_entry_vwap_distance_pct_bucket_x_market_regime",
+            _bucket_label_by_edges(mdf.get("delta_entry_vwap_distance_pct"), dvw_edges, dvw_labels),
+            regime_b,
+            pnl,
+            is_win,
+            is_lose,
+        )
+        _add_cross(
+            "delta_high_update_count_before_entry_bucket_x_market_regime",
+            _bucket_delta_high_update_count_before_entry(mdf.get("delta_high_update_count_before_entry")),
+            regime_b,
+            pnl,
+            is_win,
+            is_lose,
+        )
+        _add_cross(
+            "price_change_pct_from_prev_signal_bucket_x_market_regime",
+            _bucket_label_by_edges(mdf.get("price_change_pct_from_prev_signal"), pc_edges, pc_labels),
+            regime_b,
+            pnl,
+            is_win,
+            is_lose,
+        )
+        _add_cross(
+            "volume_efficiency_pct_bucket_x_market_regime",
+            _bucket_volume_efficiency_pct(mdf.get("volume_efficiency_pct")),
+            regime_b,
+            pnl,
+            is_win,
+            is_lose,
+        )
+
+    def _rows_for_name(name: str, field1: str, field2: str) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for (b1, b2), a in (acc.get(name) or {}).items():
+            sigs = int(a.get("signals", 0))
+            win = int(a.get("win", 0))
+            pnl_sum = float(a.get("pnl_sum", 0.0))
+            winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+            exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+            pnls = a.get("pnls") or []
+            rows.append(
+                {
+                    field1: str(b1),
+                    field2: str(b2),
+                    "signals": int(sigs),
+                    "winrate_pct": float(winrate),
+                    "avg_expectancy_yen_100_shares": float(exp),
+                    "total_pnl_yen_100_shares": float(pnl_sum),
+                    "lose_worst10_sum_yen_100_shares": float(
+                        _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                    ),
+                }
+            )
+        return sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+
+    return {
+        "delta_entry_vwap_distance_pct_bucket_x_market_regime": _rows_for_name(
+            "delta_entry_vwap_distance_pct_bucket_x_market_regime",
+            "delta_entry_vwap_distance_pct_bucket",
+            "market_regime",
+        ),
+        "delta_high_update_count_before_entry_bucket_x_market_regime": _rows_for_name(
+            "delta_high_update_count_before_entry_bucket_x_market_regime",
+            "delta_high_update_count_before_entry_bucket",
+            "market_regime",
+        ),
+        "price_change_pct_from_prev_signal_bucket_x_market_regime": _rows_for_name(
+            "price_change_pct_from_prev_signal_bucket_x_market_regime",
+            "price_change_pct_from_prev_signal_bucket",
+            "market_regime",
+        ),
+        "volume_efficiency_pct_bucket_x_market_regime": _rows_for_name(
+            "volume_efficiency_pct_bucket_x_market_regime",
+            "volume_efficiency_pct_bucket",
+            "market_regime",
+        ),
+    }
+
+
+def _build_chase_extension_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    excluded_from_eval=False の BASE かつ prev_signal_exists=True。
+    price_change_pct_from_prev_signal を細分化 bucket で集計する。
+    """
+    acc: dict[str, dict[str, Any]] = {}
+
+    def _add(bucket: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        a = acc.setdefault(bucket, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    edges = [0.0, 0.3, 0.5, 0.8, 1.2]
+    labels = ["<=0", "0~0.3", "0.3~0.5", "0.5~0.8", "0.8~1.2", ">=1.2"]
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        b = _bucket_label_by_edges(mdf.get("price_change_pct_from_prev_signal"), edges, labels)
+        _add(b, pnl, res == "WIN", res == "LOSE")
+
+    rows: list[dict[str, Any]] = []
+    for bkt, a in acc.items():
+        sigs = int(a.get("signals", 0))
+        win = int(a.get("win", 0))
+        pnl_sum = float(a.get("pnl_sum", 0.0))
+        winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+        exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+        pnls = a.get("pnls") or []
+        rows.append(
+            {
+                "bucket": str(bkt),
+                "signals": int(sigs),
+                "winrate_pct": float(winrate),
+                "avg_expectancy_yen_100_shares": float(exp),
+                "total_pnl_yen_100_shares": float(pnl_sum),
+                "lose_worst10_sum_yen_100_shares": float(
+                    _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                ),
+            }
+        )
+    return sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+
+
+def _build_chase_extension_x_market_regime_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    excluded_from_eval=False の BASE かつ prev_signal_exists=True。
+    price_change_pct_from_prev_signal bucket × market_regime の cross。
+    """
+    acc: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _add_cross(b1: str, b2: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        key = (str(b1), str(b2))
+        a = acc.setdefault(key, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    edges = [0.0, 0.3, 0.5, 0.8, 1.2]
+    labels = ["<=0", "0~0.3", "0.3~0.5", "0.5~0.8", "0.8~1.2", ">=1.2"]
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        b = _bucket_label_by_edges(mdf.get("price_change_pct_from_prev_signal"), edges, labels)
+        rk = str(s.get("market_regime") or "").strip() or "N/A"
+        _add_cross(b, rk, pnl, res == "WIN", res == "LOSE")
+
+    rows: list[dict[str, Any]] = []
+    for (b1, b2), a in acc.items():
+        sigs = int(a.get("signals", 0))
+        win = int(a.get("win", 0))
+        pnl_sum = float(a.get("pnl_sum", 0.0))
+        winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+        exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+        pnls = a.get("pnls") or []
+        rows.append(
+            {
+                "price_change_pct_from_prev_signal_bucket": str(b1),
+                "market_regime": str(b2),
+                "signals": int(sigs),
+                "winrate_pct": float(winrate),
+                "avg_expectancy_yen_100_shares": float(exp),
+                "total_pnl_yen_100_shares": float(pnl_sum),
+                "lose_worst10_sum_yen_100_shares": float(
+                    _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                ),
+            }
+        )
+    return sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+
+
+EXTENSION_SWEEP_PRICE_CHANGE_THRESHOLDS_PCT: tuple[float, ...] = (0.3, 0.5, 0.7, 1.0)
+
+
+def _build_extension_sweep_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    BASE・eval・prev_signal_exists=True のコホートで、price_change_pct_from_prev_signal>=T を仮想除外した場合の効果。
+    forward 耐性（伸びすぎ追撃）評価用。
+    """
+    cohort: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        pc = mdf.get("price_change_pct_from_prev_signal")
+        if not isinstance(pc, (int, float)) or (not math.isfinite(float(pc))):
+            continue
+        cohort.append(s)
+
+    base_m = _rollup_eval_base_signal_dict_metrics(cohort)
+    thr_rows: list[dict[str, Any]] = []
+    for thr in EXTENSION_SWEEP_PRICE_CHANGE_THRESHOLDS_PCT:
+        rem = [s for s in cohort]
+        blocked: list[dict[str, Any]] = []
+        kept: list[dict[str, Any]] = []
+        for s in rem:
+            mdf2 = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+            pc2 = mdf2.get("price_change_pct_from_prev_signal")
+            fv = float(pc2) if isinstance(pc2, (int, float)) else 0.0
+            if fv >= float(thr):
+                blocked.append(s)
+            else:
+                kept.append(s)
+        bm = _rollup_eval_base_signal_dict_metrics(blocked)
+        km = _rollup_eval_base_signal_dict_metrics(kept)
+        pnl_blocked = float(bm.get("total_pnl_yen_100_shares") or 0.0)
+        thr_rows.append(
+            {
+                "threshold_exclude_ge_pct": float(thr),
+                "blocked_signals": int(bm.get("signals") or 0),
+                "blocked_total_pnl": float(pnl_blocked),
+                "pnl_after_block": float(km.get("total_pnl_yen_100_shares") or 0.0),
+                "pnl_improvement": float(float(km.get("total_pnl_yen_100_shares") or 0.0) - float(base_m.get("total_pnl_yen_100_shares") or 0.0)),
+                "expectancy_after_block": float(km.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                "winrate_after_block": float(km.get("winrate_pct") or 0.0),
+                "lose_worst10_after_block": float(km.get("lose_worst10_sum_yen_100_shares") or 0.0),
+                "signals_after_block": int(km.get("signals") or 0),
+            }
+        )
+
+    return {
+        "note": (
+            "対象: excluded_from_eval=False の BASE かつ prev_signal_exists=True かつ price_change_pct が有限値。"
+            " 各 threshold で「前回同一銘柄BASEからの騰落%が>=threshold」を仮想除外。"
+        ),
+        "cohort": dict(base_m),
+        "thresholds": list(thr_rows),
+    }
+
+
+def _build_extension_hu_interaction_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    market_regime × price_change_pct_bucket × delta_high_update_count_before_entry_bucket の3軸interaction。
+    """
+    pc_edges = [0.0, 0.3, 0.5, 0.8, 1.2]
+    pc_labels = ["<=0", "0~0.3", "0.3~0.5", "0.5~0.8", "0.8~1.2", ">=1.2"]
+    acc: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+    def _add(mr: str, pc_b: str, dh_b: str, pnl: float, is_win: bool, is_lose: bool) -> None:
+        key = (str(mr), str(pc_b), str(dh_b))
+        a = acc.setdefault(key, {"signals": 0, "win": 0, "lose": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        if bool(is_lose):
+            a["lose"] = int(a.get("lose", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        mr = str(s.get("market_regime") or "").strip() or "N/A"
+        pc_b = _bucket_label_by_edges(mdf.get("price_change_pct_from_prev_signal"), pc_edges, pc_labels)
+        dh_b = _bucket_delta_high_update_count_before_entry(mdf.get("delta_high_update_count_before_entry"))
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        _add(mr, pc_b, dh_b, pnl, res == "WIN", res == "LOSE")
+
+    rows_out: list[dict[str, Any]] = []
+    for (mr, pcb, dhb), a in acc.items():
+        sigs = int(a.get("signals") or 0)
+        win = int(a.get("win") or 0)
+        pnl_sum = float(a.get("pnl_sum") or 0.0)
+        pnls = a.get("pnls") or []
+        rows_out.append(
+            {
+                "market_regime": str(mr),
+                "price_change_pct_from_prev_signal_bucket": str(pcb),
+                "delta_high_update_count_before_entry_bucket": str(dhb),
+                "signals": int(sigs),
+                "winrate_pct": float((float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0),
+                "avg_expectancy_yen_100_shares": float((pnl_sum / float(sigs)) if sigs > 0 else 0.0),
+                "total_pnl_yen_100_shares": float(pnl_sum),
+                "lose_worst10_sum_yen_100_shares": float(_lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])),
+            }
+        )
+    return sorted(rows_out, key=lambda x: int(x.get("signals") or 0), reverse=True)
+
+
+def _build_structure_edge_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    forward 前提: 銘柄名ではなく構造（feature状態）で edge / tail risk を見るための分析。
+    対象: excluded_from_eval=False, BASE, prev_signal_exists=True のみ。
+    """
+    cohort: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        cohort.append(s)
+
+    def _mdf(s: dict[str, Any]) -> dict[str, Any]:
+        return s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+
+    a_rows = _group_rollup_base_eval_rows(
+        cohort,
+        bucket_key_name="extension_vs_pullback_bucket",
+        bucket_fn=lambda s: _bucket_extension_vs_pullback(
+            _mdf(s).get("price_change_pct_from_prev_signal"),
+            _mdf(s).get("pullback_depth_pct"),
+        ),
+        include_symbol_dispersion=True,
+    )
+    b_rows = _group_rollup_base_eval_rows(
+        cohort,
+        bucket_key_name="hu_transition_bucket",
+        bucket_fn=lambda s: _bucket_hu_transition_delta(_mdf(s).get("delta_high_update_count_before_entry")),
+        include_symbol_dispersion=True,
+    )
+    c_rows = _group_rollup_base_eval_rows(
+        cohort,
+        bucket_key_name="volume_efficiency_bucket",
+        bucket_fn=lambda s: _bucket_volume_efficiency_pct(_mdf(s).get("volume_efficiency_pct")),
+        include_symbol_dispersion=True,
+    )
+    d_rows = _group_rollup_base_eval_rows(
+        cohort,
+        bucket_key_name="rs_continuation_bucket",
+        bucket_fn=lambda s: _bucket_rs_continuation(_mdf(s).get("rs_change_from_prev_signal_pct")),
+        include_symbol_dispersion=True,
+    )
+
+    return {
+        "note": (
+            "対象: excluded_from_eval=False の BASE かつ prev_signal_exists=True。"
+            " symbol_daily_entry_index / 時間帯 bucket は使わず、signal時点までの特徴量のみで bucket 集計。"
+        ),
+        "cohort_signals": int(len(cohort)),
+        "extension_vs_pullback_bucket": list(a_rows),
+        "hu_transition_bucket": list(b_rows),
+        "volume_efficiency_bucket": list(c_rows),
+        "rs_continuation_bucket": list(d_rows),
+    }
+
+
+def _tail_risk_rollup_rows(xs: list[dict[str, Any]]) -> dict[str, Any]:
+    pnls = [float(s.get("pnl_yen_100_shares") or 0.0) for s in xs if isinstance(s, dict)]
+    if not pnls:
+        return {
+            "signals": 0,
+            "total_pnl_yen_100_shares": 0.0,
+            "lose_worst10_sum_yen_100_shares": 0.0,
+            "avg_loss_yen_100_shares": 0.0,
+            "worst_loss_yen_100_shares": 0.0,
+        }
+    tot = float(sum(pnls))
+    worst = float(min(pnls))
+    avg = float(tot / float(len(pnls)))
+    return {
+        "signals": int(len(pnls)),
+        "total_pnl_yen_100_shares": float(tot),
+        "lose_worst10_sum_yen_100_shares": float(_lose_worst10_sum_yen_100_shares_from_pnls(pnls)),
+        "avg_loss_yen_100_shares": float(avg),
+        "worst_loss_yen_100_shares": float(worst),
+    }
+
+
+def _build_tail_risk_structure_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    対象: LOSE worst20 のみ（BASE eval）。
+    平均期待値ではなく tail risk（損失の構造）を見る。
+    """
+    base_lose: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        if str(s.get("result") or "") != "LOSE":
+            continue
+        base_lose.append(s)
+
+    lose_sorted = sorted(base_lose, key=lambda s: float(s.get("pnl_yen_100_shares") or 0.0))[:20]
+
+    def _mdf(s: dict[str, Any]) -> dict[str, Any]:
+        return s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+
+    # A: extension_bucket
+    acc_a: dict[str, list[dict[str, Any]]] = {}
+    for s in lose_sorted:
+        b = _bucket_extension_bucket_for_tail(_mdf(s).get("price_change_pct_from_prev_signal"))
+        if b == "N/A":
+            continue
+        acc_a.setdefault(b, []).append(s)
+    rows_a = []
+    for b, xs in acc_a.items():
+        rows_a.append({"extension_bucket": b, **_tail_risk_rollup_rows(xs)})
+    rows_a = sorted(rows_a, key=lambda r: int(r.get("signals") or 0), reverse=True)
+
+    def _cross_rows(name1: str, name2: str, bucket1_fn, bucket2_fn) -> list[dict[str, Any]]:
+        acc: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for s in lose_sorted:
+            b1 = str(bucket1_fn(s) or "N/A")
+            b2 = str(bucket2_fn(s) or "N/A")
+            if (not b1) or (not b2) or b1 == "N/A" or b2 == "N/A":
+                continue
+            acc.setdefault((b1, b2), []).append(s)
+        rows: list[dict[str, Any]] = []
+        for (b1, b2), xs in acc.items():
+            rows.append({name1: b1, name2: b2, **_tail_risk_rollup_rows(xs)})
+        return sorted(rows, key=lambda r: int(r.get("signals") or 0), reverse=True)
+
+    rows_b = _cross_rows(
+        "extension_bucket",
+        "volume_efficiency_bucket",
+        bucket1_fn=lambda s: _bucket_extension_bucket_for_tail(_mdf(s).get("price_change_pct_from_prev_signal")),
+        bucket2_fn=lambda s: _bucket_volume_efficiency_pct(_mdf(s).get("volume_efficiency_pct")),
+    )
+    rows_c = _cross_rows(
+        "extension_bucket",
+        "rs_change_bucket",
+        bucket1_fn=lambda s: _bucket_extension_bucket_for_tail(_mdf(s).get("price_change_pct_from_prev_signal")),
+        bucket2_fn=lambda s: _bucket_rs_continuation(_mdf(s).get("rs_change_from_prev_signal_pct")),
+    )
+    rows_d = _cross_rows(
+        "extension_bucket",
+        "entry_vwap_distance_bucket",
+        bucket1_fn=lambda s: _bucket_extension_bucket_for_tail(_mdf(s).get("price_change_pct_from_prev_signal")),
+        bucket2_fn=lambda s: _bucket_entry_vwap_distance_tail(s.get("entry_vwap_distance_pct")),
+    )
+
+    # E: HU transition bucket
+    acc_e: dict[str, list[dict[str, Any]]] = {}
+    for s in lose_sorted:
+        b = _bucket_hu_transition_delta(_mdf(s).get("delta_high_update_count_before_entry"))
+        if b == "N/A":
+            continue
+        acc_e.setdefault(b, []).append(s)
+    rows_e = []
+    for b, xs in acc_e.items():
+        rows_e.append({"hu_transition_bucket": b, **_tail_risk_rollup_rows(xs)})
+    rows_e = sorted(rows_e, key=lambda r: int(r.get("signals") or 0), reverse=True)
+
+    return {
+        "note": "対象: BASE eval の LOSE から損失が大きい順に worst20 を抽出し、構造別に tail 指標を集計。",
+        "cohort_lose_total": int(len(base_lose)),
+        "lose_worst20": int(len(lose_sorted)),
+        "extension_bucket": rows_a,
+        "extension_x_volume_efficiency": rows_b,
+        "extension_x_rs_change": rows_c,
+        "extension_x_vwap_distance": rows_d,
+        "hu_transition_bucket": rows_e,
+    }
+
+
+def _build_robustness_generalization_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    STRUCTURE_EDGE_ANALYSIS の bucket ごとに、上位銘柄除外後の expectancy を計算して generalization を見る。
+    対象: excluded_from_eval=False, BASE, prev_signal_exists=True。
+    """
+    cohort: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        cohort.append(s)
+
+    def _mdf(s: dict[str, Any]) -> dict[str, Any]:
+        return s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+
+    def _rows_for_bucket(bucket_name: str, bucket_fn) -> list[dict[str, Any]]:
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for s in cohort:
+            b = str(bucket_fn(s) or "N/A")
+            if not b or b == "N/A":
+                continue
+            groups.setdefault(b, []).append(s)
+        rows: list[dict[str, Any]] = []
+        for b, xs in groups.items():
+            m = dict(_rollup_eval_base_signal_dict_metrics(xs))
+            ex1 = _exclude_top_symbols_by_expectancy(xs, exclude_top_n=1)
+            ex2 = _exclude_top_symbols_by_expectancy(xs, exclude_top_n=2)
+            rows.append(
+                {
+                    bucket_name: str(b),
+                    "signals": int(m.get("signals") or 0),
+                    "expectancy_yen_100_shares_per_signal": float(m.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                    "exclude_top1_symbol_expectancy": float(
+                        ex1.get("expectancy_after_excluding_top_symbols_yen_100_shares_per_signal") or 0.0
+                    ),
+                    "exclude_top1_excluded_symbols": list(ex1.get("excluded_symbols") or []),
+                    "exclude_top2_symbol_expectancy": float(
+                        ex2.get("expectancy_after_excluding_top_symbols_yen_100_shares_per_signal") or 0.0
+                    ),
+                    "exclude_top2_excluded_symbols": list(ex2.get("excluded_symbols") or []),
+                }
+            )
+        return sorted(rows, key=lambda r: int(r.get("signals") or 0), reverse=True)
+
+    return {
+        "note": (
+            "STRUCTURE bucket ごとに『そのbucket内で期待値が高い銘柄』を top1/top2 除外した後の expectancy を計算。"
+            " symbol_daily_entry_index / 時間帯 bucket は使わない。"
+        ),
+        "cohort_signals": int(len(cohort)),
+        "extension_vs_pullback_bucket": _rows_for_bucket(
+            "extension_vs_pullback_bucket",
+            lambda s: _bucket_extension_vs_pullback(
+                _mdf(s).get("price_change_pct_from_prev_signal"),
+                _mdf(s).get("pullback_depth_pct"),
+            ),
+        ),
+        "hu_transition_bucket": _rows_for_bucket(
+            "hu_transition_bucket",
+            lambda s: _bucket_hu_transition_delta(_mdf(s).get("delta_high_update_count_before_entry")),
+        ),
+        "volume_efficiency_bucket": _rows_for_bucket(
+            "volume_efficiency_bucket",
+            lambda s: _bucket_volume_efficiency_pct(_mdf(s).get("volume_efficiency_pct")),
+        ),
+        "rs_continuation_bucket": _rows_for_bucket(
+            "rs_continuation_bucket",
+            lambda s: _bucket_rs_continuation(_mdf(s).get("rs_change_from_prev_signal_pct")),
+        ),
+    }
+
+
+def _build_structure_risk_score_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    analysis-only: structure_extension_risk_score を bucket 集計。
+    対象: excluded_from_eval=False / BASE / prev_signal_exists=True。
+    """
+    cohort: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        cohort.append(s)
+
+    acc: dict[str, list[dict[str, Any]]] = {}
+    for s in cohort:
+        b = _bucket_structure_risk_score(s.get("structure_extension_risk_score"))
+        if b == "N/A":
+            continue
+        acc.setdefault(b, []).append(s)
+
+    rows: list[dict[str, Any]] = []
+    for b, xs in acc.items():
+        m = dict(_rollup_eval_base_signal_dict_metrics(xs))
+        rows.append(
+            {
+                "bucket": str(b),
+                "signals": int(m.get("signals") or 0),
+                "winrate_pct": float(m.get("winrate_pct") or 0.0),
+                "avg_expectancy_yen_100_shares": float(m.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                "total_pnl_yen_100_shares": float(m.get("total_pnl_yen_100_shares") or 0.0),
+                "lose_worst10_sum_yen_100_shares": float(m.get("lose_worst10_sum_yen_100_shares") or 0.0),
+                "max_losing_run_yen_100_shares": float(m.get("max_losing_run_yen_100_shares") or 0.0),
+            }
+        )
+    return sorted(rows, key=lambda r: int(r.get("signals") or 0), reverse=True)
+
+
+def _build_structure_risk_score_x_market_regime_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    structure_extension_risk_score × market_regime cross。
+    対象: excluded_from_eval=False / BASE / prev_signal_exists=True。
+    """
+    cohort: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+        if not bool(mdf.get("prev_signal_exists", False)):
+            continue
+        cohort.append(s)
+
+    acc: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for s in cohort:
+        b = _bucket_structure_risk_score(s.get("structure_extension_risk_score"))
+        if b == "N/A":
+            continue
+        mr = str(s.get("market_regime") or "").strip() or "N/A"
+        acc.setdefault((b, mr), []).append(s)
+
+    rows: list[dict[str, Any]] = []
+    for (b, mr), xs in acc.items():
+        m = dict(_rollup_eval_base_signal_dict_metrics(xs))
+        rows.append(
+            {
+                "structure_risk_score_bucket": str(b),
+                "market_regime": str(mr),
+                "signals": int(m.get("signals") or 0),
+                "winrate_pct": float(m.get("winrate_pct") or 0.0),
+                "avg_expectancy_yen_100_shares": float(m.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                "total_pnl_yen_100_shares": float(m.get("total_pnl_yen_100_shares") or 0.0),
+                "lose_worst10_sum_yen_100_shares": float(m.get("lose_worst10_sum_yen_100_shares") or 0.0),
+                "max_losing_run_yen_100_shares": float(m.get("max_losing_run_yen_100_shares") or 0.0),
+            }
+        )
+    return sorted(rows, key=lambda r: int(r.get("signals") or 0), reverse=True)
+
+
+def _build_robustness_symbol_removal_analysis_from_signal_dicts(
+    signal_dicts: list[dict[str, Any]],
+    *,
+    min_signals_for_expectancy_rank: int = 2,
+    expectancy_rank_top_cap: int = 25,
+    exclude_top_n_list: tuple[int, ...] = (1, 2, 3),
+) -> dict[str, Any]:
+    """
+    特定銘柄への依存（forward robustness）。
+    expectancy 上位を1銘柄ずつ除外した効果と、expectancy順の top N 銘柄まとめ除外。
+    max_losing_run はトレード時系列順の累積損益の最大ドローダウン（円・負値）。
+    """
+    base_cohort = [
+        s
+        for s in signal_dicts
+        if isinstance(s, dict)
+        and (not bool(s.get("excluded_from_eval", False)))
+        and str(s.get("position_kind") or "BASE").strip().upper() == "BASE"
+    ]
+    baseline = dict(_rollup_eval_base_signal_dict_metrics(base_cohort))
+    exp_before = float(baseline.get("expectancy_yen_100_shares_per_signal") or 0.0)
+
+    by_sym: dict[str, list[dict[str, Any]]] = {}
+    for s in base_cohort:
+        sym = str(s.get("symbol") or "").strip()
+        if not sym:
+            continue
+        by_sym.setdefault(sym, []).append(s)
+
+    sym_stats: list[dict[str, Any]] = []
+    for sym, xs in by_sym.items():
+        ag = _rollup_eval_base_signal_dict_metrics(xs)
+        sym_stats.append(
+            {
+                "symbol": str(sym),
+                "signals": int(ag.get("signals") or 0),
+                "expectancy_yen_100_shares_per_signal": float(ag.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                "total_pnl_yen_100_shares": float(ag.get("total_pnl_yen_100_shares") or 0.0),
+            }
+        )
+    ranked = sorted(
+        [x for x in sym_stats if int(x.get("signals") or 0) >= int(min_signals_for_expectancy_rank)],
+        key=lambda r: float(r.get("expectancy_yen_100_shares_per_signal") or 0.0),
+        reverse=True,
+    )
+    capped = ranked[: max(0, int(expectancy_rank_top_cap))]
+
+    one_offs: list[dict[str, Any]] = []
+    for i, row in enumerate(capped):
+        sym = str(row.get("symbol") or "")
+        if not sym:
+            continue
+        sub = [s for s in base_cohort if str(s.get("symbol") or "") != sym]
+        am = _rollup_eval_base_signal_dict_metrics(sub)
+        one_offs.append(
+            {
+                "excluded_symbol": sym,
+                "excluded_expectancy_rank": int(i + 1),
+                "excluded_symbol_signals": int(row.get("signals") or 0),
+                "excluded_symbol_expectancy_yen": float(row.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                "expectancy_after_removal": float(am.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                "total_pnl_after_removal": float(am.get("total_pnl_yen_100_shares") or 0.0),
+                "max_losing_run_after_removal": float(am.get("max_losing_run_yen_100_shares") or 0.0),
+                "lose_worst10_after_removal": float(am.get("lose_worst10_sum_yen_100_shares") or 0.0),
+                "signals_after_removal": int(am.get("signals") or 0),
+            }
+        )
+
+    topn_expectancy_rows: list[dict[str, Any]] = []
+    for n in exclude_top_n_list:
+        try:
+            nn = int(n)
+        except Exception:
+            continue
+        if nn <= 0:
+            continue
+        excl_syms = [str(x.get("symbol") or "") for x in ranked[:nn] if str(x.get("symbol") or "")]
+        excl_set = set(excl_syms)
+        sub2 = [s for s in base_cohort if str(s.get("symbol") or "") not in excl_set]
+        bm2 = _rollup_eval_base_signal_dict_metrics(sub2)
+        exp_after = float(bm2.get("expectancy_yen_100_shares_per_signal") or 0.0)
+        topn_expectancy_rows.append(
+            {
+                "exclude_top_n_symbols": int(nn),
+                "excluded_symbols_expectancy_ordered": list(excl_syms),
+                "expectancy_before": float(exp_before),
+                "expectancy_after_removal": float(exp_after),
+                "expectancy_drop_ratio": _expectancy_drop_ratio(exp_before, exp_after),
+                "total_pnl_after_removal": float(bm2.get("total_pnl_yen_100_shares") or 0.0),
+                "max_losing_run_after_removal": float(bm2.get("max_losing_run_yen_100_shares") or 0.0),
+                "lose_worst10_after_removal": float(bm2.get("lose_worst10_sum_yen_100_shares") or 0.0),
+                "signals_after_removal": int(bm2.get("signals") or 0),
+            }
+        )
+
+    return {
+        "note": (
+            "expectancy 順は同一銘柄の BASE eval について「signals>=min_signals_for_expectancy_rank」のみ順位付け。"
+            " max_losing_run は約定並びの累積損益ドローダウン。"
+        ),
+        "min_signals_for_expectancy_rank": int(min_signals_for_expectancy_rank),
+        "baseline_eval_base": baseline,
+        "exclude_one_symbol_expectancy_ranked": list(one_offs),
+        "exclude_top_n_expectancy_ordered": list(topn_expectancy_rows),
+    }
+
+
+STRONG_EXTENSION_ISOLATION_THRESHOLD_PCTS: tuple[float, ...] = (0.3, 0.5, 0.8, 1.0)
+
+
+def _eval_base_signal_dicts_for_extension_analysis(signal_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """excluded_from_eval=False の BASE のみ（仮想 extension 分析の母集団）。"""
+    out: list[dict[str, Any]] = []
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        if str(s.get("position_kind") or "BASE").strip().upper() != "BASE":
+            continue
+        out.append(s)
+    return out
+
+
+def _signal_matches_strong_extension_virtual_block_a(s: dict[str, Any], *, threshold_pct: float) -> bool:
+    """
+    STRONG かつ前回シグナルありかつ price_change_pct_from_prev_signal >= threshold。
+    symbol_daily_entry_index は参照しない。
+    """
+    if not isinstance(s, dict):
+        return False
+    mr = str(s.get("market_regime") or "").strip().upper()
+    if mr != "STRONG":
+        return False
+    mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+    if not bool(mdf.get("prev_signal_exists", False)):
+        return False
+    pc = mdf.get("price_change_pct_from_prev_signal")
+    if not isinstance(pc, (int, float)) or (not math.isfinite(float(pc))):
+        return False
+    return float(pc) >= float(threshold_pct)
+
+
+def _signal_matches_strong_extension_virtual_block_b(s: dict[str, Any], *, threshold_pct: float) -> bool:
+    """ルール A に加え delta_high_update_count_before_entry == +1（整数）。"""
+    if not _signal_matches_strong_extension_virtual_block_a(s, threshold_pct=float(threshold_pct)):
+        return False
+    mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+    dh = mdf.get("delta_high_update_count_before_entry")
+    try:
+        v = int(float(dh))
+    except Exception:
+        return False
+    return int(v) == 1
+
+
+def _symbol_contribution_top2_abs_pnl_ratio_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> float:
+    """銘柄別損益の絶対値ベースで上位2銘柄が占める割合（0〜1）。"""
+    by_sym: dict[str, float] = {}
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        sym = str(s.get("symbol") or "").strip()
+        if not sym:
+            continue
+        by_sym[sym] = float(by_sym.get(sym, 0.0)) + float(s.get("pnl_yen_100_shares") or 0.0)
+    if not by_sym:
+        return 0.0
+    abs_vals = sorted((abs(float(v)) for v in by_sym.values()), reverse=True)
+    denom = float(sum(abs(float(v)) for v in by_sym.values()))
+    if denom <= 0.0:
+        return 0.0
+    if len(abs_vals) >= 2:
+        return float(abs_vals[0] + abs_vals[1]) / denom
+    return float(abs_vals[0]) / denom
+
+
+def _symbol_contribution_top3_abs_pnl_ratio_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> float:
+    """銘柄別損益の絶対値ベースで上位3銘柄が占める割合（0〜1）。"""
+    by_sym: dict[str, float] = {}
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        sym = str(s.get("symbol") or "").strip()
+        if not sym:
+            continue
+        by_sym[sym] = float(by_sym.get(sym, 0.0)) + float(s.get("pnl_yen_100_shares") or 0.0)
+    if not by_sym:
+        return 0.0
+    abs_vals = sorted((abs(float(v)) for v in by_sym.values()), reverse=True)
+    denom = float(sum(abs(float(v)) for v in by_sym.values()))
+    if denom <= 0.0:
+        return 0.0
+    top = float(sum(abs_vals[:3])) if len(abs_vals) >= 3 else float(sum(abs_vals))
+    return float(top) / denom
+
+
+def _expectancy_exclude_top_expectancy_symbols_from_signal_dicts(
+    signal_dicts: list[dict[str, Any]],
+    *,
+    exclude_n: int,
+    min_signals_for_expectancy_rank: int = 2,
+) -> dict[str, Any]:
+    """同一 signal 集合から「銘柄別期待値」上位 exclude_n をまとめて除外したときの expectancy 等。"""
+    try:
+        nn = int(exclude_n)
+    except Exception:
+        nn = 0
+    if nn <= 0:
+        bm0 = dict(_rollup_eval_base_signal_dict_metrics(signal_dicts))
+        return {
+            "excluded_symbols_expectancy_ordered": [],
+            "expectancy_after_exclude_top_expectancy_symbols": float(
+                bm0.get("expectancy_yen_100_shares_per_signal") or 0.0
+            ),
+            "signals_after_exclude": int(bm0.get("signals") or 0),
+        }
+
+    base_cohort = [s for s in signal_dicts if isinstance(s, dict)]
+    baseline = dict(_rollup_eval_base_signal_dict_metrics(base_cohort))
+    exp_before = float(baseline.get("expectancy_yen_100_shares_per_signal") or 0.0)
+
+    by_sym: dict[str, list[dict[str, Any]]] = {}
+    for s in base_cohort:
+        sym = str(s.get("symbol") or "").strip()
+        if not sym:
+            continue
+        by_sym.setdefault(sym, []).append(s)
+
+    sym_stats: list[dict[str, Any]] = []
+    for sym, xs in by_sym.items():
+        ag = _rollup_eval_base_signal_dict_metrics(xs)
+        sym_stats.append(
+            {
+                "symbol": str(sym),
+                "signals": int(ag.get("signals") or 0),
+                "expectancy_yen_100_shares_per_signal": float(ag.get("expectancy_yen_100_shares_per_signal") or 0.0),
+            }
+        )
+    ranked = sorted(
+        [x for x in sym_stats if int(x.get("signals") or 0) >= int(min_signals_for_expectancy_rank)],
+        key=lambda r: float(r.get("expectancy_yen_100_shares_per_signal") or 0.0),
+        reverse=True,
+    )
+    excl_syms = [str(x.get("symbol") or "") for x in ranked[:nn] if str(x.get("symbol") or "")]
+    excl_set = set(excl_syms)
+    sub = [s for s in base_cohort if str(s.get("symbol") or "") not in excl_set]
+    am = dict(_rollup_eval_base_signal_dict_metrics(sub))
+    exp_after = float(am.get("expectancy_yen_100_shares_per_signal") or 0.0)
+    return {
+        "expectancy_before": float(exp_before),
+        "expectancy_drop_ratio_exclude_top_symbols_only": _expectancy_drop_ratio(exp_before, exp_after),
+        "excluded_symbols_expectancy_ordered": list(excl_syms),
+        "expectancy_after_exclude_top_expectancy_symbols": float(exp_after),
+        "signals_after_exclude": int(am.get("signals") or 0),
+        "total_pnl_after_exclude_top_expectancy_symbols": float(am.get("total_pnl_yen_100_shares") or 0.0),
+    }
+
+
+def _strong_extension_virtual_block_cell_metrics(
+    *,
+    cohort: list[dict[str, Any]],
+    kept: list[dict[str, Any]],
+    blocked: list[dict[str, Any]],
+    baseline_total_pnl: float,
+    baseline_expectancy: float,
+    cell_name: str,
+) -> dict[str, Any]:
+    km = dict(_rollup_eval_base_signal_dict_metrics(kept))
+    bm = dict(_rollup_eval_base_signal_dict_metrics(blocked))
+    bn = int(bm.get("signals") or 0)
+    btp = float(bm.get("total_pnl_yen_100_shares") or 0.0)
+    b_exp = float(btp / float(bn)) if bn > 0 else 0.0
+    k_tot = float(km.get("total_pnl_yen_100_shares") or 0.0)
+    k_exp = float(km.get("expectancy_yen_100_shares_per_signal") or 0.0)
+
+    pim = float(k_tot - float(baseline_total_pnl))
+    edr = (
+        None
+        if str(cell_name).strip().lower() == "baseline"
+        else _expectancy_drop_ratio(float(baseline_expectancy), float(k_exp))
+    )
+    rb2 = dict(_expectancy_exclude_top_expectancy_symbols_from_signal_dicts(kept, exclude_n=2))
+    row: dict[str, Any] = {
+        "cell": str(cell_name),
+        "signals": int(km.get("signals") or 0),
+        "blocked_signals": int(bn),
+        "expectancy_yen_100_shares_per_signal": float(k_exp),
+        "total_pnl_yen_100_shares": float(k_tot),
+        "lose_worst10_sum_yen_100_shares": float(km.get("lose_worst10_sum_yen_100_shares") or 0.0),
+        "max_losing_run_yen_100_shares": float(km.get("max_losing_run_yen_100_shares") or 0.0),
+        "blocked_total_pnl_yen_100_shares": float(btp),
+        "blocked_expectancy_yen_100_shares_per_signal": float(b_exp),
+        "pnl_improvement_yen_100_shares": float(pim),
+        "expectancy_drop_ratio_vs_baseline": edr,
+        "symbol_contribution_top2_abs_pnl_ratio": float(_symbol_contribution_top2_abs_pnl_ratio_from_signal_dicts(kept)),
+        "exclude_top_expectancy_symbols_n": int(2),
+        "expectancy_after_exclude_top_expectancy_symbols": float(
+            rb2.get("expectancy_after_exclude_top_expectancy_symbols") or 0.0
+        ),
+        "excluded_symbols_expectancy_top2": list(rb2.get("excluded_symbols_expectancy_ordered") or []),
+        "signals_after_exclude_top_expectancy_symbols": int(rb2.get("signals_after_exclude") or 0),
+    }
+    if "expectancy_drop_ratio_exclude_top_symbols_only" in rb2:
+        row["expectancy_drop_ratio_exclude_top_symbols_only_vs_cell"] = rb2.get("expectancy_drop_ratio_exclude_top_symbols_only")
+    return row
+
+
+def _build_strong_extension_threshold_isolation_analysis(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    STRONG × price extension の仮想ブロック isolation（AUTO_BLOCK 採用前の forward 確認用）。
+    閾値 X ごとに baseline / ルールAのみ / ルールBのみの3セルを比較する。
+    """
+    cohort = _eval_base_signal_dicts_for_extension_analysis(signal_dicts)
+    base_m = dict(_rollup_eval_base_signal_dict_metrics(cohort))
+    b_tot = float(base_m.get("total_pnl_yen_100_shares") or 0.0)
+    b_exp = float(base_m.get("expectancy_yen_100_shares_per_signal") or 0.0)
+
+    thr_out: list[dict[str, Any]] = []
+    for thr in STRONG_EXTENSION_ISOLATION_THRESHOLD_PCTS:
+        blocked_a = [
+            s
+            for s in cohort
+            if _signal_matches_strong_extension_virtual_block_a(s, threshold_pct=float(thr))
+        ]
+        blocked_b = [
+            s
+            for s in cohort
+            if _signal_matches_strong_extension_virtual_block_b(s, threshold_pct=float(thr))
+        ]
+        set_a = {id(x) for x in blocked_a}
+        set_b = {id(x) for x in blocked_b}
+        kept_a = [s for s in cohort if id(s) not in set_a]
+        kept_b = [s for s in cohort if id(s) not in set_b]
+
+        thr_out.append(
+            {
+                "threshold_pct": float(thr),
+                "cells": {
+                    "baseline": _strong_extension_virtual_block_cell_metrics(
+                        cohort=cohort,
+                        kept=list(cohort),
+                        blocked=[],
+                        baseline_total_pnl=b_tot,
+                        baseline_expectancy=b_exp,
+                        cell_name="baseline",
+                    ),
+                    "rule_a_only": _strong_extension_virtual_block_cell_metrics(
+                        cohort=cohort,
+                        kept=kept_a,
+                        blocked=blocked_a,
+                        baseline_total_pnl=b_tot,
+                        baseline_expectancy=b_exp,
+                        cell_name="rule_a_only",
+                    ),
+                    "rule_b_only": _strong_extension_virtual_block_cell_metrics(
+                        cohort=cohort,
+                        kept=kept_b,
+                        blocked=blocked_b,
+                        baseline_total_pnl=b_tot,
+                        baseline_expectancy=b_exp,
+                        cell_name="rule_b_only",
+                    ),
+                },
+            }
+        )
+
+    return {
+        "cohort_definition": (
+            "excluded_from_eval=False の BASE のみ。仮想ブロック条件は regime==STRONG かつ "
+            "prev_signal_exists と有限の price_change_pct_from_prev_signal のみ参照（delta_hu は B のみ）。"
+            " symbol_daily_entry_index は本分析では使用しない。"
+        ),
+        "rule_a_definition": (
+            'market_regime=="STRONG" AND prev_signal_exists AND price_change_pct_from_prev_signal >= X'
+        ),
+        "rule_b_definition": (
+            "rule_a AND delta_high_update_count_before_entry == +1 (int)"
+        ),
+        "thresholds_pct": list(STRONG_EXTENSION_ISOLATION_THRESHOLD_PCTS),
+        "baseline_cohort": dict(base_m),
+        "thresholds": thr_out,
+    }
+
+
+def _write_strong_extension_threshold_isolation_sweep_txt(analysis: dict[str, Any]) -> list[str]:
+    """sweep_summary.txt 用テキスト。"""
+    lines: list[str] = []
+    lines.append("=== STRONG extension threshold isolation sweep（AUTO_BLOCK 候補・仮想集計） ===")
+    lines.append(f"saved_at_jst: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("")
+    lines.append(str(analysis.get("cohort_definition") or ""))
+    lines.append("")
+    lines.append(f"rule_a: {analysis.get('rule_a_definition')}")
+    lines.append(f"rule_b: {analysis.get('rule_b_definition')}")
+    bc = analysis.get("baseline_cohort") if isinstance(analysis.get("baseline_cohort"), dict) else {}
+    if bc:
+        lines.append("")
+        lines.append(
+            f"baseline_cohort: signals={int(bc.get('signals') or 0)}  "
+            f"expectancy={float(bc.get('expectancy_yen_100_shares_per_signal') or 0.0):+,.0f}円  "
+            f"total_pnl={float(bc.get('total_pnl_yen_100_shares') or 0.0):+,.0f}円"
+        )
+    lines.append("")
+    lines.append("--- ROBUSTNESS フォーカス: exclude_top2（期待値順）後の expectancy（銘柄集中度の感度） ---")
+    lines.append("")
+    for block in analysis.get("thresholds") or []:
+        if not isinstance(block, dict):
+            continue
+        thr = float(block.get("threshold_pct") or 0.0)
+        lines.append(f"=== threshold_pct >= {thr:g} （仮想ブロック下限） ===")
+        cells = block.get("cells") if isinstance(block.get("cells"), dict) else {}
+        for ck in ("baseline", "rule_a_only", "rule_b_only"):
+            c = cells.get(ck)
+            if not isinstance(c, dict):
+                continue
+            edr = c.get("expectancy_drop_ratio_vs_baseline")
+            edr_s = "N/A" if edr is None else f"{float(edr):.4f}"
+            lines.append(f"[{ck}]")
+            lines.append(
+                f"  signals={int(c.get('signals') or 0)}  blocked={int(c.get('blocked_signals') or 0)}  "
+                f"expectancy={float(c.get('expectancy_yen_100_shares_per_signal') or 0.0):+,.0f}円  "
+                f"total_pnl={float(c.get('total_pnl_yen_100_shares') or 0.0):+,.0f}円  "
+                f"lose_worst10_sum={float(c.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}円  "
+                f"max_losing_run={float(c.get('max_losing_run_yen_100_shares') or 0.0):+,.0f}円"
+            )
+            lines.append(
+                f"  blocked_total_pnl={float(c.get('blocked_total_pnl_yen_100_shares') or 0.0):+,.0f}円  "
+                f"blocked_expectancy={float(c.get('blocked_expectancy_yen_100_shares_per_signal') or 0.0):+,.0f}円  "
+                f"pnl_improvement={float(c.get('pnl_improvement_yen_100_shares') or 0.0):+,.0f}円  "
+                f"expectancy_drop_ratio_vs_baseline={edr_s}"
+            )
+            lines.append(
+                f"  symbol_contribution_top2_abs_pnl_ratio={float(c.get('symbol_contribution_top2_abs_pnl_ratio') or 0.0):.4f}"
+            )
+            lines.append(
+                "  ROBUST exclude_top2: "
+                f"expectancy_after={float(c.get('expectancy_after_exclude_top_expectancy_symbols') or 0.0):+,.0f}円  "
+                f"excluded={list(c.get('excluded_symbols_expectancy_top2') or [])}  "
+                f"signals_after={int(c.get('signals_after_exclude_top_expectancy_symbols') or 0)}"
+            )
+            lines.append("")
+    cols = (
+        "threshold_pct\tcell\tsignals\tblocked\texpectancy\ttotal_pnl\tlw10\tmax_dd_run\t"
+        "blocked_pnl\tblocked_exp\tpnl_imp\texp_drop_vs_bl\ttop2_ratio\texp_after_excl_top2\texcluded_top2_syms"
+    )
+    lines.append("--- TSV（タブ区切り） ---")
+    lines.append(cols)
+    for block in analysis.get("thresholds") or []:
+        if not isinstance(block, dict):
+            continue
+        thr = float(block.get("threshold_pct") or 0.0)
+        cells = block.get("cells") if isinstance(block.get("cells"), dict) else {}
+        for ck in ("baseline", "rule_a_only", "rule_b_only"):
+            c = cells.get(ck)
+            if not isinstance(c, dict):
+                continue
+            edr = c.get("expectancy_drop_ratio_vs_baseline")
+            edr_s = "" if edr is None else f"{float(edr):.6f}"
+            excl = c.get("excluded_symbols_expectancy_top2") or []
+            excl_s = ";".join([str(x) for x in excl]) if isinstance(excl, list) else ""
+            lines.append(
+                f"{thr:g}\t{ck}\t"
+                f"{int(c.get('signals') or 0)}\t{int(c.get('blocked_signals') or 0)}\t"
+                f"{float(c.get('expectancy_yen_100_shares_per_signal') or 0.0):+.4f}\t"
+                f"{float(c.get('total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+                f"{float(c.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}\t"
+                f"{float(c.get('max_losing_run_yen_100_shares') or 0.0):+.2f}\t"
+                f"{float(c.get('blocked_total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+                f"{float(c.get('blocked_expectancy_yen_100_shares_per_signal') or 0.0):+.4f}\t"
+                f"{float(c.get('pnl_improvement_yen_100_shares') or 0.0):+.2f}\t"
+                f"{edr_s}\t"
+                f"{float(c.get('symbol_contribution_top2_abs_pnl_ratio') or 0.0):.6f}\t"
+                f"{float(c.get('expectancy_after_exclude_top_expectancy_symbols') or 0.0):+.4f}\t"
+                f"{excl_s}"
+            )
+    lines.append("")
+    return lines
+
+
+def run_strong_extension_threshold_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+) -> int:
+    """
+    baseline Replay 1種のみ実行し、全 run の BASE 実績をマージした signal dict から
+    STRONG×extension の仮想ブロック isolation を算出する。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    results_root = _results_root_abs(script_dir)
+    os.makedirs(results_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"strong_extension_threshold_sweep_{sweep_stamp}", script_dir=script_dir)
+
+    mode_paths = _write_auto_block_momentum_sweep_configs(script_dir)
+    cfg_abs = str(mode_paths.get("baseline") or "")
+    if not cfg_abs:
+        print(f"[{now_str()}] strong_extension_threshold_sweep: baseline config missing")
+        return 2
+    cfg_raw = _load_replay_config(cfg_abs)
+    f = _apply_replay_config_to_flags(cfg=cfg_raw)
+    cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+
+    rng = "random_apr"
+    replay_random_days = 5
+    batch_stamp = f"{sweep_stamp}_strong_ext_iso_{rng}"
+    output_subdir = os.path.join(f"strong_extension_threshold_sweep_{sweep_stamp}", f"baseline_{rng}")
+
+    print(f"[{now_str()}] strong_extension_threshold sweep: rng={rng} repeat={int(n_repeat)} replay_mode={str(replay_mode)}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
+
+    run_summaries: list[dict[str, Any]] = []
+    results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
+
+    for i in range(1, int(n_repeat) + 1):
+        seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+        code = run_replay(
+            interval_sec=float(interval_sec),
+            only_changes=bool(only_changes),
+            fixed_watch=fixed_watch,
+            replay_range=str(rng),
+            replay_random_days=int(replay_random_days),
+            replay_random_months=3,
+            replay_seed=seed_run,
+            replay_mode=str(replay_mode or "normal"),
+            replay_fast_discord=False,
+            replay_fast_verbose=False,
+            replay_fast_print_signal_details=False,
+            replay_market_debug=False,
+            replay_repeat_run_no=i,
+            replay_repeat_total=int(n_repeat),
+            replay_output_subdir=output_subdir,
+            replay_batch_stamp=batch_stamp,
+            replay_morning_screen_hhmm="",
+            one_trade_per_symbol_per_day=False,
+            enable_add=False,
+            replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+            replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+            replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+            replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+            replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+            replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+            replay_config_name=str(f.get("replay_config_name") or ""),
+            replay_config_path=str(cfg_abs),
+            aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+            aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+            aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+            entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+            entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+            entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+            entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+            entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+            entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+            daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+            daily_loss_stop_threshold_yen_100_shares=float(
+                f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)
+            ),
+            regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+            regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+            regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+            regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+            regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
+            signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+            signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+            signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+            signal_filter_vwap_distance_ge_threshold_pct=float(
+                f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+            ),
+            signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+            signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+            **_replay_composite_signal_filter_kwargs_from_flags(f),
+            **_replay_regime_control_kwargs_from_flags(f),
+            replay_settings=None,
+        )
+        if int(code) != 0:
+            print(f"[{now_str()}] strong_extension_threshold sweep interrupted: run_replay exit={int(code)} (run={i})")
+            return int(code)
+
+        try:
+            run_tag = f"run{i:02d}"
+            candidates = sorted(
+                [
+                    fn
+                    for fn in os.listdir(results_dir)
+                    if fn.endswith(".json")
+                    and ("replay_summary_" in fn)
+                    and (not fn.endswith("_symbol_scores.json"))
+                    and (f"_{run_tag}.json" in fn)
+                ],
+                key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                reverse=True,
+            )
+            if candidates:
+                pjson = os.path.join(results_dir, candidates[0])
+                with open(pjson, "r", encoding="utf-8") as fp:
+                    rep = json.load(fp)
+                run_summaries.append({"run_no": i, "json_path": pjson, "report": rep})
+        except Exception:
+            pass
+
+    flat_signals = [
+        s
+        for rr in run_summaries
+        for s in ((rr.get("report") or {}).get("signals") or [])
+        if isinstance(s, dict)
+    ]
+    iso = _build_strong_extension_threshold_isolation_analysis(flat_signals)
+    rob = (
+        dict(_build_robustness_symbol_removal_analysis_from_signal_dicts(flat_signals))
+        if flat_signals
+        else {}
+    )
+    ext_payload = dict(iso)
+    ext_payload["sweep_meta"] = {
+        "saved_at_jst": datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+        "sweep_stamp": sweep_stamp,
+        "replay_cfg_name": cfg_name,
+        "replay_cfg_path": cfg_abs,
+        "replay_range": rng,
+        "replay_repeat_runs": int(n_repeat),
+        "replay_seed": replay_seed,
+        "results_folder": str(output_subdir),
+    }
+    ext_payload["extension_robustness_metrics"] = {
+        "robustness_symbol_removal_analysis": rob,
+        "strong_extension_threshold_isolation_analysis": dict(iso),
+    }
+
+    jpath = os.path.join(sweep_root, "strong_extension_threshold_isolation.json")
+    with open(jpath, "w", encoding="utf-8") as fwj:
+        json.dump(ext_payload, fwj, ensure_ascii=False, indent=2)
+
+    iso_body_lines = _write_strong_extension_threshold_isolation_sweep_txt(iso)
+    summit = _aggregate_replay_repeat_run_summaries(run_summaries) if run_summaries else {}
+    hdr_meta_lines: list[str] = [
+        f"sweep_stamp: {sweep_stamp}",
+        f"replay_config: {cfg_name}",
+        f"replay_config_path: {cfg_abs}",
+        f"replay_range: {rng}  replay_repeat: {int(n_repeat)}",
+        f"replay_seed(base): {replay_seed}",
+        f"json_export: {jpath}",
+        "",
+        "--- merged replay run_summaries aggregate ---",
+        json.dumps(summit, ensure_ascii=False, indent=2) if summit else "{}",
+        "",
+    ]
+    out_lines = iso_body_lines[:3] + hdr_meta_lines + iso_body_lines[3:]
+
+    outp = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(outp, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(out_lines) + "\n")
+
+    print("")
+    print(f"[{now_str()}] strong_extension_threshold sweep: summary_path={outp}")
+    print(f"[{now_str()}] strong_extension_threshold sweep: json_path={jpath}")
+    print("\n".join(out_lines[:45]))
+    if len(out_lines) > 45:
+        print(f"... ({len(out_lines)} lines total)")
+    return 0
+
+
+def _forward_risk_strong_extension_ge05(s: dict[str, Any]) -> bool:
+    """STRONG + price_change_pct_from_prev_signal >= 0.5（analysis only）."""
+    if not isinstance(s, dict):
+        return False
+    mr = str(s.get("market_regime") or "").strip().upper()
+    if mr != "STRONG":
+        return False
+    mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+    pc = mdf.get("price_change_pct_from_prev_signal")
+    if not isinstance(pc, (int, float)) or (not math.isfinite(float(pc))):
+        return False
+    return float(pc) >= 0.5
+
+
+def _forward_risk_strong_delta_hu_minus1(s: dict[str, Any]) -> bool:
+    """STRONG + delta_high_update_count_before_entry == -1（analysis only）。"""
+    if not isinstance(s, dict):
+        return False
+    mr = str(s.get("market_regime") or "").strip().upper()
+    if mr != "STRONG":
+        return False
+    mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+    dh = mdf.get("delta_high_update_count_before_entry")
+    try:
+        v = int(float(dh))
+    except Exception:
+        return False
+    return int(v) == -1
+
+
+def _forward_risk_strong_gap_ge3(s: dict[str, Any]) -> bool:
+    """STRONG + gap_pct >= 3.0（analysis only）。"""
+    if not isinstance(s, dict):
+        return False
+    mr = str(s.get("market_regime") or "").strip().upper()
+    if mr != "STRONG":
+        return False
+    g = s.get("gap_pct")
+    if not isinstance(g, (int, float)) or (not math.isfinite(float(g))):
+        return False
+    return float(g) >= 3.0
+
+
+def _forward_risk_combo_safe(s: dict[str, Any]) -> bool:
+    return (
+        bool(_forward_risk_strong_extension_ge05(s))
+        or bool(_forward_risk_strong_delta_hu_minus1(s))
+        or bool(_forward_risk_strong_gap_ge3(s))
+    )
+
+
+def _shadow_block_rule_names_from_signal_dict(s: dict[str, Any]) -> list[str]:
+    """
+    shadow block: analysis-only 観測フラグ。
+    IMPORTANT: excluded_from_eval / entry_allowed / AUTO_BLOCK 等には一切影響させない。
+    """
+    if not isinstance(s, dict):
+        return []
+    mr = str(s.get("market_regime") or "").strip().upper()
+    if mr != "STRONG":
+        return []
+    mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+    out: list[str] = []
+    pc = mdf.get("price_change_pct_from_prev_signal")
+    if isinstance(pc, (int, float)) and math.isfinite(float(pc)) and float(pc) >= 0.5:
+        out.append("STRONG_EXTENSION_GE_05")
+    dh = mdf.get("delta_high_update_count_before_entry")
+    try:
+        v = int(float(dh))
+    except Exception:
+        v = None
+    if v is not None and int(v) == -1:
+        out.append("STRONG_DELTA_HU_MINUS1")
+    return out
+
+
+def _shadow_block_candidate_flags_from_signal_dict(s: dict[str, Any]) -> dict[str, bool]:
+    names = set(_shadow_block_rule_names_from_signal_dict(s))
+    return {
+        "STRONG_EXTENSION_GE_05": bool("STRONG_EXTENSION_GE_05" in names),
+        "STRONG_DELTA_HU_MINUS1": bool("STRONG_DELTA_HU_MINUS1" in names),
+    }
+
+
+def _build_shadow_block_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Replay summary 用: 【SHADOW_BLOCK_ANALYSIS】の集計（analysis only）。
+    """
+    sigs = [s for s in (signal_dicts or []) if isinstance(s, dict)]
+    rules = ["STRONG_EXTENSION_GE_05", "STRONG_DELTA_HU_MINUS1"]
+    by_rule: dict[str, Any] = {}
+    for r in rules:
+        xs = [s for s in sigs if r in set(_shadow_block_rule_names_from_signal_dict(s))]
+        m = dict(_rollup_eval_base_signal_dict_metrics(xs))
+        by_rule[r] = {
+            "signals": int(m.get("signals") or 0),
+            "expectancy": float(m.get("expectancy_yen_100_shares_per_signal") or 0.0),
+            "total_pnl": float(m.get("total_pnl_yen_100_shares") or 0.0),
+            "winrate": float(m.get("winrate_pct") or 0.0),
+            "lose_worst10": float(m.get("lose_worst10_sum_yen_100_shares") or 0.0),
+            "max_losing_run": float(m.get("max_losing_run_yen_100_shares") or 0.0),
+        }
+    hit_any = [s for s in sigs if _shadow_block_rule_names_from_signal_dict(s)]
+    m2 = dict(_rollup_eval_base_signal_dict_metrics(hit_any))
+    return {
+        "rules": by_rule,
+        "hit_any": {
+            "signals": int(m2.get("signals") or 0),
+            "expectancy": float(m2.get("expectancy_yen_100_shares_per_signal") or 0.0),
+            "total_pnl": float(m2.get("total_pnl_yen_100_shares") or 0.0),
+            "winrate": float(m2.get("winrate_pct") or 0.0),
+            "lose_worst10": float(m2.get("lose_worst10_sum_yen_100_shares") or 0.0),
+            "max_losing_run": float(m2.get("max_losing_run_yen_100_shares") or 0.0),
+        },
+    }
+
+
+def _shadow_block_abs_pnl_by_symbol(signal_dicts: list[dict[str, Any]]) -> dict[str, float]:
+    by: dict[str, float] = {}
+    for s in (signal_dicts or []):
+        if not isinstance(s, dict):
+            continue
+        sym = str(s.get("symbol") or "").strip()
+        if not sym:
+            continue
+        try:
+            pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        except Exception:
+            pnl = 0.0
+        by[sym] = float(by.get(sym, 0.0)) + abs(float(pnl))
+    return by
+
+
+def _shadow_block_symbol_contribution_top_abs_ratio(signal_dicts: list[dict[str, Any]], *, top_n: int) -> float:
+    top_n = max(1, int(top_n))
+    by = _shadow_block_abs_pnl_by_symbol(signal_dicts)
+    if not by:
+        return 0.0
+    tot = float(sum(float(v) for v in by.values()))
+    if tot <= 0:
+        return 0.0
+    tops = sorted(by.values(), reverse=True)[:top_n]
+    return float(sum(float(x) for x in tops) / float(tot))
+
+
+def _shadow_block_expectancy_after_excluding_top_abs_symbols(
+    signal_dicts: list[dict[str, Any]], *, exclude_n: int
+) -> float:
+    exclude_n = max(0, int(exclude_n))
+    xs = [s for s in (signal_dicts or []) if isinstance(s, dict)]
+    if not xs:
+        return 0.0
+    if exclude_n <= 0:
+        m0 = dict(_rollup_eval_base_signal_dict_metrics(xs))
+        return float(m0.get("expectancy_yen_100_shares_per_signal") or 0.0)
+    by = _shadow_block_abs_pnl_by_symbol(xs)
+    ex_syms = set([k for k, _v in sorted(by.items(), key=lambda kv: float(kv[1]), reverse=True)[:exclude_n]])
+    kept = [s for s in xs if str(s.get("symbol") or "") not in ex_syms]
+    m = dict(_rollup_eval_base_signal_dict_metrics(kept))
+    return float(m.get("expectancy_yen_100_shares_per_signal") or 0.0)
+
+
+def _shadow_block_avg_and_worst_loss(signal_dicts: list[dict[str, Any]]) -> tuple[float, float]:
+    losses: list[float] = []
+    for s in (signal_dicts or []):
+        if not isinstance(s, dict):
+            continue
+        try:
+            pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        except Exception:
+            continue
+        if float(pnl) < 0:
+            losses.append(float(pnl))
+    if not losses:
+        return 0.0, 0.0
+    avg = float(sum(losses) / float(len(losses)))
+    worst = float(min(losses))
+    return avg, worst
+
+
+def _shadow_block_run_ratio(
+    run_summaries: list[dict[str, Any]],
+    *,
+    label: str,
+    match_fn: Any,
+) -> dict[str, Any]:
+    pos = neg = considered = 0
+    for rr in (run_summaries or []):
+        if not isinstance(rr, dict):
+            continue
+        rep = rr.get("report") if isinstance(rr.get("report"), dict) else {}
+        sigs = rep.get("signals") or []
+        cohort = _eval_base_signal_dicts_for_extension_analysis(sigs if isinstance(sigs, list) else [])
+        xs = [s for s in cohort if match_fn(s)]
+        if len(xs) <= 0:
+            continue
+        considered += 1
+        m = dict(_rollup_eval_base_signal_dict_metrics(xs))
+        tp = float(m.get("total_pnl_yen_100_shares") or 0.0)
+        if tp > 0:
+            pos += 1
+        if tp < 0:
+            neg += 1
+    return {
+        "runs_considered_with_signals": int(considered),
+        "positive_run_ratio": (float(pos) / float(considered)) if considered > 0 else 0.0,
+        "negative_run_ratio": (float(neg) / float(considered)) if considered > 0 else 0.0,
+    }
+
+
+def _build_shadow_block_analysis_enhanced(
+    *,
+    signal_dicts: list[dict[str, Any]],
+    run_summaries: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """
+    replay/all_runs 用: shadow block 分析（analysis-only）。
+    - 除外しない（excluded_from_eval を変えない）
+    - AUTO_BLOCK/entry reject に一切影響しない
+    """
+    run_summaries = list(run_summaries or [])
+    cohort = _eval_base_signal_dicts_for_extension_analysis(signal_dicts or [])
+    base_m = dict(_rollup_eval_base_signal_dict_metrics(cohort))
+    baseline_signals = int(base_m.get("signals") or 0)
+    baseline_total_pnl = float(base_m.get("total_pnl_yen_100_shares") or 0.0)
+    baseline_expectancy = float(base_m.get("expectancy_yen_100_shares_per_signal") or 0.0)
+
+    def _match_rule(rule_name: str):
+        def _fn(s: dict[str, Any]) -> bool:
+            fl = s.get("shadow_block_candidate_flags") if isinstance(s.get("shadow_block_candidate_flags"), dict) else {}
+            return bool(fl.get(rule_name, False))
+
+        return _fn
+
+    def _match_any(s: dict[str, Any]) -> bool:
+        fl = s.get("shadow_block_candidate_flags") if isinstance(s.get("shadow_block_candidate_flags"), dict) else {}
+        return bool(fl.get("STRONG_EXTENSION_GE_05", False) or fl.get("STRONG_DELTA_HU_MINUS1", False))
+
+    def _match_and(s: dict[str, Any]) -> bool:
+        fl = s.get("shadow_block_candidate_flags") if isinstance(s.get("shadow_block_candidate_flags"), dict) else {}
+        return bool(fl.get("STRONG_EXTENSION_GE_05", False) and fl.get("STRONG_DELTA_HU_MINUS1", False))
+
+    rows_def: list[tuple[str, Any]] = [
+        ("STRONG_EXTENSION_GE_05", _match_rule("STRONG_EXTENSION_GE_05")),
+        ("STRONG_DELTA_HU_MINUS1", _match_rule("STRONG_DELTA_HU_MINUS1")),
+        ("SHADOW_COMBO_ANY", _match_any),
+        ("STRONG_EXTENSION_GE_05_AND_STRONG_DELTA_HU_MINUS1", _match_and),
+    ]
+
+    rows: list[dict[str, Any]] = []
+    for name, fn in rows_def:
+        xs = [s for s in cohort if fn(s)]
+        m = dict(_rollup_eval_base_signal_dict_metrics(xs))
+        avg_loss, worst_loss = _shadow_block_avg_and_worst_loss(xs)
+        rr = dict(_shadow_block_run_ratio(run_summaries, label=name, match_fn=fn)) if run_summaries else {}
+
+        # virtual exclude effect (baseline cohort - xs)
+        kept = [s for s in cohort if not fn(s)]
+        km = dict(_rollup_eval_base_signal_dict_metrics(kept))
+
+        sym_top1 = float(_shadow_block_symbol_contribution_top_abs_ratio(xs, top_n=1))
+        sym_top2 = float(_shadow_block_symbol_contribution_top_abs_ratio(xs, top_n=2))
+        exp_ex1 = float(_shadow_block_expectancy_after_excluding_top_abs_symbols(xs, exclude_n=1))
+        exp_ex2 = float(_shadow_block_expectancy_after_excluding_top_abs_symbols(xs, exclude_n=2))
+
+        rows.append(
+            {
+                "name": str(name),
+                # base metrics (rule hits)
+                "signals": int(m.get("signals") or 0),
+                "winrate_pct": float(m.get("winrate_pct") or 0.0),
+                "expectancy": float(m.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                "total_pnl": float(m.get("total_pnl_yen_100_shares") or 0.0),
+                "lose_worst10_sum": float(m.get("lose_worst10_sum_yen_100_shares") or 0.0),
+                "max_losing_run": float(m.get("max_losing_run_yen_100_shares") or 0.0),
+                "avg_loss": float(avg_loss),
+                "worst_loss": float(worst_loss),
+                "positive_run_ratio": float(rr.get("positive_run_ratio") or 0.0),
+                "negative_run_ratio": float(rr.get("negative_run_ratio") or 0.0),
+                # virtual exclude effect (baseline - rule hits)
+                "baseline_signals": int(baseline_signals),
+                "baseline_expectancy": float(baseline_expectancy),
+                "baseline_total_pnl": float(baseline_total_pnl),
+                "pnl_after_virtual_exclude": float(km.get("total_pnl_yen_100_shares") or 0.0),
+                "expectancy_after_virtual_exclude": float(km.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                "pnl_improvement": float((km.get("total_pnl_yen_100_shares") or 0.0) - float(baseline_total_pnl)),
+                "lose_worst10_after_virtual_exclude": float(km.get("lose_worst10_sum_yen_100_shares") or 0.0),
+                "max_losing_run_after_virtual_exclude": float(km.get("max_losing_run_yen_100_shares") or 0.0),
+                # symbol robustness (within rule hits)
+                "symbol_contribution_top1_abs_pnl_ratio": sym_top1,
+                "symbol_contribution_top2_abs_pnl_ratio": sym_top2,
+                "expectancy_after_exclude_top1_symbol": exp_ex1,
+                "expectancy_after_exclude_top2_symbols": exp_ex2,
+            }
+        )
+
+    return {
+        "baseline": {
+            "signals": int(baseline_signals),
+            "expectancy": float(baseline_expectancy),
+            "total_pnl": float(baseline_total_pnl),
+        },
+        "rows": rows,
+    }
+
+
+def _shadow_block_context_bucket_entry_vwap_distance(x: Any) -> str:
+    edges = [0.5, 1.0, 1.5]
+    labels = ["<0.5", "0.5~1.0", "1.0~1.5", ">=1.5"]
+    return _bucket_label_by_edges(x if isinstance(x, (int, float)) else None, edges, labels)
+
+
+def _shadow_block_context_bucket_pullback_depth(x: Any) -> str:
+    # <=0, 0~0.3, 0.3~0.7, >=0.7
+    if x is None or (not isinstance(x, (int, float))) or (not math.isfinite(float(x))):
+        return "N/A"
+    v = float(x)
+    if v <= 0.0:
+        return "<=0"
+    if v < 0.3:
+        return "0~0.3"
+    if v < 0.7:
+        return "0.3~0.7"
+    return ">=0.7"
+
+
+def _shadow_block_context_bucket_delta_rs_vs_topix(x: Any) -> str:
+    edges = [-1.0, 0.0, 1.0]
+    labels = ["<=-1", "-1~0", "0~1", ">=1"]
+    return _bucket_label_by_edges(x if isinstance(x, (int, float)) else None, edges, labels)
+
+
+def _shadow_block_context_bucket_delta_hu(x: Any) -> str:
+    if x is None:
+        return "N/A"
+    try:
+        v = int(float(x))
+    except Exception:
+        return "N/A"
+    if v <= -2:
+        return "<=-2"
+    if v == -1:
+        return "-1"
+    if v == 0:
+        return "0"
+    if v == 1:
+        return "+1"
+    return ">=+2"
+
+
+def _shadow_block_context_bucket_volume_efficiency(x: Any) -> str:
+    edges = [20.0, 40.0, 60.0]
+    labels = ["<=20", "20~40", "40~60", ">=60"]
+    return _bucket_label_by_edges(x if isinstance(x, (int, float)) else None, edges, labels)
+
+
+def _build_shadow_block_context_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    shadow hit の局面分析（analysis-only）。
+    対象: shadow_block_candidate_flags hit の eval base cohort（excluded_from_eval は変更しない）。
+    """
+    cohort = _eval_base_signal_dicts_for_extension_analysis(signal_dicts or [])
+
+    def _hit(name: str, s: dict[str, Any]) -> bool:
+        fl = s.get("shadow_block_candidate_flags") if isinstance(s.get("shadow_block_candidate_flags"), dict) else {}
+        if name == "SHADOW_COMBO_ANY":
+            return bool(fl.get("STRONG_EXTENSION_GE_05", False) or fl.get("STRONG_DELTA_HU_MINUS1", False))
+        if name == "STRONG_EXTENSION_GE_05_AND_STRONG_DELTA_HU_MINUS1":
+            return bool(fl.get("STRONG_EXTENSION_GE_05", False) and fl.get("STRONG_DELTA_HU_MINUS1", False))
+        return bool(fl.get(name, False))
+
+    rule_names = [
+        "STRONG_EXTENSION_GE_05",
+        "STRONG_DELTA_HU_MINUS1",
+        "STRONG_EXTENSION_GE_05_AND_STRONG_DELTA_HU_MINUS1",
+        "SHADOW_COMBO_ANY",
+    ]
+
+    feat_defs: list[dict[str, Any]] = [
+        {
+            "feature": "entry_vwap_distance_pct",
+            "source": "top",
+            "bucket_fn": _shadow_block_context_bucket_entry_vwap_distance,
+        },
+        {
+            "feature": "pullback_depth_pct",
+            "source": "mdf",
+            "bucket_fn": _shadow_block_context_bucket_pullback_depth,
+        },
+        {
+            "feature": "delta_rs_vs_topix_pct",
+            "source": "mdf",
+            "bucket_fn": _shadow_block_context_bucket_delta_rs_vs_topix,
+        },
+        {
+            "feature": "delta_high_update_count_before_entry",
+            "source": "mdf",
+            "bucket_fn": _shadow_block_context_bucket_delta_hu,
+        },
+        {
+            "feature": "volume_efficiency_pct",
+            "source": "mdf",
+            "bucket_fn": _shadow_block_context_bucket_volume_efficiency,
+        },
+    ]
+
+    out_rules: dict[str, Any] = {}
+
+    for rn in rule_names:
+        xs = [s for s in cohort if _hit(rn, s)]
+        sec: dict[str, Any] = {"rule_name": rn, "signals": int(len(xs)), "features": {}}
+        if not xs:
+            out_rules[rn] = sec
+            continue
+
+        for fd in feat_defs:
+            feat = str(fd["feature"])
+            src = str(fd["source"])
+            bfn = fd["bucket_fn"]
+            acc: dict[str, list[dict[str, Any]]] = {}
+            for s in xs:
+                v = None
+                if src == "top":
+                    v = s.get(feat)
+                else:
+                    mdf = s.get("momentum_decay_features") if isinstance(s.get("momentum_decay_features"), dict) else {}
+                    v = mdf.get(feat)
+                bucket = str(bfn(v))
+                acc.setdefault(bucket, []).append(s)
+
+            rows: list[dict[str, Any]] = []
+            for b, bxs in acc.items():
+                m = dict(_rollup_eval_base_signal_dict_metrics(bxs))
+                avg_loss, worst_loss = _shadow_block_avg_and_worst_loss(bxs)
+                rows.append(
+                    {
+                        "feature": feat,
+                        "bucket": str(b),
+                        "signals": int(m.get("signals") or 0),
+                        "winrate_pct": float(m.get("winrate_pct") or 0.0),
+                        "expectancy": float(m.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                        "total_pnl": float(m.get("total_pnl_yen_100_shares") or 0.0),
+                        "lose_worst10_sum": float(m.get("lose_worst10_sum_yen_100_shares") or 0.0),
+                        "max_losing_run": float(m.get("max_losing_run_yen_100_shares") or 0.0),
+                        "avg_loss": float(avg_loss),
+                        "worst_loss": float(worst_loss),
+                        "danger_sub_bucket_candidate": False,
+                    }
+                )
+
+            # danger_sub_bucket_candidate: bucket内 expectancy worst 3
+            finite = [r for r in rows if isinstance(r, dict) and int(r.get("signals") or 0) > 0]
+            worst3 = sorted(finite, key=lambda r: float(r.get("expectancy") or 0.0))[:3]
+            worst_set = set((str(r.get("bucket") or "") for r in worst3))
+            for r in rows:
+                if str(r.get("bucket") or "") in worst_set:
+                    r["danger_sub_bucket_candidate"] = True
+
+            # 表示順: tail risk優先
+            def _sk(r: dict[str, Any]) -> tuple:
+                return (
+                    float(r.get("lose_worst10_sum") or 0.0),
+                    float(r.get("max_losing_run") or 0.0),
+                    float(r.get("expectancy") or 0.0),
+                )
+
+            rows_sorted = sorted(rows, key=_sk)
+            sec["features"][feat] = {
+                "rows": rows_sorted,
+                "danger_buckets": sorted(list(worst_set)),
+            }
+
+        out_rules[rn] = sec
+
+    return {"rules": out_rules, "notes": {"analysis_only": True}}
+
+
+def _shadow_block_match_fn_for_name(rule_name: str):
+    rn = str(rule_name or "").strip()
+
+    def _get_flags(s: dict[str, Any]) -> dict[str, bool]:
+        return s.get("shadow_block_candidate_flags") if isinstance(s.get("shadow_block_candidate_flags"), dict) else {}
+
+    if rn == "SHADOW_COMBO_ANY":
+        return lambda s: bool(_get_flags(s).get("STRONG_EXTENSION_GE_05", False) or _get_flags(s).get("STRONG_DELTA_HU_MINUS1", False))
+    if rn == "STRONG_EXTENSION_GE_05_AND_STRONG_DELTA_HU_MINUS1":
+        return lambda s: bool(_get_flags(s).get("STRONG_EXTENSION_GE_05", False) and _get_flags(s).get("STRONG_DELTA_HU_MINUS1", False))
+    return lambda s: bool(_get_flags(s).get(rn, False))
+
+
+def _shadow_block_temporal_rollup(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    m = dict(_rollup_eval_base_signal_dict_metrics(signal_dicts))
+    return {
+        "signals": int(m.get("signals") or 0),
+        "expectancy": float(m.get("expectancy_yen_100_shares_per_signal") or 0.0),
+        "total_pnl": float(m.get("total_pnl_yen_100_shares") or 0.0),
+        "lose_worst10_sum": float(m.get("lose_worst10_sum_yen_100_shares") or 0.0),
+        "max_losing_run": float(m.get("max_losing_run_yen_100_shares") or 0.0),
+        "winrate_pct": float(m.get("winrate_pct") or 0.0),
+    }
+
+
+def _period_pos_neg_ratios(period_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    considered = 0
+    pos = 0
+    neg = 0
+    for r in period_rows:
+        if not isinstance(r, dict):
+            continue
+        sigs = int(r.get("signals") or 0)
+        if sigs <= 0:
+            continue
+        considered += 1
+        tp = float(r.get("total_pnl") or 0.0)
+        if tp > 0:
+            pos += 1
+        if tp < 0:
+            neg += 1
+    return {
+        "periods_considered_with_signals": int(considered),
+        "positive_period_ratio": (float(pos) / float(considered)) if considered > 0 else 0.0,
+        "negative_period_ratio": (float(neg) / float(considered)) if considered > 0 else 0.0,
+    }
+
+
+def _build_shadow_block_temporal_stability_analysis(
+    *,
+    signal_dicts: list[dict[str, Any]],
+    run_summaries: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """
+    analysis-only: 単純ルールの期間安定性を見る。
+    - 条件の細分化はしない（VWAP>=... 等は禁止）
+    - excluded_from_eval 等は変更しない
+    """
+    run_summaries = list(run_summaries or [])
+    cohort = _eval_base_signal_dicts_for_extension_analysis(signal_dicts or [])
+    # day_jst が無い場合は signal_time_jst から YYYY-MM-DD を抽出（保険）
+    def _day_of(s: dict[str, Any]) -> str:
+        dj = str(s.get("day_jst") or "").strip()
+        if dj:
+            return dj
+        st = str(s.get("signal_time_jst") or "").strip()
+        return st[:10] if len(st) >= 10 else ""
+
+    rules = ["STRONG_EXTENSION_GE_05", "STRONG_DELTA_HU_MINUS1", "SHADOW_COMBO_ANY"]
+    out: dict[str, Any] = {"rules": {}}
+
+    for rn in rules:
+        fn = _shadow_block_match_fn_for_name(rn)
+        xs = [s for s in cohort if fn(s)]
+        overall = _shadow_block_temporal_rollup(xs)
+
+        # day split: first half / second half by unique days
+        by_day: dict[str, list[dict[str, Any]]] = {}
+        for s in xs:
+            dk = _day_of(s)
+            if not dk:
+                continue
+            by_day.setdefault(dk, []).append(s)
+        days_sorted = sorted(by_day.keys())
+        mid = len(days_sorted) // 2
+        d_first = set(days_sorted[:mid])
+        d_second = set(days_sorted[mid:])
+        first_x = [s for s in xs if _day_of(s) in d_first] if d_first else []
+        second_x = [s for s in xs if _day_of(s) in d_second] if d_second else []
+        halves = {
+            "first_half": {"days": sorted(list(d_first)), **_shadow_block_temporal_rollup(first_x)},
+            "second_half": {"days": sorted(list(d_second)), **_shadow_block_temporal_rollup(second_x)},
+        }
+
+        # per-run
+        per_run_rows: list[dict[str, Any]] = []
+        for rr in run_summaries:
+            if not isinstance(rr, dict):
+                continue
+            rep = rr.get("report") if isinstance(rr.get("report"), dict) else {}
+            sigs = rep.get("signals") or []
+            coh_r = _eval_base_signal_dicts_for_extension_analysis(sigs if isinstance(sigs, list) else [])
+            xr = [s for s in coh_r if fn(s)]
+            row = {"run_no": int(rr.get("run_no") or 0), **_shadow_block_temporal_rollup(xr)}
+            per_run_rows.append(row)
+        per_run_rows_sorted = sorted(per_run_rows, key=lambda r: int(r.get("run_no") or 0))
+
+        # daily top summary: worst days by total pnl and by lose_worst10_sum
+        day_rows: list[dict[str, Any]] = []
+        for dk in days_sorted:
+            rday = {"day_jst": dk, **_shadow_block_temporal_rollup(by_day.get(dk) or [])}
+            day_rows.append(rday)
+        worst_days_by_pnl = sorted(day_rows, key=lambda r: float(r.get("total_pnl") or 0.0))[:10]
+        worst_days_by_lw10 = sorted(day_rows, key=lambda r: float(r.get("lose_worst10_sum") or 0.0))[:10]
+
+        # period ratios: halves + runs
+        period_rows = [
+            dict(halves["first_half"]),
+            dict(halves["second_half"]),
+            *per_run_rows_sorted,
+        ]
+        ratios = _period_pos_neg_ratios(period_rows)
+
+        out["rules"][rn] = {
+            "overall": overall,
+            "halves": halves,
+            "by_run": per_run_rows_sorted,
+            "daily_top_summary": {
+                "worst_days_by_total_pnl": worst_days_by_pnl,
+                "worst_days_by_lose_worst10_sum": worst_days_by_lw10,
+            },
+            **ratios,
+        }
+
+    return out
+
+
+def _forward_risk_expectancy_after_block_metrics(
+    cohort: list[dict[str, Any]],
+    *,
+    should_block: Any,
+    baseline_tot: float,
+    baseline_exp: float,
+    cell_label: str,
+) -> dict[str, Any]:
+    """
+    cohort: BASE/excluded=False のsignal dictリスト。
+    should_block(s) True のものを仮想除外した kept の指標。
+    """
+    cohort = list(cohort or [])
+    blk = bool(str(cell_label or "").strip().upper() != "BASELINE")
+    blocked: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
+    for s in cohort:
+        if not isinstance(s, dict):
+            continue
+        try:
+            is_b = bool(should_block(s))
+        except Exception:
+            is_b = False
+        if is_b:
+            blocked.append(s)
+        else:
+            kept.append(s)
+
+    bm = dict(_rollup_eval_base_signal_dict_metrics(blocked))
+    km = dict(_rollup_eval_base_signal_dict_metrics(kept))
+    bn = int(bm.get("signals") or 0)
+    btp = float(bm.get("total_pnl_yen_100_shares") or 0.0)
+    b_exp = float(btp / float(bn)) if bn > 0 else 0.0
+    kn = int(km.get("signals") or 0)
+    k_tot = float(km.get("total_pnl_yen_100_shares") or 0.0)
+    k_exp = float(km.get("expectancy_yen_100_shares_per_signal") or 0.0) if kn > 0 else 0.0
+
+    pim = float(k_tot - float(baseline_tot))
+    rb2 = dict(_expectancy_exclude_top_expectancy_symbols_from_signal_dicts(kept, exclude_n=2))
+
+    row: dict[str, Any] = {
+        "cell": str(cell_label),
+        "signals": int(kn),
+        "blocked_signals": int(bn) if blk else int(0),
+        "blocked_total_pnl": float(btp),
+        "blocked_expectancy": float(b_exp),
+        "expectancy_after_block": float(k_exp),
+        "total_pnl_after_block": float(k_tot),
+        "pnl_improvement": float(pim),
+        "lose_worst10_after_block": float(km.get("lose_worst10_sum_yen_100_shares") or 0.0),
+        "max_losing_run_after_block": float(km.get("max_losing_run_yen_100_shares") or 0.0),
+        "winrate_after_block": float(km.get("winrate_pct") or 0.0),
+        "plus_runs": int(0),
+        "minus_runs": int(0),
+        "symbol_contribution_top2_abs_pnl_ratio": float(_symbol_contribution_top2_abs_pnl_ratio_from_signal_dicts(kept)),
+        "expectancy_after_exclude_top2_symbols": float(rb2.get("expectancy_after_exclude_top_expectancy_symbols") or 0.0),
+        "blocked_total_pnl_yen_100_shares": float(btp),
+        "blocked_expectancy_yen_100_shares_per_signal": float(b_exp),
+        "pnl_improvement_yen_100_shares": float(pim),
+    }
+    row["baseline_total_pnl_yen_100_shares_ref"] = float(baseline_tot)
+    row["baseline_expectancy_ref"] = float(baseline_exp)
+    return row
+
+
+def _median_finite(vals: list[float]) -> Optional[float]:
+    xs = sorted([float(x) for x in vals if isinstance(x, (int, float)) and math.isfinite(float(x))])
+    if not xs:
+        return None
+    n = len(xs)
+    mid = n // 2
+    if n % 2 == 1:
+        return float(xs[mid])
+    return float((xs[mid - 1] + xs[mid]) / 2.0)
+
+
+def _forward_risk_run_stability_from_expectancies(expectancies: list[Optional[float]]) -> dict[str, Any]:
+    vals: list[float] = []
+    pos = neg = considered = 0
+    for e in expectancies:
+        if e is None:
+            continue
+        if not (isinstance(e, (int, float)) and math.isfinite(float(e))):
+            continue
+        considered += 1
+        ev = float(e)
+        vals.append(ev)
+        if ev > 0:
+            pos += 1
+        if ev < 0:
+            neg += 1
+    mu = None
+    sd = None
+    if vals:
+        mu = float(sum(vals) / float(len(vals)))
+        var = float(sum((float(x) - float(mu)) * (float(x) - float(mu)) for x in vals) / float(len(vals)))
+        sd = float(math.sqrt(var))
+    worst = float(min(vals)) if vals else None
+    best = float(max(vals)) if vals else None
+    pos_ratio = float(pos / float(considered)) if considered > 0 else 0.0
+    neg_ratio = float(neg / float(considered)) if considered > 0 else 0.0
+    denom = max(abs(float(mu or 0.0)), 1.0)
+    disp = (float(sd) / float(denom)) if (sd is not None and math.isfinite(float(sd))) else None
+    return {
+        "runs_considered_with_signals": int(considered),
+        "positive_run_ratio": float(pos_ratio),
+        "negative_run_ratio": float(neg_ratio),
+        "median_expectancy_after_block": _median_finite(vals),
+        "worst_run_expectancy_after_block": worst,
+        "best_run_expectancy_after_block": best,
+        "run_dispersion_score": disp,
+        "expectancy_stddev_across_runs": sd,
+    }
+
+
+def _forward_risk_augment_cells_with_run_summaries(cells_payload: dict[str, Any], *, run_summaries: list[dict[str, Any]]) -> None:
+    """各セルへ run単位 expectancy / plus_minus / stability を追加。"""
+    defs = cells_payload.get("cell_definitions") or []
+    if not isinstance(defs, list):
+        return
+    cmap: dict[str, Any] = {str(x.get("name") or ""): x.get("predicate_key") for x in defs if isinstance(x, dict)}
+
+    def _pred_fn(key: str):
+        lk = str(key or "").strip().upper()
+        if lk == "STRONG_EXTENSION_GE_05":
+            return _forward_risk_strong_extension_ge05
+        if lk == "STRONG_DELTA_HU_MINUS1":
+            return _forward_risk_strong_delta_hu_minus1
+        if lk == "STRONG_GAP_GE_3":
+            return _forward_risk_strong_gap_ge3
+        if lk == "COMBO_SAFE":
+            return _forward_risk_combo_safe
+        return lambda _x: False
+
+    for cell_block in cells_payload.get("cells") or []:
+        if not isinstance(cell_block, dict):
+            continue
+        name = str(cell_block.get("cell") or "")
+        ck = cmap.get(name) or cmap.get(str(cell_block.get("cell_key") or ""))
+        if isinstance(ck, str) and str(ck).strip().upper() == "NONE":
+            should_block_fn = lambda _x: False
+        elif name.strip().upper() == "BASELINE":
+            should_block_fn = lambda _x: False
+        else:
+            should_block_fn = _pred_fn(str(ck))
+
+        exp_list: list[Optional[float]] = []
+        pnl_kept_run: list[float] = []
+        run_rows: list[dict[str, Any]] = []
+
+        for rr in run_summaries:
+            rep = rr.get("report") or {}
+            cohort = _eval_base_signal_dicts_for_extension_analysis(rep.get("signals") or [])
+            kept = [s for s in cohort if not should_block_fn(s)]
+            km = dict(_rollup_eval_base_signal_dict_metrics(kept))
+            sigs_k = int(km.get("signals") or 0)
+            tp_k = float(km.get("total_pnl_yen_100_shares") or 0.0)
+            exp_after = (
+                float(km.get("expectancy_yen_100_shares_per_signal") or 0.0) if sigs_k > 0 else None
+            )
+            run_no_i = int(rr.get("run_no") or 0)
+            exp_list.append(exp_after)
+            run_rows.append(
+                {
+                    "run_no": int(run_no_i),
+                    "signals_after_block": int(sigs_k),
+                    "expectancy_after_block": exp_after,
+                    "total_pnl_after_block_run": float(tp_k),
+                    "blocked_signals_run": max(0, len(cohort) - sigs_k),
+                }
+            )
+            pnl_kept_run.append(float(tp_k))
+
+        plus_runs = sum(1 for x in pnl_kept_run if float(x) > 0)
+        minus_runs = sum(1 for x in pnl_kept_run if float(x) < 0)
+        stab = dict(_forward_risk_run_stability_from_expectancies(exp_list))
+
+        cell_block["run_breakdown"] = run_rows
+        cell_block["run_stability"] = stab
+        cell_block["plus_runs"] = int(plus_runs)
+        cell_block["minus_runs"] = int(minus_runs)
+
+
+def _forward_risk_write_sweep_summary_txt(payload: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    lines.append("=== forward_risk_virtual_block_sweep (analysis-only) ===")
+    lines.append("")
+    sm = payload.get("sweep_meta") if isinstance(payload.get("sweep_meta"), dict) else {}
+    for k in (
+        "saved_at_jst",
+        "replay_range",
+        "replay_repeat_runs",
+        "replay_seed",
+        "replay_config_path",
+        "replay_results_subdir",
+    ):
+        lines.append(f"{k}: {sm.get(k)}")
+    jp = payload.get("json_export_path") or ""
+    lines.append(f"json_export_path: {jp}")
+    lines.append("")
+    hdr = (
+        "cell\tsignals\tblocked_signals\tblocked_total_pnl\tblocked_expectancy\texpectancy_after_block\t"
+        "total_pnl_after_block\tpnl_improvement\tlw10_after\tmax_lose_run_after\twr_after_pct\tplus_runs\tminus_runs\t"
+        "sym_top2_abs_ratio\texp_after_exclude_top2\tpos_run_ratio\tneg_run_ratio\tmed_exp_after\tworst_exp\tbest_exp\trun_disp"
+    )
+    lines.append(hdr)
+    for row in payload.get("cells") or []:
+        if not isinstance(row, dict):
+            continue
+        rs = row.get("run_stability") if isinstance(row.get("run_stability"), dict) else {}
+        lines.append(
+            f"{row.get('cell','')}\t"
+            f"{int(row.get('signals') or 0)}\t"
+            f"{int(row.get('blocked_signals') or 0)}\t"
+            f"{float(row.get('blocked_total_pnl') or row.get('blocked_total_pnl_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(row.get('blocked_expectancy') or row.get('blocked_expectancy_yen_100_shares_per_signal') or 0.0):+.4f}\t"
+            f"{float(row.get('expectancy_after_block') or 0.0):+.4f}\t"
+            f"{float(row.get('total_pnl_after_block') or 0.0):+.2f}\t"
+            f"{float(row.get('pnl_improvement') or row.get('pnl_improvement_yen_100_shares') or 0.0):+.2f}\t"
+            f"{float(row.get('lose_worst10_after_block') or 0.0):+.2f}\t"
+            f"{float(row.get('max_losing_run_after_block') or 0.0):+.2f}\t"
+            f"{float(row.get('winrate_after_block') or 0.0):.2f}\t"
+            f"{int(row.get('plus_runs') or 0)}\t"
+            f"{int(row.get('minus_runs') or 0)}\t"
+            f"{float(row.get('symbol_contribution_top2_abs_pnl_ratio') or 0.0):.6f}\t"
+            f"{float(row.get('expectancy_after_exclude_top2_symbols') or 0.0):+.4f}\t"
+            f"{float(rs.get('positive_run_ratio') or 0.0):.6f}\t"
+            f"{float(rs.get('negative_run_ratio') or 0.0):.6f}\t"
+            f"{rs.get('median_expectancy_after_block')}\t"
+            f"{rs.get('worst_run_expectancy_after_block')}\t"
+            f"{rs.get('best_run_expectancy_after_block')}\t"
+            f"{rs.get('run_dispersion_score')}"
+        )
+    lines.append("")
+    lines.append("※ AUTO_BLOCK/excluded_from_eval には変更しません（仮想集計のみ）。")
+    lines.append("")
+    return lines
+
+
+def run_forward_risk_virtual_block_sweep(
+    *,
+    fixed_watch: Optional[list[str]],
+    interval_sec: float,
+    only_changes: bool,
+    replay_seed: Optional[int],
+    replay_mode: str,
+    n_repeat: int,
+    replay_range: str,
+    replay_random_days: int,
+    replay_config_path_cli: str,
+) -> int:
+    """
+    forward risk の仮想ブロックを analysis-only で比較（baseline + セル）。
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    sweep_root = _build_results_path_under_run_date(
+        sweep_stamp, f"forward_risk_virtual_block_sweep_{sweep_stamp}", script_dir=script_dir
+    )
+
+    cfg_abs = ""
+    rp = str(replay_config_path_cli or "").strip()
+    if rp:
+        cfg_abs = str(_resolve_replay_config_path(rp) or "")
+    if not cfg_abs:
+        mode_paths = _write_auto_block_momentum_sweep_configs(script_dir)
+        cfg_abs = str(mode_paths.get("baseline") or "")
+    if not cfg_abs:
+        cfg_abs = _ensure_replay_configs_exist()
+
+    cfg_raw = _load_replay_config(cfg_abs)
+    f = _apply_replay_config_to_flags(cfg=cfg_raw)
+    cfg_name = str(f.get("replay_config_name") or os.path.basename(cfg_abs))
+
+    rng = str(replay_range or "random_apr").strip()
+    rnd_days = int(replay_random_days or 0)
+    if rng in FIXED_RANDOM_REPLAY_LABELS:
+        rnd_days = 5 if int(rnd_days or 0) <= 0 else int(rnd_days)
+
+    batch_stamp = f"{sweep_stamp}_fr_vblock_{rng.replace('/', '_')}"
+    output_subdir = os.path.join(f"forward_risk_virtual_block_sweep_{sweep_stamp}", f"baseline_{rng}")
+
+    print(f"[{now_str()}] forward_risk_virtual_block_sweep: range={rng} repeat={int(n_repeat)} replay_mode={replay_mode}")
+    print(f"[{now_str()}] sweep_root: {sweep_root}")
+    print(f"[{now_str()}] replay_config_path: {cfg_abs}")
+
+    run_summaries: list[dict[str, Any]] = []
+    results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
+
+    for i in range(1, int(n_repeat) + 1):
+        seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
+        code = run_replay(
+            interval_sec=float(interval_sec),
+            only_changes=bool(only_changes),
+            fixed_watch=fixed_watch,
+            replay_range=str(rng),
+            replay_random_days=int(rnd_days),
+            replay_random_months=3,
+            replay_seed=seed_run,
+            replay_mode=str(replay_mode or "normal"),
+            replay_fast_discord=False,
+            replay_fast_verbose=False,
+            replay_fast_print_signal_details=False,
+            replay_market_debug=False,
+            replay_repeat_run_no=i,
+            replay_repeat_total=int(n_repeat),
+            replay_output_subdir=output_subdir,
+            replay_batch_stamp=batch_stamp,
+            replay_morning_screen_hhmm="",
+            one_trade_per_symbol_per_day=False,
+            enable_add=False,
+            replay_early_exit_before_stop=bool(f["replay_early_exit_before_stop"]),
+            replay_early_exit_vwap=bool(f["replay_early_exit_vwap"]),
+            replay_early_exit_recent_low=bool(f["replay_early_exit_recent_low"]),
+            replay_disable_afternoon_entry=bool(f["replay_disable_afternoon_entry"]),
+            replay_strict_afternoon_entry=bool(f["replay_strict_afternoon_entry"]),
+            replay_afternoon_topix_weak_block=bool(f["replay_afternoon_topix_weak_block"]),
+            replay_config_name=str(f.get("replay_config_name") or ""),
+            replay_config_path=str(cfg_abs),
+            aft_volume_spike_ratio_min=float(f["aft_volume_spike_ratio_min"]),
+            aft_vwap_dist_pct_max=float(f["aft_vwap_dist_pct_max"]),
+            aft_rebreak_mult=float(f["aft_rebreak_mult"]),
+            entry_filter_rsi_enabled=bool(f["entry_filter_rsi_enabled"]),
+            entry_filter_rsi_exclude_above=float(f["entry_filter_rsi_exclude_above"]),
+            entry_filter_vwap_distance_enabled=bool(f["entry_filter_vwap_distance_enabled"]),
+            entry_filter_vwap_distance_exclude_above=float(f["entry_filter_vwap_distance_exclude_above"]),
+            entry_filter_atr_pct_enabled=bool(f["entry_filter_atr_pct_enabled"]),
+            entry_filter_atr_pct_exclude_above=float(f["entry_filter_atr_pct_exclude_above"]),
+            daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+            daily_loss_stop_threshold_yen_100_shares=float(f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)),
+            regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+            regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+            regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+            regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+            regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
+            signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+            signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+            signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+            signal_filter_vwap_distance_ge_threshold_pct=float(
+                f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+            ),
+            signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+            signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+            **_replay_composite_signal_filter_kwargs_from_flags(f),
+            **_replay_regime_control_kwargs_from_flags(f),
+            replay_settings=None,
+        )
+        if int(code) != 0:
+            print(f"[{now_str()}] forward_risk_virtual_block_sweep: run_replay exit={int(code)} (run={i})")
+            return int(code)
+        try:
+            run_tag = f"run{i:02d}"
+            candidates = sorted(
+                [
+                    fn
+                    for fn in os.listdir(results_dir)
+                    if fn.endswith(".json")
+                    and ("replay_summary_" in fn)
+                    and (not fn.endswith("_symbol_scores.json"))
+                    and (f"_{run_tag}.json" in fn)
+                ],
+                key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
+                reverse=True,
+            )
+            if candidates:
+                pjson = os.path.join(results_dir, candidates[0])
+                with open(pjson, "r", encoding="utf-8") as fp:
+                    rep = json.load(fp)
+                run_summaries.append({"run_no": i, "json_path": pjson, "report": rep})
+        except Exception:
+            pass
+
+    flat_signals = [
+        s
+        for rr in run_summaries
+        for s in ((rr.get("report") or {}).get("signals") or [])
+        if isinstance(s, dict)
+    ]
+    cohort_merge = _eval_base_signal_dicts_for_extension_analysis(flat_signals)
+    bm0 = dict(_rollup_eval_base_signal_dict_metrics(cohort_merge))
+    baseline_tot = float(bm0.get("total_pnl_yen_100_shares") or 0.0)
+    baseline_exp = float(bm0.get("expectancy_yen_100_shares_per_signal") or 0.0)
+
+    cell_specs: list[tuple[str, str, Any]] = [
+        ("BASELINE", "NONE", lambda _x: False),
+        ("STRONG_EXTENSION_GE_05", "STRONG_EXTENSION_GE_05", _forward_risk_strong_extension_ge05),
+        ("STRONG_DELTA_HU_MINUS1", "STRONG_DELTA_HU_MINUS1", _forward_risk_strong_delta_hu_minus1),
+        ("STRONG_GAP_GE_3", "STRONG_GAP_GE_3", _forward_risk_strong_gap_ge3),
+        ("COMBO_SAFE", "COMBO_SAFE", _forward_risk_combo_safe),
+    ]
+
+    merged_cells: list[dict[str, Any]] = []
+    for label, pred_key, pred_fn in cell_specs:
+        r = dict(
+            _forward_risk_expectancy_after_block_metrics(
+                cohort_merge,
+                should_block=pred_fn,
+                baseline_tot=baseline_tot,
+                baseline_exp=baseline_exp,
+                cell_label=str(label),
+            )
+        )
+        r["cell_key"] = str(pred_key)
+        merged_cells.append(r)
+
+    jpath = os.path.join(sweep_root, "forward_risk_virtual_block_sweep.json")
+    payload_out: dict[str, Any] = {
+        "sweep_meta": {
+            "saved_at_jst": datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+            "sweep_stamp": sweep_stamp,
+            "replay_config_name": cfg_name,
+            "replay_config_path": cfg_abs,
+            "replay_range": rng,
+            "replay_random_days": int(rnd_days),
+            "replay_repeat_runs": int(n_repeat),
+            "replay_seed": replay_seed,
+            "replay_mode": str(replay_mode or ""),
+            "replay_results_subdir": output_subdir,
+            "baseline_merged_signals": int(bm0.get("signals") or 0),
+        },
+        "cell_definitions": [
+            {"name": "BASELINE", "predicate_key": "NONE", "note": "仮想除外なし"},
+            {"name": "STRONG_EXTENSION_GE_05", "predicate_key": "STRONG_EXTENSION_GE_05"},
+            {"name": "STRONG_DELTA_HU_MINUS1", "predicate_key": "STRONG_DELTA_HU_MINUS1"},
+            {"name": "STRONG_GAP_GE_3", "predicate_key": "STRONG_GAP_GE_3"},
+            {"name": "COMBO_SAFE", "predicate_key": "COMBO_SAFE"},
+        ],
+        "merged_baseline_rollups_ref": bm0,
+        "cells": merged_cells,
+        "json_export_path": jpath,
+    }
+    payload_out["run_summaries_loaded"] = int(len(run_summaries))
+
+    try:
+        _forward_risk_augment_cells_with_run_summaries(payload_out, run_summaries=list(run_summaries))
+    except Exception:
+        pass
+
+    summ = dict(_aggregate_replay_repeat_run_summaries(run_summaries)) if run_summaries else {}
+
+    with open(jpath, "w", encoding="utf-8") as fwj:
+        json.dump(payload_out, fwj, ensure_ascii=False, indent=2)
+
+    txt_body = list(_forward_risk_write_sweep_summary_txt(payload_out))
+    hdr_agg = ["--- replay run_summaries aggregate (reference) ---", json.dumps(summ, ensure_ascii=False, indent=2) if summ else "{}", "", ""]
+    outp = os.path.join(sweep_root, "sweep_summary.txt")
+    with open(outp, "w", encoding="utf-8") as fw:
+        fw.write("\n".join(txt_body + hdr_agg) + "\n")
+
+    print("")
+    print(f"[{now_str()}] forward_risk_virtual_block_sweep: sweep_summary.txt -> {outp}")
+    print(f"[{now_str()}] forward_risk_virtual_block_sweep: json -> {jpath}")
+    print("\n".join(txt_body[:25]))
+    return 0
+
+
+def _replay_forward_extension_analysis_txt_lines(
+    src: dict[str, Any],
+    *,
+    bracket_headings: bool = False,
+) -> list[str]:
+    """Replay 出力用: EXTENSION sweep / HU interaction / ROBUSTNESS symbol removal を TXT に整形する。"""
+    lines: list[str] = []
+
+    def _hk(s_cn: str, s_en: str) -> str:
+        return f"[{s_en}]" if bracket_headings else f"【{s_cn}】"
+
+    try:
+        # ----- extension sweep -----
+        lines.append(_hk("EXTENSION_SWEEP_ANALYSIS", "EXTENSION_SWEEP_ANALYSIS"))
+        lines.append("")
+        esa = src.get("extension_sweep_analysis")
+        if isinstance(esa, dict):
+            coh = esa.get("cohort") if isinstance(esa.get("cohort"), dict) else {}
+            if coh:
+                lines.append(
+                    f"- cohort(BASE/eval/prevあり): signals={int(coh.get('signals') or 0)}  "
+                    f"expectancy={float(coh.get('expectancy_yen_100_shares_per_signal') or 0.0):+,.0f}円  "
+                    f"total_pnl={float(coh.get('total_pnl_yen_100_shares') or 0.0):+,.0f}円  "
+                    f"lose_worst10_sum={float(coh.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}円"
+                )
+            thr_list = esa.get("thresholds") or []
+            if isinstance(thr_list, list):
+                for tr in thr_list:
+                    if not isinstance(tr, dict):
+                        continue
+                    lines.append(
+                        f"- exclude_ge_pct>={float(tr.get('threshold_exclude_ge_pct') or 0.0):g}%: "
+                        f"blocked_signals={int(tr.get('blocked_signals') or 0)}  "
+                        f"blocked_total_pnl={float(tr.get('blocked_total_pnl') or 0.0):+,.0f}円  "
+                        f"pnl_after_block={float(tr.get('pnl_after_block') or 0.0):+,.0f}円  "
+                        f"pnl_improvement={float(tr.get('pnl_improvement') or 0.0):+,.0f}円  "
+                        f"expectancy_after_block={float(tr.get('expectancy_after_block') or 0.0):+,.0f}円  "
+                        f"winrate_after_block={float(tr.get('winrate_after_block') or 0.0):.1f}%  "
+                        f"lose_worst10_after_block={float(tr.get('lose_worst10_after_block') or 0.0):+,.0f}円"
+                    )
+            lines.append("")
+        else:
+            lines.append("- (extension_sweep_analysis なし)")
+            lines.append("")
+
+        # ----- extension × HU -----
+        lines.append(_hk("EXTENSION_HU_INTERACTION_ANALYSIS", "EXTENSION_HU_INTERACTION_ANALYSIS"))
+        lines.append("")
+        hui = src.get("extension_hu_interaction_analysis")
+        if isinstance(hui, list) and hui:
+            for rr in hui:
+                if not isinstance(rr, dict):
+                    continue
+                lines.append(
+                    f"- mr={rr.get('market_regime')} × "
+                    f"pc_pct={rr.get('price_change_pct_from_prev_signal_bucket')} × "
+                    f"delta_hu={rr.get('delta_high_update_count_before_entry_bucket')}: "
+                    f"signals={int(rr.get('signals') or 0)}  "
+                    f"winrate={float(rr.get('winrate_pct') or 0.0):.1f}%  "
+                    f"avg_expectancy_yen_100_shares={float(rr.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f}円  "
+                    f"total_pnl_yen_100_shares={float(rr.get('total_pnl_yen_100_shares') or 0.0):+,.0f}円  "
+                    f"lose_worst10_sum={float(rr.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}円"
+                )
+            lines.append("")
+        else:
+            lines.append("- (extension_hu_interaction_analysis なしまたは空)")
+            lines.append("")
+
+        # ----- robustness symbol removal -----
+        lines.append(_hk("ROBUSTNESS_SYMBOL_REMOVAL_ANALYSIS", "ROBUSTNESS_SYMBOL_REMOVAL_ANALYSIS"))
+        lines.append("")
+        rsa = src.get("robustness_symbol_removal_analysis")
+        if isinstance(rsa, dict):
+            base = rsa.get("baseline_eval_base") if isinstance(rsa.get("baseline_eval_base"), dict) else {}
+            if base:
+                lines.append(
+                    f"- baseline_eval_base: signals={int(base.get('signals') or 0)}  "
+                    f"expectancy={float(base.get('expectancy_yen_100_shares_per_signal') or 0.0):+,.0f}円  "
+                    f"total_pnl={float(base.get('total_pnl_yen_100_shares') or 0.0):+,.0f}円"
+                )
+            oo = rsa.get("exclude_one_symbol_expectancy_ranked") or []
+            if isinstance(oo, list) and oo:
+                lines.append("- exclude_one_symbol (expectancy rank order):")
+                for row in oo:
+                    if not isinstance(row, dict):
+                        continue
+                    lines.append(
+                        f"  - rank#{int(row.get('excluded_expectancy_rank') or 0)} exclude {row.get('excluded_symbol')}: "
+                        f"expectancy_after_removal={float(row.get('expectancy_after_removal') or 0.0):+,.0f}円  "
+                        f"total_pnl_after_removal={float(row.get('total_pnl_after_removal') or 0.0):+,.0f}円  "
+                        f"max_losing_run_after_removal={float(row.get('max_losing_run_after_removal') or 0.0):+,.0f}円  "
+                        f"lose_worst10_after_removal={float(row.get('lose_worst10_after_removal') or 0.0):+,.0f}円"
+                    )
+            tn = rsa.get("exclude_top_n_expectancy_ordered") or []
+            if isinstance(tn, list) and tn:
+                lines.append("- exclude_top_n expectancy_ordered:")
+                for rw in tn:
+                    if not isinstance(rw, dict):
+                        continue
+                    edr = rw.get("expectancy_drop_ratio")
+                    edr_s = "N/A" if edr is None else f"{float(edr):.4f}"
+                    lines.append(
+                        f"  - exclude_top_n={int(rw.get('exclude_top_n_symbols') or 0)}  "
+                        f"symbols={rw.get('excluded_symbols_expectancy_ordered') or []}  "
+                        f"expectancy_after={float(rw.get('expectancy_after_removal') or 0.0):+,.0f}円  "
+                        f"expectancy_drop_ratio={edr_s}  "
+                        f"total_pnl_after_removal={float(rw.get('total_pnl_after_removal') or 0.0):+,.0f}円  "
+                        f"max_losing_run_after_removal={float(rw.get('max_losing_run_after_removal') or 0.0):+,.0f}円  "
+                        f"lose_worst10_after_removal={float(rw.get('lose_worst10_after_removal') or 0.0):+,.0f}円"
+                    )
+            lines.append("")
+        else:
+            lines.append("- (robustness_symbol_removal_analysis なし)")
+            lines.append("")
+    except Exception:
+        return lines
+
+    return lines
+
+
+def _replay_structure_tail_generalization_txt_lines(
+    src: dict[str, Any],
+    *,
+    bracket_headings: bool = False,
+) -> list[str]:
+    lines: list[str] = []
+
+    def _hk(s_cn: str, s_en: str) -> str:
+        return f"[{s_en}]" if bracket_headings else f"【{s_cn}】"
+
+    try:
+        sea = src.get("structure_edge_analysis") if isinstance(src, dict) else None
+        lines.append(_hk("STRUCTURE_EDGE_ANALYSIS", "STRUCTURE_EDGE_ANALYSIS"))
+        lines.append("")
+        if isinstance(sea, dict):
+            for sec in [
+                "extension_vs_pullback_bucket",
+                "hu_transition_bucket",
+                "volume_efficiency_bucket",
+                "rs_continuation_bucket",
+            ]:
+                rows = sea.get(sec) or []
+                if not isinstance(rows, list) or not rows:
+                    continue
+                lines.append(f"[{sec}]")
+                for r in rows[:60]:
+                    if not isinstance(r, dict):
+                        continue
+                    # bucket key はセクションごとに異なる
+                    bk = (
+                        r.get("extension_vs_pullback_bucket")
+                        or r.get("hu_transition_bucket")
+                        or r.get("volume_efficiency_bucket")
+                        or r.get("rs_continuation_bucket")
+                    )
+                    lines.append(
+                        f"- bucket={bk}: signals={int(r.get('signals') or 0)} "
+                        f"winrate={float(r.get('winrate_pct') or 0.0):.1f}% "
+                        f"avg_expectancy={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f}円 "
+                        f"total_pnl={float(r.get('total_pnl_yen_100_shares') or 0.0):+,.0f}円 "
+                        f"lw10={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}円 "
+                        f"max_losing_run={float(r.get('max_losing_run_yen_100_shares') or 0.0):+,.0f}円"
+                    )
+                    if "effective_symbol_count" in r:
+                        lines.append(
+                            "  dispersion: "
+                            f"eff_sym={float(r.get('effective_symbol_count') or 0.0):.2f} "
+                            f"top1_abs={float(r.get('top1_symbol_abs_pnl_ratio') or 0.0):.3f} "
+                            f"top2_abs={float(r.get('top2_symbol_abs_pnl_ratio') or 0.0):.3f} "
+                            f"top3_abs={float(r.get('top3_symbol_abs_pnl_ratio') or 0.0):.3f} "
+                            f"pos_syms={int(r.get('positive_symbols_count') or 0)} "
+                            f"neg_syms={int(r.get('negative_symbols_count') or 0)} "
+                            f"median_exp={float(r.get('median_symbol_expectancy') or 0.0):+,.0f} "
+                            f"exp_sd={float(r.get('symbol_expectancy_stddev') or 0.0):,.0f}"
+                        )
+                lines.append("")
+        else:
+            lines.append("- (structure_edge_analysis なし)")
+            lines.append("")
+
+        tra = src.get("tail_risk_structure_analysis") if isinstance(src, dict) else None
+        lines.append(_hk("TAIL_RISK_STRUCTURE_ANALYSIS", "TAIL_RISK_STRUCTURE_ANALYSIS"))
+        lines.append("")
+        if isinstance(tra, dict):
+            for sec in [
+                "extension_bucket",
+                "extension_x_volume_efficiency",
+                "extension_x_rs_change",
+                "extension_x_vwap_distance",
+                "hu_transition_bucket",
+            ]:
+                rows = tra.get(sec) or []
+                if not isinstance(rows, list) or not rows:
+                    continue
+                lines.append(f"[{sec}]")
+                for r in rows[:80]:
+                    if not isinstance(r, dict):
+                        continue
+                    # key 表示
+                    kparts = []
+                    for kk in [
+                        "extension_bucket",
+                        "volume_efficiency_bucket",
+                        "rs_change_bucket",
+                        "entry_vwap_distance_bucket",
+                        "hu_transition_bucket",
+                    ]:
+                        if kk in r:
+                            kparts.append(f"{kk}={r.get(kk)}")
+                    kshow = " | ".join(kparts) if kparts else "bucket=N/A"
+                    lines.append(
+                        f"- {kshow}: signals={int(r.get('signals') or 0)} "
+                        f"total_pnl={float(r.get('total_pnl_yen_100_shares') or 0.0):+,.0f}円 "
+                        f"lw10={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}円 "
+                        f"avg_loss={float(r.get('avg_loss_yen_100_shares') or 0.0):+,.0f}円 "
+                        f"worst_loss={float(r.get('worst_loss_yen_100_shares') or 0.0):+,.0f}円"
+                    )
+                lines.append("")
+        else:
+            lines.append("- (tail_risk_structure_analysis なし)")
+            lines.append("")
+
+        rga = src.get("robustness_generalization_analysis") if isinstance(src, dict) else None
+        lines.append(_hk("ROBUSTNESS_GENERALIZATION_ANALYSIS", "ROBUSTNESS_GENERALIZATION_ANALYSIS"))
+        lines.append("")
+        if isinstance(rga, dict):
+            for sec in [
+                "extension_vs_pullback_bucket",
+                "hu_transition_bucket",
+                "volume_efficiency_bucket",
+                "rs_continuation_bucket",
+            ]:
+                rows = rga.get(sec) or []
+                if not isinstance(rows, list) or not rows:
+                    continue
+                lines.append(f"[{sec}]")
+                for r in rows[:60]:
+                    if not isinstance(r, dict):
+                        continue
+                    bk = (
+                        r.get("extension_vs_pullback_bucket")
+                        or r.get("hu_transition_bucket")
+                        or r.get("volume_efficiency_bucket")
+                        or r.get("rs_continuation_bucket")
+                    )
+                    lines.append(
+                        f"- bucket={bk}: signals={int(r.get('signals') or 0)} "
+                        f"exp={float(r.get('expectancy_yen_100_shares_per_signal') or 0.0):+,.0f}円 "
+                        f"exclude_top1_exp={float(r.get('exclude_top1_symbol_expectancy') or 0.0):+,.0f}円 "
+                        f"exclude_top2_exp={float(r.get('exclude_top2_symbol_expectancy') or 0.0):+,.0f}円 "
+                        f"excluded_top2={r.get('exclude_top2_excluded_symbols') or []}"
+                    )
+                lines.append("")
+        else:
+            lines.append("- (robustness_generalization_analysis なし)")
+            lines.append("")
+
+        srs = src.get("structure_risk_score_analysis") if isinstance(src, dict) else None
+        lines.append(_hk("STRUCTURE_RISK_SCORE_ANALYSIS", "STRUCTURE_RISK_SCORE_ANALYSIS"))
+        lines.append("")
+        if isinstance(srs, list) and srs:
+            for r in srs:
+                if not isinstance(r, dict):
+                    continue
+                lines.append(
+                    f"- bucket={r.get('bucket')}: signals={int(r.get('signals') or 0)} "
+                    f"winrate={float(r.get('winrate_pct') or 0.0):.1f}% "
+                    f"avg_expectancy={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f}円 "
+                    f"total_pnl={float(r.get('total_pnl_yen_100_shares') or 0.0):+,.0f}円 "
+                    f"lw10={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}円 "
+                    f"max_losing_run={float(r.get('max_losing_run_yen_100_shares') or 0.0):+,.0f}円"
+                )
+            lines.append("")
+        else:
+            lines.append("- (structure_risk_score_analysis なしまたは空)")
+            lines.append("")
+
+        srsx = src.get("structure_risk_score_x_market_regime") if isinstance(src, dict) else None
+        lines.append(_hk("STRUCTURE_RISK_SCORE_X_MARKET_REGIME", "STRUCTURE_RISK_SCORE_X_MARKET_REGIME"))
+        lines.append("")
+        if isinstance(srsx, list) and srsx:
+            for r in srsx:
+                if not isinstance(r, dict):
+                    continue
+                lines.append(
+                    f"- bucket={r.get('structure_risk_score_bucket')} × mr={r.get('market_regime')}: "
+                    f"signals={int(r.get('signals') or 0)} "
+                    f"winrate={float(r.get('winrate_pct') or 0.0):.1f}% "
+                    f"avg_expectancy={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f}円 "
+                    f"total_pnl={float(r.get('total_pnl_yen_100_shares') or 0.0):+,.0f}円 "
+                    f"lw10={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}円 "
+                    f"max_losing_run={float(r.get('max_losing_run_yen_100_shares') or 0.0):+,.0f}円"
+                )
+            lines.append("")
+        else:
+            lines.append("- (structure_risk_score_x_market_regime なしまたは空)")
+            lines.append("")
+
+        srg = src.get("structure_risk_score_generalization_analysis") if isinstance(src, dict) else None
+        lines.append(
+            _hk(
+                "STRUCTURE_RISK_SCORE_GENERALIZATION_ANALYSIS",
+                "STRUCTURE_RISK_SCORE_GENERALIZATION_ANALYSIS",
+            )
+        )
+        lines.append("")
+        if isinstance(srg, list) and srg:
+            for r in srg:
+                if not isinstance(r, dict):
+                    continue
+                lines.append(
+                    f"- bucket={r.get('structure_risk_score_bucket')}: signals={int(r.get('signals') or 0)} "
+                    f"winrate={float(r.get('winrate_pct') or 0.0):.1f}% "
+                    f"avg_expectancy={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f}円 "
+                    f"total_pnl={float(r.get('total_pnl_yen_100_shares') or 0.0):+,.0f}円 "
+                    f"lw10={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}円 "
+                    f"max_losing_run={float(r.get('max_losing_run_yen_100_shares') or 0.0):+,.0f}円"
+                )
+                lines.append(
+                    f"  symbols: unique={int(r.get('unique_symbols') or 0)} "
+                    f"other_excl_top2={int(r.get('other_symbols_count_excluding_top2') or 0)} "
+                    f"present_key={r.get('present_key_symbols') or []}"
+                )
+                lines.append(
+                    f"  exclude_top1_exp={float(r.get('exclude_top1_symbol_expectancy') or 0.0):+,.0f}円 "
+                    f"exclude_top2_exp={float(r.get('exclude_top2_symbol_expectancy') or 0.0):+,.0f}円 "
+                    f"exclude_top3_exp={float(r.get('exclude_top3_symbol_expectancy') or 0.0):+,.0f}円"
+                )
+                lines.append(
+                    f"  excluded_top1={r.get('excluded_symbols_top1') or []} "
+                    f"excluded_top2={r.get('excluded_symbols_top2') or []} "
+                    f"excluded_top3={r.get('excluded_symbols_top3') or []}"
+                )
+                lines.append(
+                    f"  top2_abs_pnl_ratio={float(r.get('symbol_contribution_top2_abs_pnl_ratio') or 0.0):.4f} "
+                    f"top3_abs_pnl_ratio={float(r.get('symbol_contribution_top3_abs_pnl_ratio') or 0.0):.4f}"
+                )
+                if "effective_symbol_count" in r:
+                    lines.append(
+                        "  dispersion: "
+                        f"eff_sym={float(r.get('effective_symbol_count') or 0.0):.2f} "
+                        f"top1_abs={float(r.get('top1_symbol_abs_pnl_ratio') or 0.0):.3f} "
+                        f"top2_abs={float(r.get('top2_symbol_abs_pnl_ratio') or 0.0):.3f} "
+                        f"top3_abs={float(r.get('top3_symbol_abs_pnl_ratio') or 0.0):.3f} "
+                        f"pos_syms={int(r.get('positive_symbols_count') or 0)} "
+                        f"neg_syms={int(r.get('negative_symbols_count') or 0)} "
+                        f"median_exp={float(r.get('median_symbol_expectancy') or 0.0):+,.0f} "
+                        f"exp_sd={float(r.get('symbol_expectancy_stddev') or 0.0):,.0f}"
+                    )
+                top_syms = r.get("top_symbols_by_expectancy") or []
+                if isinstance(top_syms, list) and top_syms:
+                    lines.append("  top_symbols_by_expectancy(top5):")
+                    for ts in top_syms[:5]:
+                        if not isinstance(ts, dict):
+                            continue
+                        lines.append(
+                            f"    - {ts.get('symbol')}: signals={int(ts.get('signals') or 0)} "
+                            f"expectancy={float(ts.get('expectancy_yen_100_shares_per_signal') or 0.0):+,.0f}円 "
+                            f"total_pnl={float(ts.get('total_pnl_yen_100_shares') or 0.0):+,.0f}円"
+                        )
+                lines.append("")
+        else:
+            lines.append("- (structure_risk_score_generalization_analysis なしまたは空)")
+            lines.append("")
+
+        sgc = src.get("structure_generalization_core_analysis") if isinstance(src, dict) else None
+        lines.append(_hk("STRUCTURE_GENERALIZATION_CORE_ANALYSIS", "STRUCTURE_GENERALIZATION_CORE_ANALYSIS"))
+        lines.append("")
+        if isinstance(sgc, dict):
+            secs = [
+                ("market_regime_x_price_change", "mr×price_change"),
+                ("market_regime_x_delta_hu", "mr×delta_hu"),
+                ("market_regime_x_price_change_x_delta_hu", "mr×price_change×delta_hu"),
+            ]
+            for sk, lab in secs:
+                rows = sgc.get(sk) or []
+                if not isinstance(rows, list) or not rows:
+                    continue
+                lines.append(f"[{lab}]")
+                for r in rows:
+                    if not isinstance(r, dict):
+                        continue
+                    fc = bool(r.get("forward_candidate", False))
+                    mr = r.get("market_regime")
+                    pcb = r.get("price_change_pct_from_prev_signal_bucket")
+                    hub = r.get("delta_high_update_count_before_entry_bucket")
+                    key = f"mr={mr}"
+                    if pcb is not None:
+                        key += f" pc={pcb}"
+                    if hub is not None:
+                        key += f" hu={hub}"
+                    lines.append(
+                        f"- {key}: forward_candidate={str(fc)} "
+                        f"signals={int(r.get('signals') or 0)} "
+                        f"exp={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f}円 "
+                        f"eff_sym={float(r.get('effective_symbol_count') or 0.0):.2f} "
+                        f"median_sym_exp={float(r.get('median_symbol_expectancy') or 0.0):+,.0f} "
+                        f"excl_top2_exp={float(r.get('exclude_top2_symbol_expectancy') or 0.0):+,.0f} "
+                        f"top1/top2={float(r.get('top1_symbol_abs_pnl_ratio') or 0.0):.3f}/"
+                        f"{float(r.get('top2_symbol_abs_pnl_ratio') or 0.0):.3f}"
+                    )
+                lines.append("")
+        else:
+            lines.append("- (structure_generalization_core_analysis なし)")
+            lines.append("")
+
+        fcp = src.get("forward_candidate_profile_analysis") if isinstance(src, dict) else None
+        lines.append(_hk("FORWARD_CANDIDATE_PROFILE_ANALYSIS", "FORWARD_CANDIDATE_PROFILE_ANALYSIS"))
+        lines.append("")
+        if isinstance(fcp, dict):
+            bs = fcp.get("buckets") or []
+            if isinstance(bs, list) and bs:
+                feats = fcp.get("features") or []
+                for b in bs:
+                    if not isinstance(b, dict):
+                        continue
+                    bid = str(b.get("bucket_id") or "")
+                    meta = b.get("meta_from_core") if isinstance(b.get("meta_from_core"), dict) else {}
+                    lines.append(
+                        f"- bucket_id={bid}: signals={int(b.get('matched_signals') or 0)} "
+                        f"exp={float(b.get('matched_expectancy_yen_100_shares') or 0.0):+,.0f}円 "
+                        f"eff_sym={float(meta.get('effective_symbol_count') or 0.0):.2f}"
+                    )
+                    fp = b.get("feature_profiles") if isinstance(b.get("feature_profiles"), dict) else {}
+                    for fn in feats:
+                        frow = fp.get(fn) if isinstance(fp.get(fn), dict) else {}
+                        w = frow.get("win") if isinstance(frow.get("win"), dict) else {}
+                        l = frow.get("lose") if isinstance(frow.get("lose"), dict) else {}
+                        d = frow.get("diff") if isinstance(frow.get("diff"), dict) else {}
+                        lines.append(
+                            f"  - {fn}: "
+                            f"WIN mean/med={float(w.get('mean') or 0.0):+.3f}/{float(w.get('median') or 0.0):+.3f} "
+                            f"LOSE mean/med={float(l.get('mean') or 0.0):+.3f}/{float(l.get('median') or 0.0):+.3f} "
+                            f"diff(mean/med)={float(d.get('win_minus_lose_mean') or 0.0):+.3f}/{float(d.get('win_minus_lose_median') or 0.0):+.3f}"
+                        )
+                    lines.append("")
+            else:
+                lines.append("- (forward_candidate buckets: 0)")
+                lines.append("")
+        else:
+            lines.append("- (forward_candidate_profile_analysis なし)")
+            lines.append("")
+
+        feb = src.get("forward_edge_breakdown_analysis") if isinstance(src, dict) else None
+        lines.append(_hk("FORWARD_EDGE_BREAKDOWN_ANALYSIS", "FORWARD_EDGE_BREAKDOWN_ANALYSIS"))
+        lines.append("")
+        if isinstance(feb, dict):
+            bs2 = feb.get("buckets") or []
+            if isinstance(bs2, list) and bs2:
+                for b in bs2:
+                    if not isinstance(b, dict):
+                        continue
+                    lines.append(
+                        f"- bucket_id={b.get('bucket_id')}: signals={int(b.get('matched_signals') or 0)} "
+                        f"exp={float(b.get('matched_expectancy_yen_100_shares') or 0.0):+,.0f}円"
+                    )
+                    fr = b.get("features_ranked") or []
+                    if isinstance(fr, list) and fr:
+                        for r in fr[:12]:
+                            if not isinstance(r, dict):
+                                continue
+                            eff = r.get("effect_size_mean")
+                            eff_s = "N/A" if eff is None else f"{float(eff):.3f}"
+                            agr = r.get("symbol_direction_agreement_ratio")
+                            agr_s = "N/A" if agr is None else f"{float(agr):.2f}"
+                            tma = r.get("tail_minus_all_mean")
+                            tma_s = "N/A" if tma is None else f"{float(tma):+.3f}"
+                            lines.append(
+                                f"  - {r.get('feature')}: effect_size={eff_s} "
+                                f"direction={r.get('direction')} "
+                                f"tail_minus_all_mean={tma_s} "
+                                f"agreement_ratio={agr_s} "
+                                f"danger={bool(r.get('danger_feature_candidate', False))}"
+                            )
+                    lines.append("")
+            else:
+                lines.append("- (forward_edge_breakdown buckets: 0)")
+                lines.append("")
+        else:
+            lines.append("- (forward_edge_breakdown_analysis なし)")
+            lines.append("")
+
+        ffi = src.get("forward_feature_interaction_analysis") if isinstance(src, dict) else None
+        lines.append(_hk("FORWARD_FEATURE_INTERACTION_ANALYSIS", "FORWARD_FEATURE_INTERACTION_ANALYSIS"))
+        lines.append("")
+        if isinstance(ffi, dict):
+            bs3 = ffi.get("buckets") or []
+            if isinstance(bs3, list) and bs3:
+                for b in bs3:
+                    if not isinstance(b, dict):
+                        continue
+                    lines.append(
+                        f"- bucket_id={b.get('bucket_id')}: signals={int(b.get('matched_signals') or 0)} "
+                        f"exp={float(b.get('matched_expectancy_yen_100_shares') or 0.0):+,.0f}円 "
+                        f"danger_features={b.get('danger_features') or []}"
+                    )
+                    pairs = b.get("feature_pair_interactions") or []
+                    if not isinstance(pairs, list) or not pairs:
+                        lines.append("  - (feature_pair_interactions: 0)")
+                        lines.append("")
+                        continue
+                    for pr in pairs:
+                        if not isinstance(pr, dict):
+                            continue
+                        fa0 = str(pr.get("feature_a") or "")
+                        fb0 = str(pr.get("feature_b") or "")
+                        lines.append(f"  [pair] {fa0} x {fb0}")
+                        ir = pr.get("interactions_ranked") or []
+                        if not isinstance(ir, list) or not ir:
+                            lines.append("    - (no interaction cells)")
+                            continue
+                        for r in ir[:18]:
+                            if not isinstance(r, dict):
+                                continue
+                            syn = r.get("synergy_score")
+                            syn_s = "N/A" if syn is None else f"{float(syn):+.2f}"
+                            tr = r.get("interaction_tail_risk_ratio")
+                            tr_s = "N/A" if tr is None else f"{float(tr):.3f}"
+                            lines.append(
+                                f"    - state={r.get('interaction_state')}: signals={int(r.get('signals') or 0)} "
+                                f"exp={float(r.get('expectancy_yen_100_shares_per_signal') or 0.0):+,.0f}円 "
+                                f"tail_ratio={tr_s} synergy={syn_s} "
+                                f"eff_sym={float(r.get('interaction_effective_symbol_count') or 0.0):.2f} "
+                                f"danger_ic={bool(r.get('danger_interaction_candidate', False))}"
+                            )
+                        lines.append("")
+                    lines.append("")
+            else:
+                lines.append("- (forward_feature_interaction buckets: 0)")
+                lines.append("")
+
+            cr = ffi.get("combo_collapse_filtered_rules") if isinstance(ffi.get("combo_collapse_filtered_rules"), dict) else {}
+            lines.append(
+                "  -- combo collapse extract: danger_ic & effective_symbol_count>=4 & exclude_top2_exp<0; "
+                "sort: synergy_score asc → expectancy asc → effective_symbol_count desc --"
+            )
+            if isinstance(cr, dict) and cr:
+                lines.append(
+                    f"  rules(meta): eff_ge={float(cr.get('effective_symbol_count_ge') or 4.0)} "
+                    f"excl_top2_lt={float(cr.get('exclude_top2_symbol_expectancy_lt') or 0.0)}"
+                )
+            pflat = ffi.get("prioritized_combo_collapse_interactions_flat") or []
+            pstate = ffi.get("prioritized_combo_collapse_interactions_one_row_per_interaction_state") or []
+            if isinstance(pflat, list) and pflat:
+                lines.append("  -- flat prioritized (単独=max(singleA,singleB) vs interaction、sngl/int/syn) Top --")
+                for r in pflat[:40]:
+                    if not isinstance(r, dict):
+                        continue
+                    s_single = r.get("single_feature_expectancy")
+                    s_sin_s = "N/A" if s_single is None else f"{float(s_single):+,.0f}"
+                    syn = r.get("synergy_score")
+                    syn_s = "N/A" if syn is None else f"{float(syn):+.2f}"
+                    lines.append(
+                        f"    pri: bucket={r.get('bucket_id')} pair={r.get('feature_a')}x{r.get('feature_b')} | {r.get('interaction_state')} | "
+                        f"sig={int(r.get('signals') or 0)} exp={float(r.get('expectancy') or 0.0):+,.0f} "
+                        f"lw10={float(r.get('lose_worst10_sum') or 0.0):+,.0f} mxrun={float(r.get('max_losing_run') or 0.0):+,.0f} "
+                        f"eff={float(r.get('effective_symbol_count') or 0.0):.2f} top1={float(r.get('top1_symbol_abs_pnl_ratio') or 0.0):.3f} | "
+                        f"sngl_exp={s_sin_s} int_exp={float(r.get('interaction_expectancy') or 0.0):+,.0f} synergy={syn_s}"
+                    )
+                lines.append("")
+            else:
+                lines.append("  - (prioritized_combo_collapse_interactions_flat: 0 rows)")
+                lines.append("")
+            if isinstance(pstate, list) and pstate:
+                lines.append("  -- one row per interaction_state (複数bucket衝突時はpriority最先のセルを代表) --")
+                for r in pstate[:30]:
+                    if not isinstance(r, dict):
+                        continue
+                    s_single = r.get("single_feature_expectancy")
+                    s_sin_s = "N/A" if s_single is None else f"{float(s_single):+,.0f}"
+                    syn = r.get("synergy_score")
+                    syn_s = "N/A" if syn is None else f"{float(syn):+.2f}"
+                    lines.append(
+                        f"    {r.get('interaction_state')} | reps={int(r.get('interaction_state_collision_count_across_buckets') or 1)} "
+                        f"sig={int(r.get('signals') or 0)} exp={float(r.get('expectancy') or 0.0):+,.0f} "
+                        f"eff={float(r.get('effective_symbol_count') or 0.0):.2f} | "
+                        f"sngl={s_sin_s} int={float(r.get('interaction_expectancy') or 0.0):+,.0f} syn={syn_s}"
+                    )
+                lines.append("")
+
+            sns = ffi.get("stable_negative_interaction_summaries") if isinstance(ffi.get("stable_negative_interaction_summaries"), dict) else None
+            if isinstance(sns, dict):
+                lines.append("  -- stable_negative_interaction_candidate (eff/excl2/neg_run/agr_min/signals; agr=EDGE min of pair) --")
+                sttab = sns.get("stable_negative_interactions_table") or []
+                if isinstance(sttab, list) and sttab:
+                    for z in sttab[:25]:
+                        if not isinstance(z, dict):
+                            continue
+                        ex2 = z.get("exclude_top2_symbol_expectancy")
+                        ex2_s = "N/A" if ex2 is None else f"{float(ex2):+,.0f}"
+                        nrr = z.get("negative_run_ratio")
+                        nrr_s = "N/A" if nrr is None else f"{float(nrr):.2f}"
+                        agr = z.get("symbol_direction_agreement_ratio")
+                        agr_s = "N/A" if agr is None else f"{float(agr):.2f}"
+                        lines.append(
+                            f"    sn: {z.get('bucket_id')} | {z.get('feature_a')}x{z.get('feature_b')} | {z.get('interaction_state')} || "
+                            f"eff={float(z.get('effective_symbol_count') or 0.0):.2f} excl2={ex2_s} neg_run={nrr_s} agr(min)={agr_s} sig={int(z.get('signals') or 0)}"
+                        )
+                    lines.append("")
+                else:
+                    lines.append("    - (stable_negative_interactions_table: 0)")
+                    lines.append("")
+                rept = sns.get("forward_reproducibility_candidate_interactions_table") or []
+                lines.append(
+                    '  -- forwardで再現性あり候補 (eff≥5 & excl2<0 & neg_run≥0.7 & agr(min)≥0.7、"複数銘柄で繰り返す崩れ"想定) --'
+                )
+                if isinstance(rept, list) and rept:
+                    for z in rept[:25]:
+                        if not isinstance(z, dict):
+                            continue
+                        ex2 = z.get("exclude_top2_symbol_expectancy")
+                        ex2_s = "N/A" if ex2 is None else f"{float(ex2):+,.0f}"
+                        agr = z.get("symbol_direction_agreement_ratio")
+                        agr_s = "N/A" if agr is None else f"{float(agr):.2f}"
+                        lines.append(
+                            f"    rep: {z.get('bucket_id')} | {z.get('feature_a')}x{z.get('feature_b')} || "
+                            f"eff={float(z.get('effective_symbol_count') or 0.0):.2f} excl2={ex2_s} "
+                            f"neg_run={float(z.get('negative_run_ratio') or 0.0):.2f} agr={agr_s} sig={int(z.get('signals') or 0)}"
+                        )
+                    lines.append("")
+                else:
+                    lines.append("    - (forward_reproducibility_candidate_interactions_table: 0)")
+                    lines.append("")
+        else:
+            lines.append("- (forward_feature_interaction_analysis なし)")
+            lines.append("")
+
+        ffi_fs = src.get("forward_feature_interaction_analysis") if isinstance(src, dict) else None
+        sns_fs = (
+            (ffi_fs.get("stable_negative_interaction_summaries") or {})
+            if isinstance(ffi_fs, dict)
+            else None
+        )
+        fsan = sns_fs.get("feature_state_frequency_analysis") if isinstance(sns_fs, dict) else None
+        lines.append(_hk("FORWARD_REPRODUCIBILITY_FEATURE_STATE_FREQUENCY", "FORWARD_REPRODUCIBILITY_FEATURE_STATE_FREQUENCY"))
+        lines.append("")
+        hlset = frozenset(FORWARD_REPRO_FEATURE_STATE_HIGHLIGHT_FEATURES)
+        if isinstance(fsan, dict):
+            lines.append(f"- cohort (repro interactions): {int(fsan.get('cohort_interactions') or 0)}")
+            lines.append(
+                "- tokenize: interaction_state を 'feat=STATE' +' AND ' に分解。"
+                " 指標は当該 feature-state が現れた interaction_rows 単位での平均。"
+            )
+            lines.append("")
+            roll = fsan.get("feature_state_rollups_sorted_by_interaction_rows_desc") or []
+            lines.append("-- feature-state 頻度上位 (interaction_rows desc, 危険 repro cohort における繰り返し登場) --")
+            if isinstance(roll, list) and roll:
+                for rr in roll[:35]:
+                    if not isinstance(rr, dict):
+                        continue
+                    fk = str(rr.get("feature") or "")
+                    mark = ">> " if fk in hlset else "   "
+                    nrm = rr.get("negative_run_ratio_mean")
+                    exm = rr.get("expectancy_mean")
+                    trm = rr.get("tail_risk_ratio_mean")
+                    nf = lambda v, fd: ("N/A" if v is None else f"{float(v):{fd}}")
+                    lines.append(
+                        f"{mark}rows={int(rr.get('interaction_rows') or 0)} sig_sum={int(rr.get('signals_sum') or 0)} | "
+                        f"{rr.get('feature_state_key')} | "
+                        f"nrr_mu={nf(nrm,'.3f')} exp_mu={nf(exm,'+,.0f')} tail_mu={nf(trm,'.3f')} "
+                        f"eff_mu={nf(rr.get('effective_symbol_count_mean'),'.2f')} x2_mu={nf(rr.get('exclude_top2_symbol_expectancy_mean'),'+,.0f')}"
+                    )
+                lines.append("")
+            else:
+                lines.append("- (feature_state_rollups: 0)")
+                lines.append("")
+            lines.append(f"-- ★注目 feature ({', '.join(FORWARD_REPRO_FEATURE_STATE_HIGHLIGHT_FEATURES)}) の feature-state のみ（同ソート上位） --")
+            honly = fsan.get("feature_state_rollups_highlight_features_only_sorted") or []
+            if isinstance(honly, list) and honly:
+                for rr in honly[:25]:
+                    if not isinstance(rr, dict):
+                        continue
+                    nf = lambda v, fd: ("N/A" if v is None else f"{float(v):{fd}}")
+                    nrm = rr.get("negative_run_ratio_mean")
+                    lines.append(
+                        f"   rows={int(rr.get('interaction_rows') or 0)} | {rr.get('feature_state_key')} | "
+                        f"nrr_mu={nf(nrm,'.3f')} exp_mu={nf(rr.get('expectancy_mean'),'+,.0f')}"
+                    )
+                lines.append("")
+            else:
+                lines.append("- (highlight subset: 0 / 対象interactionに現れない場合あり)")
+                lines.append("")
+            drows = fsan.get("direction_counts_by_feature_sorted_hi_lose_desc") or []
+            lines.append("-- EDGE direction カウント (repro interaction の feature_a/feature_b レッグ毎・行ベース) --")
+            if isinstance(drows, list) and drows:
+                for dr in drows[:20]:
+                    if not isinstance(dr, dict):
+                        continue
+                    fk = str(dr.get("feature") or "")
+                    mark = ">> " if fk in hlset else "   "
+                    lines.append(
+                        f"{mark}{fk}: HIGHER_IN_LOSE={int(dr.get('HIGHER_IN_LOSE') or 0)} "
+                        f"HIGHER_IN_WIN={int(dr.get('HIGHER_IN_WIN') or 0)} "
+                        f"OTHER={int(dr.get('NEUTRAL_OR_OTHER') or 0)}"
+                    )
+                lines.append("")
+            else:
+                lines.append("- (direction_counts: 0)")
+                lines.append("")
+        else:
+            lines.append("- (feature_state_frequency_analysis なし; all_runs + repeat 後の JSON を参照)")
+            lines.append("")
+
+        lines.append(_hk("FORWARD_REPRODUCIBILITY_CORE_CLUSTER_ANALYSIS", "FORWARD_REPRODUCIBILITY_CORE_CLUSTER_ANALYSIS"))
+        lines.append("")
+        cca_blob = sns_fs.get("FORWARD_REPRODUCIBILITY_CORE_CLUSTER_ANALYSIS") if isinstance(sns_fs, dict) else None
+        if isinstance(cca_blob, dict):
+            pn = cca_blob.get("note")
+            if isinstance(pn, str) and pn.strip():
+                lines.append(f"- note: {pn.strip()}")
+            prm = cca_blob.get("parameters") if isinstance(cca_blob.get("parameters"), dict) else {}
+            lines.append(
+                f"- params: edge_weight_pct_ge={float(prm.get('edge_weight_percentile_ge') or 0.0):.2f} "
+                f"min_co_occur={int(prm.get('min_edge_co_occurrence') or 0)} max_clusters_out={int(prm.get('max_clusters_out') or 0)}"
+            )
+            eth = cca_blob.get("edge_weight_threshold_used")
+            lines.append(f"- edge_weight_threshold_used={'N/A' if eth is None else f'{float(eth):.3f}'}")
+            lines.append("")
+            clusters_cc = (
+                cca_blob.get("clusters") or cca_blob.get("FORWARD_REPRODUCIBILITY_CORE_CLUSTER_ANALYSIS") or []
+            )
+            lines.append("-- danger feature-state 「共通核」クラスタ (強エッジ連結・頻度×tail×再現スコア順) --")
+            if isinstance(clusters_cc, list) and clusters_cc:
+                nf = lambda v, fd: ("N/A" if v is None else f"{float(v):{fd}}")
+                for c0 in clusters_cc[:12]:
+                    if not isinstance(c0, dict):
+                        continue
+                    st_li = c0.get("states") or []
+                    st_txt = "; ".join(str(s) for s in st_li[:10])
+                    if isinstance(st_li, list) and len(st_li) > 10:
+                        st_txt += f" … (+{len(st_li) - 10})"
+                    fq = int(c0.get("frequency") or c0.get("frequency_touching_interactions") or 0)
+                    lines.append(
+                        f"  [c{int(c0.get('cluster_id') or 0)}] freq={fq} qual={nf(c0.get('cluster_quality_score'),'.1f')} | "
+                        f"nrr={nf(c0.get('avg_negative_run_ratio'),'.3f')} tail={nf(c0.get('avg_tail_risk_ratio'),'.3f')} "
+                        f"exp={nf(c0.get('avg_expectancy'),'+,.0f')} eff_mu={nf(c0.get('effective_symbol_count_mean'),'.2f')}"
+                    )
+                    lines.append(f"       states: {st_txt}")
+                    wh = c0.get("CORE_CLUSTER_WATCH_FEATURES_present")
+                    if isinstance(wh, dict) and wh:
+                        hits = [k for k, v in wh.items() if v]
+                        miss = [k for k, v in wh.items() if not v]
+                        lines.append(
+                            f"       watch_features present: {hits if hits else '(none)'} | absent: {miss if miss else '(none)'}"
+                        )
+                    lines.append("")
+            else:
+                lines.append("- (clusters: 0)")
+                lines.append("")
+            cw = cca_blob.get("core_watch_feature_summary") if isinstance(cca_blob.get("core_watch_feature_summary"), dict) else {}
+            per_w = cw.get("per_feature") if isinstance(cw.get("per_feature"), dict) else {}
+            wf_list = cw.get("watch_features")
+            wf_s = ", ".join(str(x) for x in wf_list) if isinstance(wf_list, list) else ", ".join(CORE_CLUSTER_WATCH_FEATURES)
+            lines.append(f"-- ★注目3 feature が最大品質クラスタに含まれるか ({wf_s}) --")
+            if per_w:
+                for wf_nm in CORE_CLUSTER_WATCH_FEATURES:
+                    row_w = per_w.get(wf_nm) if isinstance(per_w.get(wf_nm), dict) else {}
+                    if not isinstance(row_w, dict):
+                        continue
+                    ir = row_w.get("rankAmong_all_nodes_occurrence_sorted")
+                    ir_s = "N/A" if ir is None else str(ir)
+                    in_top = row_w.get("in_largest_quality_cluster")
+                    lines.append(
+                        f"   {wf_nm}: rank_occ={ir_s} max_occ={int(row_w.get('max_occurrenceAmong_nodes_rank0best') or 0)} "
+                        f"in_top_cluster={'yes' if in_top else 'no'}"
+                    )
+                lines.append("")
+            else:
+                lines.append("- (core_watch_feature_summary なし)")
+                lines.append("")
+        else:
+            lines.append("- (FORWARD_REPRODUCIBILITY_CORE_CLUSTER_ANALYSIS なし)")
+            lines.append("")
+
+        fsc = src.get("forward_candidate_dispersion_screened_summary") if isinstance(src, dict) else None
+        lines.append(_hk("FORWARD_CANDIDATE_DISPERSION_SCREENED_SUMMARY", "FORWARD_CANDIDATE_DISPERSION_SCREENED_SUMMARY"))
+        lines.append("")
+        if isinstance(fsc, dict):
+            sr = fsc.get("screen_rules") if isinstance(fsc.get("screen_rules"), dict) else {}
+            lines.append(
+                f"- rules: effective_symbol_count>={float(sr.get('effective_symbol_count_ge') or 0.0)} AND "
+                f"exclude_top2_exp>{float(sr.get('exclude_top2_symbol_expectancy_gt') or 0.0)} AND "
+                f"top1_abs_pnl_ratio<={float(sr.get('top1_symbol_abs_pnl_ratio_max') or 0.0)} "
+                f"(matched rollup; FORWARD_* 対象 cohort と同一)"
+            )
+            lines.append(f"- filtered_buckets={int(fsc.get('filtered_bucket_count') or 0)}")
+            lines.append("")
+            fbs = fsc.get("filtered_buckets") or []
+            if isinstance(fbs, list) and fbs:
+                lines.append("-- bucket table (signals / expectancy / lw10 / max_lose_run / median_sym_exp / sym_exp_sd) --")
+                for b in fbs:
+                    if not isinstance(b, dict):
+                        continue
+                    lines.append(
+                        f"- {b.get('bucket_id')}: "
+                        f"signals={int(b.get('signals') or 0)} "
+                        f"exp={float(b.get('expectancy_yen_100_shares_per_signal') or 0.0):+,.0f}円 "
+                        f"lw10={float(b.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}円 "
+                        f"max_lose_run={float(b.get('max_losing_run_yen_100_shares') or 0.0):+,.0f}円 "
+                        f"median_sym_exp={float(b.get('median_symbol_expectancy') or 0.0):+,.0f}円 "
+                        f"sym_exp_sd={float(b.get('symbol_expectancy_stddev') or 0.0):,.0f}"
+                    )
+                    dfs = b.get("danger_feature_candidates") or []
+                    if isinstance(dfs, list) and dfs:
+                        lines.append(f"  danger_features: {','.join([str(z.get('feature')) for z in dfs if isinstance(z, dict)])}")
+                    ints = b.get("danger_interaction_candidates") or []
+                    if isinstance(ints, list) and ints:
+                        for z in ints[:8]:
+                            if not isinstance(z, dict):
+                                continue
+                            lines.append(
+                                f"  danger_ix: {z.get('feature_a')} x {z.get('feature_b')} | {z.get('interaction_state')} "
+                                f"(signals={int(z.get('signals') or 0)})"
+                            )
+                    lines.append("")
+                freq = fsc.get("frequency") if isinstance(fsc.get("frequency"), dict) else {}
+                dfb = freq.get("danger_feature_candidate_bucket_hits_by_feature_sorted") or []
+                dhi = freq.get("danger_feature_HIGHER_IN_LOSE_bucket_hits_by_feature_sorted") or []
+                if isinstance(dfb, list) and dfb:
+                    lines.append("-- freq: danger_feature_candidate bucket hits（どのbucketで危険扱いか） Top --")
+                    for r in dfb[:20]:
+                        if not isinstance(r, dict):
+                            continue
+                        lines.append(f"  - {r.get('feature')}: bucket_hits={int(r.get('bucket_hits') or 0)}")
+                    lines.append("")
+                if isinstance(dhi, list) and dhi:
+                    lines.append("-- freq: HIGHER_IN_LOSE の danger_feature（共通の危険方向） Top --")
+                    for r in dhi[:20]:
+                        if not isinstance(r, dict):
+                            continue
+                        lines.append(f"  - {r.get('feature')}: bucket_hits={int(r.get('bucket_hits') or 0)}")
+                    lines.append("")
+                ich = freq.get("danger_interaction_component_bucket_reach_by_feature_sorted") or []
+                if isinstance(ich, list) and ich:
+                    lines.append("-- freq: danger_interaction に銘柄横断で絡んだ feature の bucket reach Top --")
+                    for r in ich[:20]:
+                        if not isinstance(r, dict):
+                            continue
+                        lines.append(f"  - {r.get('feature')}: bucket_reach={int(r.get('bucket_reach') or 0)}")
+                    lines.append("")
+            else:
+                lines.append("- (filtered buckets: 0)")
+                lines.append("")
+        else:
+            lines.append("- (forward_candidate_dispersion_screened_summary なし)")
+            lines.append("")
+
+        fsv = src.get("forward_split_validation_analysis") if isinstance(src, dict) else None
+        lines.append(_hk("FORWARD_SPLIT_VALIDATION_ANALYSIS", "FORWARD_SPLIT_VALIDATION_ANALYSIS"))
+        lines.append("")
+        if isinstance(fsv, dict) and bool(fsv.get("enabled")):
+            lines.append("- 主評価: lose_worst10_sum / max_losing_run / negative_run_ratio（単期 cohort proxy）優先・expect は補助")
+            lines.append("")
+            nf = lambda v, fd: ("N/A" if v is None else f"{float(v):{fd}}")
+            tbl = fsv.get("split_tail_first_table") or []
+            lines.append("-- 期間別 BASE+prev cohort（tail優先サマリー） --")
+            if isinstance(tbl, list) and tbl:
+                lines.append(
+                    "split\tsignals\tlw10_sum\tmax_lose_run\tn_rr_proxy\texpectancy\teff_sym"
+                )
+                for row in tbl:
+                    if not isinstance(row, dict):
+                        continue
+                    lines.append(
+                        f"{row.get('split')}\t{int(row.get('signals') or 0)}\t"
+                        f"{nf(row.get('lose_worst10_sum'), '+.0f')}\t"
+                        f"{nf(row.get('max_losing_run'), '+.0f')}\t"
+                        f"{nf(row.get('negative_run_ratio'),'.3f')}\t"
+                        f"{nf(row.get('expectancy'),'+,.0f')}\t"
+                        f"{nf(row.get('effective_symbol_count'),'.2f')}"
+                    )
+                lines.append("")
+            vbm = fsv.get("virtual_block_cluster_match_analysis") if isinstance(fsv.get("virtual_block_cluster_match_analysis"), dict) else {}
+            lines.append("-- virtual_block_cluster_match（train核を val/fwd で仮想除外・excluded_from_eval 不変） --")
+            if isinstance(vbm, dict):
+                for pk in ("validation", "forward"):
+                    blk = vbm.get(pk)
+                    if not isinstance(blk, dict):
+                        continue
+                    lines.append(f"  [{pk}]")
+                    base = blk.get("baseline") if isinstance(blk.get("baseline"), dict) else {}
+                    vb = blk.get("virtual_block") if isinstance(blk.get("virtual_block"), dict) else {}
+                    tc = blk.get("tail_risk_comparison") if isinstance(blk.get("tail_risk_comparison"), dict) else {}
+                    if base and vb:
+                        lines.append(
+                            f"    baseline: sig={int(base.get('signals') or 0)} lw10={nf(base.get('lose_worst10_sum'),'+,.0f')} "
+                            f"max_dd={nf(base.get('max_losing_run'),'+,.0f')} nrr~={nf(base.get('negative_run_ratio'),'.3f')} "
+                            f"exp={nf(base.get('expectancy'),'+,.0f')}"
+                        )
+                        lines.append(
+                            f"    virtual:   sig={int(vb.get('signals') or 0)} blocked={int(vb.get('blocked_signals') or 0)} "
+                            f"lw10={nf(vb.get('lose_worst10_sum'),'+,.0f')} max_dd={nf(vb.get('max_losing_run'),'+,.0f')} "
+                            f"nrr~={nf(vb.get('negative_run_ratio'),'.3f')} exp={nf(vb.get('expectancy'),'+,.0f')}"
+                        )
+                        _nrrd = tc.get("negative_run_ratio_delta")
+                        _nrrd_s = "N/A" if _nrrd is None else f"{float(_nrrd):+.4f}"
+                        lines.append(
+                            f"    tail_delta: lw10Δ={nf(tc.get('lose_worst10_sum_delta'),'+,.0f')} "
+                            f"max_ddΔ={nf(tc.get('max_losing_run_delta'),'+,.0f')} "
+                            f"n_rrΔ={_nrrd_s}"
+                        )
+                    elif isinstance(blk.get("note"), str):
+                        lines.append(f"    - {blk.get('note')}")
+                    lines.append("")
+            cra = fsv.get("cluster_reappearance_analysis") if isinstance(fsv.get("cluster_reappearance_analysis"), dict) else {}
+            lines.append("-- cluster_reappearance_analysis（構造が未学習期に繰り返すかの目安） --")
+            if isinstance(cra, dict):
+                for pk in ("validation", "forward"):
+                    rr = cra.get(pk)
+                    if not isinstance(rr, dict):
+                        continue
+                    tr = rr.get("cluster_match_tail_risk") if isinstance(rr.get("cluster_match_tail_risk"), dict) else {}
+                    lines.append(
+                        f"  {pk}: matches={int(rr.get('cluster_match_count') or 0)} "
+                        f"ratio={nf(rr.get('cluster_match_signal_ratio'),'.4f')} "
+                        f"m_exp={nf(rr.get('cluster_match_expectancy'),'+,.0f')} "
+                        f"overlap_nodes={nf(rr.get('cluster_state_overlap_ratio'),'.3f')} | "
+                        f"m_lw10={nf(tr.get('lose_worst10_sum'),'+,.0f')} m_mr={nf(tr.get('max_losing_run'),'+,.0f')}"
+                    )
+                lines.append("")
+            clf = fsv.get("cluster_lifecycle_analysis") if isinstance(fsv.get("cluster_lifecycle_analysis"), dict) else None
+            lines.append(_hk("CLUSTER_LIFECYCLE_ANALYSIS", "CLUSTER_LIFECYCLE_ANALYSIS"))
+            lines.append("")
+            if isinstance(clf, dict):
+                wf = clf.get("window_business_days")
+                lines.append(f"- window: {int(wf)} 営業日チャンク day_jst 集合を時系列順に結合分割（フェーズごと）。表示優先: tail / ratio / eff_sym → exp")
+                trm = clf.get("train_reference_cluster_matched")
+                if isinstance(trm, dict):
+                    lines.append(
+                        f"- train matched benchmark: signals={int(trm.get('train_matched_signals') or trm.get('signals') or 0)} "
+                        f"lw10={nf(trm.get('lose_worst10_sum'),'+,.0f')} eff={nf(trm.get('effective_symbol_count'),'.2f')}"
+                    )
+                lines.append("")
+                for sec in ("validation", "forward"):
+                    blk = clf.get(sec)
+                    if not isinstance(blk, dict):
+                        continue
+                    lines.append(
+                        f"== {sec}: half_life_HEALTHY_prefix={int(blk.get('cluster_half_life_windows') or 0)} windows =="
+                    )
+                    trrows = blk.get("phase_transitions") or []
+                    if isinstance(trrows, list) and trrows:
+                        lines.append("-- phase transitions --")
+                        for t in trrows:
+                            if not isinstance(t, dict):
+                                continue
+                            lines.append(
+                                f"  w{int(t.get('at_window_index') or 0)}: {t.get('from_phase')}→{t.get('to_phase')} ({t.get('week_start')})"
+                            )
+                        lines.append("")
+                    rows = blk.get("windows") or []
+                    lines.append("-- window table（cluster match 側） --")
+                    if isinstance(rows, list) and rows:
+                        lines.append(
+                            "idx\tw_start\tw_end\tphase\tm_sig\tm_ratio\tm_lw10\tm_mdd\tm_nneg\tm_eff\tm_exp\tAflip\tBtailX\tCovDrop\tEffCol"
+                        )
+                        for rr in rows:
+                            if not isinstance(rr, dict):
+                                continue
+                            df = rr.get("deterioration_flags") if isinstance(rr.get("deterioration_flags"), dict) else {}
+                            tr = rr.get("cluster_match_tail_risk") if isinstance(rr.get("cluster_match_tail_risk"), dict) else {}
+                            lines.append(
+                                f"{int(rr.get('window_index_in_phase') or 0)}\t"
+                                f"{rr.get('window_dates_start')}…{rr.get('window_dates_end')}\t"
+                                f"{rr.get('lifecycle_phase')}\t"
+                                f"{int(rr.get('cluster_match_signals') or 0)}\t"
+                                f"{nf(rr.get('cluster_match_signal_ratio'),'.4f')}\t"
+                                f"{nf(tr.get('lose_worst10_sum'),'+,.0f')}\t"
+                                f"{nf(tr.get('max_losing_run'),'+,.0f')}\t"
+                                f"{nf(rr.get('cluster_match_negative_ratio'),'.3f')}\t"
+                                f"{nf(rr.get('cluster_match_effective_symbol_count'),'.2f')}\t"
+                                f"{nf(rr.get('cluster_match_expectancy'),'+,.2f')}\t"
+                                f"{'Y' if df.get('expectancy_sign_flip_plus_to_minus') else '.'}\t"
+                                f"{'Y' if df.get('tail_risk_explosion_vs_train') else '.'}\t"
+                                f"{'Y' if df.get('coverage_collapse_signal_ratio_drop') else '.'}\t"
+                                f"{'Y' if df.get('symbol_collapse_eff_lt3') else '.'}"
+                            )
+                        lines.append("")
+                    else:
+                        lines.append("- (windows 0)")
+                        lines.append("")
+            elif isinstance(fsv, dict) and bool(fsv.get("enabled")):
+                lines.append("- (cluster_lifecycle_analysis がありません)")
+                lines.append("")
+        elif isinstance(fsv, dict):
+            lines.append(f"- （無効またはスキップ）{fsv.get('note') or fsv.get('error') or 'see JSON'}")
+            lines.append("")
+        else:
+            lines.append("- (forward_split_validation_analysis なし)")
+            lines.append("")
+    except Exception:
+        return lines
+
+    return lines
+
+
 def _build_strong_loser_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
     """
     market_regime == STRONG かつ pnl_yen_100_shares < 0 のシグナルを対象に、bucket ごとに集計する。
@@ -14472,6 +24583,91 @@ def _build_strong_loser_analysis_from_signal_dicts(signal_dicts: list[dict[str, 
     return out
 
 
+def _build_weak_regime_feature_analysis_from_signal_dicts(signal_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    market_regime == WEAK かつ eval 対象（excluded_from_eval=False）のみ。
+    VWAP乖離 / gap / 高値更新回数 / 保有時間 / 時間帯ごとの bucket 集計。
+    各 bucket: signals, winrate, total_pnl, expectancy, lose_worst10（strong_loser_analysis と同型 + winrate）。
+    """
+    gap_edges = [-3.0, -1.0, 1.0, 3.0]
+    gap_labels = ["<=-3", "-3~-1", "-1~1", "1~3", ">=3"]
+    vdist_edges = [0.5, 1.0, 1.5, 2.0]
+    vdist_labels = ["<=0.5", "0.5~1.0", "1.0~1.5", "1.5~2.0", ">=2.0"]
+    hold_edges = [5.0, 15.0, 30.0, 60.0, 120.0]
+    hold_labels = ["<=5", "5~15", "15~30", "30~60", "60~120", ">120"]
+
+    acc: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def _add(feature: str, bucket: str, pnl: float, is_win: bool) -> None:
+        acc.setdefault(feature, {})
+        a = acc[feature].setdefault(bucket, {"signals": 0, "win": 0, "pnl_sum": 0.0, "pnls": []})
+        a["signals"] = int(a.get("signals", 0)) + 1
+        if bool(is_win):
+            a["win"] = int(a.get("win", 0)) + 1
+        a["pnl_sum"] = float(a.get("pnl_sum", 0.0)) + float(pnl)
+        try:
+            a["pnls"].append(float(pnl))
+        except Exception:
+            pass
+
+    for s in signal_dicts:
+        if not isinstance(s, dict):
+            continue
+        if bool(s.get("excluded_from_eval", False)):
+            continue
+        rk = str(s.get("market_regime") or "").strip().upper()
+        if rk != "WEAK":
+            continue
+        pnl = float(s.get("pnl_yen_100_shares") or 0.0)
+        res = str(s.get("result") or "")
+        is_win = res == "WIN"
+
+        gap = s.get("gap_pct")
+        vdist = s.get("entry_vwap_distance_pct")
+        etb = str(s.get("entry_time_bucket") or "").strip() or "N/A"
+        hm = s.get("hold_minutes")
+        huc = s.get("high_update_count_before_entry")
+
+        _add("entry_vwap_distance_pct", _bucket_label_by_edges(vdist, vdist_edges, vdist_labels), pnl, is_win)
+        _add("gap_pct", _bucket_label_by_edges(gap, gap_edges, gap_labels), pnl, is_win)
+        _add("high_update_count_before_entry", _bucket_high_update_count_before_entry(huc), pnl, is_win)
+        _add("hold_minutes", _bucket_label_by_edges(hm, hold_edges, hold_labels), pnl, is_win)
+        _add("entry_time_bucket", etb, pnl, is_win)
+
+    feat_order = [
+        "entry_vwap_distance_pct",
+        "gap_pct",
+        "high_update_count_before_entry",
+        "hold_minutes",
+        "entry_time_bucket",
+    ]
+    out: dict[str, Any] = {}
+    for feat in feat_order:
+        buckets = acc.get(feat) or {}
+        rows: list[dict[str, Any]] = []
+        for b, a in buckets.items():
+            sigs = int(a.get("signals", 0))
+            win = int(a.get("win", 0))
+            pnl_sum = float(a.get("pnl_sum", 0.0))
+            winrate = (float(win) / float(sigs) * 100.0) if sigs > 0 else 0.0
+            exp = (float(pnl_sum) / float(sigs)) if sigs > 0 else 0.0
+            pnls = a.get("pnls") or []
+            rows.append(
+                {
+                    "bucket": str(b),
+                    "signals": int(sigs),
+                    "winrate_pct": float(winrate),
+                    "total_pnl_yen_100_shares": float(pnl_sum),
+                    "avg_expectancy_yen_100_shares": float(exp),
+                    "lose_worst10_sum_yen_100_shares": float(
+                        _lose_worst10_sum_yen_100_shares_from_pnls(pnls if isinstance(pnls, list) else [])
+                    ),
+                }
+            )
+        out[feat] = sorted(rows, key=lambda x: int(x.get("signals", 0)), reverse=True)
+    return out
+
+
 def run_daily_loss_stop_sweep(
     *,
     fixed_watch: Optional[list[str]],
@@ -14505,10 +24701,9 @@ def run_daily_loss_stop_sweep(
     ranges = list(SWEEP_REPLAY_RANGES)
     sweep_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
 
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"daily_loss_stop_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"daily_loss_stop_sweep_{sweep_stamp}", script_dir=script_dir)
 
     print(f"[{now_str()}] daily_loss_stop sweep: configs={len(cfg_paths)} ranges={ranges} repeat={n_repeat}")
     print(f"[{now_str()}] sweep_root: {sweep_root}")
@@ -14531,8 +24726,7 @@ def run_daily_loss_stop_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             for i in range(1, int(n_repeat) + 1):
                 seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
@@ -14797,10 +24991,9 @@ def run_topix_weak_threshold_sweep(
 
     cfg_paths = _write_topix_weak_threshold_sweep_configs(script_dir)
 
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"topix_weak_threshold_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"topix_weak_threshold_sweep_{sweep_stamp}", script_dir=script_dir)
 
     print(f"[{now_str()}] topix_weak_threshold sweep: configs={len(cfg_paths)} ranges={ranges} repeat={n_repeat}")
     print(f"[{now_str()}] sweep_root: {sweep_root}")
@@ -14834,8 +25027,7 @@ def run_topix_weak_threshold_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             for i in range(1, int(n_repeat) + 1):
                 seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
@@ -14884,6 +25076,16 @@ def run_topix_weak_threshold_sweep(
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
                     regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
                     **_replay_regime_control_kwargs_from_flags(f),
                     replay_settings=None,
                 )
@@ -15020,10 +25222,9 @@ def run_regime_filter_sweep(
 
     cfg_paths = _write_regime_filter_sweep_configs(script_dir)
 
-    results_root = os.path.join(script_dir, "results")
+    results_root = _results_root_abs(script_dir)
     os.makedirs(results_root, exist_ok=True)
-    sweep_root = os.path.join(results_root, f"regime_filter_sweep_{sweep_stamp}")
-    os.makedirs(sweep_root, exist_ok=True)
+    sweep_root = _build_results_path_under_run_date(sweep_stamp, f"regime_filter_sweep_{sweep_stamp}", script_dir=script_dir)
 
     print(f"[{now_str()}] regime_filter sweep: configs={len(cfg_paths)} ranges={ranges} repeat={n_repeat}")
     print(f"[{now_str()}] sweep_root: {sweep_root}")
@@ -15063,8 +25264,7 @@ def run_regime_filter_sweep(
             print(f"[{now_str()}] output_subdir: results/{output_subdir}/")
 
             run_summaries: list[dict[str, Any]] = []
-            results_dir = os.path.join(script_dir, "results", output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _build_results_dir_from_output_subdir(sweep_stamp, output_subdir, script_dir=script_dir)
 
             for i in range(1, int(n_repeat) + 1):
                 seed_run = int(replay_seed) + i - 1 if replay_seed is not None else None
@@ -15113,6 +25313,16 @@ def run_regime_filter_sweep(
                     regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
                     regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
                     regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+                    regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
+                    signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+                    signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+                    signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+                    signal_filter_vwap_distance_ge_threshold_pct=float(
+                        f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)
+                    ),
+                    signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+                    signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+                    **_replay_composite_signal_filter_kwargs_from_flags(f),
                     **_replay_regime_control_kwargs_from_flags(f),
                     replay_settings=None,
                 )
@@ -15267,6 +25477,10 @@ def main(argv: list[str]) -> int:
     replay_range: str = str(getattr(args, "replay_range", "1d"))
     replay_random_days: int = int(getattr(args, "replay_random_days", 0) or 0)
     replay_random_months: int = int(getattr(args, "replay_random_months", 3) or 3)
+    if str(replay_range).strip() == "forward_split" and int(replay_random_days or 0) <= 0:
+        replay_random_days = 5000
+    forward_split_validation: bool = bool(getattr(args, "forward_split_validation", False))
+    forward_split_periods_path_cli: str = str(getattr(args, "forward_split_periods_path", "") or "").strip()
     replay_seed: Optional[int] = getattr(args, "replay_seed", None)
     replay_mode: str = str(getattr(args, "replay_mode", "normal") or "normal")
     replay_fast_discord: bool = bool(getattr(args, "replay_fast_discord", False))
@@ -15368,6 +25582,7 @@ def main(argv: list[str]) -> int:
     regime_filter_disable_rising_ratio_lt50 = bool(cfg_flags.get("regime_filter_disable_rising_ratio_lt50", False))
     regime_filter_disable_topix_weak = bool(cfg_flags.get("regime_filter_disable_topix_weak", False))
     regime_filter_topix_weak_threshold_pct = cfg_flags.get("regime_filter_topix_weak_threshold_pct", None)
+    regime_filter_rising_ratio_threshold_pct = cfg_flags.get("regime_filter_rising_ratio_threshold_pct", None)
     signal_filter_disable_gap_ge_pct = bool(cfg_flags.get("signal_filter_disable_gap_ge_pct", False))
     signal_filter_gap_ge_threshold_pct = float(cfg_flags.get("signal_filter_gap_ge_threshold_pct", 3.0))
     signal_filter_disable_vwap_distance_ge_pct = bool(cfg_flags.get("signal_filter_disable_vwap_distance_ge_pct", False))
@@ -15626,6 +25841,14 @@ def main(argv: list[str]) -> int:
                 "value": bool(regime_filter_disable_rising_ratio_lt50),
                 "source": _src_rf("disable_rising_ratio_lt50"),
             },
+            "rising_ratio_threshold_pct": {
+                "value": (
+                    float(regime_filter_rising_ratio_threshold_pct)
+                    if isinstance(regime_filter_rising_ratio_threshold_pct, (int, float))
+                    else None
+                ),
+                "source": _src_rf("rising_ratio_threshold_pct"),
+            },
             "disable_topix_weak": {"value": bool(regime_filter_disable_topix_weak), "source": _src_rf("disable_topix_weak")},
             "topix_weak_threshold_pct": {
                 "value": (
@@ -15717,6 +25940,10 @@ def main(argv: list[str]) -> int:
         "regime_controls": {
             "enabled": {"value": bool(regime_control_enabled), "source": _src_rcfg_any()},
         },
+        "forward_split": {
+            "validation_enabled": {"value": bool(forward_split_validation), "source": "cli"},
+            "periods_path": {"value": str(forward_split_periods_path_cli or ""), "source": "cli"},
+        },
     }
     _rr_cli = str(replay_range).strip()
     if _replay_fixed_random_pool_dates(_rr_cli):
@@ -15727,6 +25954,23 @@ def main(argv: list[str]) -> int:
             "value": int(_replay_fixed_random_weekday_candidate_count(_rr_cli)),
             "source": _rr_cli,
         }
+    elif _rr_cli == "forward_split":
+        try:
+            _pfs = _forward_split_resolve_periods_path(forward_split_periods_path_cli)
+            _perx, _eperr = _forward_split_load_periods_json(_pfs)
+            if _eperr or not isinstance(_perx, dict):
+                replay_settings["replay_date_pool_start"] = {"value": "", "source": "forward_split:error"}
+                replay_settings["replay_date_pool_end"] = {"value": "", "source": "forward_split:error"}
+            else:
+                _ux0, _ux1 = _forward_split_union_bounds(_perx)
+                replay_settings["replay_date_pool_start"] = {"value": _ux0.strftime("%Y-%m-%d"), "source": "forward_split"}
+                replay_settings["replay_date_pool_end"] = {"value": _ux1.strftime("%Y-%m-%d"), "source": "forward_split"}
+                replay_settings["replay_candidate_days_count"] = {
+                    "value": int(len(_weekday_date_strings_between(_ux0, _ux1))),
+                    "source": "forward_split",
+                }
+        except Exception:
+            pass
 
     # 事故防止: CLIだけ「後場禁止」と「後場厳格化」を同時指定しない（config の replay_morning_only は両方 True が正当）
     if bool(_cli_disable_afternoon_entry) and bool(_cli_strict_afternoon_entry):
@@ -15968,66 +26212,121 @@ def main(argv: list[str]) -> int:
             )
         )
 
+    if bool(getattr(args, "rising_lt50_validation_sweep", False)):
+        _rs_rlt = getattr(args, "replay_seed", None)
+        _seed_rlt: Optional[int] = int(_rs_rlt) if _rs_rlt is not None else None
+        _rep_rlt = getattr(args, "replay_repeat", None)
+        _nrep_rlt = int(_rep_rlt) if _rep_rlt is not None else 10
+        return int(
+            run_rising_lt50_validation_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_rlt,
+                replay_mode="fast",
+                n_repeat=int(_nrep_rlt),
+            )
+        )
+
+    if bool(getattr(args, "rising_ratio_threshold_sweep", False)):
+        _rs_rrt = getattr(args, "replay_seed", None)
+        _seed_rrt: Optional[int] = int(_rs_rrt) if _rs_rrt is not None else None
+        _rep_rrt = getattr(args, "replay_repeat", None)
+        _nrep_rrt = int(_rep_rrt) if _rep_rrt is not None else 10
+        return int(
+            run_rising_ratio_threshold_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_rrt,
+                replay_mode="fast",
+                n_repeat=int(_nrep_rrt),
+            )
+        )
+
+    if bool(getattr(args, "weak_combo_filter_sweep", False)):
+        _rs_wcf = getattr(args, "replay_seed", None)
+        _seed_wcf: Optional[int] = int(_rs_wcf) if _rs_wcf is not None else None
+        _rep_wcf = getattr(args, "replay_repeat", None)
+        _nrep_wcf = int(_rep_wcf) if _rep_wcf is not None else 10
+        return int(
+            run_weak_combo_filter_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_wcf,
+                replay_mode="fast",
+                n_repeat=int(_nrep_wcf),
+            )
+        )
+
+    if bool(getattr(args, "auto_block_momentum_sweep", False)):
+        _rs_abm = getattr(args, "replay_seed", None)
+        _seed_abm: Optional[int] = int(_rs_abm) if _rs_abm is not None else None
+        _explicit_rr = any(
+            tok == "--replay-repeat" or tok.startswith("--replay-repeat=") for tok in (sys.argv or [])
+        )
+        _parsed_rr = int(getattr(args, "replay_repeat", 1) or 1)
+        # Sweep 既定 repeat=10（要件）。--replay-repeat 明示時はその値（1 回も指定可能）
+        _nrep_abm = max(1, int(_parsed_rr if _explicit_rr else 10))
+        return int(
+            run_auto_block_momentum_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_abm,
+                replay_mode="fast",
+                n_repeat=int(_nrep_abm),
+            )
+        )
+
+    if bool(getattr(args, "strong_extension_threshold_sweep", False)):
+        _rs_se = getattr(args, "replay_seed", None)
+        _seed_se: Optional[int] = int(_rs_se) if _rs_se is not None else None
+        _explicit_rr_se = any(
+            tok == "--replay-repeat" or tok.startswith("--replay-repeat=") for tok in (sys.argv or [])
+        )
+        _parsed_rr_se = int(getattr(args, "replay_repeat", 1) or 1)
+        _nrep_se = max(1, int(_parsed_rr_se if _explicit_rr_se else 10))
+        return int(
+            run_strong_extension_threshold_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_se,
+                replay_mode="fast",
+                n_repeat=int(_nrep_se),
+            )
+        )
+
+    if bool(getattr(args, "forward_risk_virtual_block_sweep", False)):
+        _rs_fr = getattr(args, "replay_seed", None)
+        _seed_fr: Optional[int] = int(_rs_fr) if _rs_fr is not None else None
+        _explicit_rr_fr = any(
+            tok == "--replay-repeat" or tok.startswith("--replay-repeat=") for tok in (sys.argv or [])
+        )
+        _parsed_rr_fr = int(getattr(args, "replay_repeat", 1) or 1)
+        _nrep_fr = max(1, int(_parsed_rr_fr if _explicit_rr_fr else 10))
+        return int(
+            run_forward_risk_virtual_block_sweep(
+                fixed_watch=fixed_watch,
+                interval_sec=interval_sec,
+                only_changes=only_changes,
+                replay_seed=_seed_fr,
+                replay_mode=str(getattr(args, "replay_mode", "normal") or "normal"),
+                n_repeat=int(_nrep_fr),
+                replay_range=str(replay_range or "random_apr"),
+                replay_random_days=int(replay_random_days or 0),
+                replay_config_path_cli=str(replay_config_path or ""),
+            )
+        )
+
     if paper_trade:
         _pti = float(getattr(args, "paper_trade_interval", 60.0) or 60.0)
         if _pti <= 0:
             print(f"[{now_str()}] --paper-trade-interval は 0 より大きい値にしてください。")
             return 2
-        _batch_pt = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
-        _pt_kw: dict[str, Any] = {
-            "interval_sec": interval_sec,
-            "only_changes": only_changes,
-            "fixed_watch": fixed_watch,
-            "replay_range": "1d",
-            "replay_random_days": 0,
-            "replay_random_months": 3,
-            "replay_seed": None,
-            "replay_mode": "fast",
-            "replay_fast_discord": False,
-            "replay_fast_verbose": False,
-            "replay_fast_print_signal_details": False,
-            "replay_market_debug": False,
-            "replay_repeat_run_no": 1,
-            "replay_repeat_total": 1,
-            "replay_output_subdir": "",
-            "replay_batch_stamp": _batch_pt,
-            "replay_morning_screen_hhmm": "",
-            "one_trade_per_symbol_per_day": one_trade_per_symbol_per_day,
-            "enable_add": enable_add,
-            "replay_early_exit_before_stop": replay_early_exit_before_stop,
-            "replay_early_exit_vwap": bool(replay_early_exit_vwap),
-            "replay_early_exit_recent_low": bool(replay_early_exit_recent_low),
-            "replay_disable_afternoon_entry": bool(replay_disable_afternoon_entry),
-            "replay_strict_afternoon_entry": bool(replay_strict_afternoon_entry),
-            "replay_afternoon_topix_weak_block": bool(replay_afternoon_topix_weak_block),
-            "replay_config_name": str(replay_config_name or ""),
-            "replay_config_path": str(replay_config_path or ""),
-            "aft_volume_spike_ratio_min": float(aft_volume_spike_ratio_min),
-            "aft_vwap_dist_pct_max": float(aft_vwap_dist_pct_max),
-            "aft_rebreak_mult": float(aft_rebreak_mult),
-            "entry_filter_rsi_enabled": bool(entry_filter_rsi_enabled),
-            "entry_filter_rsi_exclude_above": float(entry_filter_rsi_exclude_above),
-            "entry_filter_vwap_distance_enabled": bool(entry_filter_vwap_distance_enabled),
-            "entry_filter_vwap_distance_exclude_above": float(entry_filter_vwap_distance_exclude_above),
-            "entry_filter_atr_pct_enabled": bool(entry_filter_atr_pct_enabled),
-            "entry_filter_atr_pct_exclude_above": float(entry_filter_atr_pct_exclude_above),
-            "daily_loss_stop_enabled": bool(daily_loss_stop_enabled),
-            "daily_loss_stop_threshold_yen_100_shares": float(daily_loss_stop_threshold_yen_100_shares),
-            "regime_filter_disable_morning_weak": bool(regime_filter_disable_morning_weak),
-            "regime_filter_disable_rising_ratio_lt50": bool(regime_filter_disable_rising_ratio_lt50),
-            "regime_filter_disable_topix_weak": bool(regime_filter_disable_topix_weak),
-            "regime_filter_topix_weak_threshold_pct": regime_filter_topix_weak_threshold_pct,
-            "signal_filter_disable_gap_ge_pct": bool(signal_filter_disable_gap_ge_pct),
-            "signal_filter_gap_ge_threshold_pct": float(signal_filter_gap_ge_threshold_pct),
-            "signal_filter_disable_vwap_distance_ge_pct": bool(signal_filter_disable_vwap_distance_ge_pct),
-            "signal_filter_vwap_distance_ge_threshold_pct": float(signal_filter_vwap_distance_ge_threshold_pct),
-            "signal_filter_disable_entry_after_hhmm": bool(signal_filter_disable_entry_after_hhmm),
-            "signal_filter_entry_after_hhmm": str(signal_filter_entry_after_hhmm),
-        }
-        _pt_kw.update(_replay_composite_signal_filter_kwargs_from_flags(cfg_flags))
-        _pt_kw.update(_replay_regime_control_kwargs_from_flags(cfg_flags))
-        _pt_kw["replay_settings"] = replay_settings
-        return int(run_paper_trade(paper_trade_interval_sec=_pti, run_replay_kw=_pt_kw))
+        return int(run_paper_trade(paper_trade_interval_sec=_pti, fixed_watch=fixed_watch))
 
     # -----------------------------
     # テスト用リプレイモード
@@ -16061,17 +26360,16 @@ def main(argv: list[str]) -> int:
         run_summaries: list[dict[str, Any]] = []
         if str(replay_range) in FIXED_RANDOM_REPLAY_LABELS:
             repeat_label = str(replay_range)
+        elif str(replay_range).strip() == "forward_split":
+            repeat_label = "forward_split"
         elif int(replay_random_days or 0) > 0:
             repeat_label = f"random_{int(replay_random_days)}d"
         else:
             repeat_label = str(replay_range)
 
-        # repeatロットごとのフォルダ（results配下にまとめる）
+        # repeat / 単発とも同一規則: results/YYYYMMDD/replay_<label>_<batch_stamp>/
         batch_stamp = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
-        output_subdir = ""
-        if n > 1 or bool(afternoon_compare_modes):
-            # 例: results/replay_random_5d_20260507_232500/
-            output_subdir = f"replay_{repeat_label}_{batch_stamp}"
+        output_subdir = f"replay_{repeat_label}_{batch_stamp}"
 
         run_no = 0
         for i in range(1, n + 1):
@@ -16127,6 +26425,7 @@ def main(argv: list[str]) -> int:
                     regime_filter_disable_rising_ratio_lt50=bool(regime_filter_disable_rising_ratio_lt50),
                     regime_filter_disable_topix_weak=bool(regime_filter_disable_topix_weak),
                     regime_filter_topix_weak_threshold_pct=regime_filter_topix_weak_threshold_pct,
+                    regime_filter_rising_ratio_threshold_pct=regime_filter_rising_ratio_threshold_pct,
                     signal_filter_disable_gap_ge_pct=bool(signal_filter_disable_gap_ge_pct),
                     signal_filter_gap_ge_threshold_pct=float(signal_filter_gap_ge_threshold_pct),
                     signal_filter_disable_vwap_distance_ge_pct=bool(signal_filter_disable_vwap_distance_ge_pct),
@@ -16136,6 +26435,8 @@ def main(argv: list[str]) -> int:
                     **_replay_composite_signal_filter_kwargs_from_flags(cfg_flags),
                     **_replay_regime_control_kwargs_from_flags(cfg_flags),
                     replay_settings=replay_settings,
+                    forward_split_validation=bool(forward_split_validation),
+                    forward_split_periods_path=str(forward_split_periods_path_cli or ""),
                 )
                 if int(code) != 0:
                     print(f"[{now_str()}] Replay repeat run{run_no:02d} が失敗しました（exit_code={int(code)}）")
@@ -16143,12 +26444,21 @@ def main(argv: list[str]) -> int:
 
             try:
                 script_dir = os.path.dirname(os.path.abspath(__file__))
-                results_dir = os.path.join(script_dir, "results")
-                if output_subdir:
-                    results_dir = os.path.join(results_dir, output_subdir)
+                results_dir = _resolve_replay_results_dir(
+                    script_dir=script_dir,
+                    replay_output_subdir=str(output_subdir or "").strip(),
+                    replay_range_label=str(repeat_label),
+                    batch_stamp=str(batch_stamp or "").strip(),
+                )
                 run_tag = f"run{i:02d}"
-                # jsonだけ探す（repeatフォルダ内）
-                candidates = [fn for fn in os.listdir(results_dir) if fn.endswith(".json") and fn.endswith(f"{run_tag}.json")]
+                # jsonだけ探す（repeatフォルダ内）— *_symbol_scores.json は除外
+                candidates = [
+                    fn
+                    for fn in os.listdir(results_dir)
+                    if str(fn).endswith(".json")
+                    and (not str(fn).endswith("_symbol_scores.json"))
+                    and str(fn).endswith(f"{run_tag}.json")
+                ]
                 candidates_sorted = sorted(
                     candidates,
                     key=lambda x: os.path.getmtime(os.path.join(results_dir, x)),
@@ -16165,10 +26475,12 @@ def main(argv: list[str]) -> int:
         # 合算サマリー（保存 + 表示）
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            results_dir = os.path.join(script_dir, "results")
-            if output_subdir:
-                results_dir = os.path.join(results_dir, output_subdir)
-            os.makedirs(results_dir, exist_ok=True)
+            results_dir = _resolve_replay_results_dir(
+                script_dir=script_dir,
+                replay_output_subdir=str(output_subdir or "").strip(),
+                replay_range_label=str(repeat_label),
+                batch_stamp=str(batch_stamp or "").strip(),
+            )
             # all_runs は repeatロットの時刻に揃える
             name_base = f"replay_summary_{repeat_label}_{batch_stamp}_all_runs"
 
@@ -16185,6 +26497,7 @@ def main(argv: list[str]) -> int:
             pos_signals: dict[str, int] = {"BASE": 0, "ADD1": 0, "ADD2": 0}
             block_total = 0
             block_reason_counts: dict[str, int] = {}
+            entry_block_reason_merge: dict[str, int] = {}
 
             for rr in run_summaries:
                 rep = rr.get("report") or {}
@@ -16235,6 +26548,15 @@ def main(argv: list[str]) -> int:
                         c = int(it.get("count") or 0)
                         if r:
                             block_reason_counts[r] = int(block_reason_counts.get(r, 0)) + c
+                    except Exception:
+                        continue
+
+                for it_eb in (rep.get("entry_block_reason_ranking") or []):
+                    try:
+                        r_eb = str(it_eb.get("reason") or "")
+                        c_eb = int(it_eb.get("count") or 0)
+                        if r_eb:
+                            entry_block_reason_merge[r_eb] = int(entry_block_reason_merge.get(r_eb, 0)) + c_eb
                     except Exception:
                         continue
 
@@ -16310,13 +26632,44 @@ def main(argv: list[str]) -> int:
                 key=lambda x: int(x.get("count") or 0),
                 reverse=True,
             )
+            entry_block_rank_merged = sorted(
+                [{"reason": k, "count": int(v)} for k, v in entry_block_reason_merge.items()],
+                key=lambda x: int(x.get("count") or 0),
+                reverse=True,
+            )
+            flat_signals_all_runs: list[dict[str, Any]] = [
+                s
+                for rr in run_summaries
+                for s in ((rr.get("report") or {}).get("signals") or [])
+                if isinstance(s, dict)
+            ]
+            sgc_all_runs_flat = _build_structure_generalization_core_analysis_from_signal_dicts(flat_signals_all_runs)
+            feb_all_runs_flat = _build_forward_edge_breakdown_analysis_from_signal_dicts(
+                flat_signals_all_runs,
+                structure_generalization_core_analysis=sgc_all_runs_flat,
+            )
+            ffi_all_runs_flat = _build_forward_feature_interaction_analysis_from_signal_dicts(
+                flat_signals_all_runs,
+                structure_generalization_core_analysis=sgc_all_runs_flat,
+                forward_edge_breakdown_analysis=feb_all_runs_flat,
+            )
+            fwd_screened_flat = _build_forward_candidate_dispersion_screened_summary_from_signal_dicts(
+                flat_signals_all_runs,
+                structure_generalization_core_analysis=sgc_all_runs_flat,
+                forward_edge_breakdown_analysis=feb_all_runs_flat,
+                forward_feature_interaction_analysis=ffi_all_runs_flat,
+            )
 
+            _agg_ymd = _results_run_date_folder_from_timestamp(str(batch_stamp or "").strip())
             agg = {
                 "meta": {
                     "saved_at_jst": datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
                     "repeat_label": repeat_label,
                     "repeat_runs": int(total_runs),
-                    "output_folder": str(output_subdir),
+                    "output_folder": (
+                        f"results/{_agg_ymd}/{str(output_subdir).strip()}" if str(output_subdir or "").strip() else ""
+                    ),
+                    "results_output_dir": os.path.normpath(os.path.abspath(results_dir)),
                 },
                 "summary": {
                     "runs": int(total_runs),
@@ -16363,10 +26716,75 @@ def main(argv: list[str]) -> int:
                 "strong_loser_analysis": _build_strong_loser_analysis_from_signal_dicts(
                     [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
                 ),
+                "weak_regime_feature_analysis": _build_weak_regime_feature_analysis_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
+                "weak_hu_cross_analysis": _build_weak_hu_cross_analysis_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
                 "signal_state_cross_analysis": _build_signal_state_cross_analysis_from_signal_dicts(
                     [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
                 ),
+                "symbol_daily_entry_index_analysis": _build_symbol_daily_entry_index_analysis_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
+                "symbol_daily_entry_index_x_market_regime": _build_symbol_daily_entry_index_x_market_regime_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
+                "symbol_daily_entry_index_deep_analysis": _build_symbol_daily_entry_index_deep_analysis_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
+                "symbol_daily_entry_index_deep_x_market_regime": _build_symbol_daily_entry_index_deep_x_market_regime_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
+                "momentum_decay_analysis": _build_momentum_decay_analysis_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
+                "momentum_decay_x_market_regime": _build_momentum_decay_x_market_regime_from_signal_dicts(
+                    [s for rr in run_summaries for s in ((rr.get("report") or {}).get("signals") or []) if isinstance(s, dict)]
+                ),
+                "chase_extension_analysis": _build_chase_extension_analysis_from_signal_dicts(flat_signals_all_runs),
+                "chase_extension_x_market_regime": _build_chase_extension_x_market_regime_from_signal_dicts(flat_signals_all_runs),
+                "extension_sweep_analysis": _build_extension_sweep_analysis_from_signal_dicts(flat_signals_all_runs),
+                "extension_hu_interaction_analysis": _build_extension_hu_interaction_analysis_from_signal_dicts(flat_signals_all_runs),
+                "robustness_symbol_removal_analysis": _build_robustness_symbol_removal_analysis_from_signal_dicts(flat_signals_all_runs),
+                "extension_robustness_metrics": {
+                    "strong_extension_threshold_isolation_analysis": _build_strong_extension_threshold_isolation_analysis(
+                        flat_signals_all_runs
+                    ),
+                },
+                "structure_edge_analysis": _build_structure_edge_analysis_from_signal_dicts(flat_signals_all_runs),
+                "tail_risk_structure_analysis": _build_tail_risk_structure_analysis_from_signal_dicts(flat_signals_all_runs),
+                "robustness_generalization_analysis": _build_robustness_generalization_analysis_from_signal_dicts(
+                    flat_signals_all_runs
+                ),
+                "structure_risk_score_analysis": _build_structure_risk_score_analysis_from_signal_dicts(flat_signals_all_runs),
+                "structure_risk_score_x_market_regime": _build_structure_risk_score_x_market_regime_from_signal_dicts(
+                    flat_signals_all_runs
+                ),
+                "structure_risk_score_generalization_analysis": _build_structure_risk_score_generalization_analysis_from_signal_dicts(
+                    flat_signals_all_runs
+                ),
+                "structure_generalization_core_analysis": sgc_all_runs_flat,
+                "forward_candidate_profile_analysis": _build_forward_candidate_profile_analysis_from_signal_dicts(
+                    flat_signals_all_runs,
+                    structure_generalization_core_analysis=sgc_all_runs_flat,
+                ),
+                "forward_edge_breakdown_analysis": feb_all_runs_flat,
+                "forward_feature_interaction_analysis": ffi_all_runs_flat,
+                "forward_candidate_dispersion_screened_summary": fwd_screened_flat,
+                "entry_block_reason_ranking": entry_block_rank_merged,
+                "auto_block_effect_analysis": build_auto_block_effect_analysis_rows(flat_signals_all_runs),
                 "combo_filter_analysis": _aggregate_combo_filter_analysis_from_run_summaries(run_summaries),
+                "shadow_block_analysis_enhanced": _build_shadow_block_analysis_enhanced(
+                    signal_dicts=flat_signals_all_runs,
+                    run_summaries=run_summaries,
+                ),
+                "shadow_block_context_analysis": _build_shadow_block_context_analysis_from_signal_dicts(flat_signals_all_runs),
+                "shadow_block_temporal_stability_analysis": _build_shadow_block_temporal_stability_analysis(
+                    signal_dicts=flat_signals_all_runs,
+                    run_summaries=run_summaries,
+                ),
                 "runs": [
                     {
                         "run_no": int(x.get("run_no") or 0),
@@ -16380,6 +26798,149 @@ def main(argv: list[str]) -> int:
                     for x in run_summaries
                 ],
             }
+
+            # =========================
+            # FFI: prioritized interactions stability across runs (analysis only)
+            # =========================
+            try:
+                ffi_agg = agg.get("forward_feature_interaction_analysis") if isinstance(agg, dict) else None
+                if isinstance(ffi_agg, dict):
+                    # Build per-run lookup: (bucket_id, feature_a, feature_b, interaction_state) -> metrics
+                    per_run_maps: dict[int, dict[tuple[str, str, str, str], dict[str, Any]]] = {}
+                    for rr in run_summaries:
+                        if not isinstance(rr, dict):
+                            continue
+                        run_no = int(rr.get("run_no") or 0)
+                        rep = rr.get("report") if isinstance(rr.get("report"), dict) else {}
+                        run_ffi = rep.get("forward_feature_interaction_analysis") if isinstance(rep, dict) else None
+                        if not isinstance(run_ffi, dict):
+                            continue
+                        m: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+                        for b in (run_ffi.get("buckets") or []):
+                            if not isinstance(b, dict):
+                                continue
+                            bucket_id = str(b.get("bucket_id") or "")
+                            for pr in (b.get("feature_pair_interactions") or []):
+                                if not isinstance(pr, dict):
+                                    continue
+                                for row in (pr.get("interactions_ranked") or []):
+                                    if not isinstance(row, dict):
+                                        continue
+                                    key = (
+                                        bucket_id,
+                                        str(row.get("feature_a") or pr.get("feature_a") or ""),
+                                        str(row.get("feature_b") or pr.get("feature_b") or ""),
+                                        str(row.get("interaction_state") or ""),
+                                    )
+                                    m[key] = {
+                                        "signals": int(row.get("signals") or 0),
+                                        "expectancy": float(row.get("expectancy_yen_100_shares_per_signal") or 0.0),
+                                        "total_pnl": float(row.get("total_pnl_yen_100_shares") or 0.0),
+                                        "lose_worst10_sum": float(row.get("lose_worst10_sum_yen_100_shares") or 0.0),
+                                    }
+                        per_run_maps[run_no] = m
+
+                    def _median(vals: list[float]) -> Optional[float]:
+                        xs = sorted([float(x) for x in vals if isinstance(x, (int, float)) and math.isfinite(float(x))])
+                        if not xs:
+                            return None
+                        n = len(xs)
+                        mid = n // 2
+                        if n % 2 == 1:
+                            return float(xs[mid])
+                        return float((xs[mid - 1] + xs[mid]) / 2.0)
+
+                    def _mean_std(vals: list[float]) -> tuple[Optional[float], Optional[float]]:
+                        xs = [float(x) for x in vals if isinstance(x, (int, float)) and math.isfinite(float(x))]
+                        if not xs:
+                            return None, None
+                        mu = float(sum(xs) / float(len(xs)))
+                        var = float(sum((x - mu) * (x - mu) for x in xs) / float(len(xs)))
+                        return float(mu), float(math.sqrt(var))
+
+                    def _augment_rows(rows: list[dict[str, Any]]) -> None:
+                        for r in rows:
+                            if not isinstance(r, dict):
+                                continue
+                            bucket_id = str(r.get("bucket_id") or "")
+                            fa = str(r.get("feature_a") or "")
+                            fb = str(r.get("feature_b") or "")
+                            ist = str(r.get("interaction_state") or "")
+                            key = (bucket_id, fa, fb, ist)
+
+                            run_breakdown: list[dict[str, Any]] = []
+                            exp_vals_considered: list[float] = []
+                            pos = 0
+                            neg = 0
+                            considered = 0
+                            for run_no, mp in sorted(per_run_maps.items(), key=lambda x: int(x[0])):
+                                rowm = mp.get(key)
+                                sigs = int((rowm or {}).get("signals") or 0)
+                                expv = float((rowm or {}).get("expectancy") or 0.0) if sigs > 0 else None
+                                tp = float((rowm or {}).get("total_pnl") or 0.0) if sigs > 0 else 0.0
+                                lw10 = float((rowm or {}).get("lose_worst10_sum") or 0.0) if sigs > 0 else 0.0
+                                run_breakdown.append(
+                                    {
+                                        "run_no": int(run_no),
+                                        "signals": int(sigs),
+                                        "expectancy": expv,
+                                        "total_pnl": float(tp),
+                                        "lose_worst10_sum": float(lw10),
+                                    }
+                                )
+                                if sigs > 0 and expv is not None and math.isfinite(float(expv)):
+                                    considered += 1
+                                    exp_vals_considered.append(float(expv))
+                                    if float(expv) > 0:
+                                        pos += 1
+                                    if float(expv) < 0:
+                                        neg += 1
+
+                            mu, sd = _mean_std(exp_vals_considered)
+                            med = _median(exp_vals_considered)
+                            worst = min(exp_vals_considered) if exp_vals_considered else None
+                            best = max(exp_vals_considered) if exp_vals_considered else None
+                            pos_ratio = (float(pos) / float(considered)) if considered > 0 else 0.0
+                            neg_ratio = (float(neg) / float(considered)) if considered > 0 else 0.0
+                            denom = max(abs(float(mu or 0.0)), 1.0)
+                            disp_score = (float(sd) / float(denom)) if (sd is not None and math.isfinite(float(sd))) else None
+
+                            r["run_breakdown"] = run_breakdown
+                            r["run_stability"] = {
+                                "runs_considered_with_signals": int(considered),
+                                "positive_run_ratio": float(pos_ratio),
+                                "negative_run_ratio": float(neg_ratio),
+                                "expectancy_stddev_across_runs": sd,
+                                "expectancy_median_across_runs": med,
+                                "worst_run_expectancy": worst,
+                                "best_run_expectancy": best,
+                                "run_dispersion_score": disp_score,
+                            }
+
+                            eff = float(r.get("effective_symbol_count") or 0.0)
+                            stable_neg = bool(
+                                (neg_ratio >= 0.7)
+                                and (med is not None and float(med) < 0.0)
+                                and (worst is not None and float(worst) < 0.0)
+                                and (eff >= 4.0)
+                            )
+                            r["stable_negative_interaction_candidate"] = bool(stable_neg)
+
+                    pflat = ffi_agg.get("prioritized_combo_collapse_interactions_flat")
+                    if isinstance(pflat, list):
+                        _augment_rows(pflat)
+                    pstate = ffi_agg.get("prioritized_combo_collapse_interactions_one_row_per_interaction_state")
+                    if isinstance(pstate, list):
+                        _augment_rows(pstate)
+
+                    sum_tables = _forward_build_stable_negative_interaction_summary_tables(
+                        agg.get("forward_edge_breakdown_analysis") if isinstance(agg.get("forward_edge_breakdown_analysis"), dict) else {},
+                        ffi_agg,
+                    )
+                    if isinstance(sum_tables, dict) and isinstance(ffi_agg, dict):
+                        ffi_agg.update(sum_tables)
+            except Exception:
+                pass
 
             json_path = os.path.join(results_dir, f"{name_base}.json")
             with open(json_path, "w", encoding="utf-8") as f:
@@ -16407,6 +26968,7 @@ def main(argv: list[str]) -> int:
 
             lines: list[str] = []
             debug_lines: list[str] = []
+            lines.append(f"results_output_dir: {os.path.normpath(os.path.abspath(results_dir))}")
             lines.append("=== Replay 合算サマリー ===")
             lines.append(f"debug_file: {name_base}_debug.txt")
             lines.append("")
@@ -16490,7 +27052,8 @@ def main(argv: list[str]) -> int:
             lines.append(f"- saved_at_jst: {agg['meta']['saved_at_jst']}")
             lines.append(f"- repeat_label: {repeat_label}")
             if output_subdir:
-                lines.append(f"- output_folder: results/{output_subdir}/")
+                _oline_ymd = _results_run_date_folder_from_timestamp(str(batch_stamp or "").strip())
+                lines.append(f"- output_folder: results/{_oline_ymd}/{output_subdir}/")
             lines.append(f"- 実行回数: {total_runs}")
             s = agg["summary"]
             lines.append("【比較指標（run合算・同一replay-range内の条件比較）】")
@@ -16822,14 +27385,220 @@ def main(argv: list[str]) -> int:
                     for sim in sims:
                         if not isinstance(sim, dict):
                             continue
+                        _edr_sim = sim.get("expectancy_drop_ratio")
+                        _edr_sim_s = "N/A" if _edr_sim is None else f"{float(_edr_sim):.4f}"
                         lines.append(
                             f"  - exclude_top_n={int(sim.get('exclude_top_n_symbols') or 0)} "
                             f"symbols={sim.get('excluded_symbols') or []} "
                             f"total_pnl_after={float(sim.get('total_pnl_after_yen_100_shares') or 0.0):+,.0f}円 "
                             f"expectancy_after={float(sim.get('expectancy_after_yen_100_shares_per_signal') or 0.0):+,.0f}円 "
+                            f"expectancy_drop_ratio={_edr_sim_s} "
                             f"(signals_after={int(sim.get('total_signals_after') or 0)})"
                         )
                 lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # SHADOW_BLOCK (analysis only) - all_runs
+            # =========================
+            try:
+                sbx = agg.get("shadow_block_analysis_enhanced") or {}
+                sbx_rows = sbx.get("rows") if isinstance(sbx, dict) else None
+                if isinstance(sbx_rows, list) and sbx_rows:
+                    def _sk2(r: dict[str, Any]) -> tuple:
+                        return (
+                            float(r.get("lose_worst10_sum") or 0.0),
+                            float(r.get("max_losing_run") or 0.0),
+                            float(r.get("expectancy") or 0.0),
+                            float(r.get("pnl_improvement") or 0.0),
+                        )
+
+                    rows_sorted = sorted([r for r in sbx_rows if isinstance(r, dict)], key=_sk2)
+
+                    lines.append("【SHADOW_BLOCK_ANALYSIS】")
+                    lines.append("")
+                    for r in rows_sorted:
+                        lines.append(
+                            f"- {r.get('name')}: "
+                            f"signals={int(r.get('signals') or 0)} "
+                            f"lose_worst10_sum={float(r.get('lose_worst10_sum') or 0.0):+,.0f}円 "
+                            f"max_losing_run={float(r.get('max_losing_run') or 0.0):+,.0f}円 "
+                            f"expectancy={float(r.get('expectancy') or 0.0):+,.0f}円 "
+                            f"pnl_improvement={float(r.get('pnl_improvement') or 0.0):+,.0f}円 "
+                            f"winrate_pct={float(r.get('winrate_pct') or 0.0):.1f}% "
+                            f"total_pnl={float(r.get('total_pnl') or 0.0):+,.0f}円 "
+                            f"avg_loss={float(r.get('avg_loss') or 0.0):+,.0f}円 "
+                            f"worst_loss={float(r.get('worst_loss') or 0.0):+,.0f}円 "
+                            f"pos_run_ratio={float(r.get('positive_run_ratio') or 0.0):.3f} "
+                            f"neg_run_ratio={float(r.get('negative_run_ratio') or 0.0):.3f}"
+                        )
+                    lines.append("")
+
+                    lines.append("【SHADOW_BLOCK_VIRTUAL_EXCLUDE_ANALYSIS】")
+                    lines.append("")
+                    for r in rows_sorted:
+                        lines.append(
+                            f"- {r.get('name')}: "
+                            f"baseline_signals={int(r.get('baseline_signals') or 0)} "
+                            f"baseline_expectancy={float(r.get('baseline_expectancy') or 0.0):+,.0f}円 "
+                            f"baseline_total_pnl={float(r.get('baseline_total_pnl') or 0.0):+,.0f}円 "
+                            f"pnl_after_virtual_exclude={float(r.get('pnl_after_virtual_exclude') or 0.0):+,.0f}円 "
+                            f"expectancy_after_virtual_exclude={float(r.get('expectancy_after_virtual_exclude') or 0.0):+,.0f}円 "
+                            f"pnl_improvement={float(r.get('pnl_improvement') or 0.0):+,.0f}円 "
+                            f"lose_worst10_after_virtual_exclude={float(r.get('lose_worst10_after_virtual_exclude') or 0.0):+,.0f}円 "
+                            f"max_losing_run_after_virtual_exclude={float(r.get('max_losing_run_after_virtual_exclude') or 0.0):+,.0f}円"
+                        )
+                    lines.append("")
+
+                    lines.append("【SHADOW_BLOCK_SYMBOL_ROBUSTNESS】")
+                    lines.append("")
+                    for r in rows_sorted:
+                        lines.append(
+                            f"- {r.get('name')}: "
+                            f"sym_top1_abs_ratio={float(r.get('symbol_contribution_top1_abs_pnl_ratio') or 0.0):.6f} "
+                            f"sym_top2_abs_ratio={float(r.get('symbol_contribution_top2_abs_pnl_ratio') or 0.0):.6f} "
+                            f"exp_after_exclude_top1={float(r.get('expectancy_after_exclude_top1_symbol') or 0.0):+,.0f}円 "
+                            f"exp_after_exclude_top2={float(r.get('expectancy_after_exclude_top2_symbols') or 0.0):+,.0f}円"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # SHADOW_BLOCK_CONTEXT_ANALYSIS（run合算・analysis only）
+            # =========================
+            try:
+                sbc = agg.get("shadow_block_context_analysis") if isinstance(agg.get("shadow_block_context_analysis"), dict) else {}
+                sbc_rules = sbc.get("rules") if isinstance(sbc.get("rules"), dict) else {}
+                if sbc_rules:
+                    lines.append("【SHADOW_BLOCK_CONTEXT_ANALYSIS】")
+                    lines.append("")
+                    for rule_name in [
+                        "STRONG_EXTENSION_GE_05",
+                        "STRONG_DELTA_HU_MINUS1",
+                        "STRONG_EXTENSION_GE_05_AND_STRONG_DELTA_HU_MINUS1",
+                        "SHADOW_COMBO_ANY",
+                    ]:
+                        rroot = sbc_rules.get(rule_name)
+                        if not isinstance(rroot, dict):
+                            continue
+                        lines.append(f"- rule: {rule_name} (signals={int(rroot.get('signals') or 0)})")
+                        feats = rroot.get("features") if isinstance(rroot.get("features"), dict) else {}
+                        for feat in [
+                            "entry_vwap_distance_pct",
+                            "pullback_depth_pct",
+                            "delta_rs_vs_topix_pct",
+                            "delta_high_update_count_before_entry",
+                            "volume_efficiency_pct",
+                        ]:
+                            fsec = feats.get(feat) if isinstance(feats.get(feat), dict) else {}
+                            rows = fsec.get("rows") if isinstance(fsec.get("rows"), list) else []
+                            if not rows:
+                                continue
+                            lines.append(f"  [{feat}] (tail-risk sorted)")
+                            for row in rows:
+                                if not isinstance(row, dict):
+                                    continue
+                                danger = " *DANGER*" if bool(row.get("danger_sub_bucket_candidate", False)) else ""
+                                lines.append(
+                                    f"    - bucket={row.get('bucket')}{danger}: "
+                                    f"signals={int(row.get('signals') or 0)} "
+                                    f"lw10={float(row.get('lose_worst10_sum') or 0.0):+,.0f} "
+                                    f"max_lose_run={float(row.get('max_losing_run') or 0.0):+,.0f} "
+                                    f"exp={float(row.get('expectancy') or 0.0):+,.0f} "
+                                    f"winrate={float(row.get('winrate_pct') or 0.0):.1f}% "
+                                    f"pnl={float(row.get('total_pnl') or 0.0):+,.0f} "
+                                    f"avg_loss={float(row.get('avg_loss') or 0.0):+,.0f} "
+                                    f"worst_loss={float(row.get('worst_loss') or 0.0):+,.0f}"
+                                )
+                            lines.append("")
+                        lines.append("")
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # SHADOW_BLOCK_TEMPORAL_STABILITY_ANALYSIS（run合算・analysis only）
+            # =========================
+            try:
+                t = (
+                    agg.get("shadow_block_temporal_stability_analysis")
+                    if isinstance(agg.get("shadow_block_temporal_stability_analysis"), dict)
+                    else {}
+                )
+                trules = t.get("rules") if isinstance(t.get("rules"), dict) else {}
+                if trules:
+                    lines.append("【SHADOW_BLOCK_TEMPORAL_STABILITY_ANALYSIS】")
+                    lines.append("")
+                    for rn in ["STRONG_EXTENSION_GE_05", "STRONG_DELTA_HU_MINUS1", "SHADOW_COMBO_ANY"]:
+                        rr0 = trules.get(rn)
+                        if not isinstance(rr0, dict):
+                            continue
+                        ov = rr0.get("overall") if isinstance(rr0.get("overall"), dict) else {}
+                        lines.append(f"- rule: {rn}")
+                        lines.append(
+                            f"  overall: signals={int(ov.get('signals') or 0)} "
+                            f"lw10={float(ov.get('lose_worst10_sum') or 0.0):+,.0f} "
+                            f"max_lose_run={float(ov.get('max_losing_run') or 0.0):+,.0f} "
+                            f"exp={float(ov.get('expectancy') or 0.0):+,.0f} "
+                            f"pnl={float(ov.get('total_pnl') or 0.0):+,.0f} "
+                            f"winrate={float(ov.get('winrate_pct') or 0.0):.1f}%"
+                        )
+                        lines.append(
+                            f"  positive_period_ratio={float(rr0.get('positive_period_ratio') or 0.0):.3f} "
+                            f"negative_period_ratio={float(rr0.get('negative_period_ratio') or 0.0):.3f}"
+                        )
+                        halves = rr0.get("halves") if isinstance(rr0.get("halves"), dict) else {}
+                        fh = halves.get("first_half") if isinstance(halves.get("first_half"), dict) else {}
+                        sh = halves.get("second_half") if isinstance(halves.get("second_half"), dict) else {}
+                        lines.append(
+                            f"  first_half: signals={int(fh.get('signals') or 0)} "
+                            f"lw10={float(fh.get('lose_worst10_sum') or 0.0):+,.0f} "
+                            f"max_lose_run={float(fh.get('max_losing_run') or 0.0):+,.0f} "
+                            f"exp={float(fh.get('expectancy') or 0.0):+,.0f} "
+                            f"pnl={float(fh.get('total_pnl') or 0.0):+,.0f} "
+                            f"winrate={float(fh.get('winrate_pct') or 0.0):.1f}%"
+                        )
+                        lines.append(
+                            f"  second_half: signals={int(sh.get('signals') or 0)} "
+                            f"lw10={float(sh.get('lose_worst10_sum') or 0.0):+,.0f} "
+                            f"max_lose_run={float(sh.get('max_losing_run') or 0.0):+,.0f} "
+                            f"exp={float(sh.get('expectancy') or 0.0):+,.0f} "
+                            f"pnl={float(sh.get('total_pnl') or 0.0):+,.0f} "
+                            f"winrate={float(sh.get('winrate_pct') or 0.0):.1f}%"
+                        )
+                        dts = rr0.get("daily_top_summary") if isinstance(rr0.get("daily_top_summary"), dict) else {}
+                        worst_p = dts.get("worst_days_by_total_pnl") if isinstance(dts.get("worst_days_by_total_pnl"), list) else []
+                        worst_l = dts.get("worst_days_by_lose_worst10_sum") if isinstance(dts.get("worst_days_by_lose_worst10_sum"), list) else []
+                        if worst_p:
+                            lines.append("  worst_days_by_total_pnl (top3):")
+                            for r in worst_p[:3]:
+                                if not isinstance(r, dict):
+                                    continue
+                                lines.append(
+                                    f"    - {r.get('day_jst')}: "
+                                    f"signals={int(r.get('signals') or 0)} "
+                                    f"pnl={float(r.get('total_pnl') or 0.0):+,.0f} "
+                                    f"lw10={float(r.get('lose_worst10_sum') or 0.0):+,.0f} "
+                                    f"max_lose_run={float(r.get('max_losing_run') or 0.0):+,.0f} "
+                                    f"exp={float(r.get('expectancy') or 0.0):+,.0f}"
+                                )
+                        if worst_l:
+                            lines.append("  worst_days_by_lose_worst10_sum (top3):")
+                            for r in worst_l[:3]:
+                                if not isinstance(r, dict):
+                                    continue
+                                lines.append(
+                                    f"    - {r.get('day_jst')}: "
+                                    f"signals={int(r.get('signals') or 0)} "
+                                    f"lw10={float(r.get('lose_worst10_sum') or 0.0):+,.0f} "
+                                    f"pnl={float(r.get('total_pnl') or 0.0):+,.0f} "
+                                    f"max_lose_run={float(r.get('max_losing_run') or 0.0):+,.0f} "
+                                    f"exp={float(r.get('expectancy') or 0.0):+,.0f}"
+                                )
+                        lines.append("")
+                    lines.append("")
             except Exception:
                 pass
 
@@ -16893,6 +27662,243 @@ def main(argv: list[str]) -> int:
                 pass
 
             # =========================
+            # SYMBOL_DAILY_ENTRY_INDEX_ANALYSIS（run合算・BASE eval のみ）
+            # =========================
+            try:
+                sde_rows = agg.get("symbol_daily_entry_index_analysis") or []
+                sde_cross = agg.get("symbol_daily_entry_index_x_market_regime") or []
+                lines.append("【SYMBOL_DAILY_ENTRY_INDEX_ANALYSIS】")
+                lines.append(
+                    "※ 補助分析（疲労の代理指標）。forward 主判定・AUTO_BLOCK は price extension 側を優先。"
+                )
+                lines.append("")
+                if isinstance(sde_rows, list) and sde_rows:
+                    lines.append("[symbol_daily_entry_index / bucket]")
+                    for rsd in sde_rows:
+                        if not isinstance(rsd, dict):
+                            continue
+                        lines.append(
+                            f"- bucket={rsd.get('bucket')}: signals={int(rsd.get('signals') or 0)} "
+                            f"winrate={float(rsd.get('winrate_pct') or 0.0):.1f}% "
+                            f"avg_expectancy_yen_100_shares={float(rsd.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"total_pnl_yen_100_shares={float(rsd.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rsd.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+                if isinstance(sde_cross, list) and sde_cross:
+                    lines.append("[symbol_daily_entry_index_x_market_regime]")
+                    for rxc in sde_cross:
+                        if not isinstance(rxc, dict):
+                            continue
+                        lines.append(
+                            f"- symbol_daily_entry_index_bucket={rxc.get('symbol_daily_entry_index_bucket')} × "
+                            f"market_regime={rxc.get('market_regime')}: "
+                            f"signals={int(rxc.get('signals') or 0)} "
+                            f"winrate={float(rxc.get('winrate_pct') or 0.0):.1f}% "
+                            f"avg_expectancy_yen_100_shares={float(rxc.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"total_pnl_yen_100_shares={float(rxc.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rxc.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # SYMBOL_DAILY_ENTRY_INDEX_DEEP_ANALYSIS（run合算・BASE eval のみ）
+            # =========================
+            try:
+                sded_rows = agg.get("symbol_daily_entry_index_deep_analysis") or []
+                sded_cross = agg.get("symbol_daily_entry_index_deep_x_market_regime") or []
+                lines.append("【SYMBOL_DAILY_ENTRY_INDEX_DEEP_ANALYSIS】")
+                lines.append(
+                    "※ 同上（より細かい同日何本目bucket）。メイン評価軸とは切り離して参照。"
+                )
+                lines.append("")
+                if isinstance(sded_rows, list) and sded_rows:
+                    lines.append("[symbol_daily_entry_index_deep / bucket]")
+                    for rsd in sded_rows:
+                        if not isinstance(rsd, dict):
+                            continue
+                        lines.append(
+                            f"- bucket={rsd.get('bucket')}: signals={int(rsd.get('signals') or 0)} "
+                            f"winrate={float(rsd.get('winrate_pct') or 0.0):.1f}% "
+                            f"avg_expectancy_yen_100_shares={float(rsd.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"total_pnl_yen_100_shares={float(rsd.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rsd.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+                if isinstance(sded_cross, list) and sded_cross:
+                    lines.append("[SYMBOL_DAILY_ENTRY_INDEX_DEEP_X_MARKET_REGIME]")
+                    for rxc in sded_cross:
+                        if not isinstance(rxc, dict):
+                            continue
+                        lines.append(
+                            f"- symbol_daily_entry_index_bucket={rxc.get('symbol_daily_entry_index_bucket')} × "
+                            f"market_regime={rxc.get('market_regime')}: "
+                            f"signals={int(rxc.get('signals') or 0)} "
+                            f"winrate={float(rxc.get('winrate_pct') or 0.0):.1f}% "
+                            f"avg_expectancy_yen_100_shares={float(rxc.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"total_pnl_yen_100_shares={float(rxc.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rxc.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # MOMENTUM_DECAY_ANALYSIS（run合算・BASE eval・prevあり）
+            # =========================
+            try:
+                mda = agg.get("momentum_decay_analysis") or {}
+                lines.append("【MOMENTUM_DECAY_ANALYSIS】")
+                lines.append("")
+                for feat in [
+                    "delta_entry_vwap_distance_pct",
+                    "delta_first_30m_volume_ratio",
+                    "delta_rs_vs_topix_pct",
+                    "delta_high_update_count_before_entry",
+                    "price_change_pct_from_prev_signal",
+                    "volume_efficiency_pct",
+                ]:
+                    rows = mda.get(feat) or []
+                    if not isinstance(rows, list) or not rows:
+                        continue
+                    lines.append(f"[MOMENTUM_DECAY_ANALYSIS / {feat}]")
+                    for r in rows:
+                        if not isinstance(r, dict):
+                            continue
+                        lines.append(
+                            f"- bucket={r.get('bucket')}: signals={int(r.get('signals') or 0)} "
+                            f"winrate={float(r.get('winrate_pct') or 0.0):.1f}% "
+                            f"avg_expectancy_yen_100_shares={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"total_pnl_yen_100_shares={float(r.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # MOMENTUM_DECAY_X_MARKET_REGIME（run合算）
+            # =========================
+            try:
+                mxc = agg.get("momentum_decay_x_market_regime") or {}
+                lines.append("【MOMENTUM_DECAY_X_MARKET_REGIME】")
+                lines.append("")
+                secs: list[tuple[str, str]] = [
+                    ("delta_entry_vwap_distance_pct_bucket_x_market_regime", "delta_entry_vwap_distance_pct_bucket"),
+                    ("delta_high_update_count_before_entry_bucket_x_market_regime", "delta_high_update_count_before_entry_bucket"),
+                    ("price_change_pct_from_prev_signal_bucket_x_market_regime", "price_change_pct_from_prev_signal_bucket"),
+                    ("volume_efficiency_pct_bucket_x_market_regime", "volume_efficiency_pct_bucket"),
+                ]
+                for sec_key, fk1 in secs:
+                    rows2 = mxc.get(sec_key) or []
+                    if not isinstance(rows2, list) or not rows2:
+                        continue
+                    lines.append(f"[MOMENTUM_DECAY_X_MARKET_REGIME / {sec_key}]")
+                    for r2 in rows2:
+                        if not isinstance(r2, dict):
+                            continue
+                        lines.append(
+                            f"- {fk1}={r2.get(fk1)} × market_regime={r2.get('market_regime')}: "
+                            f"signals={int(r2.get('signals') or 0)} "
+                            f"winrate={float(r2.get('winrate_pct') or 0.0):.1f}% "
+                            f"avg_expectancy_yen_100_shares={float(r2.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"total_pnl_yen_100_shares={float(r2.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(r2.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # CHASE_EXTENSION_ANALYSIS（run合算）
+            # =========================
+            try:
+                cea = agg.get("chase_extension_analysis") or []
+                lines.append("【CHASE_EXTENSION_ANALYSIS】")
+                lines.append("")
+                for r in cea:
+                    if not isinstance(r, dict):
+                        continue
+                    lines.append(
+                        f"- bucket={r.get('bucket')}: signals={int(r.get('signals') or 0)} "
+                        f"winrate={float(r.get('winrate_pct') or 0.0):.1f}% "
+                        f"avg_expectancy_yen_100_shares={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                        f"total_pnl_yen_100_shares={float(r.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                        f"lose_worst10_sum_yen_100_shares={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                    )
+                lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # CHASE_EXTENSION_ANALYSIS cross（run合算）
+            # =========================
+            try:
+                cxc = agg.get("chase_extension_x_market_regime") or []
+                lines.append("[price_change_pct_from_prev_signal_bucket_x_market_regime]")
+                lines.append("")
+                for r2 in cxc:
+                    if not isinstance(r2, dict):
+                        continue
+                    lines.append(
+                        f"- price_change_pct_from_prev_signal_bucket={r2.get('price_change_pct_from_prev_signal_bucket')} × "
+                        f"market_regime={r2.get('market_regime')}: "
+                        f"signals={int(r2.get('signals') or 0)} "
+                        f"winrate={float(r2.get('winrate_pct') or 0.0):.1f}% "
+                        f"avg_expectancy_yen_100_shares={float(r2.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                        f"total_pnl_yen_100_shares={float(r2.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                        f"lose_worst10_sum_yen_100_shares={float(r2.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                    )
+                lines.append("")
+            except Exception:
+                pass
+
+            try:
+                lines.extend(_replay_forward_extension_analysis_txt_lines(agg, bracket_headings=False))
+            except Exception:
+                pass
+            try:
+                lines.extend(_replay_structure_tail_generalization_txt_lines(agg, bracket_headings=False))
+            except Exception:
+                pass
+
+            # =========================
+            # ENTRY_BLOCK_REASON_RANKING / AUTO_BLOCK_EFFECT_ANALYSIS（run合算）
+            # =========================
+            try:
+                ebm = agg.get("entry_block_reason_ranking") or []
+                lines.append("[ENTRY_BLOCK_REASON_RANKING]")
+                lines.append("")
+                if isinstance(ebm, list) and ebm:
+                    for iteb in ebm[:50]:
+                        if not isinstance(iteb, dict):
+                            continue
+                        kr = str(iteb.get("reason") or "").strip()
+                        if kr:
+                            lines.append(f"{kr}: {int(iteb.get('count') or 0)}")
+                    lines.append("")
+                abem = agg.get("auto_block_effect_analysis") or []
+                lines.append("[AUTO_BLOCK_EFFECT_ANALYSIS]")
+                lines.append("")
+                if isinstance(abem, list) and abem:
+                    for rab in abem:
+                        if not isinstance(rab, dict):
+                            continue
+                        lines.append(
+                            f"- block_rule_name={rab.get('block_rule_name')} "
+                            f"blocked_signals={int(rab.get('blocked_signals') or 0)} "
+                            f"blocked_total_pnl={float(rab.get('blocked_total_pnl') or 0.0):+,.0f} "
+                            f"blocked_expectancy={float(rab.get('blocked_expectancy') or 0.0):+,.0f} "
+                            f"pnl_after_block={float(rab.get('pnl_after_block') or 0.0):+,.0f} "
+                            f"pnl_improvement={float(rab.get('pnl_improvement') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
             # STRONG_LOSER_ANALYSIS（run合算）
             # =========================
             try:
@@ -16919,6 +27925,83 @@ def main(argv: list[str]) -> int:
                             f"total_pnl_yen_100_shares={float(r.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
                             f"avg_expectancy_yen_100_shares={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
                             f"lose_worst10_sum_yen_100_shares={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # WEAK_REGIME_FEATURE_ANALYSIS（run合算・WEAK の eval シグナルのみ）
+            # =========================
+            try:
+                wr = agg.get("weak_regime_feature_analysis") or {}
+                lines.append("【WEAK_REGIME_FEATURE_ANALYSIS】")
+                lines.append("")
+                for feat_wr in [
+                    "entry_vwap_distance_pct",
+                    "gap_pct",
+                    "high_update_count_before_entry",
+                    "hold_minutes",
+                    "entry_time_bucket",
+                ]:
+                    rows_wr = wr.get(feat_wr) or []
+                    if not isinstance(rows_wr, list) or not rows_wr:
+                        continue
+                    lines.append(f"[WEAK_REGIME_FEATURE_ANALYSIS / {feat_wr}]")
+                    for r in rows_wr:
+                        if not isinstance(r, dict):
+                            continue
+                        lines.append(
+                            f"- bucket={r.get('bucket')}: signals={int(r.get('signals') or 0)} "
+                            f"winrate_pct={float(r.get('winrate_pct') or 0.0):.1f}% "
+                            f"total_pnl_yen_100_shares={float(r.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"avg_expectancy_yen_100_shares={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # WEAK_HU_CROSS_ANALYSIS（run合算・WEAK × HU クロス）
+            # =========================
+            try:
+                whu = agg.get("weak_hu_cross_analysis") or {}
+                lines.append("【WEAK_HU_CROSS_ANALYSIS】")
+                lines.append("")
+                _whu_sections: list[tuple[str, str, str]] = [
+                    (
+                        "high_update_count_before_entry_x_entry_time_bucket",
+                        "high_update_count_before_entry_bucket",
+                        "entry_time_bucket",
+                    ),
+                    (
+                        "high_update_count_before_entry_x_gap_pct_bucket",
+                        "high_update_count_before_entry_bucket",
+                        "gap_pct_bucket",
+                    ),
+                    (
+                        "high_update_count_before_entry_x_entry_vwap_distance_pct_bucket",
+                        "high_update_count_before_entry_bucket",
+                        "entry_vwap_distance_pct_bucket",
+                    ),
+                    ("high_update_count_before_entry_x_symbol", "high_update_count_before_entry_bucket", "symbol"),
+                ]
+                for sec_key, fk1, fk2 in _whu_sections:
+                    rows_wh = whu.get(sec_key) or []
+                    if not isinstance(rows_wh, list) or not rows_wh:
+                        continue
+                    lines.append(f"[WEAK_HU_CROSS_ANALYSIS / {sec_key}]")
+                    for rwh in rows_wh:
+                        if not isinstance(rwh, dict):
+                            continue
+                        lines.append(
+                            f"- {fk1}={rwh.get(fk1)} × {fk2}={rwh.get(fk2)}: "
+                            f"signals={int(rwh.get('signals') or 0)} "
+                            f"winrate={float(rwh.get('winrate_pct') or 0.0):.1f}% "
+                            f"avg_expectancy_yen_100_shares={float(rwh.get('avg_expectancy_yen_100_shares') or 0.0):+,.0f} "
+                            f"total_pnl_yen_100_shares={float(rwh.get('total_pnl_yen_100_shares') or 0.0):+,.0f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rwh.get('lose_worst10_sum_yen_100_shares') or 0.0):+,.0f}"
                         )
                     lines.append("")
             except Exception:
@@ -17191,11 +28274,14 @@ def main(argv: list[str]) -> int:
                     for sim in sims:
                         if not isinstance(sim, dict):
                             continue
+                        _edr_d = sim.get("expectancy_drop_ratio")
+                        _edr_d_s = "N/A" if _edr_d is None else f"{float(_edr_d):.4f}"
                         debug_lines.append(
                             f"- exclude_top_n={int(sim.get('exclude_top_n_symbols') or 0)} "
                             f"excluded_symbols={sim.get('excluded_symbols') or []} "
                             f"pnl_after={float(sim.get('total_pnl_after_yen_100_shares') or 0.0):+,.2f} "
                             f"exp_after={float(sim.get('expectancy_after_yen_100_shares_per_signal') or 0.0):+,.2f} "
+                            f"expectancy_drop_ratio={_edr_d_s} "
                             f"signals_after={int(sim.get('total_signals_after') or 0)}"
                         )
                 debug_lines.append("")
@@ -17236,6 +28322,204 @@ def main(argv: list[str]) -> int:
                 pass
 
             # =========================
+            # SYMBOL_DAILY_ENTRY_INDEX_ANALYSIS（デバッグ・全行）
+            # =========================
+            try:
+                sde_dbg = agg.get("symbol_daily_entry_index_analysis") or []
+                sde_x_dbg = agg.get("symbol_daily_entry_index_x_market_regime") or []
+                debug_lines.append("[SYMBOL_DAILY_ENTRY_INDEX_ANALYSIS]")
+                debug_lines.append("")
+                if isinstance(sde_dbg, list) and sde_dbg:
+                    debug_lines.append("[symbol_daily_entry_index / bucket]")
+                    for rdb in sde_dbg:
+                        if not isinstance(rdb, dict):
+                            continue
+                        debug_lines.append(
+                            f"- bucket={rdb.get('bucket')} | "
+                            f"signals={int(rdb.get('signals') or 0)} "
+                            f"winrate_pct={float(rdb.get('winrate_pct') or 0.0):.2f} "
+                            f"avg_expectancy_yen_100_shares={float(rdb.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                            f"total_pnl_yen_100_shares={float(rdb.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rdb.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                        )
+                    debug_lines.append("")
+                if isinstance(sde_x_dbg, list) and sde_x_dbg:
+                    debug_lines.append("[symbol_daily_entry_index_x_market_regime]")
+                    for rdx in sde_x_dbg:
+                        if not isinstance(rdx, dict):
+                            continue
+                        debug_lines.append(
+                            f"- symbol_daily_entry_index_bucket={rdx.get('symbol_daily_entry_index_bucket')} | "
+                            f"market_regime={rdx.get('market_regime')} | "
+                            f"signals={int(rdx.get('signals') or 0)} "
+                            f"winrate_pct={float(rdx.get('winrate_pct') or 0.0):.2f} "
+                            f"avg_expectancy_yen_100_shares={float(rdx.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                            f"total_pnl_yen_100_shares={float(rdx.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rdx.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                        )
+                    debug_lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # SYMBOL_DAILY_ENTRY_INDEX_DEEP_ANALYSIS（デバッグ・全行）
+            # =========================
+            try:
+                sded_dbg = agg.get("symbol_daily_entry_index_deep_analysis") or []
+                sded_x_dbg = agg.get("symbol_daily_entry_index_deep_x_market_regime") or []
+                debug_lines.append("[SYMBOL_DAILY_ENTRY_INDEX_DEEP_ANALYSIS]")
+                debug_lines.append("")
+                if isinstance(sded_dbg, list) and sded_dbg:
+                    debug_lines.append("[symbol_daily_entry_index_deep / bucket]")
+                    for rdb in sded_dbg:
+                        if not isinstance(rdb, dict):
+                            continue
+                        debug_lines.append(
+                            f"- bucket={rdb.get('bucket')} | "
+                            f"signals={int(rdb.get('signals') or 0)} "
+                            f"winrate_pct={float(rdb.get('winrate_pct') or 0.0):.2f} "
+                            f"avg_expectancy_yen_100_shares={float(rdb.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                            f"total_pnl_yen_100_shares={float(rdb.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rdb.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                        )
+                    debug_lines.append("")
+                if isinstance(sded_x_dbg, list) and sded_x_dbg:
+                    debug_lines.append("[SYMBOL_DAILY_ENTRY_INDEX_DEEP_X_MARKET_REGIME]")
+                    for rdx in sded_x_dbg:
+                        if not isinstance(rdx, dict):
+                            continue
+                        debug_lines.append(
+                            f"- symbol_daily_entry_index_bucket={rdx.get('symbol_daily_entry_index_bucket')} | "
+                            f"market_regime={rdx.get('market_regime')} | "
+                            f"signals={int(rdx.get('signals') or 0)} "
+                            f"winrate_pct={float(rdx.get('winrate_pct') or 0.0):.2f} "
+                            f"avg_expectancy_yen_100_shares={float(rdx.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                            f"total_pnl_yen_100_shares={float(rdx.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rdx.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                        )
+                    debug_lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # MOMENTUM_DECAY_ANALYSIS（デバッグ・全行）
+            # =========================
+            try:
+                mda2 = agg.get("momentum_decay_analysis") or {}
+                debug_lines.append("[MOMENTUM_DECAY_ANALYSIS]")
+                debug_lines.append("")
+                for feat in [
+                    "delta_entry_vwap_distance_pct",
+                    "delta_first_30m_volume_ratio",
+                    "delta_rs_vs_topix_pct",
+                    "delta_high_update_count_before_entry",
+                    "price_change_pct_from_prev_signal",
+                    "volume_efficiency_pct",
+                ]:
+                    rows = mda2.get(feat) or []
+                    if not isinstance(rows, list) or not rows:
+                        continue
+                    debug_lines.append(f"[MOMENTUM_DECAY_ANALYSIS / {feat}]")
+                    for r in rows:
+                        if not isinstance(r, dict):
+                            continue
+                        debug_lines.append(
+                            f"- bucket={r.get('bucket')} | "
+                            f"signals={int(r.get('signals') or 0)} "
+                            f"winrate_pct={float(r.get('winrate_pct') or 0.0):.2f} "
+                            f"avg_expectancy_yen_100_shares={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                            f"total_pnl_yen_100_shares={float(r.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                            f"lose_worst10_sum_yen_100_shares={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                        )
+                    debug_lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # MOMENTUM_DECAY_X_MARKET_REGIME（デバッグ・全行）
+            # =========================
+            try:
+                mxc2 = agg.get("momentum_decay_x_market_regime") or {}
+                debug_lines.append("[MOMENTUM_DECAY_X_MARKET_REGIME]")
+                debug_lines.append("")
+                secs: list[tuple[str, str]] = [
+                    ("delta_entry_vwap_distance_pct_bucket_x_market_regime", "delta_entry_vwap_distance_pct_bucket"),
+                    ("delta_high_update_count_before_entry_bucket_x_market_regime", "delta_high_update_count_before_entry_bucket"),
+                    ("price_change_pct_from_prev_signal_bucket_x_market_regime", "price_change_pct_from_prev_signal_bucket"),
+                    ("volume_efficiency_pct_bucket_x_market_regime", "volume_efficiency_pct_bucket"),
+                ]
+                for sec_key, fk1 in secs:
+                    rows2 = mxc2.get(sec_key) or []
+                    if not isinstance(rows2, list) or not rows2:
+                        continue
+                    debug_lines.append(f"[{sec_key}]")
+                    for r2 in rows2:
+                        if not isinstance(r2, dict):
+                            continue
+                        debug_lines.append(
+                            f"- {fk1}={r2.get(fk1)} | market_regime={r2.get('market_regime')} | "
+                            f"signals={int(r2.get('signals') or 0)} "
+                            f"winrate_pct={float(r2.get('winrate_pct') or 0.0):.2f} "
+                            f"avg_expectancy_yen_100_shares={float(r2.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                            f"total_pnl_yen_100_shares={float(r2.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                            f"lose_worst10_sum_yen_100_shares={float(r2.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                        )
+                    debug_lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # CHASE_EXTENSION_ANALYSIS（デバッグ・全行）
+            # =========================
+            try:
+                cea2 = agg.get("chase_extension_analysis") or []
+                debug_lines.append("[CHASE_EXTENSION_ANALYSIS]")
+                debug_lines.append("")
+                for r in cea2:
+                    if not isinstance(r, dict):
+                        continue
+                    debug_lines.append(
+                        f"- bucket={r.get('bucket')} | "
+                        f"signals={int(r.get('signals') or 0)} "
+                        f"winrate_pct={float(r.get('winrate_pct') or 0.0):.2f} "
+                        f"avg_expectancy_yen_100_shares={float(r.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                        f"total_pnl_yen_100_shares={float(r.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                        f"lose_worst10_sum_yen_100_shares={float(r.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                    )
+                debug_lines.append("")
+            except Exception:
+                pass
+
+            try:
+                cxc2 = agg.get("chase_extension_x_market_regime") or []
+                debug_lines.append("[price_change_pct_from_prev_signal_bucket_x_market_regime]")
+                debug_lines.append("")
+                for r2 in cxc2:
+                    if not isinstance(r2, dict):
+                        continue
+                    debug_lines.append(
+                        f"- price_change_pct_from_prev_signal_bucket={r2.get('price_change_pct_from_prev_signal_bucket')} | "
+                        f"market_regime={r2.get('market_regime')} | "
+                        f"signals={int(r2.get('signals') or 0)} "
+                        f"winrate_pct={float(r2.get('winrate_pct') or 0.0):.2f} "
+                        f"avg_expectancy_yen_100_shares={float(r2.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                        f"total_pnl_yen_100_shares={float(r2.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                        f"lose_worst10_sum_yen_100_shares={float(r2.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                    )
+                debug_lines.append("")
+            except Exception:
+                pass
+
+            try:
+                debug_lines.extend(_replay_forward_extension_analysis_txt_lines(agg, bracket_headings=True))
+            except Exception:
+                pass
+            try:
+                debug_lines.extend(_replay_structure_tail_generalization_txt_lines(agg, bracket_headings=True))
+            except Exception:
+                pass
+
+            # =========================
             # STRONG_LOSER_ANALYSIS（デバッグ・全行）
             # =========================
             try:
@@ -17263,6 +28547,84 @@ def main(argv: list[str]) -> int:
                             f"total_pnl_yen_100_shares={float(rd.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
                             f"avg_expectancy_yen_100_shares={float(rd.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
                             f"lose_worst10_sum_yen_100_shares={float(rd.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                        )
+                    debug_lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # WEAK_REGIME_FEATURE_ANALYSIS（デバッグ・全行）
+            # =========================
+            try:
+                wr2 = agg.get("weak_regime_feature_analysis") or {}
+                debug_lines.append("[WEAK_REGIME_FEATURE_ANALYSIS]")
+                debug_lines.append("")
+                for feat_wr2 in [
+                    "entry_vwap_distance_pct",
+                    "gap_pct",
+                    "high_update_count_before_entry",
+                    "hold_minutes",
+                    "entry_time_bucket",
+                ]:
+                    rows_wdbg = wr2.get(feat_wr2) or []
+                    if not isinstance(rows_wdbg, list) or not rows_wdbg:
+                        continue
+                    debug_lines.append(f"[WEAK_REGIME_FEATURE_ANALYSIS / {feat_wr2}]")
+                    for rw in rows_wdbg:
+                        if not isinstance(rw, dict):
+                            continue
+                        debug_lines.append(
+                            f"- bucket={rw.get('bucket')} | "
+                            f"signals={int(rw.get('signals') or 0)} "
+                            f"winrate_pct={float(rw.get('winrate_pct') or 0.0):.2f} "
+                            f"total_pnl_yen_100_shares={float(rw.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                            f"avg_expectancy_yen_100_shares={float(rw.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rw.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
+                        )
+                    debug_lines.append("")
+            except Exception:
+                pass
+
+            # =========================
+            # WEAK_HU_CROSS_ANALYSIS（デバッグ・全行）
+            # =========================
+            try:
+                whu_dbg = agg.get("weak_hu_cross_analysis") or {}
+                debug_lines.append("[WEAK_HU_CROSS_ANALYSIS]")
+                debug_lines.append("")
+                _whu_dbg: list[tuple[str, str, str]] = [
+                    (
+                        "high_update_count_before_entry_x_entry_time_bucket",
+                        "high_update_count_before_entry_bucket",
+                        "entry_time_bucket",
+                    ),
+                    (
+                        "high_update_count_before_entry_x_gap_pct_bucket",
+                        "high_update_count_before_entry_bucket",
+                        "gap_pct_bucket",
+                    ),
+                    (
+                        "high_update_count_before_entry_x_entry_vwap_distance_pct_bucket",
+                        "high_update_count_before_entry_bucket",
+                        "entry_vwap_distance_pct_bucket",
+                    ),
+                    ("high_update_count_before_entry_x_symbol", "high_update_count_before_entry_bucket", "symbol"),
+                ]
+                for sec_key, fk1, fk2 in _whu_dbg:
+                    rows_whd = whu_dbg.get(sec_key) or []
+                    if not isinstance(rows_whd, list) or not rows_whd:
+                        continue
+                    debug_lines.append(f"[{sec_key}]")
+                    for rwd in rows_whd:
+                        if not isinstance(rwd, dict):
+                            continue
+                        debug_lines.append(
+                            f"- {fk1}={rwd.get(fk1)} | {fk2}={rwd.get(fk2)} | "
+                            f"signals={int(rwd.get('signals') or 0)} "
+                            f"winrate_pct={float(rwd.get('winrate_pct') or 0.0):.2f} "
+                            f"avg_expectancy_yen_100_shares={float(rwd.get('avg_expectancy_yen_100_shares') or 0.0):+.2f} "
+                            f"total_pnl_yen_100_shares={float(rwd.get('total_pnl_yen_100_shares') or 0.0):+.2f} "
+                            f"lose_worst10_sum_yen_100_shares={float(rwd.get('lose_worst10_sum_yen_100_shares') or 0.0):+.2f}"
                         )
                     debug_lines.append("")
             except Exception:
@@ -17565,6 +28927,46 @@ def main(argv: list[str]) -> int:
             debug_lines.append("")
             for it in rej_rank[:30]:
                 debug_lines.append(f"{it['reason']}: {int(it['count'])}")
+            debug_lines.append("")
+
+            # ENTRY_BLOCK_REASON_RANKING（合算・デバッグ）
+            eb_tot_dbg: dict[str, int] = {}
+            for rr in run_summaries:
+                rep_ebd = rr.get("report") or {}
+                for itebd in rep_ebd.get("entry_block_reason_ranking") or []:
+                    try:
+                        ke = str(itebd.get("reason") or "").strip()
+                        ve = int(itebd.get("count") or 0)
+                        if ke:
+                            eb_tot_dbg[ke] = int(eb_tot_dbg.get(ke, 0)) + ve
+                    except Exception:
+                        continue
+            eb_rank_dbg = sorted(
+                [{"reason": k, "count": int(v)} for k, v in eb_tot_dbg.items()],
+                key=lambda x: int(x.get("count") or 0),
+                reverse=True,
+            )
+            debug_lines.append("[ENTRY_BLOCK_REASON_RANKING]")
+            debug_lines.append("")
+            for it in eb_rank_dbg[:40]:
+                debug_lines.append(f"{it['reason']}: {int(it['count'])}")
+            debug_lines.append("")
+
+            abe_dbg = agg.get("auto_block_effect_analysis") or []
+            debug_lines.append("[AUTO_BLOCK_EFFECT_ANALYSIS]")
+            debug_lines.append("")
+            if isinstance(abe_dbg, list) and abe_dbg:
+                for rabe in abe_dbg:
+                    if not isinstance(rabe, dict):
+                        continue
+                    debug_lines.append(
+                        f"- block_rule_name={rabe.get('block_rule_name')} | "
+                        f"blocked_signals={int(rabe.get('blocked_signals') or 0)} | "
+                        f"blocked_total_pnl={float(rabe.get('blocked_total_pnl') or 0.0):+.2f} | "
+                        f"blocked_expectancy={float(rabe.get('blocked_expectancy') or 0.0):+.2f} | "
+                        f"pnl_after_block={float(rabe.get('pnl_after_block') or 0.0):+.2f} | "
+                        f"pnl_improvement={float(rabe.get('pnl_improvement') or 0.0):+.2f}"
+                    )
             debug_lines.append("")
 
             # =========================
