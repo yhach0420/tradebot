@@ -1,0 +1,3064 @@
+{
+  "component": "kabu_native.run_replay",
+  "generated_at_local": "2026-05-16T22:23:40",
+  "start_date": "2026-04-10",
+  "end_date": "2026-05-15",
+  "symbols": [
+    "1306.T",
+    "1321.T",
+    "5016.T",
+    "5803.T",
+    "6315.T",
+    "6501.T",
+    "6526.T",
+    "6857.T",
+    "6890.T",
+    "6920.T",
+    "7003.T",
+    "7011.T",
+    "7012.T",
+    "7013.T",
+    "7203.T",
+    "7974.T",
+    "8001.T",
+    "8002.T",
+    "8031.T",
+    "8058.T",
+    "8136.T",
+    "8306.T",
+    "8473.T",
+    "9412.T",
+    "9432.T",
+    "9434.T",
+    "9984.T"
+  ],
+  "tier": "B",
+  "entry_score_min": 60,
+  "data_roots": [
+    "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m",
+    "C:\\Users\\yhach\\Documents\\tradebotfile\\data\\intraday_1m"
+  ],
+  "trades": 83,
+  "win_rate": 0.0,
+  "total_pnl_pct": -70.33913039357618,
+  "avg_pnl_pct": -0.8474594023322432,
+  "median_pnl_pct": -0.5717916137229987,
+  "max_loss_pct": -4.935064935064935,
+  "avg_loss_pct": -0.8474594023322432,
+  "profit_factor": 0.0,
+  "exit_reason_counts": {
+    "breakout_failure": 63,
+    "hard_stop": 16,
+    "board_imbalance_deterioration": 4
+  },
+  "daily": [
+    {
+      "trade_date": "2026-04-10",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.5262202866993286,
+      "avg_pnl_pct": -0.5262202866993286,
+      "median_pnl_pct": -0.5262202866993286,
+      "max_loss_pct": -0.5262202866993286,
+      "avg_loss_pct": -0.5262202866993286,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1
+      }
+    },
+    {
+      "trade_date": "2026-04-13",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -1.3324450366422385,
+      "avg_pnl_pct": -1.3324450366422385,
+      "median_pnl_pct": -1.3324450366422385,
+      "max_loss_pct": -1.3324450366422385,
+      "avg_loss_pct": -1.3324450366422385,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 1
+      }
+    },
+    {
+      "trade_date": "2026-04-14",
+      "trades": 5,
+      "win_rate": 0.0,
+      "total_pnl_pct": -2.542051125997215,
+      "avg_pnl_pct": -0.508410225199443,
+      "median_pnl_pct": -0.4627374573794447,
+      "max_loss_pct": -0.7184194771502694,
+      "avg_loss_pct": -0.508410225199443,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 5
+      }
+    },
+    {
+      "trade_date": "2026-04-15",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -2.2510536899435256,
+      "avg_pnl_pct": -0.7503512299811751,
+      "median_pnl_pct": -0.4869411243913236,
+      "max_loss_pct": -1.564245810055866,
+      "avg_loss_pct": -0.7503512299811751,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 1,
+        "breakout_failure": 2
+      }
+    },
+    {
+      "trade_date": "2026-04-16",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -1.497859608194902,
+      "avg_pnl_pct": -0.49928653606496737,
+      "median_pnl_pct": -0.5717916137229987,
+      "max_loss_pct": -0.6220506220506221,
+      "avg_loss_pct": -0.49928653606496737,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 3
+      }
+    },
+    {
+      "trade_date": "2026-04-21",
+      "trades": 5,
+      "win_rate": 0.0,
+      "total_pnl_pct": -2.5547215677584925,
+      "avg_pnl_pct": -0.5109443135516984,
+      "median_pnl_pct": -0.5150554675118859,
+      "max_loss_pct": -1.131401349741961,
+      "avg_loss_pct": -0.5109443135516984,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 4,
+        "board_imbalance_deterioration": 1
+      }
+    },
+    {
+      "trade_date": "2026-04-22",
+      "trades": 13,
+      "win_rate": 0.0,
+      "total_pnl_pct": -7.623613989399669,
+      "avg_pnl_pct": -0.5864318453384361,
+      "median_pnl_pct": -0.5807622504537204,
+      "max_loss_pct": -1.1094396389620158,
+      "avg_loss_pct": -0.5864318453384361,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 13
+      }
+    },
+    {
+      "trade_date": "2026-04-23",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -1.2222579607590867,
+      "avg_pnl_pct": -1.2222579607590867,
+      "median_pnl_pct": -1.2222579607590867,
+      "max_loss_pct": -1.2222579607590867,
+      "avg_loss_pct": -1.2222579607590867,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 1
+      }
+    },
+    {
+      "trade_date": "2026-04-24",
+      "trades": 2,
+      "win_rate": 0.0,
+      "total_pnl_pct": -1.2728804297939935,
+      "avg_pnl_pct": -0.6364402148969968,
+      "median_pnl_pct": -0.6364402148969968,
+      "max_loss_pct": -0.6600101540023693,
+      "avg_loss_pct": -0.6364402148969968,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 2
+      }
+    },
+    {
+      "trade_date": "2026-04-27",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -2.0986967798149707,
+      "avg_pnl_pct": -0.6995655932716569,
+      "median_pnl_pct": -0.6371507923541905,
+      "max_loss_pct": -0.9981999672721321,
+      "avg_loss_pct": -0.6995655932716569,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 3
+      }
+    },
+    {
+      "trade_date": "2026-04-30",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -4.700606579152094,
+      "avg_pnl_pct": -1.5668688597173646,
+      "median_pnl_pct": -1.3178599527930763,
+      "max_loss_pct": -2.3255813953488373,
+      "avg_loss_pct": -1.5668688597173646,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 2,
+        "breakout_failure": 1
+      }
+    },
+    {
+      "trade_date": "2026-05-01",
+      "trades": 7,
+      "win_rate": 0.0,
+      "total_pnl_pct": -11.474639850145852,
+      "avg_pnl_pct": -1.6392342643065503,
+      "median_pnl_pct": -1.0052777079668258,
+      "max_loss_pct": -4.935064935064935,
+      "avg_loss_pct": -1.6392342643065503,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 4,
+        "hard_stop": 2,
+        "board_imbalance_deterioration": 1
+      }
+    },
+    {
+      "trade_date": "2026-05-07",
+      "trades": 17,
+      "win_rate": 0.0,
+      "total_pnl_pct": -7.5126664912662084,
+      "avg_pnl_pct": -0.4419215583097769,
+      "median_pnl_pct": -0.44709388971684055,
+      "max_loss_pct": -1.4133165829145728,
+      "avg_loss_pct": -0.4419215583097769,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 1,
+        "breakout_failure": 15,
+        "board_imbalance_deterioration": 1
+      }
+    },
+    {
+      "trade_date": "2026-05-08",
+      "trades": 4,
+      "win_rate": 0.0,
+      "total_pnl_pct": -8.17424419501811,
+      "avg_pnl_pct": -2.0435610487545275,
+      "median_pnl_pct": -1.8271928914720643,
+      "max_loss_pct": -4.504504504504505,
+      "avg_loss_pct": -2.0435610487545275,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "board_imbalance_deterioration": 1,
+        "hard_stop": 2,
+        "breakout_failure": 1
+      }
+    },
+    {
+      "trade_date": "2026-05-12",
+      "trades": 11,
+      "win_rate": 0.0,
+      "total_pnl_pct": -12.175278468554659,
+      "avg_pnl_pct": -1.1068434971413328,
+      "median_pnl_pct": -0.8897485493230174,
+      "max_loss_pct": -2.188679245283019,
+      "avg_loss_pct": -1.1068434971413328,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 5,
+        "breakout_failure": 6
+      }
+    },
+    {
+      "trade_date": "2026-05-13",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.3449465332873405,
+      "avg_pnl_pct": -0.3449465332873405,
+      "median_pnl_pct": -0.3449465332873405,
+      "max_loss_pct": -0.3449465332873405,
+      "avg_loss_pct": -0.3449465332873405,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1
+      }
+    },
+    {
+      "trade_date": "2026-05-14",
+      "trades": 2,
+      "win_rate": 0.0,
+      "total_pnl_pct": -2.6685864356197686,
+      "avg_pnl_pct": -1.3342932178098843,
+      "median_pnl_pct": -1.3342932178098843,
+      "max_loss_pct": -2.0761245674740483,
+      "avg_loss_pct": -1.3342932178098843,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1,
+        "hard_stop": 1
+      }
+    },
+    {
+      "trade_date": "2026-05-15",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.36636136552872606,
+      "avg_pnl_pct": -0.36636136552872606,
+      "median_pnl_pct": -0.36636136552872606,
+      "max_loss_pct": -0.36636136552872606,
+      "avg_loss_pct": -0.36636136552872606,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1
+      }
+    }
+  ],
+  "by_symbol": [
+    {
+      "symbol": "5016.T",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -4.893730731345283,
+      "avg_pnl_pct": -1.6312435771150942,
+      "median_pnl_pct": -1.986632008911994,
+      "max_loss_pct": -2.188679245283019,
+      "avg_loss_pct": -1.6312435771150942,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1,
+        "hard_stop": 2
+      }
+    },
+    {
+      "symbol": "5803.T",
+      "trades": 15,
+      "win_rate": 0.0,
+      "total_pnl_pct": -13.278925147288442,
+      "avg_pnl_pct": -0.8852616764858962,
+      "median_pnl_pct": -0.8406725380304243,
+      "max_loss_pct": -1.7277214861002859,
+      "avg_loss_pct": -0.8852616764858962,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 8,
+        "hard_stop": 6,
+        "board_imbalance_deterioration": 1
+      }
+    },
+    {
+      "symbol": "6315.T",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.44709388971684055,
+      "avg_pnl_pct": -0.44709388971684055,
+      "median_pnl_pct": -0.44709388971684055,
+      "max_loss_pct": -0.44709388971684055,
+      "avg_loss_pct": -0.44709388971684055,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1
+      }
+    },
+    {
+      "symbol": "6890.T",
+      "trades": 2,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.4576665030273278,
+      "avg_pnl_pct": -0.2288332515136639,
+      "median_pnl_pct": -0.2288332515136639,
+      "max_loss_pct": -0.22909507445589922,
+      "avg_loss_pct": -0.2288332515136639,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1,
+        "board_imbalance_deterioration": 1
+      }
+    },
+    {
+      "symbol": "7013.T",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -8.158890287448633,
+      "avg_pnl_pct": -2.719630095816211,
+      "median_pnl_pct": -3.159795365633464,
+      "max_loss_pct": -4.504504504504505,
+      "avg_loss_pct": -2.719630095816211,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 2,
+        "breakout_failure": 1
+      }
+    },
+    {
+      "symbol": "8001.T",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -1.0052777079668258,
+      "avg_pnl_pct": -1.0052777079668258,
+      "median_pnl_pct": -1.0052777079668258,
+      "max_loss_pct": -1.0052777079668258,
+      "avg_loss_pct": -1.0052777079668258,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1
+      }
+    },
+    {
+      "symbol": "8002.T",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -4.935064935064935,
+      "avg_pnl_pct": -4.935064935064935,
+      "median_pnl_pct": -4.935064935064935,
+      "max_loss_pct": -4.935064935064935,
+      "avg_loss_pct": -4.935064935064935,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 1
+      }
+    },
+    {
+      "symbol": "8058.T",
+      "trades": 2,
+      "win_rate": 0.0,
+      "total_pnl_pct": -3.4025709942830282,
+      "avg_pnl_pct": -1.7012854971415141,
+      "median_pnl_pct": -1.7012854971415141,
+      "max_loss_pct": -3.057624460995688,
+      "avg_loss_pct": -1.7012854971415141,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 1,
+        "breakout_failure": 1
+      }
+    },
+    {
+      "symbol": "8306.T",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.017869907076483203,
+      "avg_pnl_pct": -0.017869907076483203,
+      "median_pnl_pct": -0.017869907076483203,
+      "max_loss_pct": -0.017869907076483203,
+      "avg_loss_pct": -0.017869907076483203,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "board_imbalance_deterioration": 1
+      }
+    },
+    {
+      "symbol": "9984.T",
+      "trades": 54,
+      "win_rate": 0.0,
+      "total_pnl_pct": -33.74204029035838,
+      "avg_pnl_pct": -0.6248525979695997,
+      "median_pnl_pct": -0.5054616180534637,
+      "max_loss_pct": -2.3255813953488373,
+      "avg_loss_pct": -0.6248525979695997,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 49,
+        "hard_stop": 4,
+        "board_imbalance_deterioration": 1
+      }
+    }
+  ],
+  "skipped_inputs_count": 432,
+  "skipped_inputs": [
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-04-11",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-11\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-04-12",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-12\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-04-18",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-18\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-04-19",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-19\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-04-20",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-20\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-04-25",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-25\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-04-26",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-26\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-04-29",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-04-29\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-05-02",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-02\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-05-03",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-03\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-05-04",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-04\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-05-05",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-05\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-05-06",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-06\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-05-09",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-09\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-05-10",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-10\\9984.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "1306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\1306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "1321.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\1321.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "5016.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\5016.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "5803.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\5803.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "6315.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\6315.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "6501.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\6501.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "6526.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\6526.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "6857.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\6857.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "6890.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\6890.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "6920.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\6920.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "7003.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\7003.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "7011.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\7011.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "7012.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\7012.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "7013.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\7013.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "7203.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\7203.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "7974.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\7974.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "8001.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\8001.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "8002.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\8002.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "8031.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\8031.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "8058.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\8058.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "8136.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\8136.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "8306.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\8306.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "8473.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\8473.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "9412.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\9412.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "9432.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\9432.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "9434.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\9434.T.csv"
+    },
+    {
+      "trade_date": "2026-05-11",
+      "symbol": "9984.T",
+      "skip_reason": "missing_intraday_csv",
+      "csv_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\data\\intraday_1m\\2026-05-11\\9984.T.csv"
+    }
+  ]
+}

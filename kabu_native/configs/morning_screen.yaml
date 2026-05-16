@@ -1,0 +1,34 @@
+# kabu_native 朝スクリーニング
+# python kabu_native/scripts/run_morning_screen.py --universe kabu_native/data/universe/universe_20260516.csv
+
+# 寄り前 / 寄り直後 / 引け後 — board が取れれば実行（freshness は加点のみ）
+session_mode: any
+
+weights:
+  trading_value: 0.15
+  trading_volume: 0.10
+  current_price: 0.05
+  change_pct: 0.15
+  vwap_distance: 0.15
+  high_proximity: 0.15
+  spread_bps: 0.10
+  board_imbalance: 0.10
+  freshness: 0.05
+  security_type: 0.00
+
+gates:
+  require_security_type_equity: true
+  min_trading_value: null
+  min_trading_volume: null
+  min_change_pct: null
+  max_change_pct: 12.0
+  max_spread_bps: 40.0
+  max_freshness_sec: null
+  min_price: 100
+  max_price: 150000
+
+# 出力銘柄数（pass_screen=true のみ、score 降順）
+max_symbols: 10
+
+# 全行を CSV に出す（false なら pass_screen のみ）
+output_all_rows: true

@@ -1,0 +1,120 @@
+{
+  "component": "kabu_native.check_shadow_safety",
+  "generated_at": "2026-05-17T01:29:03",
+  "overall_pass": true,
+  "ready_for_weekday_shadow": true,
+  "config_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\configs\\shadow.yaml",
+  "report_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\results\\reports\\safety_report_20260517.json",
+  "checks": [
+    {
+      "check_id": "no_legacy_modules_loaded",
+      "passed": true,
+      "message": "legacy shadow/yahoo modules not imported",
+      "details": {
+        "kabu_signal_shadow": false,
+        "yahoo_kabu_watch": false
+      }
+    },
+    {
+      "check_id": "safety_flags",
+      "passed": true,
+      "message": "all safety flags false",
+      "details": {
+        "discord_enabled": false,
+        "order_enabled": false,
+        "legacy_yahoo_watch_enabled": false,
+        "expected": {
+          "discord_enabled": false,
+          "order_enabled": false,
+          "legacy_yahoo_watch_enabled": false
+        }
+      }
+    },
+    {
+      "check_id": "no_entry_until_absent",
+      "passed": true,
+      "message": "no deprecated no_entry_until keys",
+      "details": {
+        "deprecated_paths": [],
+        "use": "market_session_control in rules"
+      }
+    },
+    {
+      "check_id": "market_session_control",
+      "passed": true,
+      "message": "market_session_control=true (Phase 13 adopted)",
+      "details": {
+        "market_session_control": true
+      }
+    },
+    {
+      "check_id": "output_paths",
+      "passed": true,
+      "message": "output dir writable: C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\results\\shadow\\20260517",
+      "details": {
+        "shadow_dir": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\results\\shadow\\20260517",
+        "shadow_events_csv": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\results\\shadow\\20260517\\shadow_events.csv",
+        "shadow_events_jsonl": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\results\\shadow\\20260517\\shadow_events.jsonl"
+      }
+    },
+    {
+      "check_id": "watchlist_morning_screen",
+      "passed": true,
+      "message": "morning_screen: 3 symbols",
+      "details": {
+        "symbols": [
+          "9984.T",
+          "8306.T",
+          "6758.T"
+        ],
+        "count": 3
+      }
+    },
+    {
+      "check_id": "watchlist_universe",
+      "passed": true,
+      "message": "universe: 10 symbols",
+      "details": {
+        "symbols": [
+          "1306.T",
+          "1321.T",
+          "5016.T",
+          "5803.T",
+          "6315.T",
+          "6501.T",
+          "6526.T",
+          "6857.T",
+          "6890.T",
+          "6920.T"
+        ],
+        "count": 10
+      }
+    },
+    {
+      "check_id": "watchlist_configured_source",
+      "passed": true,
+      "message": "configured source=morning_screen",
+      "details": {
+        "source": "morning_screen"
+      }
+    },
+    {
+      "check_id": "api",
+      "passed": true,
+      "message": "skipped (--skip-api)",
+      "details": {
+        "skipped": true
+      }
+    },
+    {
+      "check_id": "shadow_run",
+      "passed": true,
+      "message": "skipped (--skip-run)",
+      "details": {
+        "skipped": true
+      }
+    }
+  ],
+  "warnings": [],
+  "failed_check_ids": []
+}

@@ -1,0 +1,1228 @@
+{
+  "meta": {
+    "component": "kabu_native.analyze_replay_results",
+    "generated_at_local": "2026-05-16T22:23:48",
+    "replay_root": "kabu_native\\results\\replay",
+    "latest_run_only": true,
+    "run_dir": "kabu_native\\results\\replay\\20260516\\replay_20260516_221700",
+    "trade_count": 83,
+    "unique_symbols": [
+      "5016.T",
+      "5803.T",
+      "6315.T",
+      "6890.T",
+      "7013.T",
+      "8001.T",
+      "8002.T",
+      "8058.T",
+      "8306.T",
+      "9984.T"
+    ],
+    "unique_dates": [
+      "2026-04-10",
+      "2026-04-13",
+      "2026-04-14",
+      "2026-04-15",
+      "2026-04-16",
+      "2026-04-21",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-04-24",
+      "2026-04-27",
+      "2026-04-30",
+      "2026-05-01",
+      "2026-05-07",
+      "2026-05-08",
+      "2026-05-12",
+      "2026-05-13",
+      "2026-05-14",
+      "2026-05-15"
+    ],
+    "source_runs": [
+      "replay_20260516_221700"
+    ]
+  },
+  "overall": {
+    "trades": 83,
+    "win_rate": 0.0,
+    "total_pnl_pct": -70.339129,
+    "avg_pnl_pct": -0.8474593855421687,
+    "median_pnl_pct": -0.571792,
+    "max_loss_pct": -4.935065,
+    "avg_loss_pct": -0.8474593855421687,
+    "profit_factor": 0.0
+  },
+  "symbol_concentration": {
+    "overfitting": {
+      "total_pnl_pct": -70.339129,
+      "symbol": {
+        "symbol_count": 10,
+        "symbol_largest_abs_share": 0.4797,
+        "symbol_largest_abs_key": "9984.T",
+        "symbol_best_total_pnl": {
+          "key": "8306.T",
+          "pnl": -0.01787
+        },
+        "symbol_worst_total_pnl": {
+          "key": "9984.T",
+          "pnl": -33.74204
+        },
+        "symbol_single_dominates": false
+      },
+      "day": {
+        "day_count": 18,
+        "day_largest_abs_share": 0.1731,
+        "day_largest_abs_key": "2026-05-12",
+        "day_best_total_pnl": {
+          "key": "2026-05-13",
+          "pnl": -0.344947
+        },
+        "day_worst_total_pnl": {
+          "key": "2026-05-12",
+          "pnl": -12.175277
+        },
+        "day_single_dominates": false
+      },
+      "exit_reason_top": {
+        "reason": "breakout_failure",
+        "count": 63,
+        "share": 0.759
+      },
+      "exit_reason_counts": {
+        "breakout_failure": 63,
+        "hard_stop": 16,
+        "board_imbalance_deterioration": 4
+      },
+      "risk_flags": [
+        "exit_reason_heavily_skewed"
+      ],
+      "interpretation": [
+        "EXIT が1理由に偏っている（最大 76%）。kabu_exit_v1 の breakout_failure / hard_stop 閾値を構造単位で見直す候補。",
+        "全体マイナスかつ breakout_failure 偏重 → エントリー直後の失敗判定が厳しすぎる可能性。"
+      ]
+    },
+    "worst_pnl_symbols": [
+      {
+        "symbol": "9984.T",
+        "trades": 54,
+        "win_rate": 0.0,
+        "total_pnl_pct": -33.74204,
+        "avg_pnl_pct": -0.6248525925925926,
+        "median_pnl_pct": -0.5054615,
+        "max_loss_pct": -2.325581,
+        "avg_loss_pct": -0.6248525925925926,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "breakout_failure": 49,
+          "hard_stop": 4,
+          "board_imbalance_deterioration": 1
+        }
+      },
+      {
+        "symbol": "5803.T",
+        "trades": 15,
+        "win_rate": 0.0,
+        "total_pnl_pct": -13.278925000000001,
+        "avg_pnl_pct": -0.8852616666666667,
+        "median_pnl_pct": -0.840673,
+        "max_loss_pct": -1.727721,
+        "avg_loss_pct": -0.8852616666666667,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "breakout_failure": 8,
+          "hard_stop": 6,
+          "board_imbalance_deterioration": 1
+        }
+      },
+      {
+        "symbol": "7013.T",
+        "trades": 3,
+        "win_rate": 0.0,
+        "total_pnl_pct": -8.15889,
+        "avg_pnl_pct": -2.71963,
+        "median_pnl_pct": -3.159795,
+        "max_loss_pct": -4.504505,
+        "avg_loss_pct": -2.71963,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "hard_stop": 2,
+          "breakout_failure": 1
+        }
+      },
+      {
+        "symbol": "8002.T",
+        "trades": 1,
+        "win_rate": 0.0,
+        "total_pnl_pct": -4.935065,
+        "avg_pnl_pct": -4.935065,
+        "median_pnl_pct": -4.935065,
+        "max_loss_pct": -4.935065,
+        "avg_loss_pct": -4.935065,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "hard_stop": 1
+        }
+      },
+      {
+        "symbol": "5016.T",
+        "trades": 3,
+        "win_rate": 0.0,
+        "total_pnl_pct": -4.89373,
+        "avg_pnl_pct": -1.6312433333333334,
+        "median_pnl_pct": -1.986632,
+        "max_loss_pct": -2.188679,
+        "avg_loss_pct": -1.6312433333333334,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "breakout_failure": 1,
+          "hard_stop": 2
+        }
+      },
+      {
+        "symbol": "8058.T",
+        "trades": 2,
+        "win_rate": 0.0,
+        "total_pnl_pct": -3.402571,
+        "avg_pnl_pct": -1.7012855,
+        "median_pnl_pct": -1.7012855,
+        "max_loss_pct": -3.057624,
+        "avg_loss_pct": -1.7012855,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "hard_stop": 1,
+          "breakout_failure": 1
+        }
+      },
+      {
+        "symbol": "8001.T",
+        "trades": 1,
+        "win_rate": 0.0,
+        "total_pnl_pct": -1.005278,
+        "avg_pnl_pct": -1.005278,
+        "median_pnl_pct": -1.005278,
+        "max_loss_pct": -1.005278,
+        "avg_loss_pct": -1.005278,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "breakout_failure": 1
+        }
+      },
+      {
+        "symbol": "6890.T",
+        "trades": 2,
+        "win_rate": 0.0,
+        "total_pnl_pct": -0.457666,
+        "avg_pnl_pct": -0.228833,
+        "median_pnl_pct": -0.228833,
+        "max_loss_pct": -0.229095,
+        "avg_loss_pct": -0.228833,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "breakout_failure": 1,
+          "board_imbalance_deterioration": 1
+        }
+      }
+    ],
+    "most_active_symbols": [
+      {
+        "symbol": "9984.T",
+        "trades": 54,
+        "win_rate": 0.0,
+        "total_pnl_pct": -33.74204,
+        "avg_pnl_pct": -0.6248525925925926,
+        "median_pnl_pct": -0.5054615,
+        "max_loss_pct": -2.325581,
+        "avg_loss_pct": -0.6248525925925926,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "breakout_failure": 49,
+          "hard_stop": 4,
+          "board_imbalance_deterioration": 1
+        }
+      },
+      {
+        "symbol": "5803.T",
+        "trades": 15,
+        "win_rate": 0.0,
+        "total_pnl_pct": -13.278925000000001,
+        "avg_pnl_pct": -0.8852616666666667,
+        "median_pnl_pct": -0.840673,
+        "max_loss_pct": -1.727721,
+        "avg_loss_pct": -0.8852616666666667,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "breakout_failure": 8,
+          "hard_stop": 6,
+          "board_imbalance_deterioration": 1
+        }
+      },
+      {
+        "symbol": "7013.T",
+        "trades": 3,
+        "win_rate": 0.0,
+        "total_pnl_pct": -8.15889,
+        "avg_pnl_pct": -2.71963,
+        "median_pnl_pct": -3.159795,
+        "max_loss_pct": -4.504505,
+        "avg_loss_pct": -2.71963,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "hard_stop": 2,
+          "breakout_failure": 1
+        }
+      },
+      {
+        "symbol": "5016.T",
+        "trades": 3,
+        "win_rate": 0.0,
+        "total_pnl_pct": -4.89373,
+        "avg_pnl_pct": -1.6312433333333334,
+        "median_pnl_pct": -1.986632,
+        "max_loss_pct": -2.188679,
+        "avg_loss_pct": -1.6312433333333334,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "breakout_failure": 1,
+          "hard_stop": 2
+        }
+      },
+      {
+        "symbol": "8058.T",
+        "trades": 2,
+        "win_rate": 0.0,
+        "total_pnl_pct": -3.402571,
+        "avg_pnl_pct": -1.7012855,
+        "median_pnl_pct": -1.7012855,
+        "max_loss_pct": -3.057624,
+        "avg_loss_pct": -1.7012855,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "hard_stop": 1,
+          "breakout_failure": 1
+        }
+      },
+      {
+        "symbol": "6890.T",
+        "trades": 2,
+        "win_rate": 0.0,
+        "total_pnl_pct": -0.457666,
+        "avg_pnl_pct": -0.228833,
+        "median_pnl_pct": -0.228833,
+        "max_loss_pct": -0.229095,
+        "avg_loss_pct": -0.228833,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "breakout_failure": 1,
+          "board_imbalance_deterioration": 1
+        }
+      },
+      {
+        "symbol": "8002.T",
+        "trades": 1,
+        "win_rate": 0.0,
+        "total_pnl_pct": -4.935065,
+        "avg_pnl_pct": -4.935065,
+        "median_pnl_pct": -4.935065,
+        "max_loss_pct": -4.935065,
+        "avg_loss_pct": -4.935065,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "hard_stop": 1
+        }
+      },
+      {
+        "symbol": "8001.T",
+        "trades": 1,
+        "win_rate": 0.0,
+        "total_pnl_pct": -1.005278,
+        "avg_pnl_pct": -1.005278,
+        "median_pnl_pct": -1.005278,
+        "max_loss_pct": -1.005278,
+        "avg_loss_pct": -1.005278,
+        "profit_factor": 0.0,
+        "exit_reason_counts": {
+          "breakout_failure": 1
+        }
+      }
+    ]
+  },
+  "by_symbol": [
+    {
+      "symbol": "9984.T",
+      "trades": 54,
+      "win_rate": 0.0,
+      "total_pnl_pct": -33.74204,
+      "avg_pnl_pct": -0.6248525925925926,
+      "median_pnl_pct": -0.5054615,
+      "max_loss_pct": -2.325581,
+      "avg_loss_pct": -0.6248525925925926,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 49,
+        "hard_stop": 4,
+        "board_imbalance_deterioration": 1
+      }
+    },
+    {
+      "symbol": "5803.T",
+      "trades": 15,
+      "win_rate": 0.0,
+      "total_pnl_pct": -13.278925000000001,
+      "avg_pnl_pct": -0.8852616666666667,
+      "median_pnl_pct": -0.840673,
+      "max_loss_pct": -1.727721,
+      "avg_loss_pct": -0.8852616666666667,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 8,
+        "hard_stop": 6,
+        "board_imbalance_deterioration": 1
+      }
+    },
+    {
+      "symbol": "7013.T",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -8.15889,
+      "avg_pnl_pct": -2.71963,
+      "median_pnl_pct": -3.159795,
+      "max_loss_pct": -4.504505,
+      "avg_loss_pct": -2.71963,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 2,
+        "breakout_failure": 1
+      }
+    },
+    {
+      "symbol": "8002.T",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -4.935065,
+      "avg_pnl_pct": -4.935065,
+      "median_pnl_pct": -4.935065,
+      "max_loss_pct": -4.935065,
+      "avg_loss_pct": -4.935065,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 1
+      }
+    },
+    {
+      "symbol": "5016.T",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -4.89373,
+      "avg_pnl_pct": -1.6312433333333334,
+      "median_pnl_pct": -1.986632,
+      "max_loss_pct": -2.188679,
+      "avg_loss_pct": -1.6312433333333334,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1,
+        "hard_stop": 2
+      }
+    },
+    {
+      "symbol": "8058.T",
+      "trades": 2,
+      "win_rate": 0.0,
+      "total_pnl_pct": -3.402571,
+      "avg_pnl_pct": -1.7012855,
+      "median_pnl_pct": -1.7012855,
+      "max_loss_pct": -3.057624,
+      "avg_loss_pct": -1.7012855,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "hard_stop": 1,
+        "breakout_failure": 1
+      }
+    },
+    {
+      "symbol": "8001.T",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -1.005278,
+      "avg_pnl_pct": -1.005278,
+      "median_pnl_pct": -1.005278,
+      "max_loss_pct": -1.005278,
+      "avg_loss_pct": -1.005278,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1
+      }
+    },
+    {
+      "symbol": "6890.T",
+      "trades": 2,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.457666,
+      "avg_pnl_pct": -0.228833,
+      "median_pnl_pct": -0.228833,
+      "max_loss_pct": -0.229095,
+      "avg_loss_pct": -0.228833,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1,
+        "board_imbalance_deterioration": 1
+      }
+    },
+    {
+      "symbol": "6315.T",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.447094,
+      "avg_pnl_pct": -0.447094,
+      "median_pnl_pct": -0.447094,
+      "max_loss_pct": -0.447094,
+      "avg_loss_pct": -0.447094,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "breakout_failure": 1
+      }
+    },
+    {
+      "symbol": "8306.T",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.01787,
+      "avg_pnl_pct": -0.01787,
+      "median_pnl_pct": -0.01787,
+      "max_loss_pct": -0.01787,
+      "avg_loss_pct": -0.01787,
+      "profit_factor": 0.0,
+      "exit_reason_counts": {
+        "board_imbalance_deterioration": 1
+      }
+    }
+  ],
+  "by_day": [
+    {
+      "trade_date": "2026-04-10",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.52622,
+      "avg_pnl_pct": -0.52622,
+      "median_pnl_pct": -0.52622,
+      "max_loss_pct": -0.52622,
+      "avg_loss_pct": -0.52622,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-04-13",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -1.332445,
+      "avg_pnl_pct": -1.332445,
+      "median_pnl_pct": -1.332445,
+      "max_loss_pct": -1.332445,
+      "avg_loss_pct": -1.332445,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-04-14",
+      "trades": 5,
+      "win_rate": 0.0,
+      "total_pnl_pct": -2.54205,
+      "avg_pnl_pct": -0.50841,
+      "median_pnl_pct": -0.462737,
+      "max_loss_pct": -0.718419,
+      "avg_loss_pct": -0.50841,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-04-15",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -2.251054,
+      "avg_pnl_pct": -0.7503513333333334,
+      "median_pnl_pct": -0.486941,
+      "max_loss_pct": -1.564246,
+      "avg_loss_pct": -0.7503513333333334,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-04-16",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -1.49786,
+      "avg_pnl_pct": -0.49928666666666666,
+      "median_pnl_pct": -0.571792,
+      "max_loss_pct": -0.622051,
+      "avg_loss_pct": -0.49928666666666666,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-04-21",
+      "trades": 5,
+      "win_rate": 0.0,
+      "total_pnl_pct": -2.5547210000000002,
+      "avg_pnl_pct": -0.5109442000000001,
+      "median_pnl_pct": -0.515055,
+      "max_loss_pct": -1.131401,
+      "avg_loss_pct": -0.5109442000000001,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-04-22",
+      "trades": 13,
+      "win_rate": 0.0,
+      "total_pnl_pct": -7.623615,
+      "avg_pnl_pct": -0.586431923076923,
+      "median_pnl_pct": -0.580762,
+      "max_loss_pct": -1.10944,
+      "avg_loss_pct": -0.586431923076923,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-04-23",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -1.222258,
+      "avg_pnl_pct": -1.222258,
+      "median_pnl_pct": -1.222258,
+      "max_loss_pct": -1.222258,
+      "avg_loss_pct": -1.222258,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-04-24",
+      "trades": 2,
+      "win_rate": 0.0,
+      "total_pnl_pct": -1.27288,
+      "avg_pnl_pct": -0.63644,
+      "median_pnl_pct": -0.63644,
+      "max_loss_pct": -0.66001,
+      "avg_loss_pct": -0.63644,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-04-27",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -2.098697,
+      "avg_pnl_pct": -0.6995656666666666,
+      "median_pnl_pct": -0.637151,
+      "max_loss_pct": -0.9982,
+      "avg_loss_pct": -0.6995656666666666,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-04-30",
+      "trades": 3,
+      "win_rate": 0.0,
+      "total_pnl_pct": -4.7006060000000005,
+      "avg_pnl_pct": -1.5668686666666667,
+      "median_pnl_pct": -1.31786,
+      "max_loss_pct": -2.325581,
+      "avg_loss_pct": -1.5668686666666667,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-05-01",
+      "trades": 7,
+      "win_rate": 0.0,
+      "total_pnl_pct": -11.474639999999999,
+      "avg_pnl_pct": -1.6392342857142856,
+      "median_pnl_pct": -1.005278,
+      "max_loss_pct": -4.935065,
+      "avg_loss_pct": -1.6392342857142856,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-05-07",
+      "trades": 17,
+      "win_rate": 0.0,
+      "total_pnl_pct": -7.5126669999999995,
+      "avg_pnl_pct": -0.4419215882352941,
+      "median_pnl_pct": -0.447094,
+      "max_loss_pct": -1.413317,
+      "avg_loss_pct": -0.4419215882352941,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-05-08",
+      "trades": 4,
+      "win_rate": 0.0,
+      "total_pnl_pct": -8.174244,
+      "avg_pnl_pct": -2.043561,
+      "median_pnl_pct": -1.8271925,
+      "max_loss_pct": -4.504505,
+      "avg_loss_pct": -2.043561,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-05-12",
+      "trades": 11,
+      "win_rate": 0.0,
+      "total_pnl_pct": -12.175277,
+      "avg_pnl_pct": -1.1068433636363637,
+      "median_pnl_pct": -0.889749,
+      "max_loss_pct": -2.188679,
+      "avg_loss_pct": -1.1068433636363637,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-05-13",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.344947,
+      "avg_pnl_pct": -0.344947,
+      "median_pnl_pct": -0.344947,
+      "max_loss_pct": -0.344947,
+      "avg_loss_pct": -0.344947,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-05-14",
+      "trades": 2,
+      "win_rate": 0.0,
+      "total_pnl_pct": -2.6685870000000005,
+      "avg_pnl_pct": -1.3342935000000002,
+      "median_pnl_pct": -1.3342935000000002,
+      "max_loss_pct": -2.076125,
+      "avg_loss_pct": -1.3342935000000002,
+      "profit_factor": 0.0,
+      "winning_day": false
+    },
+    {
+      "trade_date": "2026-05-15",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.366361,
+      "avg_pnl_pct": -0.366361,
+      "median_pnl_pct": -0.366361,
+      "max_loss_pct": -0.366361,
+      "avg_loss_pct": -0.366361,
+      "profit_factor": 0.0,
+      "winning_day": false
+    }
+  ],
+  "by_exit_reason": [
+    {
+      "exit_reason": "breakout_failure",
+      "exit_reason_group": "breakout_failure",
+      "trades": 63,
+      "win_rate": 0.0,
+      "total_pnl_pct": -34.593993,
+      "avg_pnl_pct": -0.549111,
+      "median_pnl_pct": -0.495868,
+      "max_loss_pct": -1.189169,
+      "avg_loss_pct": -0.549111,
+      "profit_factor": 0.0
+    },
+    {
+      "exit_reason": "hard_stop",
+      "exit_reason_group": "hard_stop",
+      "trades": 16,
+      "win_rate": 0.0,
+      "total_pnl_pct": -35.424621,
+      "avg_pnl_pct": -2.2140388125,
+      "median_pnl_pct": -1.8571765,
+      "max_loss_pct": -4.935065,
+      "avg_loss_pct": -2.2140388125,
+      "profit_factor": 0.0
+    },
+    {
+      "exit_reason": "board_imbalance_deterioration",
+      "exit_reason_group": "other",
+      "trades": 4,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.320515,
+      "avg_pnl_pct": -0.08012875,
+      "median_pnl_pct": -0.038295,
+      "max_loss_pct": -0.228571,
+      "avg_loss_pct": -0.08012875,
+      "profit_factor": 0.0
+    }
+  ],
+  "by_exit_reason_group": [
+    {
+      "exit_reason_group": "breakout_failure",
+      "trades": 63,
+      "win_rate": 0.0,
+      "total_pnl_pct": -34.593993,
+      "avg_pnl_pct": -0.549111,
+      "median_pnl_pct": -0.495868,
+      "max_loss_pct": -1.189169,
+      "avg_loss_pct": -0.549111,
+      "profit_factor": 0.0
+    },
+    {
+      "exit_reason_group": "hard_stop",
+      "trades": 16,
+      "win_rate": 0.0,
+      "total_pnl_pct": -35.424621,
+      "avg_pnl_pct": -2.2140388125,
+      "median_pnl_pct": -1.8571765,
+      "max_loss_pct": -4.935065,
+      "avg_loss_pct": -2.2140388125,
+      "profit_factor": 0.0
+    },
+    {
+      "exit_reason_group": "other",
+      "trades": 4,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.320515,
+      "avg_pnl_pct": -0.08012875,
+      "median_pnl_pct": -0.038295,
+      "max_loss_pct": -0.228571,
+      "avg_loss_pct": -0.08012875,
+      "profit_factor": 0.0
+    }
+  ],
+  "by_time_band": [
+    {
+      "time_band_jst": "09:00-09:30",
+      "trades": 27,
+      "win_rate": 0.0,
+      "total_pnl_pct": -27.953379,
+      "avg_pnl_pct": -1.0353103333333333,
+      "median_pnl_pct": -0.80194,
+      "max_loss_pct": -2.325581,
+      "avg_loss_pct": -1.0353103333333333,
+      "profit_factor": 0.0
+    },
+    {
+      "time_band_jst": "09:30-10:30",
+      "trades": 20,
+      "win_rate": 0.0,
+      "total_pnl_pct": -10.072325,
+      "avg_pnl_pct": -0.50361625,
+      "median_pnl_pct": -0.478086,
+      "max_loss_pct": -0.9982,
+      "avg_loss_pct": -0.50361625,
+      "profit_factor": 0.0
+    },
+    {
+      "time_band_jst": "10:30-11:30",
+      "trades": 13,
+      "win_rate": 0.0,
+      "total_pnl_pct": -9.362619,
+      "avg_pnl_pct": -0.7202014615384615,
+      "median_pnl_pct": -0.399467,
+      "max_loss_pct": -4.935065,
+      "avg_loss_pct": -0.7202014615384615,
+      "profit_factor": 0.0
+    },
+    {
+      "time_band_jst": "12:30-13:30",
+      "trades": 14,
+      "win_rate": 0.0,
+      "total_pnl_pct": -12.998859,
+      "avg_pnl_pct": -0.9284899285714285,
+      "median_pnl_pct": -0.49076549999999997,
+      "max_loss_pct": -4.504505,
+      "avg_loss_pct": -0.9284899285714285,
+      "profit_factor": 0.0
+    },
+    {
+      "time_band_jst": "13:30-14:30",
+      "trades": 8,
+      "win_rate": 0.0,
+      "total_pnl_pct": -9.936593,
+      "avg_pnl_pct": -1.242074125,
+      "median_pnl_pct": -1.091454,
+      "max_loss_pct": -3.057624,
+      "avg_loss_pct": -1.242074125,
+      "profit_factor": 0.0
+    },
+    {
+      "time_band_jst": "14:30-15:30",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.015354,
+      "avg_pnl_pct": -0.015354,
+      "median_pnl_pct": -0.015354,
+      "max_loss_pct": -0.015354,
+      "avg_loss_pct": -0.015354,
+      "profit_factor": 0.0
+    }
+  ],
+  "by_tier_proxy": [
+    {
+      "tier_proxy": "tier_proxy_A",
+      "trades": 67,
+      "win_rate": 0.0,
+      "total_pnl_pct": -54.262843,
+      "avg_pnl_pct": -0.8098931791044776,
+      "median_pnl_pct": -0.531915,
+      "max_loss_pct": -4.935065,
+      "avg_loss_pct": -0.8098931791044776,
+      "profit_factor": 0.0
+    },
+    {
+      "tier_proxy": "tier_proxy_B",
+      "trades": 16,
+      "win_rate": 0.0,
+      "total_pnl_pct": -16.076286,
+      "avg_pnl_pct": -1.004767875,
+      "median_pnl_pct": -0.716888,
+      "max_loss_pct": -2.325581,
+      "avg_loss_pct": -1.004767875,
+      "profit_factor": 0.0
+    }
+  ],
+  "by_spread_bucket": [
+    {
+      "spread_bucket": "high",
+      "trades": 1,
+      "win_rate": 0.0,
+      "total_pnl_pct": -0.01787,
+      "avg_pnl_pct": -0.01787,
+      "median_pnl_pct": -0.01787,
+      "max_loss_pct": -0.01787,
+      "avg_loss_pct": -0.01787,
+      "profit_factor": 0.0
+    },
+    {
+      "spread_bucket": "mid",
+      "trades": 54,
+      "win_rate": 0.0,
+      "total_pnl_pct": -33.74204,
+      "avg_pnl_pct": -0.6248525925925926,
+      "median_pnl_pct": -0.5054615,
+      "max_loss_pct": -2.325581,
+      "avg_loss_pct": -0.6248525925925926,
+      "profit_factor": 0.0
+    },
+    {
+      "spread_bucket": "unknown",
+      "trades": 28,
+      "win_rate": 0.0,
+      "total_pnl_pct": -36.579219,
+      "avg_pnl_pct": -1.3064006785714286,
+      "median_pnl_pct": -0.865211,
+      "max_loss_pct": -4.935065,
+      "avg_loss_pct": -1.3064006785714286,
+      "profit_factor": 0.0
+    }
+  ],
+  "by_liquidity_bucket": [
+    {
+      "liquidity_bucket": "high",
+      "trades": 55,
+      "win_rate": 0.0,
+      "total_pnl_pct": -33.75991,
+      "avg_pnl_pct": -0.6138165454545454,
+      "median_pnl_pct": -0.495868,
+      "max_loss_pct": -2.325581,
+      "avg_loss_pct": -0.6138165454545454,
+      "profit_factor": 0.0
+    },
+    {
+      "liquidity_bucket": "unknown",
+      "trades": 28,
+      "win_rate": 0.0,
+      "total_pnl_pct": -36.579219,
+      "avg_pnl_pct": -1.3064006785714286,
+      "median_pnl_pct": -0.865211,
+      "max_loss_pct": -4.935065,
+      "avg_loss_pct": -1.3064006785714286,
+      "profit_factor": 0.0
+    }
+  ],
+  "pf_by_symbol": [
+    {
+      "symbol": "5016.T",
+      "trades": 3,
+      "total_pnl_pct": -4.89373,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "breakout_failure_share": 0.3333,
+      "opening_band_trades": 2,
+      "opening_band_pnl": -4.1753
+    },
+    {
+      "symbol": "5803.T",
+      "trades": 15,
+      "total_pnl_pct": -13.278925000000001,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "breakout_failure_share": 0.5333,
+      "opening_band_trades": 4,
+      "opening_band_pnl": -4.3859
+    },
+    {
+      "symbol": "6315.T",
+      "trades": 1,
+      "total_pnl_pct": -0.447094,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "breakout_failure_share": 1.0,
+      "opening_band_trades": 0,
+      "opening_band_pnl": 0.0
+    },
+    {
+      "symbol": "6890.T",
+      "trades": 2,
+      "total_pnl_pct": -0.457666,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "breakout_failure_share": 0.5,
+      "opening_band_trades": 0,
+      "opening_band_pnl": 0.0
+    },
+    {
+      "symbol": "7013.T",
+      "trades": 3,
+      "total_pnl_pct": -8.15889,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "breakout_failure_share": 0.3333,
+      "opening_band_trades": 0,
+      "opening_band_pnl": 0.0
+    },
+    {
+      "symbol": "8001.T",
+      "trades": 1,
+      "total_pnl_pct": -1.005278,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "breakout_failure_share": 1.0,
+      "opening_band_trades": 0,
+      "opening_band_pnl": 0.0
+    },
+    {
+      "symbol": "8002.T",
+      "trades": 1,
+      "total_pnl_pct": -4.935065,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "breakout_failure_share": 0.0,
+      "opening_band_trades": 0,
+      "opening_band_pnl": 0.0
+    },
+    {
+      "symbol": "8058.T",
+      "trades": 2,
+      "total_pnl_pct": -3.402571,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "breakout_failure_share": 0.5,
+      "opening_band_trades": 1,
+      "opening_band_pnl": -0.3449
+    },
+    {
+      "symbol": "8306.T",
+      "trades": 1,
+      "total_pnl_pct": -0.01787,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "breakout_failure_share": 0.0,
+      "opening_band_trades": 0,
+      "opening_band_pnl": 0.0
+    },
+    {
+      "symbol": "9984.T",
+      "trades": 54,
+      "total_pnl_pct": -33.74204,
+      "profit_factor": 0.0,
+      "win_rate": 0.0,
+      "breakout_failure_share": 0.9074,
+      "opening_band_trades": 20,
+      "opening_band_pnl": -19.0472
+    }
+  ],
+  "trades_insufficiency": {
+    "expected_symbol_count": 27,
+    "symbols_with_trades": 10,
+    "symbols_zero_trades": [
+      "1306.T",
+      "1321.T",
+      "6501.T",
+      "6526.T",
+      "6857.T",
+      "6920.T",
+      "7003.T",
+      "7011.T",
+      "7012.T",
+      "7203.T",
+      "7974.T",
+      "8031.T",
+      "8136.T",
+      "8473.T",
+      "9412.T",
+      "9432.T",
+      "9434.T"
+    ],
+    "symbols_low_trades_lt3": [
+      "6315.T",
+      "6890.T",
+      "8001.T",
+      "8002.T",
+      "8058.T",
+      "8306.T"
+    ],
+    "skipped_input_rows": 432,
+    "skipped_by_reason": {
+      "missing_intraday_csv": 432
+    },
+    "median_trades_per_symbol": 2.0
+  },
+  "opening_band_analysis": {
+    "opening_band": "09:00-09:30",
+    "symbols_with_opening_trades": 4,
+    "symbols_negative_opening_pnl": [
+      "5803.T",
+      "9984.T",
+      "5016.T",
+      "8058.T"
+    ],
+    "share_symbols_negative": 1.0,
+    "overall_opening": {
+      "trades": 27,
+      "win_rate": 0.0,
+      "total_pnl_pct": -27.953379,
+      "avg_pnl_pct": -1.0353103333333333,
+      "median_pnl_pct": -0.80194,
+      "max_loss_pct": -2.325581,
+      "avg_loss_pct": -1.0353103333333333,
+      "profit_factor": 0.0
+    },
+    "per_symbol_opening_pnl": [
+      {
+        "symbol": "9984.T",
+        "trades": 20,
+        "total_pnl_pct": -19.0472
+      },
+      {
+        "symbol": "5803.T",
+        "trades": 4,
+        "total_pnl_pct": -4.3859
+      },
+      {
+        "symbol": "5016.T",
+        "trades": 2,
+        "total_pnl_pct": -4.1753
+      },
+      {
+        "symbol": "8058.T",
+        "trades": 1,
+        "total_pnl_pct": -0.3449
+      }
+    ],
+    "is_universal_problem": true
+  },
+  "breakout_failure_analysis": {
+    "overall_breakout_failure_share": 0.759,
+    "symbols_bf_share_ge_70pct": [
+      "9984.T",
+      "8001.T",
+      "6315.T"
+    ],
+    "share_symbols_high_bf": 0.3,
+    "is_universal": false,
+    "per_symbol_bf_share": [
+      {
+        "symbol": "5016.T",
+        "breakout_failure_share": 0.3333
+      },
+      {
+        "symbol": "5803.T",
+        "breakout_failure_share": 0.5333
+      },
+      {
+        "symbol": "6315.T",
+        "breakout_failure_share": 1.0
+      },
+      {
+        "symbol": "6890.T",
+        "breakout_failure_share": 0.5
+      },
+      {
+        "symbol": "7013.T",
+        "breakout_failure_share": 0.3333
+      },
+      {
+        "symbol": "8001.T",
+        "breakout_failure_share": 1.0
+      },
+      {
+        "symbol": "8002.T",
+        "breakout_failure_share": 0.0
+      },
+      {
+        "symbol": "8058.T",
+        "breakout_failure_share": 0.5
+      },
+      {
+        "symbol": "8306.T",
+        "breakout_failure_share": 0.0
+      },
+      {
+        "symbol": "9984.T",
+        "breakout_failure_share": 0.9074
+      }
+    ]
+  },
+  "overfitting": {
+    "total_pnl_pct": -70.339129,
+    "symbol": {
+      "symbol_count": 10,
+      "symbol_largest_abs_share": 0.4797,
+      "symbol_largest_abs_key": "9984.T",
+      "symbol_best_total_pnl": {
+        "key": "8306.T",
+        "pnl": -0.01787
+      },
+      "symbol_worst_total_pnl": {
+        "key": "9984.T",
+        "pnl": -33.74204
+      },
+      "symbol_single_dominates": false
+    },
+    "day": {
+      "day_count": 18,
+      "day_largest_abs_share": 0.1731,
+      "day_largest_abs_key": "2026-05-12",
+      "day_best_total_pnl": {
+        "key": "2026-05-13",
+        "pnl": -0.344947
+      },
+      "day_worst_total_pnl": {
+        "key": "2026-05-12",
+        "pnl": -12.175277
+      },
+      "day_single_dominates": false
+    },
+    "exit_reason_top": {
+      "reason": "breakout_failure",
+      "count": 63,
+      "share": 0.759
+    },
+    "exit_reason_counts": {
+      "breakout_failure": 63,
+      "hard_stop": 16,
+      "board_imbalance_deterioration": 4
+    },
+    "risk_flags": [
+      "exit_reason_heavily_skewed"
+    ],
+    "interpretation": [
+      "EXIT が1理由に偏っている（最大 76%）。kabu_exit_v1 の breakout_failure / hard_stop 閾値を構造単位で見直す候補。",
+      "全体マイナスかつ breakout_failure 偏重 → エントリー直後の失敗判定が厳しすぎる可能性。"
+    ]
+  },
+  "next_adjustment_hints": [
+    "時間帯 09:00-09:30 が最悪（total_pnl=-27.9534）。エントリー時間帯ゲートまたは tier 別閾値の検討。",
+    "銘柄 9984.T で損失集中（54 trades）。個別パラメータではなく universe 流動性帯で見る。",
+    "breakout_failure 系 EXIT が主因 → fail_window / fail_buffer のスイープ（全銘柄共通）。"
+  ]
+}

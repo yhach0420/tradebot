@@ -115,6 +115,19 @@ class PushHistoryRing:
         cutoff = as_of.astimezone(timezone.utc) - PUSH_DENSITY_WINDOW
         return sum(1 for t, _, _ in self.samples if t >= cutoff)
 
+    def push_samples_avg_per_minute(
+        self, *, as_of: datetime, window: timedelta = timedelta(minutes=3)
+    ) -> Optional[float]:
+        """直近 window 内のサンプル数を分あたり平均に換算（EXIT push_density 用）。"""
+        if not self.samples:
+            return None
+        cutoff = as_of.astimezone(timezone.utc) - window
+        count = sum(1 for t, _, _ in self.samples if t >= cutoff)
+        minutes = window.total_seconds() / 60.0
+        if minutes <= 0:
+            return None
+        return float(count) / minutes
+
     def volume_delta_30s(self, *, as_of: datetime) -> Optional[float]:
         if not self.volume_deltas:
             return None

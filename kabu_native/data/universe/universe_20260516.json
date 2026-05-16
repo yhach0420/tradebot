@@ -1,0 +1,267 @@
+{
+  "meta": {
+    "component": "kabu_native.build_universe",
+    "generated_at_local": "2026-05-16T21:47:37",
+    "config_path": "kabu_native\\configs\\universe.yaml",
+    "base_url": "http://localhost:18080/kabusapi",
+    "day_stamp": "20260516",
+    "csv_path": "kabu_native\\data\\universe\\universe_20260516.csv",
+    "json_path": "kabu_native\\data\\universe\\universe_20260516.json",
+    "runtime_log": "logs\\runtime\\kabu_native_build_universe_20260516.log",
+    "candidate_count": 6,
+    "included_count": 3,
+    "excluded_count": 3
+  },
+  "config": {
+    "market": "prime",
+    "include_symbols": [
+      "9984",
+      "7203",
+      "6758",
+      "8306",
+      "1306",
+      "1321"
+    ],
+    "exclude_symbols": [],
+    "exclude_etf": true,
+    "min_trading_value": 5000000000.0,
+    "min_trading_volume": null,
+    "min_price": 300.0,
+    "max_price": 100000.0,
+    "max_spread_bps": 30.0,
+    "max_symbols": 20,
+    "default_exchange": 1
+  },
+  "included": [
+    {
+      "symbol": "9984",
+      "exchange": 1,
+      "symbol_key": "9984@1",
+      "symbol_name": "ソフトバンクグループ",
+      "passed": true,
+      "exclude_reasons": [],
+      "metrics": {
+        "current_price": 5745.0,
+        "trading_value": 409873170400.0,
+        "trading_volume": 69924000.0,
+        "spread_bps": 6.9602,
+        "security_type": 1,
+        "exchange_name": "東証プ"
+      },
+      "board_error": null
+    },
+    {
+      "symbol": "6758",
+      "exchange": 1,
+      "symbol_key": "6758@1",
+      "symbol_name": "ソニーグループ",
+      "passed": true,
+      "exclude_reasons": [],
+      "metrics": {
+        "current_price": 3576.0,
+        "trading_value": 114647778300.0,
+        "trading_volume": 31904000.0,
+        "spread_bps": 5.5928,
+        "security_type": 1,
+        "exchange_name": "東証プ"
+      },
+      "board_error": null
+    },
+    {
+      "symbol": "8306",
+      "exchange": 1,
+      "symbol_key": "8306@1",
+      "symbol_name": "三菱ＵＦＪフィナンシャル・グループ",
+      "passed": true,
+      "exclude_reasons": [],
+      "metrics": {
+        "current_price": 2929.0,
+        "trading_value": 138013524750.0,
+        "trading_volume": 47220900.0,
+        "spread_bps": 25.6345,
+        "security_type": 1,
+        "exchange_name": "東証プ"
+      },
+      "board_error": null
+    }
+  ],
+  "excluded": [
+    {
+      "symbol": "7203",
+      "exchange": 1,
+      "symbol_key": "7203@1",
+      "symbol_name": "トヨタ自動車",
+      "passed": false,
+      "exclude_reasons": [
+        "missing_trading_value",
+        "missing_spread_bps"
+      ],
+      "metrics": {
+        "current_price": 3085.0,
+        "trading_value": null,
+        "trading_volume": null,
+        "spread_bps": null,
+        "security_type": 1,
+        "exchange_name": "東証プ"
+      },
+      "board_error": null
+    },
+    {
+      "symbol": "1306",
+      "exchange": 1,
+      "symbol_key": "1306@1",
+      "symbol_name": "ＮＥＸＴ　ＦＵＮＤＳ　ＴＯＰＩＸ連動型上場投信",
+      "passed": false,
+      "exclude_reasons": [
+        "market_not_prime",
+        "etf",
+        "missing_trading_value",
+        "missing_spread_bps"
+      ],
+      "metrics": {
+        "current_price": 409.9,
+        "trading_value": null,
+        "trading_volume": null,
+        "spread_bps": null,
+        "security_type": 1,
+        "exchange_name": "東証ETF/ETN"
+      },
+      "board_error": null
+    },
+    {
+      "symbol": "1321",
+      "exchange": 1,
+      "symbol_key": "1321@1",
+      "symbol_name": "ＮＥＸＴ　ＦＵＮＤＳ　日経２２５連動型上場投信",
+      "passed": false,
+      "exclude_reasons": [
+        "market_not_prime",
+        "etf"
+      ],
+      "metrics": {
+        "current_price": 64280.0,
+        "trading_value": 46259552240.0,
+        "trading_volume": 714753.0,
+        "spread_bps": 9.3371,
+        "security_type": 1,
+        "exchange_name": "東証ETF/ETN"
+      },
+      "board_error": null
+    }
+  ],
+  "rows": [
+    {
+      "symbol": "9984",
+      "exchange": 1,
+      "symbol_key": "9984@1",
+      "symbol_name": "ソフトバンクグループ",
+      "passed": true,
+      "exclude_reasons": [],
+      "metrics": {
+        "current_price": 5745.0,
+        "trading_value": 409873170400.0,
+        "trading_volume": 69924000.0,
+        "spread_bps": 6.9602,
+        "security_type": 1,
+        "exchange_name": "東証プ"
+      },
+      "board_error": null
+    },
+    {
+      "symbol": "7203",
+      "exchange": 1,
+      "symbol_key": "7203@1",
+      "symbol_name": "トヨタ自動車",
+      "passed": false,
+      "exclude_reasons": [
+        "missing_trading_value",
+        "missing_spread_bps"
+      ],
+      "metrics": {
+        "current_price": 3085.0,
+        "trading_value": null,
+        "trading_volume": null,
+        "spread_bps": null,
+        "security_type": 1,
+        "exchange_name": "東証プ"
+      },
+      "board_error": null
+    },
+    {
+      "symbol": "6758",
+      "exchange": 1,
+      "symbol_key": "6758@1",
+      "symbol_name": "ソニーグループ",
+      "passed": true,
+      "exclude_reasons": [],
+      "metrics": {
+        "current_price": 3576.0,
+        "trading_value": 114647778300.0,
+        "trading_volume": 31904000.0,
+        "spread_bps": 5.5928,
+        "security_type": 1,
+        "exchange_name": "東証プ"
+      },
+      "board_error": null
+    },
+    {
+      "symbol": "8306",
+      "exchange": 1,
+      "symbol_key": "8306@1",
+      "symbol_name": "三菱ＵＦＪフィナンシャル・グループ",
+      "passed": true,
+      "exclude_reasons": [],
+      "metrics": {
+        "current_price": 2929.0,
+        "trading_value": 138013524750.0,
+        "trading_volume": 47220900.0,
+        "spread_bps": 25.6345,
+        "security_type": 1,
+        "exchange_name": "東証プ"
+      },
+      "board_error": null
+    },
+    {
+      "symbol": "1306",
+      "exchange": 1,
+      "symbol_key": "1306@1",
+      "symbol_name": "ＮＥＸＴ　ＦＵＮＤＳ　ＴＯＰＩＸ連動型上場投信",
+      "passed": false,
+      "exclude_reasons": [
+        "market_not_prime",
+        "etf",
+        "missing_trading_value",
+        "missing_spread_bps"
+      ],
+      "metrics": {
+        "current_price": 409.9,
+        "trading_value": null,
+        "trading_volume": null,
+        "spread_bps": null,
+        "security_type": 1,
+        "exchange_name": "東証ETF/ETN"
+      },
+      "board_error": null
+    },
+    {
+      "symbol": "1321",
+      "exchange": 1,
+      "symbol_key": "1321@1",
+      "symbol_name": "ＮＥＸＴ　ＦＵＮＤＳ　日経２２５連動型上場投信",
+      "passed": false,
+      "exclude_reasons": [
+        "market_not_prime",
+        "etf"
+      ],
+      "metrics": {
+        "current_price": 64280.0,
+        "trading_value": 46259552240.0,
+        "trading_volume": 714753.0,
+        "spread_bps": 9.3371,
+        "security_type": 1,
+        "exchange_name": "東証ETF/ETN"
+      },
+      "board_error": null
+    }
+  ]
+}

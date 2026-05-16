@@ -1,0 +1,17 @@
+trade_date,symbol,skip_reason,csv_path
+2026-05-02,9984.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-02\9984.T.csv
+2026-05-02,8306.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-02\8306.T.csv
+2026-05-03,9984.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-03\9984.T.csv
+2026-05-03,8306.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-03\8306.T.csv
+2026-05-04,9984.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-04\9984.T.csv
+2026-05-04,8306.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-04\8306.T.csv
+2026-05-05,9984.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-05\9984.T.csv
+2026-05-05,8306.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-05\8306.T.csv
+2026-05-06,9984.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-06\9984.T.csv
+2026-05-06,8306.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-06\8306.T.csv
+2026-05-09,9984.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-09\9984.T.csv
+2026-05-09,8306.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-09\8306.T.csv
+2026-05-10,9984.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-10\9984.T.csv
+2026-05-10,8306.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-10\8306.T.csv
+2026-05-11,9984.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-11\9984.T.csv
+2026-05-11,8306.T,missing_intraday_csv,C:\Users\yhach\Documents\tradebotfile\kabu_native\data\intraday_1m\2026-05-11\8306.T.csv

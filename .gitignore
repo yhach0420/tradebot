@@ -1,3 +1,7 @@
 watchlist.json
 .env
 results/
+# kabu_native: 空の成果物バケットだけ追跡（実行結果本体はコミットしない）
+!kabu_native/results/
+!kabu_native/results/**/
+!kabu_native/results/**/.gitkeep

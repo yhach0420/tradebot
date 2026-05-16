@@ -9,7 +9,10 @@
 |------------|------|
 | `src/signal_engine.py` | Yahoo プロファイル（**変更なし**） |
 | `src/kabu_signal_engine.py` | kabu_signal_v1（**新規**） |
-| `src/kabu_signal_shadow.py` | paper_trade シャドウ（**Phase 5D**） |
+| `src/kabu_signal_shadow.py` | paper_trade シャドウ（**Phase 5D / 5F-E0**） |
+| `src/kabu_exit_engine.py` | kabu_exit_v1 シャドウ算出（**Phase 5F-E0**） |
+| `src/kabu_signal_replay.py` | リプレイ検証エンジン（**Phase 5G**） |
+| `scripts/kabu_signal_replay.py` | 過去データ一括リプレイ CLI |
 | `scripts/kabu_signal_probe.py` | 単体実行・成果物出力 |
 
 ---
@@ -197,7 +200,9 @@ python yahoo_kabu_watch.py --paper-trade --kabu-signal-shadow
 
 ### 出力列（CSV）
 
-`timestamp`, `poll_ts_jst`, `poll_number`, `symbol`, `current_price`, `signal_score`, `notify_entry_eligible`（= `notify_breakout_eligible` の算出値）, `timing_ok`, `tier`, `reject_reasons`, `quote_age_sec`, `spread_bps`, `board_imbalance`, `vwap_distance_pct`, `high_proximity_ratio`, `push_samples_1m`, `rolling_high_5m`, `trigger_level`, `breakout_event`, `data_mode`, `evaluated_at_utc`
+`timestamp`, `poll_ts_jst`, `poll_number`, `symbol`, `current_price`, `signal_score`, `notify_entry_eligible`（= `notify_breakout_eligible` の算出値）, `timing_ok`, `tier`, `reject_reasons`, `quote_age_sec`, `spread_bps`, `board_imbalance`, `vwap_distance_pct`, `high_proximity_ratio`, `push_samples_1m`, `rolling_high_5m`, `trigger_level`, `breakout_event`, `data_mode`, `evaluated_at_utc`, `shadow_has_virtual_position`, `would_exit`, `exit_reason`, `exit_priority`, `unrealized_pct`, `mfe_pct`, `elapsed_min`
+
+JSONL には上記に加え `exit_thresholds_used`, `exit_debug` を含む。
 
 ### PUSH 履歴について
 
@@ -232,6 +237,63 @@ python yahoo_kabu_watch.py --paper-trade --kabu-signal-shadow
 
 ---
 
+## Phase 5F-E0: kabu_exit_v1 シャドウ算出
+
+### 目的
+
+`docs/kabu_signal_design.md` §11 の **kabu_exit_v1** を、**実際の EXIT・Discord・paper_trade 決済に接続せず**、シャドウログに「もし kabu_exit_v1 なら EXIT したか」を記録する。
+
+| 項目 | 内容 |
+|------|------|
+| モジュール | `src/kabu_exit_engine.py` — `evaluate_kabu_exit_v1()` |
+| 統合 | `src/kabu_signal_shadow.py` — 仮想ポジション + 毎ポール EXIT 評価 |
+| Yahoo paper_trade | **変更なし**（position / EXIT CSV / Discord 非接続） |
+
+### 仮想ポジション（シャドウ専用）
+
+- `breakout_event=true` かつ Tier A/B のとき、**当該ポールの価格**で仮想エントリー（`ShadowVirtualPosition`）。
+- Yahoo の `paper_trade` ポジション・`results/paper_trade/` とは **別 dict** で保持。
+- 仮想ポジションなし: `would_exit=false`, `exit_reason=NO_POSITION_SHADOW`。
+- `would_exit=true` になったポールで仮想ポジションをクリア（次の `breakout_event` で再オープン可）。
+
+### EXIT 評価順（§11.9）
+
+1. `hard_stop` — 2. `breakout_failure` — 3. `vwap_reclaim_failure` — 4. `high_update_stall` — 5. `board_imbalance_deterioration` — 6. `spread_widening` — 7. `push_density_drop` — 8. `time_stop`
+
+成立しなければ `exit_reason=HOLD_SHADOW`（仮想保有中のみ）。
+
+### 単体評価例
+
+```powershell
+python -c "
+from datetime import datetime, timedelta, timezone
+from src.kabu_exit_engine import KabuExitEvalInput, evaluate_kabu_exit_v1
+
+now = datetime.now(timezone.utc)
+entry = now - timedelta(minutes=1)
+r = evaluate_kabu_exit_v1(
+    KabuExitEvalInput(
+        entry_price=100.0,
+        current_price=98.5,
+        entry_time=entry,
+        now_time=now,
+        high_since_entry=100.2,
+        tier='A',
+        breakout_trigger_level=100.0,
+    ),
+    has_position=True,
+)
+print(r.to_dict())
+"
+```
+
+### 失敗時
+
+- `[KABU_EXIT_SHADOW] error symbol=...` のみ。paper_trade ループは継続。
+- 当該行は `exit_reason=EXIT_EVAL_ERROR`, `would_exit=false`。
+
+---
+
 ## 次フェーズ（仮想エントリー接続）の条件
 
 | # | 条件 |
@@ -243,7 +305,34 @@ python yahoo_kabu_watch.py --paper-trade --kabu-signal-shadow
 
 ---
 
+## Phase 5I: 構造分析（市場条件）
+
+[kabu_signal_structure_analysis.md](kabu_signal_structure_analysis.md) — クラスタ・時間帯・ENTRY/EXIT 分離（**個別銘柄チューニングなし**）。
+
+```powershell
+python scripts/kabu_signal_structure_analysis.py --day 2026-05-15 --tier B
+```
+
+---
+
+## Phase 5H: パラメータスイープ
+
+[kabu_signal_param_sweep.md](kabu_signal_param_sweep.md) — `entry_score` / `breakout_failure` / `hard_stop` 等の横比較。
+
+---
+
+## Phase 5G: リプレイ検証（推奨）
+
+パラメータ調整・EXIT 検証は **paper_trade を待たず** [kabu_signal_replay.md](kabu_signal_replay.md) のリプレイを使う。
+
+```powershell
+python scripts/kabu_signal_replay.py --day 2026-05-15 --symbols 9984.T --tier B --replay-relaxed-gates
+```
+
+---
+
 ## 関連ドキュメント
 
+- [kabu_signal_replay.md](kabu_signal_replay.md) — リプレイ優先方針・CLI
 - [kabu_signal_design.md](kabu_signal_design.md) — 仕様
 - [kabu_bar_quality.md](kabu_bar_quality.md) — 1 分足品質（Phase 5A）

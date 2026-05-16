@@ -1,0 +1,41 @@
+# kabu_native shadow（発注なし・Discord なし・yahoo_kabu_watch 非接続）
+# 採用ルール: Phase 13 market_session_plus_B
+
+rules:
+  market_session_control: true
+  bf_confirm_count: 2
+  fail_window_min: 2
+  fail_buffer_pct: 0.12
+  hard_stop_pct: 1.20
+  tier: B
+  entry_score_min: 60
+  require_timing_ok: true
+
+# 市場セッション（configs/session_control.yaml と同一）
+session:
+  entry_start_jst: "09:05"
+  entry_end_jst: "14:50"
+
+watchlist:
+  # universe | morning_screen
+  source: morning_screen
+  # ディレクトリまたは CSV。未指定時は results/morning_screen 最新
+  path: null
+  universe_path: kabu_native/data/universe/universe_intraday_full.csv
+  top_n: 10
+  passed_only: true
+
+runtime:
+  poll_interval_sec: 15
+  use_push: false
+  max_polls: null
+  continue_on_error: true
+
+safety:
+  # Phase 15 チェック名: discord_enabled / order_enabled / legacy_yahoo_watch_enabled
+  discord_notify: false
+  discord_enabled: false
+  place_orders: false
+  order_enabled: false
+  connect_yahoo_watch: false
+  legacy_yahoo_watch_enabled: false

@@ -1,0 +1,4 @@
+2026-05-16 22:02:17,029 INFO symbols=['9984.T', '8306.T'] range=2026-05-01..2026-05-15
+2026-05-16 22:02:27,210 INFO trades=20 skipped=16 out=C:\Users\yhach\Documents\tradebotfile\kabu_native\results\replay\20260516\replay_20260516_220217
+2026-05-16 22:17:00,908 INFO symbols=['1306.T', '1321.T', '5016.T', '5803.T', '6315.T', '6501.T', '6526.T', '6857.T', '6890.T', '6920.T', '7003.T', '7011.T', '7012.T', '7013.T', '7203.T', '7974.T', '8001.T', '8002.T', '8031.T', '8058.T', '8136.T', '8306.T', '8473.T', '9412.T', '9432.T', '9434.T', '9984.T'] range=2026-04-10..2026-05-15
+2026-05-16 22:23:40,289 INFO trades=83 skipped=432 out=C:\Users\yhach\Documents\tradebotfile\kabu_native\results\replay\20260516\replay_20260516_221700

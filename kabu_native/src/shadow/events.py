@@ -1,0 +1,35 @@
+"""Shadow event log field definitions."""
+
+from __future__ import annotations
+
+SHADOW_EVENT_CSV_FIELDS: tuple[str, ...] = (
+    "timestamp_utc",
+    "poll_ts_jst",
+    "poll_number",
+    "symbol",
+    "symbol_key",
+    "current_price",
+    "signal_score",
+    "breakout_event",
+    "timing_ok",
+    "tier",
+    "reject_reasons",
+    "spread_bps",
+    "board_imbalance",
+    "vwap_distance_pct",
+    "push_samples_1m",
+    "trigger_level",
+    "entry_allowed_session",
+    "market_session_control",
+    "shadow_virtual_position",
+    "shadow_virtual_entry",
+    "shadow_virtual_exit",
+    "would_exit",
+    "exit_reason",
+    "exit_priority",
+    "unrealized_pct",
+    "mfe_pct",
+    "elapsed_min",
+    "bf_confirm_streak",
+    "data_mode",
+)

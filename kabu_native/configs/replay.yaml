@@ -1,0 +1,25 @@
+# kabu_native リプレイ（paper_trade ではなくシグナル/EXIT 検証が主目的）
+
+data_roots:
+  - kabu_native/data/intraday_1m
+  - data/intraday_1m
+
+tier: B
+entry_score_min: 60
+require_timing_ok: true
+relaxed_signal: false
+
+synthetic_push_keep: 1.0
+synthetic_spread_bps: 8.0
+synthetic_events_per_minute: 10
+eod_exit_reason: eod_close
+
+# 市場セッション ENTRY 枠（詳細: configs/session_control.yaml, docs/market_session_control.md）
+market_session_control: false
+session_entry_start_jst: "09:05"
+session_entry_end_jst: "14:50"
+
+# universe / morning_screen から銘柄を読むとき
+universe_passed_only: true
+morning_screen_passed_only: true
+morning_screen_ranked_only: false
