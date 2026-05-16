@@ -1,0 +1,921 @@
+
+=== run_watchdog_inner 2026/05/14  0:06:48.56 ===
+ROOT=c:\Users\yhach\Documents\tradebotfile
+PYTHON_EXE=C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe
+CD=c:\Users\yhach\Documents\tradebotfile
+WATCHDOG_SCRIPT=c:\Users\yhach\Documents\tradebotfile\scripts\watchdog.py
+CMD="C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe" "c:\Users\yhach\Documents\tradebotfile\scripts\watchdog.py"
+========================================
+2026-05-14 00:06:48,782 [INFO] dotenv: loaded path=C:\Users\yhach\Documents\tradebotfile\.env exists=True
+2026-05-14 00:06:48,783 [INFO] watchdog bootstrap: os.getcwd()=c:\Users\yhach\Documents\tradebotfile
+2026-05-14 00:06:48,784 [INFO] watchdog bootstrap: sys.executable=C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe
+2026-05-14 00:06:48,784 [INFO] watchdog bootstrap: __file__=C:\Users\yhach\Documents\tradebotfile\scripts\watchdog.py
+2026-05-14 00:06:48,784 [INFO] watchdog bootstrap: ROOT=C:\Users\yhach\Documents\tradebotfile
+2026-05-14 00:06:48,784 [INFO] watchdog bootstrap: dotenv_path=C:\Users\yhach\Documents\tradebotfile\.env
+2026-05-14 00:06:48,784 [INFO] watchdog bootstrap: issue_bot_bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_issue_bot.bat
+2026-05-14 00:06:48,784 [INFO] watchdog bootstrap: paper_trade_bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat
+2026-05-14 00:06:48,784 [INFO] watchdog started (interval=300s, root=C:\Users\yhach\Documents\tradebotfile)
+Traceback (most recent call last):
+  File "C:\Users\yhach\AppData\Local\Programs\Python\Python314\Lib\zoneinfo\_common.py", line 12, in load_tzdata
+    path = resources.files(package_name).joinpath(resource_name)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\yhach\AppData\Local\Programs\Python\Python314\Lib\importlib\resources\_common.py", line 46, in wrapper
+    return func(anchor)
+  File "C:\Users\yhach\AppData\Local\Programs\Python\Python314\Lib\importlib\resources\_common.py", line 56, in files
+    return from_package(resolve(anchor))
+                        ~~~~~~~^^^^^^^^
+  File "C:\Users\yhach\AppData\Local\Programs\Python\Python314\Lib\functools.py", line 982, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\yhach\AppData\Local\Programs\Python\Python314\Lib\importlib\resources\_common.py", line 82, in _
+    return importlib.import_module(cand)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\yhach\AppData\Local\Programs\Python\Python314\Lib\importlib\__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1398, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1371, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1314, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 491, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1398, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1371, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1314, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 491, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1398, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1371, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1335, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'tzdata'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "c:\Users\yhach\Documents\tradebotfile\scripts\watchdog.py", line 288, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "c:\Users\yhach\Documents\tradebotfile\scripts\watchdog.py", line 211, in main
+    now = _now_jst()
+  File "c:\Users\yhach\Documents\tradebotfile\scripts\watchdog.py", line 62, in _now_jst
+    return datetime.now(ZoneInfo(JST_NAME))
+                        ~~~~~~~~^^^^^^^^^^
+  File "C:\Users\yhach\AppData\Local\Programs\Python\Python314\Lib\zoneinfo\_common.py", line 29, in load_tzdata
+    raise ZoneInfoNotFoundError(f"No time zone found with key {key}")
+zoneinfo._common.ZoneInfoNotFoundError: 'No time zone found with key Asia/Tokyo'
+[2026/05/14  0:06:48.80] watchdog.py exited errorlevel=1
+
+=== run_watchdog_inner 2026/05/14  0:08:22.36 ===
+ROOT=C:\Users\yhach\Documents\tradebotfile
+PYTHON_EXE=C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe
+CD=C:\Users\yhach\Documents\tradebotfile
+WATCHDOG_SCRIPT=C:\Users\yhach\Documents\tradebotfile\scripts\watchdog.py
+CMD="C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe" "C:\Users\yhach\Documents\tradebotfile\scripts\watchdog.py"
+========================================
+2026-05-14 00:08:22,590 [INFO] dotenv: loaded path=C:\Users\yhach\Documents\tradebotfile\.env exists=True
+2026-05-14 00:08:22,590 [INFO] watchdog bootstrap: os.getcwd()=C:\Users\yhach\Documents\tradebotfile
+2026-05-14 00:08:22,591 [INFO] watchdog bootstrap: sys.executable=C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe
+2026-05-14 00:08:22,591 [INFO] watchdog bootstrap: __file__=C:\Users\yhach\Documents\tradebotfile\scripts\watchdog.py
+2026-05-14 00:08:22,591 [INFO] watchdog bootstrap: ROOT=C:\Users\yhach\Documents\tradebotfile
+2026-05-14 00:08:22,591 [INFO] watchdog bootstrap: dotenv_path=C:\Users\yhach\Documents\tradebotfile\.env
+2026-05-14 00:08:22,591 [INFO] watchdog bootstrap: issue_bot_bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_issue_bot.bat
+2026-05-14 00:08:22,591 [INFO] watchdog bootstrap: paper_trade_bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat
+2026-05-14 00:08:22,598 [INFO] watchdog bootstrap: jst_tz=Asia/Tokyo (install tzdata package for IANA names on Windows)
+2026-05-14 00:08:22,599 [INFO] watchdog started (interval=300s, root=C:\Users\yhach\Documents\tradebotfile)
+2026-05-14 00:08:22,605 [INFO] tick jst=2026-05-14 00:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 00:13:22,610 [INFO] tick jst=2026-05-14 00:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 00:18:22,615 [INFO] tick jst=2026-05-14 00:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 00:23:22,618 [INFO] tick jst=2026-05-14 00:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 00:28:22,621 [INFO] tick jst=2026-05-14 00:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 00:33:22,626 [INFO] tick jst=2026-05-14 00:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 00:38:22,634 [WARNING] issue_bot: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_issue_bot.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-14 00:38:22,648 [INFO] spawned bat=start_issue_bot.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_issue_bot.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=28068
+2026-05-14 00:38:22,648 [INFO] issue_bot: start_issue_bot.bat spawn OK child_pid=28068
+2026-05-14 00:38:26,649 [INFO] issue_bot: post-restart alive check after 4s running=True
+2026-05-14 00:38:26,650 [INFO] [WATCHDOG] restarted issue_bot
+2026-05-14 00:38:27,193 [INFO] tick jst=2026-05-14 00:38 paper_window=no issue_bot=restarted paper_trade=idle
+2026-05-14 00:43:27,196 [INFO] tick jst=2026-05-14 00:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 00:48:27,200 [INFO] tick jst=2026-05-14 00:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 00:53:27,203 [INFO] tick jst=2026-05-14 00:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 00:58:27,207 [INFO] tick jst=2026-05-14 00:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:03:27,210 [INFO] tick jst=2026-05-14 01:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:08:27,214 [INFO] tick jst=2026-05-14 01:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:13:27,218 [INFO] tick jst=2026-05-14 01:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:18:27,221 [INFO] tick jst=2026-05-14 01:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:23:27,224 [INFO] tick jst=2026-05-14 01:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:28:27,227 [INFO] tick jst=2026-05-14 01:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:33:27,230 [INFO] tick jst=2026-05-14 01:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:38:27,233 [INFO] tick jst=2026-05-14 01:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:43:27,236 [INFO] tick jst=2026-05-14 01:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:48:27,239 [INFO] tick jst=2026-05-14 01:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:53:27,242 [INFO] tick jst=2026-05-14 01:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 01:58:27,256 [INFO] tick jst=2026-05-14 01:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 02:03:27,272 [INFO] tick jst=2026-05-14 02:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 02:08:27,288 [INFO] tick jst=2026-05-14 02:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 02:13:27,304 [WARNING] issue_bot: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_issue_bot.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-14 02:13:27,307 [INFO] spawned bat=start_issue_bot.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_issue_bot.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=3572
+2026-05-14 02:13:27,307 [INFO] issue_bot: start_issue_bot.bat spawn OK child_pid=3572
+2026-05-14 02:13:31,307 [INFO] issue_bot: post-restart alive check after 4s running=True
+2026-05-14 02:13:31,308 [INFO] [WATCHDOG] restarted issue_bot
+2026-05-14 02:13:31,721 [INFO] tick jst=2026-05-14 02:13 paper_window=no issue_bot=restarted paper_trade=idle
+2026-05-14 02:18:31,738 [INFO] tick jst=2026-05-14 02:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 02:23:31,754 [INFO] tick jst=2026-05-14 02:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 02:28:31,771 [INFO] tick jst=2026-05-14 02:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 02:33:31,781 [INFO] tick jst=2026-05-14 02:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 02:38:31,791 [INFO] tick jst=2026-05-14 02:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 02:43:31,802 [INFO] tick jst=2026-05-14 02:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 02:48:31,812 [INFO] tick jst=2026-05-14 02:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 02:53:31,821 [INFO] tick jst=2026-05-14 02:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 02:58:31,831 [INFO] tick jst=2026-05-14 02:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:03:31,840 [INFO] tick jst=2026-05-14 03:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:08:31,847 [INFO] tick jst=2026-05-14 03:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:13:31,854 [INFO] tick jst=2026-05-14 03:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:18:31,860 [INFO] tick jst=2026-05-14 03:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:23:31,868 [INFO] tick jst=2026-05-14 03:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:28:31,874 [INFO] tick jst=2026-05-14 03:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:33:31,881 [INFO] tick jst=2026-05-14 03:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:38:31,887 [INFO] tick jst=2026-05-14 03:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:43:31,893 [INFO] tick jst=2026-05-14 03:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:48:31,899 [INFO] tick jst=2026-05-14 03:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:53:31,904 [INFO] tick jst=2026-05-14 03:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 03:58:31,910 [INFO] tick jst=2026-05-14 03:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:03:31,916 [INFO] tick jst=2026-05-14 04:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:08:31,921 [INFO] tick jst=2026-05-14 04:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:13:31,927 [INFO] tick jst=2026-05-14 04:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:18:31,932 [INFO] tick jst=2026-05-14 04:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:23:31,938 [INFO] tick jst=2026-05-14 04:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:28:31,944 [INFO] tick jst=2026-05-14 04:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:33:31,949 [INFO] tick jst=2026-05-14 04:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:38:31,954 [INFO] tick jst=2026-05-14 04:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:43:31,959 [INFO] tick jst=2026-05-14 04:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:48:31,966 [INFO] tick jst=2026-05-14 04:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:53:31,970 [INFO] tick jst=2026-05-14 04:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 04:58:31,975 [INFO] tick jst=2026-05-14 04:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:03:31,980 [INFO] tick jst=2026-05-14 05:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:08:31,985 [INFO] tick jst=2026-05-14 05:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:13:31,990 [INFO] tick jst=2026-05-14 05:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:18:31,995 [INFO] tick jst=2026-05-14 05:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:23:32,000 [INFO] tick jst=2026-05-14 05:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:28:32,005 [INFO] tick jst=2026-05-14 05:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:33:32,010 [INFO] tick jst=2026-05-14 05:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:38:32,014 [INFO] tick jst=2026-05-14 05:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:43:32,018 [INFO] tick jst=2026-05-14 05:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:48:32,024 [INFO] tick jst=2026-05-14 05:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:53:32,028 [INFO] tick jst=2026-05-14 05:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 05:58:32,033 [INFO] tick jst=2026-05-14 05:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:03:32,038 [INFO] tick jst=2026-05-14 06:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:08:32,042 [INFO] tick jst=2026-05-14 06:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:13:32,047 [INFO] tick jst=2026-05-14 06:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:18:32,051 [INFO] tick jst=2026-05-14 06:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:23:32,055 [INFO] tick jst=2026-05-14 06:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:28:32,061 [INFO] tick jst=2026-05-14 06:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:33:32,074 [INFO] tick jst=2026-05-14 06:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:38:32,087 [INFO] tick jst=2026-05-14 06:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:43:32,101 [INFO] tick jst=2026-05-14 06:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:48:32,115 [INFO] tick jst=2026-05-14 06:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:53:32,128 [INFO] tick jst=2026-05-14 06:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 06:58:32,142 [INFO] tick jst=2026-05-14 06:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:03:32,154 [INFO] tick jst=2026-05-14 07:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:08:32,163 [INFO] tick jst=2026-05-14 07:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:13:32,171 [INFO] tick jst=2026-05-14 07:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:18:32,179 [INFO] tick jst=2026-05-14 07:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:23:32,187 [INFO] tick jst=2026-05-14 07:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:28:32,194 [INFO] tick jst=2026-05-14 07:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:33:32,204 [INFO] tick jst=2026-05-14 07:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:38:32,212 [INFO] tick jst=2026-05-14 07:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:43:32,219 [INFO] tick jst=2026-05-14 07:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:48:32,225 [INFO] tick jst=2026-05-14 07:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:53:32,231 [INFO] tick jst=2026-05-14 07:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 07:58:32,238 [INFO] tick jst=2026-05-14 07:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 08:03:32,245 [INFO] tick jst=2026-05-14 08:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 08:08:32,250 [INFO] tick jst=2026-05-14 08:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 08:13:32,255 [INFO] tick jst=2026-05-14 08:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 08:18:32,261 [INFO] tick jst=2026-05-14 08:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 08:23:32,265 [INFO] tick jst=2026-05-14 08:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 08:28:32,269 [INFO] tick jst=2026-05-14 08:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 08:33:32,275 [INFO] tick jst=2026-05-14 08:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 08:38:32,279 [INFO] tick jst=2026-05-14 08:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 08:43:32,284 [INFO] tick jst=2026-05-14 08:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 08:48:32,289 [INFO] tick jst=2026-05-14 08:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 08:53:32,295 [INFO] tick jst=2026-05-14 08:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 08:58:32,299 [INFO] tick jst=2026-05-14 08:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:03:32,304 [INFO] tick jst=2026-05-14 09:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:08:32,308 [INFO] tick jst=2026-05-14 09:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:13:32,312 [INFO] tick jst=2026-05-14 09:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:18:32,317 [INFO] tick jst=2026-05-14 09:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:23:32,321 [INFO] tick jst=2026-05-14 09:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:28:32,326 [INFO] tick jst=2026-05-14 09:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:33:32,330 [INFO] tick jst=2026-05-14 09:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:38:32,335 [INFO] tick jst=2026-05-14 09:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:43:32,340 [INFO] tick jst=2026-05-14 09:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:48:32,344 [INFO] tick jst=2026-05-14 09:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:53:32,349 [INFO] tick jst=2026-05-14 09:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 09:58:32,353 [INFO] tick jst=2026-05-14 09:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:03:32,358 [INFO] tick jst=2026-05-14 10:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:08:32,363 [INFO] tick jst=2026-05-14 10:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:13:32,367 [INFO] tick jst=2026-05-14 10:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:18:32,373 [INFO] tick jst=2026-05-14 10:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:23:32,377 [INFO] tick jst=2026-05-14 10:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:28:32,381 [INFO] tick jst=2026-05-14 10:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:33:32,387 [INFO] tick jst=2026-05-14 10:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:38:32,391 [INFO] tick jst=2026-05-14 10:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:43:32,396 [INFO] tick jst=2026-05-14 10:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:48:32,401 [INFO] tick jst=2026-05-14 10:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:53:32,405 [INFO] tick jst=2026-05-14 10:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 10:58:32,410 [INFO] tick jst=2026-05-14 10:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:03:32,419 [INFO] tick jst=2026-05-14 11:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:08:32,431 [INFO] tick jst=2026-05-14 11:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:13:32,444 [INFO] tick jst=2026-05-14 11:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:18:32,456 [INFO] tick jst=2026-05-14 11:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:23:32,468 [INFO] tick jst=2026-05-14 11:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:28:32,480 [INFO] tick jst=2026-05-14 11:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:33:32,493 [INFO] tick jst=2026-05-14 11:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:38:32,502 [INFO] tick jst=2026-05-14 11:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:43:32,510 [INFO] tick jst=2026-05-14 11:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:48:32,517 [INFO] tick jst=2026-05-14 11:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:53:32,525 [INFO] tick jst=2026-05-14 11:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 11:58:32,533 [INFO] tick jst=2026-05-14 11:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:03:32,540 [INFO] tick jst=2026-05-14 12:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:08:32,548 [INFO] tick jst=2026-05-14 12:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:13:32,554 [INFO] tick jst=2026-05-14 12:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:18:32,560 [INFO] tick jst=2026-05-14 12:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:23:32,565 [INFO] tick jst=2026-05-14 12:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:28:32,570 [INFO] tick jst=2026-05-14 12:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:33:32,575 [INFO] tick jst=2026-05-14 12:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:38:32,581 [INFO] tick jst=2026-05-14 12:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:43:32,586 [INFO] tick jst=2026-05-14 12:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:48:32,590 [INFO] tick jst=2026-05-14 12:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:53:32,595 [INFO] tick jst=2026-05-14 12:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 12:58:32,599 [INFO] tick jst=2026-05-14 12:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:03:32,604 [INFO] tick jst=2026-05-14 13:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:08:32,608 [INFO] tick jst=2026-05-14 13:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:13:32,613 [INFO] tick jst=2026-05-14 13:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:18:32,617 [INFO] tick jst=2026-05-14 13:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:23:32,622 [INFO] tick jst=2026-05-14 13:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:28:32,626 [INFO] tick jst=2026-05-14 13:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:33:32,630 [INFO] tick jst=2026-05-14 13:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:38:32,634 [INFO] tick jst=2026-05-14 13:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:43:32,639 [INFO] tick jst=2026-05-14 13:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:48:32,643 [INFO] tick jst=2026-05-14 13:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:53:32,648 [INFO] tick jst=2026-05-14 13:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 13:58:32,652 [INFO] tick jst=2026-05-14 13:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:03:32,656 [INFO] tick jst=2026-05-14 14:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:08:32,660 [INFO] tick jst=2026-05-14 14:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:13:32,664 [INFO] tick jst=2026-05-14 14:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:18:32,667 [INFO] tick jst=2026-05-14 14:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:23:32,671 [INFO] tick jst=2026-05-14 14:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:28:32,675 [INFO] tick jst=2026-05-14 14:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:33:32,679 [INFO] tick jst=2026-05-14 14:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:38:32,683 [INFO] tick jst=2026-05-14 14:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:43:32,687 [INFO] tick jst=2026-05-14 14:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:48:32,691 [INFO] tick jst=2026-05-14 14:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:53:32,695 [INFO] tick jst=2026-05-14 14:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 14:58:32,699 [INFO] tick jst=2026-05-14 14:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 15:03:32,703 [INFO] tick jst=2026-05-14 15:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 15:08:32,707 [INFO] tick jst=2026-05-14 15:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 15:13:32,711 [INFO] tick jst=2026-05-14 15:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 15:18:32,715 [INFO] tick jst=2026-05-14 15:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 15:23:32,719 [INFO] tick jst=2026-05-14 15:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 15:28:32,723 [INFO] tick jst=2026-05-14 15:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 15:33:32,727 [INFO] tick jst=2026-05-14 15:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 15:38:32,738 [INFO] tick jst=2026-05-14 15:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-14 15:43:32,749 [INFO] tick jst=2026-05-14 15:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 15:48:32,761 [INFO] tick jst=2026-05-14 15:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 15:53:32,772 [INFO] tick jst=2026-05-14 15:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 15:58:32,783 [INFO] tick jst=2026-05-14 15:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:03:32,794 [INFO] tick jst=2026-05-14 16:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:08:32,804 [INFO] tick jst=2026-05-14 16:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:13:32,812 [INFO] tick jst=2026-05-14 16:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:18:32,819 [INFO] tick jst=2026-05-14 16:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:23:32,826 [INFO] tick jst=2026-05-14 16:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:28:32,833 [INFO] tick jst=2026-05-14 16:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:33:32,840 [INFO] tick jst=2026-05-14 16:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:38:32,847 [INFO] tick jst=2026-05-14 16:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:43:32,854 [INFO] tick jst=2026-05-14 16:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:48:32,859 [INFO] tick jst=2026-05-14 16:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:53:32,865 [INFO] tick jst=2026-05-14 16:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 16:58:32,870 [INFO] tick jst=2026-05-14 16:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:03:32,876 [INFO] tick jst=2026-05-14 17:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:08:32,881 [INFO] tick jst=2026-05-14 17:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:13:32,887 [INFO] tick jst=2026-05-14 17:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:18:32,892 [INFO] tick jst=2026-05-14 17:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:23:32,897 [INFO] tick jst=2026-05-14 17:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:28:32,902 [INFO] tick jst=2026-05-14 17:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:33:32,907 [INFO] tick jst=2026-05-14 17:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:38:32,912 [INFO] tick jst=2026-05-14 17:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:43:32,917 [INFO] tick jst=2026-05-14 17:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:48:32,922 [INFO] tick jst=2026-05-14 17:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:53:32,928 [INFO] tick jst=2026-05-14 17:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 17:58:32,932 [INFO] tick jst=2026-05-14 17:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:03:32,937 [INFO] tick jst=2026-05-14 18:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:08:32,941 [INFO] tick jst=2026-05-14 18:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:13:32,946 [INFO] tick jst=2026-05-14 18:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:18:32,950 [INFO] tick jst=2026-05-14 18:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:23:32,956 [INFO] tick jst=2026-05-14 18:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:28:32,960 [INFO] tick jst=2026-05-14 18:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:33:32,965 [INFO] tick jst=2026-05-14 18:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:38:32,970 [INFO] tick jst=2026-05-14 18:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:43:32,974 [INFO] tick jst=2026-05-14 18:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:48:32,979 [INFO] tick jst=2026-05-14 18:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:53:32,984 [INFO] tick jst=2026-05-14 18:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 18:58:32,988 [INFO] tick jst=2026-05-14 18:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:03:32,993 [INFO] tick jst=2026-05-14 19:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:08:32,997 [INFO] tick jst=2026-05-14 19:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:13:33,002 [INFO] tick jst=2026-05-14 19:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:18:33,007 [INFO] tick jst=2026-05-14 19:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:23:33,011 [INFO] tick jst=2026-05-14 19:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:28:33,016 [INFO] tick jst=2026-05-14 19:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:33:33,021 [INFO] tick jst=2026-05-14 19:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:38:33,025 [INFO] tick jst=2026-05-14 19:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:43:33,029 [INFO] tick jst=2026-05-14 19:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:48:33,034 [INFO] tick jst=2026-05-14 19:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:53:33,038 [INFO] tick jst=2026-05-14 19:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 19:58:33,042 [INFO] tick jst=2026-05-14 19:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:03:33,047 [INFO] tick jst=2026-05-14 20:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:08:33,053 [INFO] tick jst=2026-05-14 20:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:13:33,064 [INFO] tick jst=2026-05-14 20:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:18:33,075 [INFO] tick jst=2026-05-14 20:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:23:33,086 [INFO] tick jst=2026-05-14 20:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:28:33,097 [INFO] tick jst=2026-05-14 20:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:33:33,108 [INFO] tick jst=2026-05-14 20:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:38:33,119 [INFO] tick jst=2026-05-14 20:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:43:33,130 [INFO] tick jst=2026-05-14 20:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:48:33,141 [INFO] tick jst=2026-05-14 20:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:53:33,153 [INFO] tick jst=2026-05-14 20:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 20:58:33,165 [INFO] tick jst=2026-05-14 20:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:03:33,177 [INFO] tick jst=2026-05-14 21:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:08:33,185 [INFO] tick jst=2026-05-14 21:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:13:33,190 [INFO] tick jst=2026-05-14 21:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:18:33,194 [INFO] tick jst=2026-05-14 21:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:23:33,198 [INFO] tick jst=2026-05-14 21:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:28:33,203 [INFO] tick jst=2026-05-14 21:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:33:33,208 [INFO] tick jst=2026-05-14 21:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:38:33,215 [INFO] tick jst=2026-05-14 21:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:43:33,219 [INFO] tick jst=2026-05-14 21:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:48:33,225 [INFO] tick jst=2026-05-14 21:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:53:33,230 [INFO] tick jst=2026-05-14 21:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 21:58:33,234 [INFO] tick jst=2026-05-14 21:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:03:33,239 [INFO] tick jst=2026-05-14 22:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:08:33,244 [INFO] tick jst=2026-05-14 22:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:13:33,248 [INFO] tick jst=2026-05-14 22:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:18:33,253 [INFO] tick jst=2026-05-14 22:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:23:33,258 [INFO] tick jst=2026-05-14 22:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:28:33,262 [INFO] tick jst=2026-05-14 22:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:33:33,267 [INFO] tick jst=2026-05-14 22:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:38:33,271 [INFO] tick jst=2026-05-14 22:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:43:33,277 [INFO] tick jst=2026-05-14 22:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:48:33,281 [INFO] tick jst=2026-05-14 22:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:53:33,287 [INFO] tick jst=2026-05-14 22:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 22:58:33,293 [INFO] tick jst=2026-05-14 22:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:03:33,298 [INFO] tick jst=2026-05-14 23:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:08:33,302 [INFO] tick jst=2026-05-14 23:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:13:33,307 [INFO] tick jst=2026-05-14 23:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:18:33,312 [INFO] tick jst=2026-05-14 23:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:23:33,317 [INFO] tick jst=2026-05-14 23:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:28:33,321 [INFO] tick jst=2026-05-14 23:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:33:33,326 [INFO] tick jst=2026-05-14 23:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:38:33,330 [INFO] tick jst=2026-05-14 23:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:43:33,335 [INFO] tick jst=2026-05-14 23:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:48:33,340 [INFO] tick jst=2026-05-14 23:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:53:33,345 [INFO] tick jst=2026-05-14 23:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-14 23:58:33,349 [INFO] tick jst=2026-05-14 23:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:03:33,354 [INFO] tick jst=2026-05-15 00:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:08:33,358 [INFO] tick jst=2026-05-15 00:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:13:33,362 [INFO] tick jst=2026-05-15 00:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:18:33,367 [INFO] tick jst=2026-05-15 00:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:23:33,371 [INFO] tick jst=2026-05-15 00:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:28:33,376 [INFO] tick jst=2026-05-15 00:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:33:33,381 [INFO] tick jst=2026-05-15 00:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:38:33,385 [INFO] tick jst=2026-05-15 00:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:43:33,395 [INFO] tick jst=2026-05-15 00:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:48:33,405 [INFO] tick jst=2026-05-15 00:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:53:33,415 [INFO] tick jst=2026-05-15 00:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 00:58:33,426 [INFO] tick jst=2026-05-15 00:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:03:33,436 [INFO] tick jst=2026-05-15 01:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:08:33,446 [INFO] tick jst=2026-05-15 01:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:13:33,456 [INFO] tick jst=2026-05-15 01:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:18:33,467 [INFO] tick jst=2026-05-15 01:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:23:33,476 [INFO] tick jst=2026-05-15 01:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:28:33,486 [INFO] tick jst=2026-05-15 01:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:33:33,495 [INFO] tick jst=2026-05-15 01:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:38:33,504 [INFO] tick jst=2026-05-15 01:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:43:33,513 [INFO] tick jst=2026-05-15 01:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:48:33,517 [INFO] tick jst=2026-05-15 01:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:53:33,522 [INFO] tick jst=2026-05-15 01:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 01:58:33,528 [INFO] tick jst=2026-05-15 01:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:03:33,533 [INFO] tick jst=2026-05-15 02:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:08:33,538 [INFO] tick jst=2026-05-15 02:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:13:33,543 [INFO] tick jst=2026-05-15 02:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:18:33,548 [INFO] tick jst=2026-05-15 02:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:23:33,554 [INFO] tick jst=2026-05-15 02:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:28:33,561 [INFO] tick jst=2026-05-15 02:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:33:33,566 [INFO] tick jst=2026-05-15 02:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:38:33,571 [INFO] tick jst=2026-05-15 02:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:43:33,578 [INFO] tick jst=2026-05-15 02:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:48:33,584 [INFO] tick jst=2026-05-15 02:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:53:33,590 [INFO] tick jst=2026-05-15 02:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 02:58:33,595 [INFO] tick jst=2026-05-15 02:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:03:33,601 [INFO] tick jst=2026-05-15 03:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:08:33,606 [INFO] tick jst=2026-05-15 03:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:13:33,611 [INFO] tick jst=2026-05-15 03:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:18:33,616 [INFO] tick jst=2026-05-15 03:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:23:33,621 [INFO] tick jst=2026-05-15 03:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:28:33,626 [INFO] tick jst=2026-05-15 03:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:33:33,631 [INFO] tick jst=2026-05-15 03:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:38:33,636 [INFO] tick jst=2026-05-15 03:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:43:33,641 [INFO] tick jst=2026-05-15 03:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:48:33,647 [INFO] tick jst=2026-05-15 03:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:53:33,651 [INFO] tick jst=2026-05-15 03:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 03:58:33,656 [INFO] tick jst=2026-05-15 03:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:03:33,662 [INFO] tick jst=2026-05-15 04:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:08:33,668 [INFO] tick jst=2026-05-15 04:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:13:33,672 [INFO] tick jst=2026-05-15 04:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:18:33,678 [INFO] tick jst=2026-05-15 04:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:23:33,682 [INFO] tick jst=2026-05-15 04:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:28:33,688 [INFO] tick jst=2026-05-15 04:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:33:33,694 [INFO] tick jst=2026-05-15 04:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:38:33,700 [INFO] tick jst=2026-05-15 04:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:43:33,705 [INFO] tick jst=2026-05-15 04:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:48:33,711 [INFO] tick jst=2026-05-15 04:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:53:33,717 [INFO] tick jst=2026-05-15 04:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 04:58:33,723 [INFO] tick jst=2026-05-15 04:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:03:33,728 [INFO] tick jst=2026-05-15 05:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:08:33,733 [INFO] tick jst=2026-05-15 05:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:13:33,740 [INFO] tick jst=2026-05-15 05:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:18:33,749 [INFO] tick jst=2026-05-15 05:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:23:33,758 [INFO] tick jst=2026-05-15 05:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:28:33,766 [INFO] tick jst=2026-05-15 05:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:33:33,775 [INFO] tick jst=2026-05-15 05:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:38:33,784 [INFO] tick jst=2026-05-15 05:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:43:33,793 [INFO] tick jst=2026-05-15 05:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:48:33,802 [INFO] tick jst=2026-05-15 05:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:53:33,811 [INFO] tick jst=2026-05-15 05:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 05:58:33,820 [INFO] tick jst=2026-05-15 05:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:03:33,829 [INFO] tick jst=2026-05-15 06:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:08:33,837 [INFO] tick jst=2026-05-15 06:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:13:33,845 [INFO] tick jst=2026-05-15 06:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:18:33,850 [INFO] tick jst=2026-05-15 06:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:23:33,854 [INFO] tick jst=2026-05-15 06:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:28:33,859 [INFO] tick jst=2026-05-15 06:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:33:33,864 [INFO] tick jst=2026-05-15 06:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:38:33,869 [INFO] tick jst=2026-05-15 06:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:43:33,873 [INFO] tick jst=2026-05-15 06:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:48:33,878 [INFO] tick jst=2026-05-15 06:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:53:33,882 [INFO] tick jst=2026-05-15 06:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 06:58:33,887 [INFO] tick jst=2026-05-15 06:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:03:33,892 [INFO] tick jst=2026-05-15 07:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:08:33,897 [INFO] tick jst=2026-05-15 07:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:13:33,902 [INFO] tick jst=2026-05-15 07:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:18:33,906 [INFO] tick jst=2026-05-15 07:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:23:33,911 [INFO] tick jst=2026-05-15 07:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:28:33,915 [INFO] tick jst=2026-05-15 07:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:33:33,920 [INFO] tick jst=2026-05-15 07:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:38:33,925 [INFO] tick jst=2026-05-15 07:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:43:33,929 [INFO] tick jst=2026-05-15 07:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:48:33,933 [INFO] tick jst=2026-05-15 07:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:53:33,939 [INFO] tick jst=2026-05-15 07:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 07:58:33,944 [INFO] tick jst=2026-05-15 07:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 08:03:33,950 [INFO] tick jst=2026-05-15 08:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 08:08:33,955 [INFO] tick jst=2026-05-15 08:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 08:13:33,960 [INFO] tick jst=2026-05-15 08:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 08:18:33,966 [INFO] tick jst=2026-05-15 08:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 08:23:33,970 [INFO] tick jst=2026-05-15 08:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 08:28:33,976 [INFO] tick jst=2026-05-15 08:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 08:33:33,981 [INFO] tick jst=2026-05-15 08:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 08:38:33,987 [INFO] tick jst=2026-05-15 08:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 08:43:33,992 [INFO] tick jst=2026-05-15 08:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 08:48:33,999 [INFO] tick jst=2026-05-15 08:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 08:53:34,005 [INFO] tick jst=2026-05-15 08:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 08:58:34,011 [INFO] tick jst=2026-05-15 08:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:03:34,016 [INFO] tick jst=2026-05-15 09:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:08:34,023 [INFO] tick jst=2026-05-15 09:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:13:34,030 [INFO] tick jst=2026-05-15 09:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:18:34,035 [INFO] tick jst=2026-05-15 09:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:23:34,042 [INFO] tick jst=2026-05-15 09:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:28:34,049 [INFO] tick jst=2026-05-15 09:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:33:34,054 [INFO] tick jst=2026-05-15 09:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:38:34,059 [INFO] tick jst=2026-05-15 09:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:43:34,065 [INFO] tick jst=2026-05-15 09:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:48:34,073 [INFO] tick jst=2026-05-15 09:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:53:34,081 [INFO] tick jst=2026-05-15 09:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 09:58:34,090 [INFO] tick jst=2026-05-15 09:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:03:34,099 [INFO] tick jst=2026-05-15 10:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:08:34,107 [INFO] tick jst=2026-05-15 10:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:13:34,115 [INFO] tick jst=2026-05-15 10:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:18:34,124 [INFO] tick jst=2026-05-15 10:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:23:34,135 [INFO] tick jst=2026-05-15 10:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:28:34,144 [INFO] tick jst=2026-05-15 10:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:33:34,153 [INFO] tick jst=2026-05-15 10:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:38:34,163 [INFO] tick jst=2026-05-15 10:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:43:34,173 [INFO] tick jst=2026-05-15 10:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:48:34,182 [INFO] tick jst=2026-05-15 10:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:53:34,188 [INFO] tick jst=2026-05-15 10:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 10:58:34,193 [INFO] tick jst=2026-05-15 10:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:03:34,199 [INFO] tick jst=2026-05-15 11:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:08:34,206 [INFO] tick jst=2026-05-15 11:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:13:34,211 [INFO] tick jst=2026-05-15 11:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:18:34,216 [INFO] tick jst=2026-05-15 11:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:23:34,222 [INFO] tick jst=2026-05-15 11:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:28:34,228 [INFO] tick jst=2026-05-15 11:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:33:34,233 [INFO] tick jst=2026-05-15 11:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:38:34,239 [INFO] tick jst=2026-05-15 11:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:43:34,243 [INFO] tick jst=2026-05-15 11:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:48:34,249 [INFO] tick jst=2026-05-15 11:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:53:34,254 [INFO] tick jst=2026-05-15 11:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 11:58:34,259 [INFO] tick jst=2026-05-15 11:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:03:34,265 [INFO] tick jst=2026-05-15 12:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:08:34,270 [INFO] tick jst=2026-05-15 12:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:13:34,275 [INFO] tick jst=2026-05-15 12:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:18:34,280 [INFO] tick jst=2026-05-15 12:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:23:34,285 [INFO] tick jst=2026-05-15 12:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:28:34,291 [INFO] tick jst=2026-05-15 12:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:33:34,296 [INFO] tick jst=2026-05-15 12:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:38:34,303 [INFO] tick jst=2026-05-15 12:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:43:34,309 [INFO] tick jst=2026-05-15 12:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:48:34,315 [INFO] tick jst=2026-05-15 12:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:53:34,320 [INFO] tick jst=2026-05-15 12:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 12:58:34,324 [INFO] tick jst=2026-05-15 12:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:03:34,329 [INFO] tick jst=2026-05-15 13:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:08:34,334 [INFO] tick jst=2026-05-15 13:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:13:34,338 [INFO] tick jst=2026-05-15 13:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:18:34,343 [INFO] tick jst=2026-05-15 13:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:23:34,349 [INFO] tick jst=2026-05-15 13:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:28:34,356 [INFO] tick jst=2026-05-15 13:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:33:34,360 [INFO] tick jst=2026-05-15 13:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:38:34,366 [INFO] tick jst=2026-05-15 13:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:43:34,371 [INFO] tick jst=2026-05-15 13:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:48:34,378 [INFO] tick jst=2026-05-15 13:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:53:34,388 [INFO] tick jst=2026-05-15 13:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 13:58:34,393 [INFO] tick jst=2026-05-15 13:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:03:34,398 [INFO] tick jst=2026-05-15 14:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:08:34,403 [INFO] tick jst=2026-05-15 14:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:13:34,407 [INFO] tick jst=2026-05-15 14:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:18:34,412 [INFO] tick jst=2026-05-15 14:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:23:34,420 [INFO] tick jst=2026-05-15 14:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:28:34,427 [INFO] tick jst=2026-05-15 14:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:33:34,435 [INFO] tick jst=2026-05-15 14:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:38:34,443 [INFO] tick jst=2026-05-15 14:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:43:34,451 [INFO] tick jst=2026-05-15 14:43 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:48:34,459 [INFO] tick jst=2026-05-15 14:48 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:53:34,466 [INFO] tick jst=2026-05-15 14:53 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 14:58:34,475 [INFO] tick jst=2026-05-15 14:58 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 15:03:34,483 [INFO] tick jst=2026-05-15 15:03 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 15:08:34,491 [INFO] tick jst=2026-05-15 15:08 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 15:13:34,499 [INFO] tick jst=2026-05-15 15:13 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 15:18:34,506 [INFO] tick jst=2026-05-15 15:18 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 15:23:34,512 [INFO] tick jst=2026-05-15 15:23 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 15:28:34,516 [INFO] tick jst=2026-05-15 15:28 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 15:33:34,521 [INFO] tick jst=2026-05-15 15:33 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 15:38:34,525 [INFO] tick jst=2026-05-15 15:38 paper_window=yes issue_bot=ok paper_trade=ok
+2026-05-15 15:43:34,529 [INFO] tick jst=2026-05-15 15:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 15:48:34,534 [INFO] tick jst=2026-05-15 15:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 15:53:34,538 [INFO] tick jst=2026-05-15 15:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 15:58:34,543 [INFO] tick jst=2026-05-15 15:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:03:34,547 [INFO] tick jst=2026-05-15 16:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:08:34,551 [INFO] tick jst=2026-05-15 16:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:13:34,556 [INFO] tick jst=2026-05-15 16:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:18:34,561 [INFO] tick jst=2026-05-15 16:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:23:34,565 [INFO] tick jst=2026-05-15 16:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:28:34,570 [INFO] tick jst=2026-05-15 16:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:33:34,574 [INFO] tick jst=2026-05-15 16:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:38:34,579 [INFO] tick jst=2026-05-15 16:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:43:34,583 [INFO] tick jst=2026-05-15 16:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:48:34,587 [INFO] tick jst=2026-05-15 16:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:53:34,591 [INFO] tick jst=2026-05-15 16:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 16:58:34,595 [INFO] tick jst=2026-05-15 16:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:03:34,600 [INFO] tick jst=2026-05-15 17:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:08:34,604 [INFO] tick jst=2026-05-15 17:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:13:34,609 [INFO] tick jst=2026-05-15 17:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:18:34,613 [INFO] tick jst=2026-05-15 17:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:23:34,618 [INFO] tick jst=2026-05-15 17:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:28:34,622 [INFO] tick jst=2026-05-15 17:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:33:34,626 [INFO] tick jst=2026-05-15 17:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:38:34,631 [INFO] tick jst=2026-05-15 17:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:43:34,635 [INFO] tick jst=2026-05-15 17:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:48:34,640 [INFO] tick jst=2026-05-15 17:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:53:34,644 [INFO] tick jst=2026-05-15 17:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 17:58:34,648 [INFO] tick jst=2026-05-15 17:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:03:34,653 [INFO] tick jst=2026-05-15 18:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:08:34,657 [INFO] tick jst=2026-05-15 18:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:13:34,662 [INFO] tick jst=2026-05-15 18:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:18:34,666 [INFO] tick jst=2026-05-15 18:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:23:34,670 [INFO] tick jst=2026-05-15 18:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:28:34,674 [INFO] tick jst=2026-05-15 18:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:33:34,679 [INFO] tick jst=2026-05-15 18:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:38:34,684 [INFO] tick jst=2026-05-15 18:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:43:34,689 [INFO] tick jst=2026-05-15 18:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:48:34,694 [INFO] tick jst=2026-05-15 18:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:53:34,700 [INFO] tick jst=2026-05-15 18:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 18:58:34,709 [INFO] tick jst=2026-05-15 18:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:03:34,718 [INFO] tick jst=2026-05-15 19:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:08:34,727 [INFO] tick jst=2026-05-15 19:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:13:34,736 [INFO] tick jst=2026-05-15 19:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:18:34,745 [INFO] tick jst=2026-05-15 19:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:23:34,754 [INFO] tick jst=2026-05-15 19:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:28:34,764 [INFO] tick jst=2026-05-15 19:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:33:34,774 [INFO] tick jst=2026-05-15 19:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:38:34,783 [INFO] tick jst=2026-05-15 19:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:43:34,792 [INFO] tick jst=2026-05-15 19:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:48:34,802 [INFO] tick jst=2026-05-15 19:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:53:34,811 [INFO] tick jst=2026-05-15 19:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 19:58:34,816 [INFO] tick jst=2026-05-15 19:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:03:34,821 [INFO] tick jst=2026-05-15 20:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:08:34,827 [INFO] tick jst=2026-05-15 20:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:13:34,831 [INFO] tick jst=2026-05-15 20:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:18:34,835 [INFO] tick jst=2026-05-15 20:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:23:34,840 [INFO] tick jst=2026-05-15 20:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:28:34,844 [INFO] tick jst=2026-05-15 20:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:33:34,849 [INFO] tick jst=2026-05-15 20:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:38:34,854 [INFO] tick jst=2026-05-15 20:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:43:34,859 [INFO] tick jst=2026-05-15 20:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:48:34,863 [INFO] tick jst=2026-05-15 20:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:53:34,868 [INFO] tick jst=2026-05-15 20:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 20:58:34,872 [INFO] tick jst=2026-05-15 20:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:03:34,877 [INFO] tick jst=2026-05-15 21:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:08:34,882 [INFO] tick jst=2026-05-15 21:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:13:34,886 [INFO] tick jst=2026-05-15 21:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:18:34,892 [INFO] tick jst=2026-05-15 21:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:23:34,897 [INFO] tick jst=2026-05-15 21:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:28:34,901 [INFO] tick jst=2026-05-15 21:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:33:34,906 [INFO] tick jst=2026-05-15 21:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:38:34,910 [INFO] tick jst=2026-05-15 21:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:43:34,915 [INFO] tick jst=2026-05-15 21:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:48:34,921 [INFO] tick jst=2026-05-15 21:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:53:34,926 [INFO] tick jst=2026-05-15 21:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 21:58:34,931 [INFO] tick jst=2026-05-15 21:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:03:34,936 [INFO] tick jst=2026-05-15 22:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:08:34,941 [INFO] tick jst=2026-05-15 22:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:13:34,946 [INFO] tick jst=2026-05-15 22:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:18:34,952 [INFO] tick jst=2026-05-15 22:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:23:34,956 [INFO] tick jst=2026-05-15 22:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:28:34,963 [INFO] tick jst=2026-05-15 22:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:33:34,967 [INFO] tick jst=2026-05-15 22:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:38:34,972 [INFO] tick jst=2026-05-15 22:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:43:34,977 [INFO] tick jst=2026-05-15 22:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:48:34,982 [INFO] tick jst=2026-05-15 22:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:53:34,987 [INFO] tick jst=2026-05-15 22:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 22:58:34,992 [INFO] tick jst=2026-05-15 22:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:03:34,996 [INFO] tick jst=2026-05-15 23:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:08:35,001 [INFO] tick jst=2026-05-15 23:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:13:35,006 [INFO] tick jst=2026-05-15 23:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:18:35,010 [INFO] tick jst=2026-05-15 23:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:23:35,015 [INFO] tick jst=2026-05-15 23:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:28:35,022 [INFO] tick jst=2026-05-15 23:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:33:35,031 [INFO] tick jst=2026-05-15 23:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:38:35,040 [INFO] tick jst=2026-05-15 23:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:43:35,051 [INFO] tick jst=2026-05-15 23:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:48:35,059 [INFO] tick jst=2026-05-15 23:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:53:35,067 [INFO] tick jst=2026-05-15 23:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-15 23:58:35,076 [INFO] tick jst=2026-05-15 23:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:03:35,085 [INFO] tick jst=2026-05-16 00:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:08:35,093 [INFO] tick jst=2026-05-16 00:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:13:35,102 [INFO] tick jst=2026-05-16 00:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:18:35,111 [INFO] tick jst=2026-05-16 00:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:23:35,119 [INFO] tick jst=2026-05-16 00:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:28:35,125 [INFO] tick jst=2026-05-16 00:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:33:35,130 [INFO] tick jst=2026-05-16 00:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:38:35,134 [INFO] tick jst=2026-05-16 00:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:43:35,140 [INFO] tick jst=2026-05-16 00:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:48:35,146 [INFO] tick jst=2026-05-16 00:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:53:35,152 [INFO] tick jst=2026-05-16 00:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 00:58:35,157 [INFO] tick jst=2026-05-16 00:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:03:35,162 [INFO] tick jst=2026-05-16 01:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:08:35,167 [INFO] tick jst=2026-05-16 01:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:13:35,173 [INFO] tick jst=2026-05-16 01:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:18:35,177 [INFO] tick jst=2026-05-16 01:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:23:35,182 [INFO] tick jst=2026-05-16 01:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:28:35,187 [INFO] tick jst=2026-05-16 01:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:33:35,191 [INFO] tick jst=2026-05-16 01:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:38:35,198 [INFO] tick jst=2026-05-16 01:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:43:35,202 [INFO] tick jst=2026-05-16 01:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:48:35,208 [INFO] tick jst=2026-05-16 01:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:53:35,213 [INFO] tick jst=2026-05-16 01:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 01:58:35,219 [INFO] tick jst=2026-05-16 01:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:03:35,224 [INFO] tick jst=2026-05-16 02:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:08:35,229 [INFO] tick jst=2026-05-16 02:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:13:35,234 [INFO] tick jst=2026-05-16 02:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:18:35,239 [INFO] tick jst=2026-05-16 02:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:23:35,244 [INFO] tick jst=2026-05-16 02:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:28:35,249 [INFO] tick jst=2026-05-16 02:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:33:35,254 [INFO] tick jst=2026-05-16 02:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:38:35,258 [INFO] tick jst=2026-05-16 02:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:43:35,263 [INFO] tick jst=2026-05-16 02:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:48:35,269 [INFO] tick jst=2026-05-16 02:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:53:35,273 [INFO] tick jst=2026-05-16 02:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 02:58:35,277 [INFO] tick jst=2026-05-16 02:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:03:35,282 [INFO] tick jst=2026-05-16 03:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:08:35,287 [INFO] tick jst=2026-05-16 03:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:13:35,291 [INFO] tick jst=2026-05-16 03:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:18:35,296 [INFO] tick jst=2026-05-16 03:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:23:35,301 [INFO] tick jst=2026-05-16 03:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:28:35,305 [INFO] tick jst=2026-05-16 03:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:33:35,310 [INFO] tick jst=2026-05-16 03:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:38:35,315 [INFO] tick jst=2026-05-16 03:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:43:35,320 [INFO] tick jst=2026-05-16 03:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:48:35,324 [INFO] tick jst=2026-05-16 03:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:53:35,330 [INFO] tick jst=2026-05-16 03:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 03:58:35,335 [INFO] tick jst=2026-05-16 03:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:03:35,343 [INFO] tick jst=2026-05-16 04:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:08:35,350 [INFO] tick jst=2026-05-16 04:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:13:35,357 [INFO] tick jst=2026-05-16 04:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:18:35,364 [INFO] tick jst=2026-05-16 04:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:23:35,372 [INFO] tick jst=2026-05-16 04:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:28:35,380 [INFO] tick jst=2026-05-16 04:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:33:35,395 [INFO] tick jst=2026-05-16 04:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:38:35,430 [INFO] tick jst=2026-05-16 04:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:43:35,473 [INFO] tick jst=2026-05-16 04:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:48:35,480 [INFO] tick jst=2026-05-16 04:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:53:35,487 [INFO] tick jst=2026-05-16 04:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 04:58:35,495 [INFO] tick jst=2026-05-16 04:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 05:03:35,537 [INFO] tick jst=2026-05-16 05:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 05:08:35,865 [WARNING] issue_bot: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_issue_bot.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-16 05:08:35,940 [INFO] spawned bat=start_issue_bot.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_issue_bot.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=100480
+2026-05-16 05:08:35,961 [INFO] issue_bot: start_issue_bot.bat spawn OK child_pid=100480
+2026-05-16 05:08:40,078 [INFO] issue_bot: post-restart alive check after 4s running=False
+2026-05-16 05:08:40,079 [INFO] [WATCHDOG] restarted issue_bot
+2026-05-16 05:08:40,959 [INFO] tick jst=2026-05-16 05:08 paper_window=no issue_bot=restarted paper_trade=idle
+2026-05-16 05:13:41,102 [INFO] tick jst=2026-05-16 05:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 05:18:41,115 [INFO] tick jst=2026-05-16 05:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 05:23:41,120 [WARNING] issue_bot: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_issue_bot.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-16 05:23:41,129 [INFO] spawned bat=start_issue_bot.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_issue_bot.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=112992
+2026-05-16 05:23:41,129 [INFO] issue_bot: start_issue_bot.bat spawn OK child_pid=112992
+2026-05-16 05:23:45,130 [INFO] issue_bot: post-restart alive check after 4s running=True
+2026-05-16 05:23:45,130 [INFO] [WATCHDOG] restarted issue_bot
+2026-05-16 05:23:45,663 [INFO] tick jst=2026-05-16 05:23 paper_window=no issue_bot=restarted paper_trade=idle
+2026-05-16 05:28:45,667 [INFO] tick jst=2026-05-16 05:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 05:33:45,672 [INFO] tick jst=2026-05-16 05:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 05:38:45,677 [INFO] tick jst=2026-05-16 05:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 05:43:45,682 [INFO] tick jst=2026-05-16 05:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 05:48:45,687 [INFO] tick jst=2026-05-16 05:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 05:53:45,691 [INFO] tick jst=2026-05-16 05:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 05:58:45,696 [INFO] tick jst=2026-05-16 05:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:03:45,704 [INFO] tick jst=2026-05-16 06:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:08:45,710 [INFO] tick jst=2026-05-16 06:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:13:45,714 [INFO] tick jst=2026-05-16 06:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:18:45,719 [INFO] tick jst=2026-05-16 06:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:23:45,724 [INFO] tick jst=2026-05-16 06:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:28:45,729 [INFO] tick jst=2026-05-16 06:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:33:45,735 [INFO] tick jst=2026-05-16 06:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:38:45,741 [INFO] tick jst=2026-05-16 06:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:43:45,746 [INFO] tick jst=2026-05-16 06:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:48:45,751 [INFO] tick jst=2026-05-16 06:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:53:45,756 [INFO] tick jst=2026-05-16 06:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 06:58:45,762 [INFO] tick jst=2026-05-16 06:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:03:45,767 [INFO] tick jst=2026-05-16 07:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:08:45,773 [INFO] tick jst=2026-05-16 07:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:13:45,779 [INFO] tick jst=2026-05-16 07:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:18:45,784 [INFO] tick jst=2026-05-16 07:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:23:45,790 [INFO] tick jst=2026-05-16 07:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:28:45,795 [INFO] tick jst=2026-05-16 07:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:33:45,800 [INFO] tick jst=2026-05-16 07:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:38:45,805 [INFO] tick jst=2026-05-16 07:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:43:45,809 [INFO] tick jst=2026-05-16 07:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:48:45,816 [INFO] tick jst=2026-05-16 07:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:53:45,822 [INFO] tick jst=2026-05-16 07:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 07:58:45,828 [INFO] tick jst=2026-05-16 07:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:03:45,834 [INFO] tick jst=2026-05-16 08:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:08:45,840 [INFO] tick jst=2026-05-16 08:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:13:45,847 [INFO] tick jst=2026-05-16 08:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:18:45,852 [INFO] tick jst=2026-05-16 08:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:23:45,859 [INFO] tick jst=2026-05-16 08:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:28:45,865 [INFO] tick jst=2026-05-16 08:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:33:45,872 [INFO] tick jst=2026-05-16 08:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:38:45,880 [INFO] tick jst=2026-05-16 08:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:43:45,887 [INFO] tick jst=2026-05-16 08:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:48:45,897 [INFO] tick jst=2026-05-16 08:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:53:45,905 [INFO] tick jst=2026-05-16 08:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 08:58:45,913 [INFO] tick jst=2026-05-16 08:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:03:45,921 [INFO] tick jst=2026-05-16 09:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:08:45,928 [INFO] tick jst=2026-05-16 09:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:13:45,936 [INFO] tick jst=2026-05-16 09:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:18:45,944 [INFO] tick jst=2026-05-16 09:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:23:45,952 [INFO] tick jst=2026-05-16 09:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:28:45,960 [INFO] tick jst=2026-05-16 09:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:33:45,967 [INFO] tick jst=2026-05-16 09:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:38:45,972 [INFO] tick jst=2026-05-16 09:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:43:45,978 [INFO] tick jst=2026-05-16 09:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:48:45,985 [INFO] tick jst=2026-05-16 09:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:53:45,993 [INFO] tick jst=2026-05-16 09:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 09:58:46,000 [INFO] tick jst=2026-05-16 09:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:03:46,005 [INFO] tick jst=2026-05-16 10:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:08:46,011 [INFO] tick jst=2026-05-16 10:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:13:46,017 [INFO] tick jst=2026-05-16 10:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:18:46,023 [INFO] tick jst=2026-05-16 10:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:23:46,029 [INFO] tick jst=2026-05-16 10:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:28:46,034 [INFO] tick jst=2026-05-16 10:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:33:46,041 [INFO] tick jst=2026-05-16 10:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:38:46,047 [INFO] tick jst=2026-05-16 10:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:43:46,053 [INFO] tick jst=2026-05-16 10:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:48:46,057 [INFO] tick jst=2026-05-16 10:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:53:46,064 [INFO] tick jst=2026-05-16 10:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 10:58:46,068 [INFO] tick jst=2026-05-16 10:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:03:46,074 [INFO] tick jst=2026-05-16 11:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:08:46,082 [INFO] tick jst=2026-05-16 11:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:13:46,089 [INFO] tick jst=2026-05-16 11:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:18:46,094 [INFO] tick jst=2026-05-16 11:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:23:46,101 [INFO] tick jst=2026-05-16 11:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:28:46,107 [INFO] tick jst=2026-05-16 11:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:33:46,112 [INFO] tick jst=2026-05-16 11:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:38:46,117 [INFO] tick jst=2026-05-16 11:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:43:46,122 [INFO] tick jst=2026-05-16 11:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:48:46,127 [INFO] tick jst=2026-05-16 11:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:53:46,132 [INFO] tick jst=2026-05-16 11:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 11:58:46,139 [INFO] tick jst=2026-05-16 11:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:03:46,147 [INFO] tick jst=2026-05-16 12:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:08:46,152 [INFO] tick jst=2026-05-16 12:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:13:46,158 [INFO] tick jst=2026-05-16 12:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:18:46,162 [INFO] tick jst=2026-05-16 12:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:23:46,168 [INFO] tick jst=2026-05-16 12:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:28:46,173 [INFO] tick jst=2026-05-16 12:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:33:46,179 [INFO] tick jst=2026-05-16 12:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:38:46,185 [INFO] tick jst=2026-05-16 12:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:43:46,190 [INFO] tick jst=2026-05-16 12:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:48:46,195 [INFO] tick jst=2026-05-16 12:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:53:46,200 [INFO] tick jst=2026-05-16 12:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 12:58:46,205 [INFO] tick jst=2026-05-16 12:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:03:46,210 [INFO] tick jst=2026-05-16 13:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:08:46,218 [INFO] tick jst=2026-05-16 13:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:13:46,226 [INFO] tick jst=2026-05-16 13:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:18:46,234 [INFO] tick jst=2026-05-16 13:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:23:46,243 [INFO] tick jst=2026-05-16 13:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:28:46,250 [INFO] tick jst=2026-05-16 13:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:33:46,259 [INFO] tick jst=2026-05-16 13:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:38:46,267 [INFO] tick jst=2026-05-16 13:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:43:46,275 [INFO] tick jst=2026-05-16 13:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:48:46,283 [INFO] tick jst=2026-05-16 13:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:53:46,291 [INFO] tick jst=2026-05-16 13:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 13:58:46,299 [INFO] tick jst=2026-05-16 13:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:03:46,307 [INFO] tick jst=2026-05-16 14:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:08:46,313 [INFO] tick jst=2026-05-16 14:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:13:46,319 [INFO] tick jst=2026-05-16 14:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:18:46,325 [INFO] tick jst=2026-05-16 14:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:23:46,331 [INFO] tick jst=2026-05-16 14:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:28:46,337 [INFO] tick jst=2026-05-16 14:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:33:46,343 [INFO] tick jst=2026-05-16 14:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:38:46,349 [INFO] tick jst=2026-05-16 14:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:43:46,354 [INFO] tick jst=2026-05-16 14:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:48:46,360 [INFO] tick jst=2026-05-16 14:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:53:46,367 [INFO] tick jst=2026-05-16 14:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 14:58:46,373 [INFO] tick jst=2026-05-16 14:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:03:46,379 [INFO] tick jst=2026-05-16 15:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:08:46,384 [INFO] tick jst=2026-05-16 15:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:13:46,390 [INFO] tick jst=2026-05-16 15:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:18:46,396 [INFO] tick jst=2026-05-16 15:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:23:46,403 [INFO] tick jst=2026-05-16 15:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:28:46,408 [INFO] tick jst=2026-05-16 15:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:33:46,413 [INFO] tick jst=2026-05-16 15:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:38:46,419 [INFO] tick jst=2026-05-16 15:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:43:46,425 [INFO] tick jst=2026-05-16 15:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:48:46,430 [INFO] tick jst=2026-05-16 15:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:53:46,436 [INFO] tick jst=2026-05-16 15:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 15:58:46,442 [INFO] tick jst=2026-05-16 15:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:03:46,446 [INFO] tick jst=2026-05-16 16:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:08:46,451 [INFO] tick jst=2026-05-16 16:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:13:46,455 [INFO] tick jst=2026-05-16 16:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:18:46,460 [INFO] tick jst=2026-05-16 16:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:23:46,466 [INFO] tick jst=2026-05-16 16:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:28:46,471 [INFO] tick jst=2026-05-16 16:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:33:46,477 [INFO] tick jst=2026-05-16 16:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:38:46,483 [INFO] tick jst=2026-05-16 16:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:43:46,489 [INFO] tick jst=2026-05-16 16:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:48:46,497 [INFO] tick jst=2026-05-16 16:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:53:46,503 [INFO] tick jst=2026-05-16 16:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 16:58:46,507 [INFO] tick jst=2026-05-16 16:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:03:46,513 [INFO] tick jst=2026-05-16 17:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:08:46,518 [INFO] tick jst=2026-05-16 17:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:13:46,523 [INFO] tick jst=2026-05-16 17:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:18:46,530 [INFO] tick jst=2026-05-16 17:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:23:46,536 [INFO] tick jst=2026-05-16 17:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:28:46,541 [INFO] tick jst=2026-05-16 17:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:33:46,547 [INFO] tick jst=2026-05-16 17:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:38:46,554 [INFO] tick jst=2026-05-16 17:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:43:46,563 [INFO] tick jst=2026-05-16 17:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:48:46,572 [INFO] tick jst=2026-05-16 17:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:53:46,581 [INFO] tick jst=2026-05-16 17:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 17:58:46,590 [INFO] tick jst=2026-05-16 17:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:03:46,600 [INFO] tick jst=2026-05-16 18:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:08:46,609 [INFO] tick jst=2026-05-16 18:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:13:46,618 [INFO] tick jst=2026-05-16 18:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:18:46,628 [INFO] tick jst=2026-05-16 18:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:23:46,637 [INFO] tick jst=2026-05-16 18:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:28:46,646 [INFO] tick jst=2026-05-16 18:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:33:46,655 [INFO] tick jst=2026-05-16 18:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:38:46,663 [INFO] tick jst=2026-05-16 18:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:43:46,669 [INFO] tick jst=2026-05-16 18:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:48:46,675 [INFO] tick jst=2026-05-16 18:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:53:46,680 [INFO] tick jst=2026-05-16 18:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 18:58:46,685 [INFO] tick jst=2026-05-16 18:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:03:46,691 [INFO] tick jst=2026-05-16 19:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:08:46,696 [INFO] tick jst=2026-05-16 19:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:13:46,703 [INFO] tick jst=2026-05-16 19:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:18:46,709 [INFO] tick jst=2026-05-16 19:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:23:46,715 [INFO] tick jst=2026-05-16 19:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:28:46,721 [INFO] tick jst=2026-05-16 19:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:33:46,726 [INFO] tick jst=2026-05-16 19:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:38:46,733 [INFO] tick jst=2026-05-16 19:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:43:46,738 [INFO] tick jst=2026-05-16 19:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:48:46,745 [INFO] tick jst=2026-05-16 19:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:53:46,752 [INFO] tick jst=2026-05-16 19:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 19:58:46,757 [INFO] tick jst=2026-05-16 19:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 20:03:46,764 [INFO] tick jst=2026-05-16 20:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 20:08:46,769 [INFO] tick jst=2026-05-16 20:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 20:13:46,776 [INFO] tick jst=2026-05-16 20:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 20:18:46,783 [INFO] tick jst=2026-05-16 20:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-16 20:23:46,789 [INFO] tick jst=2026-05-16 20:23 paper_window=no issue_bot=ok paper_trade=idle

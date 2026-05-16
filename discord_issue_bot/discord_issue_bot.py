@@ -29,14 +29,22 @@ import asyncio
 import json
 import os
 from dataclasses import dataclass
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    load_dotenv = None  # type: ignore[misc, assignment]
 
 # .env は「このサブプロジェクト直下」だけ読む（親ディレクトリ探索はしない）
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(dotenv_path=str(BASE_DIR / ".env"), override=False)
+
+if load_dotenv is not None:
+    load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
+else:
+    print("[ENV] python-dotenv not installed; skipping .env load", file=sys.stderr)
 
 import discord
 from discord.ext import commands

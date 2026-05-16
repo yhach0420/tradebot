@@ -15,9 +15,79 @@
 
 ## TODO（現在の優先順位）
 
-### 最優先
+### 最優先（明日）
 
-#### 1. STRONG × momentum deterioration / extension 相互作用（最優先）
+#### 1. paper_trade live確認
+
+- **実行**
+
+```text
+python yahoo_kabu_watch.py --paper-trade --replay-config configs/rising_ratio_threshold_sweep/replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15_rrthr_45.json
+```
+
+- **確認項目**
+  - live fetch 壊れない
+  - Discord alert/log 分離正常
+  - Entry 上抜け通知が `PAPER_ALERT_CHANNEL_ID` に来る
+  - `[SHADOW:*]` が出るか
+  - CSV 保存正常
+  - session / reconnect 正常
+  - signal 暴走なし
+
+### 次フェーズ（重要）
+
+#### 2. shadow monitoring 継続（AUTO_BLOCK 昇格はまだ禁止）
+
+- **目的**：`STRONG_EXTENSION_GE_05` が未来でも危険か確認する。
+- **現状**
+  - repeat では危険
+  - tail 改善大
+  - ただし **4/15 依存気味**の疑い
+- **重要**
+  - AUTO_BLOCK 化はまだ禁止
+  - **shadow hit = 即危険**とはまだ決めない
+
+#### 3. liveで shadow 後の値動きを観察
+
+- **見るもの**
+  - VWAP 割れ
+  - 高値掴み化
+  - 急反落
+  - 普通に上昇継続するか
+
+### 保留中（まだやらない）
+
+#### 4. AUTO_BLOCK 本実装
+
+- **まだ禁止**
+- **理由**：temporal stability 不十分 / 4/15 依存疑惑 / future leakage 防止中
+
+#### 5. 条件追加（禁止寄り）
+
+- **禁止**（過学習リスクが高い）
+- 例：`VWAP>=1.3` / `pullback>=0.7` / `RS<=-0.4` のような細分化
+
+#### 6. score tuning
+
+- **まだ禁止**
+- shadow 構造観察フェーズなので、スコア最適化は早い
+
+### 将来候補
+
+#### 7. shadow → AUTO_BLOCK 昇格条件（将来）
+
+- live でも崩れる
+- 月跨ぎでも崩れる
+- 銘柄跨ぎでも崩れる
+- repeat でも崩れる
+
+これらを **全部**満たした時だけ検討する。
+
+---
+
+### 解析（replay主体：継続）
+
+#### A1. STRONG × momentum deterioration / extension 相互作用
 
 - **目的**：最後の吹き上げ、伸びすぎ後の失速、買い継続不足を **定量化**する（**「何回目 entry」より extension の説明力**を優先）。
 - **重点特徴量**
@@ -32,47 +102,21 @@
   - `robustness_symbol_removal_analysis`（上位期待値銘柄依存の感度）
   - `AUTO_BLOCK_EFFECT_ANALYSIS`（採用前の仮想効果）
 
-### 次点
-
-#### 2. CHASE EXTENSION 分析・AUTO_BLOCK検証（複合条件化の候補）
-
-- **方針**：`BLOCK_STRONG_CHASE_AFTER_EXTENSION` を単独採用ではなく、**複合条件化**の候補として扱う。
-- **例（候補）**
-  - `market_regime == STRONG`
-  - AND `price_change_pct_from_prev_signal >= 0.5`
-  - AND `delta_high_update_count_before_entry == +1`
-- **重点分析**
-  - `CHASE_EXTENSION_ANALYSIS`
-  - `MOMENTUM_DECAY_ANALYSIS`
-  - `momentum_decay_x_market_regime`
-  - `AUTO_BLOCK_EFFECT_ANALYSIS`
-- **確認項目**
-  - 崩壊点（0.5 / 0.8 / 1.2）
-  - expectancy / lose_worst10
-  - STRONG/WEAK 別差異
-  - blocked_total_pnl / pnl_improvement
-
-#### 3. RISING_LT50 / rising_ratio_threshold（地合い単体ではなく組み合わせで見る）
+#### A2. RISING_LT50 / rising_ratio_threshold（地合い単体ではなく組み合わせで見る）
 
 - **方針**：地合い単体で結論を出さず、**状態遷移（伸びすぎ×劣化）**との組み合わせで評価する。
 - **対象**
-  - `REGIME_FILTER_RISING_LT50`（※最優先からは外す）
+  - `REGIME_FILTER_RISING_LT50`
   - `rising_ratio_threshold`（30/35/40/45/50/55）
-- **重点（例）**
-  - WEAK_expectancy
-  - lose_worst10
-  - tail risk
 
-#### 4. 現在の主軸分析（状態遷移ベースの事故条件分析）
+#### A3. 現在の主軸分析（状態遷移ベースの事故条件分析）
 
-- **目的**：単独featureではなく、**「事故る状態遷移」**を定量化する。
 - **主軸**
   - `momentum_decay_analysis`
   - `CHASE_EXTENSION_ANALYSIS`
   - `AUTO_BLOCK_EFFECT_ANALYSIS`
   - 状態遷移ベースの事故条件分析
-- **関連（必要に応じて）**
-  - strong_combo_filter / weak_combo_filter（単独の固定候補ではなく、状態遷移の説明変数として扱う）
+  - strong_combo_filter / weak_combo_filter（単独固定ではなく説明変数）
 
 ### 保留
 
@@ -199,6 +243,24 @@
 
 ---
 
+## インフラ系（ほぼ完了）
+
+~~完了済み~~
+
+- ~~paper_trade replay分離~~
+- ~~replay cache分離~~
+- ~~Discord alert/log分離~~
+- ~~PAPER_ALERT_CHANNEL_ID routing~~
+- ~~.env導入~~
+- ~~日付別results整理~~
+- ~~shadow analysis~~
+- ~~temporal stability~~
+- ~~symbol robustness~~
+- ~~forward split~~
+- ~~virtual block sweep~~
+
+---
+
 ## 現時点の戦略評価（更新版）
 
 ### 良い点
@@ -229,6 +291,64 @@
         ‖（並行）
 運用耐久・漏れ・安定性 → paper trade（期待値改善の主戦場ではない）
 ```
+
+## shadow block 継続監視フェーズ
+
+### 現状確認
+
+`STRONG_EXTENSION_GE_05` は、`random_apr` で `replay_repeat=30` でも継続して大幅マイナス expectancy を示した。
+
+特に:
+
+- `expectancy < 0` が継続
+- tail risk 悪化
+- `positive_period_ratio` が極端に低い
+- `SHADOW_COMBO_ANY` でも悪化継続
+
+ただし:
+
+- **2026-04-15 の寄与が大きく**、完全な temporal robustness は未確認。
+
+### 現時点の方針
+
+**実施する:**
+
+- shadow monitoring 継続
+- live paper_trade 観察
+- replay repeat 継続
+- temporal stability 継続確認
+
+**まだ実施しない:**
+
+- AUTO_BLOCK 本実装
+- score tuning
+- 条件追加
+- VWAP 距離閾値追加
+- 時間帯 block 追加
+- feature 追加
+- `symbol_daily_entry_index` 利用
+
+### 重要観測点
+
+特に以下の組み合わせを継続観察:
+
+- `market_regime=STRONG`
+- `extension>=0.5`
+- `delta_high_update_count_before_entry=-1`
+- `entry_vwap_distance_pct=1.0~1.5`
+
+### 次フェーズ条件
+
+以下を満たした場合のみ **AUTO_BLOCK 候補へ昇格検討**:
+
+- 別月 replay でも悪化
+- live paper_trade でも崩れる
+- 銘柄依存を除外後も悪化
+- `replay repeat>=30` でも悪化継続
+
+最後:
+
+TODO整理のみ。実装しない。
 
 ## 長期バックログ（旧整理）
 

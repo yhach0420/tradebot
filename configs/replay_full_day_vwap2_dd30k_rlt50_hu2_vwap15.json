@@ -43,5 +43,48 @@
         }
       ]
     }
+  },
+  "paper_trade": {
+    "lag_metrics_enabled": true,
+    "embed_lag_display_enabled": true,
+    "lag_guard_enabled": true,
+    "max_signal_notify_lag_sec": 120,
+    "fetch_timeouts_enabled": false,
+    "per_symbol_fetch_timeout_sec": 3,
+    "total_poll_timeout_sec": 45,
+    "max_retry_per_symbol": 1,
+    "opening_light_mode": {
+      "enabled": false,
+      "until_hhmm": "09:10",
+      "suppress_discord_signal_notify": false
+    },
+    "dynamic_watchlist": {
+      "enabled": false,
+      "refresh_sec": 300,
+      "max_symbols": 15,
+      "sticky_sec": 300,
+      "max_symbols_opening_light": 8,
+      "tier1_per_symbol_timeout_sec": 2.5,
+      "tier1_total_timeout_sec": 30
+    },
+    "tier1_score_weights": {
+      "volume_spike_score": 0.2,
+      "vwap_distance_score": 0.1,
+      "high_proximity_score": 0.22,
+      "momentum_score": 0.18,
+      "relative_strength_score": 0.15,
+      "gap_score": 0.15
+    },
+    "candidate_state_notify_enabled": true,
+    "discord_send_candidate_transition_embeds": false,
+    "discord_send_tier2_removal_logs": false,
+    "discord_send_paper_aux_logs": false,
+    "discord_use_minimal_breakout_embed": true,
+    "price_change_notify_threshold_pct": 0.5,
+    "symbol_notify_cooldown_sec": 180,
+    "candidate_vwap_break_invalidate_pct": -0.5,
+    "paper_execution_enabled": true,
+    "paper_max_hold_minutes": 0,
+    "paper_take_adjust_mode": "raise_stop"
   }
 }

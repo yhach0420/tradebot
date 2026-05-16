@@ -41,12 +41,85 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
-from dotenv import load_dotenv
 from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(_PROJECT_ROOT))
+
+from src.signal_engine import (
+    BREAKOUT_ENTRY_RESET_PCT,
+    ENTRY_BREAKOUT_BUFFER,
+    ENTRY_NEAR_RATIO,
+    VWAP_DISTANCE_PCT,
+    IntradaySignals,
+    calc_entry_from_signals,
+    calc_intraday_signals_from_series,
+)
+
+from dotenv import load_dotenv
 
 # .env は「このプロジェクト直下」だけ読む（親ディレクトリ探索はしない）
 _DOTENV_PATH = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=str(_DOTENV_PATH), override=False)
+
+
+from yahoo_kabu_paper_trade_impl import (
+    PAPER_TRADE_DRY_RUN_LOGIC_VERSION,
+    PAPER_TRADE_LOGIC_VERSION,
+    REPLAY_PAPER_TRADE_LOGIC_VERSION,
+    SHARED_EXIT_ENGINE_VERSION,
+    SHARED_SIGNAL_ENGINE_VERSION,
+    _build_multi_day_shadow_summary,
+    _build_replay_shadow_filter_validation,
+    _chase_extension_bucket,
+    _compute_market_context_scores,
+    _enrich_signal_dicts_quality_ranks,
+    _paper_trade_breakout_entry_quality_scores,
+    _paper_trade_bump_entry_quality_summary,
+    _paper_trade_bump_take_selection_counters,
+    _paper_trade_compute_stop_take_for_signal,
+    _paper_trade_csv_header_extend_phase2,
+    _paper_trade_deferral_row_set_lag_fields,
+    _paper_trade_default_runtime_controls,
+    _paper_trade_entry_quality_csv_columns,
+    _paper_trade_execution_counters_blank,
+    _paper_trade_merge_runtime_controls,
+    _paper_trade_phase2_compute_entry_context,
+    _paper_trade_phase2_record_signal,
+    _paper_trade_phase2_shadow_from_csv_rows,
+    _paper_trade_recent_5m_range_from_extras,
+    _paper_trade_rtc_merge_phase2_from_cfg,
+    _paper_trade_structure_relaxed_gate,
+    _paper_trade_take_meta_from_csv,
+    _paper_trade_try_close_open_position,
+    _paper_trade_update_peak_fail_count,
+    _parse_bool_cell,
+    _parse_replay_shadow_multi_day_list,
+    _replay_shared_engine_trace_row,
+    _shared_engine_trace_jsonl_append,
+    _build_paper_replay_divergence_report,
+    _paper_trade_bump_structure_wall_reject,
+    _paper_trade_bump_dynamic_rr_shadow,
+    _paper_trade_bump_structure_candidate_aggregate,
+    _replay_config_file_sha256,
+    _replay_logic_version_composite,
+    _write_replay_run_identity_file,
+    _paper_trade_vwap_break_timing_from_signals,
+    _paper_trade_dynamic_low_rr_shadow_tables,
+    _run_replay_validate_params,
+    _PAPER_TRADE_ENTRY_QUALITY_CSV_FIELDNAMES,
+    _PAPER_TRADE_VWAP_DIAG_CSV_FIELDS,
+    run_replay_multi_day_shadow_validation_impl,
+    run_paper_trade_dry_run_replay,
+)
+
+from yahoo_kabu_paper_trade_extended import (
+    _append_structure_rr_candidate_diag_csv,
+    _paper_trade_bump_dynamic_fallback_open,
+    _paper_trade_bump_structure_rr_from_candidate_row,
+    _paper_trade_relaxed_shadow_sweep_bump_open,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -681,6 +754,21 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
     auto_block_strong_chase_after_extension_enabled = bool(cfg.get("auto_block_strong_chase_after_extension_enabled", False))
     auto_block_strong_extension_hu_plus1_enabled = bool(cfg.get("auto_block_strong_extension_hu_plus1_enabled", False))
 
+    def _phase2_pick(key: str, default: Any) -> Any:
+        p2 = cfg.get("paper_trade_phase2") if isinstance(cfg.get("paper_trade_phase2"), dict) else {}
+        if isinstance(cfg, dict) and key in cfg:
+            return cfg.get(key)
+        if isinstance(p2, dict) and key in p2:
+            return p2.get(key)
+        return default
+
+    replay_chase_extension_autoblock_enabled = bool(_phase2_pick("replay_chase_extension_autoblock_enabled", False))
+    replay_chase_extension_ge_pct = float(_phase2_pick("replay_chase_extension_ge_pct", 0.5))
+    same_symbol_cooldown_sec = int(_phase2_pick("same_symbol_cooldown_sec", 300))
+    same_symbol_cooldown_shadow_only = bool(_phase2_pick("same_symbol_cooldown_shadow_only", True))
+    paper_entry_quality_min_for_open = _phase2_pick("paper_entry_quality_min_for_open", None)
+    use_paper_position_exec = bool(_phase2_pick("use_paper_position_exec", True))
+
     return {
         "replay_config_path": str(cfg.get("_path") or ""),
         "replay_config_name": str(cfg.get("name") or ""),
@@ -730,6 +818,12 @@ def _apply_replay_config_to_flags(*, cfg: dict[str, Any]) -> dict[str, Any]:
         "regime_control_snapshot": regime_control_snapshot,
         "auto_block_strong_chase_after_extension_enabled": bool(auto_block_strong_chase_after_extension_enabled),
         "auto_block_strong_extension_hu_plus1_enabled": bool(auto_block_strong_extension_hu_plus1_enabled),
+        "replay_chase_extension_autoblock_enabled": bool(replay_chase_extension_autoblock_enabled),
+        "replay_chase_extension_ge_pct": float(replay_chase_extension_ge_pct),
+        "same_symbol_cooldown_sec": int(same_symbol_cooldown_sec),
+        "same_symbol_cooldown_shadow_only": bool(same_symbol_cooldown_shadow_only),
+        "paper_entry_quality_min_for_open": paper_entry_quality_min_for_open,
+        "use_paper_position_exec": bool(use_paper_position_exec),
     }
 
 
@@ -1242,21 +1336,8 @@ MIN_VOLUME = 300_000          # 最低出来高（この値以上だけ通す）
 #
 # 注意:
 # - これらは 1分足系列が必要です（リアルタイムでは chart の 1m データを参照します）
-VWAP_DISTANCE_PCT = 0.5  # (price - vwap) / vwap * 100 >= 0.5
-
-# Entry候補（= entry）への接近条件:
-# - 「ブレイクした！」だけで通知が出ると、entry候補から遠い場面でも通知が増えがちです。
-# - そこで「entry候補の99.5%以上まで近づいたとき」だけ条件一致にします。
-ENTRY_NEAR_RATIO = 0.996
-
-# Entryの算出方法（新仕様）:
-# - 以前: entry = 当日高値(day_high)
-# - 変更: entry = 直近5分高値(recent_5m_high) * ENTRY_BREAKOUT_BUFFER
-#
-# ねらい:
-# - 当日高値は「すでに遠い」ことが多く、強い上昇でも Entry未成立 になりやすい
-# - 直近5分高値ベースにすると、ブレイクの“今この瞬間”に寄せやすい
-ENTRY_BREAKOUT_BUFFER = 1.001  # 0.1%上抜け（例: 5000円 → 5005円）
+# VWAP_DISTANCE_PCT / ENTRY_NEAR_RATIO / ENTRY_BREAKOUT_BUFFER / BREAKOUT_ENTRY_RESET_PCT は
+# src.signal_engine で定義し、上でインポート済み（単体検証スクリプトと数値整合）。
 
 # ----------------------------
 # 出来高急増（5日平均出来高との比較）
@@ -1319,9 +1400,7 @@ EXIT_CONFIRM_COUNT = 3
 # - breakout_state が「昔のentry突破」を引きずると、新しいentry候補で再度ブレイクしても
 #   🚀通知が出なくなります。
 #
-# 仕様:
-# - entry が前回「突破済みになった時のentry」から 0.3%以上変わったら breakout_state を False に戻す
-BREAKOUT_ENTRY_RESET_PCT = 0.3
+# BREAKOUT_ENTRY_RESET_PCT は src.signal_engine で定義（上でインポート済み）
 
 # ----------------------------
 # 25日移動平均（MA25）取得
@@ -1402,30 +1481,6 @@ class ReplayBar:
     low: float
     close: float
     volume: float
-
-
-@dataclass(frozen=True)
-class IntradaySignals:
-    """
-    「エントリータイミング検知」に必要な、直近の1分足由来シグナル。
-
-    - recent_5m_high:
-        直近5分の高値（※現在の足は含めない想定）
-    - price_5min_ago:
-        5分前の価格（1分足 close を基準）
-    - vwap:
-        日中VWAP（概算）
-    - vwap_distance_pct:
-        VWAP乖離率(%) = (price - vwap) / vwap * 100
-    - vol_3m_gt_prev_3m:
-        直近3分出来高合計 > その前の3分出来高合計（加点用）
-    """
-
-    recent_5m_high: Optional[float]
-    price_5min_ago: Optional[float]
-    vwap: Optional[float]
-    vwap_distance_pct: Optional[float]
-    vol_3m_gt_prev_3m: Optional[bool]
 
 
 @dataclass
@@ -1531,6 +1586,21 @@ class ReplaySignalEval:
             self.min_price_after = p
 
         if self.resolved:
+            return
+
+        if bool(getattr(self, "_paper_position_exec", False)):
+            _paper_trade_update_peak_fail_count(self, price=p)
+            _paper_trade_try_close_open_position(
+                self,
+                time_utc=time_utc,
+                price=p,
+                vwap=vwap,
+                recent_5m_low=recent_5m_low,
+                early_exit_before_partial_take=bool(early_exit_before_partial_take),
+                early_exit_vwap=bool(early_exit_vwap),
+                early_exit_recent_low=bool(early_exit_recent_low),
+                rtc=dict(getattr(self, "_paper_rtc", None) or {}),
+            )
             return
 
         # -----------------------------
@@ -1689,24 +1759,6 @@ class MorningScreenResult:
     vol_spike_ratio: Optional[float]
     day_range_pct: Optional[float]
     reasons: list[str]
-
-
-def calc_entry_from_signals(sig: Optional[IntradaySignals]) -> Optional[float]:
-    """
-    Entry候補価格を「直近5分高値ベース」で計算します（新仕様）。
-
-    entry = recent_5m_high * ENTRY_BREAKOUT_BUFFER
-
-    - recent_5m_high が取れない場合は None（= entry も作れない）
-    """
-    if sig is None:
-        return None
-    if sig.recent_5m_high is None:
-        return None
-    base = float(sig.recent_5m_high)
-    if base <= 0:
-        return None
-    return base * float(ENTRY_BREAKOUT_BUFFER)
 
 
 # 最新の「直近シグナル」を、通知/再計算のために保持します。
@@ -2951,7 +3003,7 @@ def fetch_intraday_1m_series(
     symbol: str,
     *,
     timeout_sec: float = 20.0,
-) -> tuple[list[float], list[float], list[float]]:
+) -> tuple[list[float], list[float], list[float], Optional[datetime]]:
     """
     リアルタイム監視用に「直近の1分足系列」を取ります。
 
@@ -2959,6 +3011,7 @@ def fetch_intraday_1m_series(
     - closes: close配列（Noneは除外しないでそのまま入る可能性があるので呼び出し側で注意）
     - highs:  high配列
     - vols:   volume配列（1分ごとの出来高）
+    - last_bar_end_utc: chart の timestamps 最終要素（その1分足バーの時刻・UTC）。無い場合 None。
 
     なぜ必要？
     - recent_5m_high（直近5分高値）
@@ -2999,7 +3052,16 @@ def fetch_intraday_1m_series(
     closes2 = [_as_float_or_none(x) for x in closes]
     highs2 = [_as_float_or_none(x) for x in highs]
     vols2 = [_as_float_or_none(x) for x in vols]
-    return closes2, highs2, vols2
+
+    last_bar_end_utc: Optional[datetime] = None
+    ts_arr = r0.get("timestamp") or []
+    if ts_arr:
+        try:
+            last_bar_end_utc = datetime.fromtimestamp(float(ts_arr[-1]), tz=timezone.utc)
+        except Exception:
+            last_bar_end_utc = None
+
+    return closes2, highs2, vols2, last_bar_end_utc
 
 
 def fetch_latest_intraday_data_for_paper_trade(
@@ -3007,21 +3069,31 @@ def fetch_latest_intraday_data_for_paper_trade(
     symbol: str,
     *,
     timeout_sec: float = 20.0,
-) -> tuple[Quote, IntradaySignals, Optional[float]]:
+    quote_provider: object | None = None,
+) -> tuple[Quote, IntradaySignals, Optional[float], Optional[datetime]]:
     """
     paper_trade 専用の live fetch 経路。
     - replay cache / replay timestamp / candle gating / future candle filter を使わない
     - 現在時刻(JST) と Yahoo chart(1m, 1d) の最新系列のみを使用
+    - MARKET_DATA_PROVIDER=kabu のとき、「現値（Quote）」だけ kabusapi が使えれば利用し、API 異常時は Yahoo に戻します。
+      intraday は既存どおり Yahoo 1分足 + VWAP（監視経路崩壊を避ける）。
+    Args:
+      quote_provider: None のときは常に Yahoo の fetch_quote を使用します。
+
     Returns:
-      (quote, intraday_signals, vwap)
+      (quote, intraday_signals, vwap, last_1m_bar_end_utc)
+      last_1m_bar_end_utc: chart の timestamp 配列の最終要素（バー終端時刻・UTC）。欠損時 None。
     """
-    q = fetch_quote(session, symbol)
+    if quote_provider is not None:
+        q = quote_provider.get_quote(symbol)
+    else:
+        q = fetch_quote(session, symbol)
     vwap: Optional[float] = None
     try:
         vwap = fetch_vwap(session, symbol)
     except Exception:
         vwap = None
-    closes_1m, highs_1m, vols_1m = fetch_intraday_1m_series(session, symbol, timeout_sec=timeout_sec)
+    closes_1m, highs_1m, vols_1m, last_1m_bar_end_utc = fetch_intraday_1m_series(session, symbol, timeout_sec=timeout_sec)
     intr = calc_intraday_signals_from_series(
         price=float(q.price),
         closes=list(closes_1m),
@@ -3029,67 +3101,8 @@ def fetch_latest_intraday_data_for_paper_trade(
         vols=list(vols_1m),
         vwap=vwap,
     )
-    return q, intr, vwap
+    return q, intr, vwap, last_1m_bar_end_utc
 
-
-def calc_intraday_signals_from_series(
-    *,
-    price: float,
-    closes: list[Optional[float]],
-    highs: list[Optional[float]],
-    vols: list[Optional[float]],
-    vwap: Optional[float],
-) -> IntradaySignals:
-    """
-    1分足の配列から、エントリー判定に必要なシグナルを計算します。
-
-    仕様対応:
-    - recent_5m_high: 直近5分の高値（最新足は除外して計算）
-    - price_5min_ago: 5分前の価格（close）
-    - VWAP乖離率
-    - 出来高増加（直近3分合計 > その前3分合計）
-    """
-    # Noneを除いた「末尾の有効データ列」を作ります（欠損があるときの耐性）
-    highs_valid = [x for x in highs if isinstance(x, (int, float))]
-    closes_valid = [x for x in closes if isinstance(x, (int, float))]
-    vols_valid = [x for x in vols if isinstance(x, (int, float))]
-
-    recent_5m_high: Optional[float] = None
-    price_5min_ago: Optional[float] = None
-    vol_inc: Optional[bool] = None
-
-    # recent_5m_high:
-    # - 「直近5分」= 直近5本の1分足
-    # - 「上抜け」判定に使うので、現在の足（最新1本）は除外して max を取ります
-    if len(highs_valid) >= 6:
-        window = highs_valid[-6:-1]  # 5本
-        if window:
-            recent_5m_high = float(max(window))
-
-    # price_5min_ago:
-    # - close の 5本前（最新を含めた時系列の -6 番目）
-    if len(closes_valid) >= 6:
-        price_5min_ago = float(closes_valid[-6])
-
-    # 出来高増加（加点用）:
-    # - 直近3分合計 vs その前3分合計
-    if len(vols_valid) >= 6:
-        last3 = sum(float(x) for x in vols_valid[-3:])
-        prev3 = sum(float(x) for x in vols_valid[-6:-3])
-        vol_inc = last3 > prev3
-
-    # VWAP乖離率
-    vwap_distance_pct: Optional[float] = None
-    if isinstance(vwap, (int, float)) and float(vwap) > 0:
-        vwap_distance_pct = ((float(price) - float(vwap)) / float(vwap)) * 100.0
-
-    return IntradaySignals(
-        recent_5m_high=recent_5m_high,
-        price_5min_ago=price_5min_ago,
-        vwap=(float(vwap) if isinstance(vwap, (int, float)) else None),
-        vwap_distance_pct=vwap_distance_pct,
-        vol_3m_gt_prev_3m=vol_inc,
-    )
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     """
@@ -3110,6 +3123,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             " デイトレ開始前に『その日触るべき監視候補』を自動選定して、ターミナルとDiscordに出力します。"
             " 通常監視やReplayには影響しません。"
         ),
+    )
+    p.add_argument(
+        "--paper-trade-dry-run-replay",
+        action="store_true",
+        help=(
+            "market外検証: data/intraday_1m の日次 CSV から paper_trade 系成果物のスキャフォールドを"
+            " results/paper_trade_dry_run/YYYYMMDD/ に出力します（共有 engine 完全統合は段階的）。"
+        ),
+    )
+    p.add_argument(
+        "--paper-trade-dry-run-day",
+        type=str,
+        default="",
+        help="--paper-trade-dry-run-replay 用 JST 営業日 YYYY-MM-DD。",
     )
     p.add_argument(
         "--replay",
@@ -3133,6 +3160,32 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=float,
         default=60.0,
         help="paper_trade のスナップショット間隔（秒）。デフォルト 60",
+    )
+    p.add_argument(
+        "--paper-trade-force-start",
+        action="store_true",
+        help=(
+            "results/paper_trade/paper_trade.lock が残っていても削除して paper_trade を起動します。"
+            " 二重起動に注意してください。"
+        ),
+    )
+    p.add_argument(
+        "--paper-trade-force-run",
+        "--ignore-market-hours",
+        action="store_true",
+        dest="paper_trade_ignore_market_hours",
+        help=(
+            "土日・日本の祝日および取引時間外でも paper_trade のポーリングを実行する（検証・開発用）。"
+            " ENTRY/Discord は 1分足の stale チェックで抑止される場合があります。"
+        ),
+    )
+    p.add_argument(
+        "--kabu-signal-shadow",
+        action="store_true",
+        help=(
+            "kabu_signal_v1 を paper_trade ポールと並行評価し results/kabu_signal_shadow/ に保存。"
+            " Yahoo ENTRY/Discord/仮想売買には影響しない（KABU_SIGNAL_SHADOW=1 と同等）。"
+        ),
     )
     p.add_argument(
         "--replay-mode",
@@ -3275,6 +3328,24 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=(
             "Replayの戦略条件をまとめたconfig JSONパス（例: configs/replay_safe.json）。"
             " Paper trade 暫定候補: configs/replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json"
+        ),
+    )
+    p.add_argument(
+        "--replay-shadow-multi-day",
+        type=str,
+        default="",
+        help=(
+            "シャドウ検証を複数日に連続実行（例: --replay-shadow-multi-day 2026-05-13,2026-05-14）。"
+            " --replay と併用。各日ごとに run_replay し multi_day_shadow_summary.json を出力します。"
+        ),
+    )
+    p.add_argument(
+        "--replay-date",
+        type=str,
+        default="",
+        help=(
+            "単日リプレイ（YYYY-MM-DD）: replay_date_fixed と replay_dates_jst に設定し、fetch は 1d 相当に固定。"
+            " --replay-range 未指定時も可（デフォルト 1d）。--replay-shadow-multi-day と併用不可。"
         ),
     )
     p.add_argument(
@@ -4404,6 +4475,24 @@ def run_morning_screen() -> int:
     return 0
 
 
+def _replay_bars_to_px_extras(bars_slice: list[Any]) -> dict[str, Any]:
+    o: list[float] = []
+    h: list[float] = []
+    l: list[float] = []
+    c: list[float] = []
+    v: list[float] = []
+    for b in bars_slice or []:
+        try:
+            o.append(float(getattr(b, "open", 0.0)))
+            h.append(float(getattr(b, "high", 0.0)))
+            l.append(float(getattr(b, "low", 0.0)))
+            c.append(float(getattr(b, "close", 0.0)))
+            v.append(float(getattr(b, "volume", 0.0)))
+        except Exception:
+            continue
+    return {"opens_1m": o, "highs_1m": h, "lows_1m": l, "closes_1m": c, "vols_1m": v}
+
+
 def run_replay(
     *,
     interval_sec: float,
@@ -4474,8 +4563,12 @@ def run_replay(
     replay_settings: Optional[dict[str, Any]] = None,
     paper_trade_mode: bool = False,
     paper_trade_collect: Optional[dict[str, Any]] = None,
+    paper_trade_dry_run_artifacts_dir: str = "",
     forward_split_validation: bool = False,
     forward_split_periods_path: str = "",
+    replay_date_fixed: str = "",
+    use_paper_position_exec: bool = False,
+    replay_shadow_collect: Optional[list[dict[str, Any]]] = None,
 ) -> int:
     """
     過去データの仮想リプレイ（テストモード）。
@@ -4729,6 +4822,14 @@ def run_replay(
     _rcp = str(replay_config_path or "").strip()
     _cfg_for_flags = _load_replay_config(_resolve_replay_config_path(_rcp)) if _rcp else {}
     cfg_flags: dict[str, Any] = dict(_apply_replay_config_to_flags(cfg=_cfg_for_flags))
+    replay_use_paper_exec = bool(cfg_flags.get("use_paper_position_exec", True))
+    replay_paper_rtc = _paper_trade_rtc_merge_phase2_from_cfg(
+        _cfg_for_flags if isinstance(_cfg_for_flags, dict) else {},
+        _paper_trade_merge_runtime_controls(_cfg_for_flags if isinstance(_cfg_for_flags, dict) else {}, None),
+    )
+    paper_trade_exec_diag: dict[str, Any] = _paper_trade_execution_counters_blank()
+    _dry_art_dir = str(paper_trade_dry_run_artifacts_dir or "").strip()
+    _shared_engine_trace_path_run: str = ""
 
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
     alert_channel_id = _parse_channel_id(os.getenv("ALERT_CHANNEL_ID", ""))
@@ -5178,6 +5279,19 @@ def run_replay(
                 print("- replay_mode: fast（sleep無し・出力最小・結果集計優先）")
             print(f"- watch: {', '.join(watch)}\n")
 
+        # shared_engine_trace.jsonl は常に今回の replay results_dir へ（dry-run も含む）
+        _script_dir_for_trace = os.path.dirname(os.path.abspath(__file__))
+        _replay_results_dir_for_trace = _resolve_replay_results_dir(
+            script_dir=_script_dir_for_trace,
+            replay_output_subdir=str(replay_output_subdir or "").strip(),
+            replay_range_label=str(replay_range_label),
+            batch_stamp=str(batch_stamp or "").strip(),
+        )
+        if replay_use_paper_exec:
+            _shared_engine_trace_path_run = os.path.join(
+                _replay_results_dir_for_trace, "shared_engine_trace.jsonl"
+            )
+
         # -----------------------------
         # fetch_range（API取得用レンジ）
         # -----------------------------
@@ -5209,7 +5323,10 @@ def run_replay(
         replay_random_pick_meta: dict[str, Any] = {}
         replay_cache_coverage_validator: dict[str, Any] = {}
         _forward_split_rng = str(replay_range).strip() == "forward_split"
-        if int(replay_random_days or 0) > 0 or _forward_split_rng:
+        _rdf = str(replay_date_fixed or "").strip()
+        if _rdf:
+            replay_dates_jst = [_rdf]
+        elif int(replay_random_days or 0) > 0 or _forward_split_rng:
             months = int(replay_random_months or 3)
             if months <= 0:
                 months = 3
@@ -5745,10 +5862,27 @@ def run_replay(
                                 continue
                             if bool(getattr(s, "resolved", False)):
                                 continue
-                            # 終端時点の価格で仮決済
+                            ep = float(getattr(s, "entry_price", 0.0) or 0.0)
+                            xp = float(getattr(s, "last_price_after", ep) or ep)
+                            pct = float(((xp - ep) / ep * 100.0) if ep > 0 else 0.0)
+                            t_end = getattr(s, "signal_time_utc", None)
+                            if isinstance(t_end, datetime):
+                                tu = t_end if t_end.tzinfo else t_end.replace(tzinfo=timezone.utc)
+                            else:
+                                tu = datetime.now(tz=timezone.utc)
+                            setattr(s, "resolved", True)
                             setattr(s, "exit_reason", "TIME_EXIT")
-                            setattr(s, "exit_price", float(getattr(s, "last_price_after", 0.0)))
-                            setattr(s, "exit_time_utc", datetime.now(tz=timezone.utc))
+                            setattr(s, "exit_price", float(xp))
+                            setattr(s, "exit_time_utc", tu)
+                            setattr(s, "final_profit_pct", float(pct))
+                            setattr(s, "result", "WIN" if pct > 0 else ("LOSE" if pct < 0 else "HOLD"))
+                            if isinstance(paper_trade_exec_diag, dict):
+                                paper_trade_exec_diag["time_exit_count"] = int(
+                                    paper_trade_exec_diag.get("time_exit_count") or 0
+                                ) + 1
+                                paper_trade_exec_diag["closed_positions_count"] = int(
+                                    paper_trade_exec_diag.get("closed_positions_count") or 0
+                                ) + 1
                         except Exception:
                             continue
 
@@ -6854,6 +6988,14 @@ def run_replay(
                                 "start_time_jst": start_jst,
                                 "end_time_jst": end_jst,
                                 "replay_dates": list(replay_dates_jst),
+                                **(
+                                    {
+                                        "replay_date_fixed": str(replay_date_fixed or "").strip(),
+                                        "replay_mode": "fixed_day",
+                                    }
+                                    if str(replay_date_fixed or "").strip()
+                                    else {}
+                                ),
                                 "replay_random_days": int(replay_random_days or 0),
                                 "replay_random_months": int(replay_random_months or 0),
                                 **(
@@ -6946,6 +7088,19 @@ def run_replay(
                             "trace_capture_failed_count": int(trace_capture_failed_count),
                             "eval_filter_debug": dict(eval_filter_debug),
                             "overall_summary": {
+                                **(
+                                    {
+                                        "replay_date_fixed": str(replay_date_fixed or "").strip(),
+                                        "replay_mode": "fixed_day",
+                                    }
+                                    if str(replay_date_fixed or "").strip()
+                                    else {}
+                                ),
+                                **(
+                                    _paper_trade_exec_diag_structure_bundle(paper_trade_exec_diag)
+                                    if replay_use_paper_exec and isinstance(paper_trade_exec_diag, dict)
+                                    else {}
+                                ),
                                 "all_signals_detected": int(len(replay_signals)),
                                 "signals_in_eval": int(len(eval_signals)),
                                 "signals_excluded": int(excluded_n),
@@ -8004,6 +8159,78 @@ def run_replay(
                                     csv_rows_written += 1
                         else:
                             csv_rows_written = int(len(replay_signals))
+                            alignment_csv_path = os.path.join(results_dir, f"{name_base}_replay_alignment.csv")
+                            align_fields = [
+                                "symbol",
+                                "entry_time_utc",
+                                "entry_side",
+                                "entry_price",
+                                "stop_price",
+                                "take_price",
+                                "exit_time_utc",
+                                "exit_reason",
+                                "take_structure_selection",
+                                "entry_quality_score",
+                                "chase_extension_pct",
+                                "same_symbol_cooldown_would_block",
+                                "market_weakness_score",
+                            ]
+                            try:
+                                with open(alignment_csv_path, "w", encoding="utf-8", newline="") as af:
+                                    wa = csv.DictWriter(af, fieldnames=align_fields, extrasaction="raise")
+                                    wa.writeheader()
+                                    for s in replay_signals:
+                                        if bool(getattr(s, "excluded_from_eval", False)):
+                                            continue
+                                        tc = getattr(s, "take_diag_csv", None)
+                                        if isinstance(tc, dict):
+                                            tss = str(
+                                                tc.get("take_structure_selection")
+                                                or getattr(s, "take_structure_selection", "")
+                                                or ""
+                                            )
+                                        else:
+                                            tss = str(getattr(s, "take_structure_selection", "") or "")
+                                        eqs = getattr(s, "entry_quality_scores", None)
+                                        eqv = ch = mq = cd = ""
+                                        if isinstance(eqs, dict):
+                                            eqv = str(eqs.get("entry_quality_score") or "")
+                                            ch = str(eqs.get("chase_extension_pct") or "")
+                                            mq = str(eqs.get("market_weakness_score") or "")
+                                            cd = str(eqs.get("same_symbol_cooldown_would_block") or "")
+                                        wa.writerow(
+                                            {
+                                                "symbol": str(getattr(s, "symbol", "") or ""),
+                                                "entry_time_utc": _as_iso_any(getattr(s, "signal_time_utc", None)),
+                                                "entry_side": "LONG",
+                                                "entry_price": str(float(getattr(s, "entry_price", 0.0) or 0.0)),
+                                                "stop_price": str(float(getattr(s, "stop_price", 0.0) or 0.0)),
+                                                "take_price": str(float(getattr(s, "take_price", 0.0) or 0.0)),
+                                                "exit_time_utc": _as_iso_any(getattr(s, "exit_time_utc", None)),
+                                                "exit_reason": str(getattr(s, "exit_reason", "") or ""),
+                                                "take_structure_selection": tss,
+                                                "entry_quality_score": eqv,
+                                                "chase_extension_pct": ch,
+                                                "same_symbol_cooldown_would_block": cd,
+                                                "market_weakness_score": mq,
+                                            }
+                                        )
+                                _rcp_id = str(replay_config_path or "").strip()
+                                _rh = _replay_config_file_sha256(_resolve_replay_config_path(_rcp_id)) if _rcp_id else ""
+                                _write_replay_run_identity_file(
+                                    results_dir=results_dir,
+                                    replay_batch_stamp=str(batch_stamp),
+                                    replay_logic_version=_replay_logic_version_composite(),
+                                    replay_config_hash=_rh,
+                                    replay_range_label=str(replay_range_label),
+                                    replay_output_subdir=str(replay_output_subdir or "").strip(),
+                                    replay_config_path=_resolve_replay_config_path(_rcp_id) if _rcp_id else "",
+                                    paper_trade_dry_run=True,
+                                    alignment_csv=os.path.basename(alignment_csv_path),
+                                    signals_csv=os.path.basename(signals_csv_path),
+                                )
+                            except Exception as e:
+                                print(f"[{now_str()}] replay_alignment_csv write failed: {e}")
 
                         # 整合性チェック（差異があればWARNING）
                         unique_ids = [str(getattr(s, "signal_id", "") or "") for s in replay_signals]
@@ -8045,14 +8272,62 @@ def run_replay(
                             except Exception:
                                 pass
 
+                        if isinstance(replay_shadow_collect, list) and str(replay_date_fixed or "").strip():
+                            try:
+                                from yahoo_kabu_paper_trade_extended import replay_signal_eval_to_shadow_row
+
+                                _dj = str(replay_date_fixed).strip()
+                                cohort = [replay_signal_eval_to_shadow_row(s) for s in replay_signals]
+                                replay_shadow_collect.append(
+                                    {
+                                        "day_jst": _dj,
+                                        "shadow_validation": _build_replay_shadow_filter_validation(cohort),
+                                    }
+                                )
+                            except Exception:
+                                pass
+
                         # Paper trade: Replay と同一ロジックの集計（report）は取得済み。
                         # results/replay_* への既定出力は行わず、上位の paper_trade ループ側でCSV/Summaryへ記録します。
                         if paper_trade_mode:
+                            if _dry_art_dir:
+                                try:
+                                    _paper_trade_finalize_dry_run_artifacts(
+                                        out_dir=_dry_art_dir,
+                                        replay_results_dir=str(results_dir),
+                                        replay_batch_stamp=str(batch_stamp),
+                                        replay_range_label=str(replay_range_label),
+                                        replay_output_subdir=str(replay_output_subdir or "").strip(),
+                                        replay_signals=list(replay_signals),
+                                        exec_diag=paper_trade_exec_diag,
+                                        day_jst=str(replay_date_fixed or "").strip(),
+                                        script_dir=os.path.dirname(os.path.abspath(__file__)),
+                                        replay_config_path=str(replay_config_path or "").strip(),
+                                    )
+                                except Exception as e:
+                                    print(f"[{now_str()}] paper_trade_dry_run artifact write failed: {e}")
                             return 0
 
                         json_path = os.path.join(results_dir, f"{name_base}.json")
                         with open(json_path, "w", encoding="utf-8") as f:
                             json.dump(report, f, ensure_ascii=False, indent=2)
+                        try:
+                            _rcp_n = str(replay_config_path or "").strip()
+                            _rh_n = _replay_config_file_sha256(_resolve_replay_config_path(_rcp_n)) if _rcp_n else ""
+                            _write_replay_run_identity_file(
+                                results_dir=results_dir,
+                                replay_batch_stamp=str(batch_stamp),
+                                replay_logic_version=_replay_logic_version_composite(),
+                                replay_config_hash=_rh_n,
+                                replay_range_label=str(replay_range_label),
+                                replay_output_subdir=str(replay_output_subdir or "").strip(),
+                                replay_config_path=_resolve_replay_config_path(_rcp_n) if _rcp_n else "",
+                                paper_trade_dry_run=False,
+                                alignment_csv="",
+                                signals_csv=os.path.basename(str(signals_csv_path or "")),
+                            )
+                        except Exception:
+                            pass
 
                         # txt
                         lines: list[str] = []
@@ -10340,8 +10615,6 @@ def run_replay(
                         continue
                     pipeline_debug["entry_calc_ok"] = int(pipeline_debug.get("entry_calc_ok", 0)) + 1
                     entry = float(entry_calc)
-                    stop = entry * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
-                    take = entry * (1.0 + TAKE_PROFIT_PCT_FROM_ENTRY)
                     ma25 = ma25_by_symbol.get(q.symbol)
                     if ma25 is None:
                         pipeline_debug["ma25_none"] = int(pipeline_debug.get("ma25_none", 0)) + 1
@@ -10355,6 +10628,31 @@ def run_replay(
                             continue_reason_counts["NO_INTRADAY_SIGNAL"] = int(continue_reason_counts.get("NO_INTRADAY_SIGNAL", 0)) + 1
                             continue
                         pipeline_debug["intraday_signal_ready"] = int(pipeline_debug.get("intraday_signal_ready", 0)) + 1
+
+                        played_notify = int(idx_by_symbol.get(q.symbol, 0))
+                        bars_slice = bars_by_symbol.get(q.symbol, [])[:played_notify]
+                        px_ex = _replay_bars_to_px_extras(bars_slice)
+                        eq_scores = _paper_trade_breakout_entry_quality_scores(
+                            px_ex, sig, float(q.price), float(entry), replay_paper_rtc
+                        )
+                        take_ex: dict[str, Any] = {}
+                        if replay_use_paper_exec:
+                            stop, take, take_ex = _paper_trade_compute_stop_take_for_signal(
+                                float(entry),
+                                q,
+                                sig,
+                                {},
+                                replay_paper_rtc,
+                                ma25_screen={"ma25": float(ma25)},
+                                entry_quality_scores=eq_scores,
+                            )
+                            _paper_trade_bump_structure_wall_reject(
+                                paper_trade_exec_diag,
+                                str(take_ex.get("structure_take_reject_reason") or ""),
+                            )
+                        else:
+                            stop = float(entry) * (1.0 - STOP_LOSS_PCT_FROM_ENTRY)
+                            take = float(entry) * (1.0 + TAKE_PROFIT_PCT_FROM_ENTRY)
 
                         # Entry上抜け（最終仕様・シンプル版）
                         st_prev = bool(breakout_state_by_symbol.get(q.symbol, False))
@@ -11276,6 +11574,194 @@ def run_replay(
                             # 重要: 補助属性の付与で落ちても append は止めない（ユーザー要望）
                             # - ReplaySignalEval を作れたら、まず append を優先する
                             replay_signals.append(s)
+                            if replay_use_paper_exec:
+                                try:
+                                    setattr(s, "_paper_position_exec", True)
+                                    setattr(s, "_paper_rtc", dict(replay_paper_rtc))
+                                    setattr(
+                                        s,
+                                        "_paper_exec_counters",
+                                        paper_trade_exec_diag if (not bool(exclude)) else None,
+                                    )
+                                    if _shared_engine_trace_path_run:
+                                        setattr(s, "_paper_shared_trace_path", _shared_engine_trace_path_run)
+                                    setattr(s, "entry_quality_scores", dict(eq_scores))
+                                    setattr(s, "entry_quality_score", float(eq_scores.get("entry_quality_score") or 0.0))
+                                    setattr(
+                                        s,
+                                        "entry_extension_at_open_pct",
+                                        float(eq_scores.get("breakout_extension_pct") or 0.0),
+                                    )
+                                    try:
+                                        _nr_sh = float(str(take_ex.get("_nearest_raw_rr_for_shadow") or "0").strip() or 0.0)
+                                    except Exception:
+                                        _nr_sh = 0.0
+                                    setattr(s, "_structure_nearest_rr_n", float(_nr_sh))
+                                    _shdk = take_ex.get("_structure_relaxed_shadow_takes")
+                                    if isinstance(_shdk, dict):
+                                        setattr(s, "structure_relaxed_shadow_takes", dict(_shdk))
+                                    tclean = {
+                                        str(k): str(v) for k, v in take_ex.items() if not str(k).startswith("_")
+                                    }
+                                    setattr(s, "take_diag_csv", tclean)
+                                    setattr(s, "take_structure_selection", str(take_ex.get("take_structure_selection") or ""))
+                                    setattr(s, "structure_take_reject_reason", str(take_ex.get("structure_take_reject_reason") or ""))
+                                    nr = str(take_ex.get("nearest_resistance") or "").strip()
+                                    if nr:
+                                        try:
+                                            setattr(s, "nearest_resistance", float(nr))
+                                        except Exception:
+                                            setattr(s, "nearest_resistance", None)
+                                    if (not bool(exclude)) and bool(crossed):
+                                        paper_trade_exec_diag["opened_positions_count"] = int(
+                                            paper_trade_exec_diag.get("opened_positions_count") or 0
+                                        ) + 1
+                                        _paper_trade_bump_entry_quality_summary(
+                                            paper_trade_exec_diag,
+                                            scores=eq_scores,
+                                            crossed=True,
+                                            rtc=replay_paper_rtc,
+                                        )
+                                        _paper_trade_bump_take_selection_counters(
+                                            paper_trade_exec_diag,
+                                            _paper_trade_take_meta_from_csv(tclean),
+                                        )
+                                        _paper_trade_bump_dynamic_rr_shadow(
+                                            paper_trade_exec_diag,
+                                            entry=float(entry),
+                                            stop=float(stop),
+                                            take=float(take),
+                                            tss=str(take_ex.get("take_structure_selection") or ""),
+                                        )
+                                        _paper_trade_bump_structure_candidate_aggregate(
+                                            paper_trade_exec_diag,
+                                            tclean,
+                                        )
+                                        try:
+                                            _cj = json.loads(str(take_ex.get("structure_candidates_diag_json") or "[]"))
+                                            if isinstance(_cj, list):
+                                                for _row in _cj:
+                                                    if isinstance(_row, dict):
+                                                        _paper_trade_bump_structure_rr_from_candidate_row(
+                                                            paper_trade_exec_diag, _row
+                                                        )
+                                        except Exception:
+                                            pass
+                                        try:
+                                            _nopen = int(str(take_ex.get("structure_take_candidate_count") or "0").strip() or 0)
+                                        except Exception:
+                                            _nopen = 0
+                                        _paper_trade_relaxed_shadow_sweep_bump_open(
+                                            paper_trade_exec_diag,
+                                            rr_n=float(_nr_sh),
+                                            has_candidates=_nopen > 0,
+                                        )
+                                        _paper_trade_bump_dynamic_fallback_open(
+                                            paper_trade_exec_diag,
+                                            entry=float(entry),
+                                            stop=float(stop),
+                                            take=float(take),
+                                            tss=str(take_ex.get("take_structure_selection") or ""),
+                                            entry_quality_scores=eq_scores,
+                                        )
+                                        try:
+                                            if _replay_results_dir_for_trace:
+                                                _stim_c = sig_time
+                                                if isinstance(_stim_c, datetime) and _stim_c.tzinfo is None:
+                                                    _stim_c = _stim_c.replace(tzinfo=timezone.utc)
+                                                _stj_c = (
+                                                    _stim_c.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S")
+                                                    if isinstance(_stim_c, datetime)
+                                                    else ""
+                                                )
+                                                _rows_c = json.loads(str(take_ex.get("structure_candidates_diag_json") or "[]"))
+                                                if isinstance(_rows_c, list) and _rows_c:
+                                                    _append_structure_rr_candidate_diag_csv(
+                                                        _replay_results_dir_for_trace,
+                                                        symbol=str(q.symbol),
+                                                        time_jst=_stj_c,
+                                                        rows=[x for x in _rows_c if isinstance(x, dict)],
+                                                    )
+                                        except Exception:
+                                            pass
+                                    if _shared_engine_trace_path_run and bool(crossed):
+                                        stim = sig_time
+                                        if isinstance(stim, datetime) and stim.tzinfo is None:
+                                            stim = stim.replace(tzinfo=timezone.utc)
+                                        stj = stim.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S") if isinstance(stim, datetime) else ""
+                                        _shared_engine_trace_jsonl_append(
+                                            _shared_engine_trace_path_run,
+                                            _replay_shared_engine_trace_row(
+                                                event="SIGNAL_DETECTED",
+                                                event_type="SIGNAL_DETECTED",
+                                                symbol=str(q.symbol),
+                                                timestamp_jst=stj,
+                                                engine_mode="paper_position_exec",
+                                                entry_price=float(entry),
+                                                stop_price=float(stop),
+                                                take_price=float(take),
+                                                eq_scores=dict(eq_scores),
+                                                take_csv=tclean,
+                                                crossed_true=True,
+                                            ),
+                                        )
+                                        _shared_engine_trace_jsonl_append(
+                                            _shared_engine_trace_path_run,
+                                            _replay_shared_engine_trace_row(
+                                                event="SIGNAL_APPENDED",
+                                                event_type="SIGNAL_APPENDED",
+                                                symbol=str(q.symbol),
+                                                timestamp_jst=stj,
+                                                engine_mode="paper_position_exec",
+                                                entry_price=float(entry),
+                                                stop_price=float(stop),
+                                                take_price=float(take),
+                                                eq_scores=dict(eq_scores),
+                                                take_csv=tclean,
+                                                crossed_true=True,
+                                                signal_appended=True,
+                                            ),
+                                        )
+                                        if bool(exclude):
+                                            _shared_engine_trace_jsonl_append(
+                                                _shared_engine_trace_path_run,
+                                                _replay_shared_engine_trace_row(
+                                                    event="SIGNAL_SKIPPED",
+                                                    event_type="SIGNAL_SKIPPED",
+                                                    symbol=str(q.symbol),
+                                                    timestamp_jst=stj,
+                                                    engine_mode="paper_position_exec",
+                                                    entry_price=float(entry),
+                                                    stop_price=float(stop),
+                                                    take_price=float(take),
+                                                    eq_scores=dict(eq_scores),
+                                                    take_csv=tclean,
+                                                    skip_reason=str(exclude_reason or ""),
+                                                    excluded_from_eval=True,
+                                                    crossed_true=True,
+                                                ),
+                                            )
+                                        else:
+                                            _shared_engine_trace_jsonl_append(
+                                                _shared_engine_trace_path_run,
+                                                _replay_shared_engine_trace_row(
+                                                    event="SIGNAL_OPEN",
+                                                    event_type="OPEN_POSITION",
+                                                    symbol=str(q.symbol),
+                                                    timestamp_jst=stj,
+                                                    engine_mode="paper_position_exec",
+                                                    entry_price=float(entry),
+                                                    stop_price=float(stop),
+                                                    take_price=float(take),
+                                                    eq_scores=dict(eq_scores),
+                                                    take_csv=tclean,
+                                                    crossed_true=True,
+                                                    signal_appended=True,
+                                                    replay_signal_written=False,
+                                                ),
+                                            )
+                                except Exception:
+                                    pass
                             if not exclude:
                                 idx = len(replay_signals) - 1
                                 active_signal_indices_by_symbol.setdefault(q.symbol, []).append(idx)
@@ -11729,6 +12215,460 @@ def _paper_trade_row_dict(s: ReplaySignalEval) -> dict[str, str]:
     }
 
 
+def _paper_trade_dry_run_csv_fieldnames() -> list[str]:
+    core = [
+        "datetime_jst",
+        "entry_time_utc",
+        "exit_time_utc",
+        "entry_side",
+        "symbol",
+        "signal_type",
+        "notify_sent",
+        "entry_price",
+        "stop_price",
+        "take_price",
+        "market_regime",
+        "rising_ratio",
+        "topix_pct",
+        "entry_vwap_distance_pct",
+        "high_update_count_before_entry",
+        "skipped",
+        "skip_reason",
+        "shadow_block_hit",
+        "shadow_block_rule_names",
+        "signal_lag_sec",
+        "position_status",
+    ]
+    tail = [
+        "chase_extension_pct",
+        "extension_bucket",
+        "prev_signal_age_sec",
+        "prev_signal_pnl",
+        "prev_signal_exit_reason",
+        "same_symbol_cooldown_would_block",
+        "market_weakness_score",
+        "market_breadth_score",
+        "market_trend_pressure_score",
+        "lt50_ratio",
+        "quality_rank_in_day",
+        "quality_rank_in_symbol",
+        "quality_percentile",
+        "pre_entry_vwap_hold_bars",
+        "pre_entry_vwap_under_bars",
+        "post_breakout_vwap_hold_bars",
+        "vwap_retouch_count_after_breakout",
+        "vwap_break_early_risk_score",
+        "take_structure_selection",
+        "take_selected_by",
+        "take_exit_kind",
+        "nearest_resistance",
+        "structure_take_reject_reason",
+        "structure_take_candidate_count",
+        "structure_take_best_candidate",
+        "structure_take_best_rr",
+        "resistance_take_preferred",
+        "structure_candidate_rank",
+        "structure_candidate_distance_pct",
+        "structure_candidate_failure_risk",
+        "nearest_resistance_source",
+        "nearest_resistance_rank",
+        "skipped_farther_structure_count",
+        "structure_candidates_diag_json",
+        "exit_reason",
+        "exit_price",
+        "pnl_yen_100_shares",
+        "max_profit_yen_100_shares",
+        "max_drawdown_yen_100_shares",
+        "profit_progress_pct",
+        "take_adjust_candidate",
+        "take_adjust_block_reason",
+        "phase2_entry_block_reason",
+    ]
+    out = _paper_trade_csv_header_extend_phase2(core + list(_PAPER_TRADE_ENTRY_QUALITY_CSV_FIELDNAMES))
+    for c in tail:
+        if c not in out:
+            out.append(c)
+    return out
+
+
+def _replay_signal_to_paper_dry_run_row(s: ReplaySignalEval) -> dict[str, str]:
+    d = dict(_paper_trade_row_dict(s))
+    d["notify_sent"] = "0"
+    d["signal_type"] = "LIVE"
+    d["skipped"] = "0"
+    d["stop_price"] = f"{float(getattr(s, 'stop_price', 0.0) or 0.0):.4f}"
+    d["take_price"] = f"{float(getattr(s, 'take_price', 0.0) or 0.0):.4f}"
+    st_utc = getattr(s, "signal_time_utc", None)
+    if isinstance(st_utc, datetime):
+        tu = st_utc if st_utc.tzinfo else st_utc.replace(tzinfo=timezone.utc)
+        d["entry_time_utc"] = tu.isoformat()
+    else:
+        d["entry_time_utc"] = ""
+    et_utc = getattr(s, "exit_time_utc", None)
+    if isinstance(et_utc, datetime):
+        eu = et_utc if et_utc.tzinfo else et_utc.replace(tzinfo=timezone.utc)
+        d["exit_time_utc"] = eu.isoformat()
+    else:
+        d["exit_time_utc"] = ""
+    d["entry_side"] = "LONG"
+    st = "CLOSED" if bool(getattr(s, "resolved", False)) else "OPEN"
+    d["position_status"] = st
+    eqs_obj = getattr(s, "entry_quality_scores", None)
+    eqs: dict[str, float] = dict(eqs_obj) if isinstance(eqs_obj, dict) else {}
+    d.update(_paper_trade_entry_quality_csv_columns(eqs if eqs else None))
+    tc = getattr(s, "take_diag_csv", None)
+    if isinstance(tc, dict):
+        for k in (
+            "take_selected_by",
+            "take_exit_kind",
+            "take_structure_selection",
+            "nearest_resistance",
+            "structure_take_reject_reason",
+            "structure_take_candidate_count",
+            "structure_take_best_candidate",
+            "structure_take_best_rr",
+            "resistance_take_preferred",
+            "structure_candidate_rank",
+            "structure_candidate_distance_pct",
+            "structure_candidate_failure_risk",
+            "nearest_resistance_source",
+            "nearest_resistance_rank",
+            "skipped_farther_structure_count",
+            "structure_candidates_diag_json",
+        ):
+            if k in tc:
+                d[k] = str(tc.get(k) or "")
+    try:
+        mx = float(s.max_profit_pct())
+        d["max_profit_yen_100_shares"] = f"{(float(s.signal_price) * 100.0 * mx / 100.0):.2f}"
+        mn = float(s.max_drawdown_pct())
+        d["max_drawdown_yen_100_shares"] = f"{(float(s.signal_price) * 100.0 * mn / 100.0):.2f}"
+    except Exception:
+        d["max_profit_yen_100_shares"] = ""
+        d["max_drawdown_yen_100_shares"] = ""
+    ep = float(getattr(s, "entry_price", 0.0) or 0.0)
+    xp_raw = getattr(s, "exit_price", None)
+    xp = float(xp_raw) if isinstance(xp_raw, (int, float)) else (float(getattr(s, "last_price_after", ep) or ep))
+    if ep > 0 and isinstance(xp_raw, (int, float)):
+        d["profit_progress_pct"] = f"{((xp - ep) / ep * 100.0):.4f}"
+    else:
+        d["profit_progress_pct"] = ""
+    for k in (
+        "chase_extension_pct",
+        "extension_bucket",
+        "prev_signal_age_sec",
+        "prev_signal_pnl",
+        "prev_signal_exit_reason",
+        "same_symbol_cooldown_would_block",
+        "market_weakness_score",
+        "market_breadth_score",
+        "market_trend_pressure_score",
+        "lt50_ratio",
+        "quality_rank_in_day",
+        "quality_rank_in_symbol",
+        "quality_percentile",
+    ):
+        v = getattr(s, k, None)
+        if v is not None and str(v) != "":
+            d[k] = str(v)
+    d["take_adjust_candidate"] = ""
+    d["take_adjust_block_reason"] = ""
+    d["phase2_entry_block_reason"] = str(getattr(s, "phase2_entry_block_reason", "") or "")
+    d["shadow_block_hit"] = str(getattr(s, "shadow_block_hit", "") or "")
+    d["shadow_block_rule_names"] = str(getattr(s, "shadow_block_rule_names", "") or "")
+    d["signal_lag_sec"] = str(getattr(s, "signal_lag_sec", "") or "")
+    return d
+
+
+def _paper_trade_exec_diag_structure_bundle(exec_diag: dict[str, Any]) -> dict[str, Any]:
+    """Replay report / paper summary: structure RR diagnostics + shadow sweep (no extra filters)."""
+    d = exec_diag if isinstance(exec_diag, dict) else {}
+    sw = d.get("structure_relaxed_rr_shadow_sweep")
+    swd = dict(sw) if isinstance(sw, dict) else {}
+    dfn = max(1, int(d.get("dynamic_fallback_n") or 0))
+    dfc = max(1, int(d.get("dynamic_fallback_closed_n") or 0))
+    sel_open = 0
+    pnl_delta_sum = 0.0
+    shadow_pnl_sum = 0.0
+    take_hit_d_sum = 0
+    vwap_saved_sum = 0
+    stop_added_sum = 0
+    for _v in swd.values():
+        if isinstance(_v, dict):
+            sel_open += int(_v.get("selected_count") or 0)
+            pnl_delta_sum += float(_v.get("pnl_delta_yen_100_sum") or 0.0)
+            shadow_pnl_sum += float(_v.get("shadow_pnl_yen_100_sum") or 0.0)
+            take_hit_d_sum += int(_v.get("take_hit_delta") or 0)
+            vwap_saved_sum += int(_v.get("vwap_break_saved") or 0)
+            stop_added_sum += int(_v.get("stop_added") or 0)
+    return {
+        "structure_rr_histogram": dict(d.get("structure_rr_histogram") or {}),
+        "structure_rr_by_candidate_type": dict(d.get("structure_rr_by_candidate_type") or {}),
+        "structure_relaxed_rr_shadow_sweep": swd,
+        "structure_relaxed_shadow_rollup": {
+            "structure_relaxed_shadow_selected": int(sel_open),
+            "structure_relaxed_shadow_virtual_pnl_yen_100_sum": float(shadow_pnl_sum),
+            "structure_relaxed_shadow_pnl_delta_yen_100_sum": float(pnl_delta_sum),
+            "structure_relaxed_shadow_take_hit_delta": int(take_hit_d_sum),
+            "structure_relaxed_shadow_vwap_saved": int(vwap_saved_sum),
+            "structure_relaxed_shadow_stop_added": int(stop_added_sum),
+            "note": "Shadow only: tiered min-RR counterfactuals; PnL uses peak>=shadow_take -> exit at shadow take.",
+        },
+        "dynamic_fallback_avg_rr": float(d.get("dynamic_fallback_sum_rr") or 0.0) / float(dfn),
+        "dynamic_fallback_avg_quality": float(d.get("dynamic_fallback_quality_sum") or 0.0) / float(dfn),
+        "dynamic_fallback_take_hit_rate": float(d.get("dynamic_fallback_take_hits") or 0) / float(dfc),
+        "dynamic_fallback_vwap_exit_rate": float(d.get("dynamic_fallback_vwap_exits") or 0) / float(dfc),
+    }
+
+
+def _paper_trade_finalize_dry_run_artifacts(
+    *,
+    out_dir: str,
+    replay_results_dir: str,
+    replay_batch_stamp: str,
+    replay_range_label: str,
+    replay_output_subdir: str,
+    replay_signals: list[ReplaySignalEval],
+    exec_diag: dict[str, Any],
+    day_jst: str,
+    script_dir: str,
+    replay_config_path: str,
+) -> None:
+    from yahoo_kabu_paper_trade_impl import (
+        PAPER_TRADE_DRY_RUN_LOGIC_VERSION,
+        SHARED_EXIT_ENGINE_VERSION,
+        SHARED_SIGNAL_ENGINE_VERSION,
+    )
+
+    os.makedirs(out_dir, exist_ok=True)
+    fnames = _paper_trade_dry_run_csv_fieldnames()
+    log_path = os.path.join(out_dir, "paper_trade_log.csv")
+    rows_out: list[dict[str, str]] = []
+    for s in replay_signals:
+        if bool(getattr(s, "excluded_from_eval", False)):
+            continue
+        r = _replay_signal_to_paper_dry_run_row(s)
+        rows_out.append({k: str(r.get(k, "") or "") for k in fnames})
+    with open(log_path, "w", encoding="utf-8", newline="") as cf:
+        w = csv.DictWriter(cf, fieldnames=fnames, extrasaction="raise")
+        w.writeheader()
+        for row in rows_out:
+            w.writerow(row)
+
+    logic_v = _replay_logic_version_composite()
+    _rcp_f = str(replay_config_path or "").strip()
+    cfg_hash = _replay_config_file_sha256(_resolve_replay_config_path(_rcp_f)) if _rcp_f else ""
+
+    div = _build_paper_replay_divergence_report(
+        paper_csv_path=log_path,
+        results_root=os.path.join(script_dir, "results"),
+        replay_batch_stamp=str(replay_batch_stamp or ""),
+        replay_logic_version=logic_v,
+        replay_config_hash=cfg_hash,
+    )
+    with open(os.path.join(out_dir, "paper_replay_divergence_report.json"), "w", encoding="utf-8") as jf:
+        json.dump(div, jf, ensure_ascii=False, indent=2)
+    with open(os.path.join(out_dir, "paper_replay_divergence_report.txt"), "w", encoding="utf-8") as tf:
+        tf.write(json.dumps(div, ensure_ascii=False, indent=2) + "\n")
+
+    try:
+        ident = div.get("replay_run_identity_matched") if isinstance(div.get("replay_run_identity_matched"), dict) else {}
+        _id_cfg = str(ident.get("replay_config_path") or "").strip()
+        _write_replay_run_identity_file(
+            results_dir=out_dir,
+            replay_batch_stamp=str(ident.get("replay_batch_stamp") or replay_batch_stamp or ""),
+            replay_logic_version=str(ident.get("replay_logic_version") or logic_v),
+            replay_config_hash=str(ident.get("replay_config_hash") or cfg_hash),
+            replay_range_label=str(ident.get("replay_range_label") or replay_range_label or ""),
+            replay_output_subdir=str(ident.get("replay_output_subdir") or replay_output_subdir or ""),
+            replay_config_path=_id_cfg or (_resolve_replay_config_path(_rcp_f) if _rcp_f else ""),
+            paper_trade_dry_run=bool(ident.get("paper_trade_dry_run", True)),
+            alignment_csv=str(ident.get("alignment_csv") or ""),
+            signals_csv=str(ident.get("signals_csv") or ""),
+        )
+    except Exception:
+        pass
+
+    n = max(1, int(exec_diag.get("vwap_break_diag_n") or 0))
+    sc_raw = int(exec_diag.get("structure_candidate_n") or 0)
+    scn = max(1, sc_raw)
+    rc_counts = exec_diag.get("structure_reject_reason_counts") or {}
+    reject_top = ""
+    if isinstance(rc_counts, dict) and rc_counts:
+        ranked = sorted(rc_counts.items(), key=lambda kv: int(kv[1] or 0), reverse=True)[:5]
+        reject_top = "; ".join(f"{k}:{v}" for k, v in ranked)
+    vwap_tim = _paper_trade_vwap_break_timing_from_signals(replay_signals)
+    dyn_tbl = _paper_trade_dynamic_low_rr_shadow_tables(replay_signals)
+
+    summary_lines = [
+        "paper_trade_logic_version/dry_run: " + str(PAPER_TRADE_DRY_RUN_LOGIC_VERSION),
+        "shared_signal_engine_version: " + str(SHARED_SIGNAL_ENGINE_VERSION),
+        "shared_exit_engine_version: " + str(SHARED_EXIT_ENGINE_VERSION),
+        "replay_config: " + str(replay_config_path or ""),
+        f"replay_batch_stamp: {str(replay_batch_stamp or '')}",
+        f"replay_logic_version: {logic_v}",
+        f"replay_config_hash: {cfg_hash}",
+        f"replay_results_dir: {str(replay_results_dir or '')}",
+        "",
+        "--- replay vs paper divergence (identity-scoped) ---",
+        f"replay_paper_exact_match_ratio: {float(div.get('replay_paper_exact_match_ratio') or 0.0):.6f}",
+        f"replay_paper_partial_match_ratio: {float(div.get('replay_paper_partial_match_ratio') or 0.0):.6f}",
+        f"replay_only_count: {int(div.get('replay_only_count') or 0)}",
+        f"paper_only_count: {int(div.get('paper_only_count') or 0)}",
+        f"avg_entry_time_diff_sec: {float(div.get('avg_entry_time_diff_sec') or 0.0):.6f}",
+        f"max_entry_time_diff_sec: {float(div.get('max_entry_time_diff_sec') or 0.0):.6f}",
+        f"avg_exit_time_diff_sec: {float(div.get('avg_exit_time_diff_sec') or 0.0):.6f}",
+        f"avg_price_diff_pct: {float(div.get('avg_price_diff_pct') or 0.0):.6f}",
+        f"avg_take_diff_pct: {float(div.get('avg_take_diff_pct') or 0.0):.6f}",
+        f"avg_stop_diff_pct: {float(div.get('avg_stop_diff_pct') or 0.0):.6f}",
+        "",
+        "--- execution diagnostics ---",
+        f"structure_take_selected_count: {int(exec_diag.get('structure_take_selected_count') or 0)}",
+        f"structure_candidate_avg_rr: {(float(exec_diag.get('structure_candidate_rr_sum') or 0.0) / float(scn)) if sc_raw else 0.0:.6f}",
+        f"structure_candidate_avg_distance_pct: {(float(exec_diag.get('structure_candidate_dist_sum') or 0.0) / float(scn)) if sc_raw else 0.0:.6f}",
+        f"structure_candidate_avg_failure_risk: {(float(exec_diag.get('structure_candidate_fail_risk_sum') or 0.0) / float(scn)) if sc_raw else 0.0:.6f}",
+        f"structure_candidate_reject_top_rules: {reject_top}",
+        f"dynamic_rr_fallback_count: {int(exec_diag.get('dynamic_rr_fallback_count') or 0)}",
+        f"structure_wall_reject_count: {int(exec_diag.get('structure_wall_reject_count') or 0)}",
+        f"structure_reject_reason_counts: {json.dumps(exec_diag.get('structure_reject_reason_counts') or {}, ensure_ascii=False)}",
+        f"dynamic_rr_fallback_reason_counts: {json.dumps(exec_diag.get('dynamic_rr_fallback_reason_counts') or {}, ensure_ascii=False)}",
+        f"structure_rr_histogram: {json.dumps(exec_diag.get('structure_rr_histogram') or {}, ensure_ascii=False)}",
+        f"structure_rr_by_candidate_type: {json.dumps(exec_diag.get('structure_rr_by_candidate_type') or {}, ensure_ascii=False)}",
+        f"structure_relaxed_rr_shadow_sweep: {json.dumps(exec_diag.get('structure_relaxed_rr_shadow_sweep') or {}, ensure_ascii=False)}",
+        f"dynamic_fallback_avg_rr: {(float(exec_diag.get('dynamic_fallback_sum_rr') or 0.0) / max(1, int(exec_diag.get('dynamic_fallback_n') or 0))):.6f}",
+        f"dynamic_fallback_avg_quality: {(float(exec_diag.get('dynamic_fallback_quality_sum') or 0.0) / max(1, int(exec_diag.get('dynamic_fallback_n') or 0))):.6f}",
+        f"dynamic_fallback_take_hit_rate: {(float(exec_diag.get('dynamic_fallback_take_hits') or 0) / max(1, int(exec_diag.get('dynamic_fallback_closed_n') or 0))):.6f}",
+        f"dynamic_fallback_vwap_exit_rate: {(float(exec_diag.get('dynamic_fallback_vwap_exits') or 0) / max(1, int(exec_diag.get('dynamic_fallback_closed_n') or 0))):.6f}",
+        f"dynamic_low_rr_shadow_tables: {json.dumps(dyn_tbl, ensure_ascii=False)}",
+        f"vwap_break_exit_count: {int(exec_diag.get('vwap_break_exit_count') or 0)}",
+        f"vwap_break_exit_within_60s: {int(vwap_tim.get('vwap_break_exit_within_60s') or 0)}",
+        f"vwap_break_exit_within_180s: {int(vwap_tim.get('vwap_break_exit_within_180s') or 0)}",
+        f"vwap_break_exit_within_300s: {int(vwap_tim.get('vwap_break_exit_within_300s') or 0)}",
+        f"avg_time_to_vwap_break_sec: {float(vwap_tim.get('avg_time_to_vwap_break_sec') or 0.0):.6f}",
+        f"avg_peak_profit_before_vwap_break_pct: {float(vwap_tim.get('avg_peak_profit_before_vwap_break_pct') or 0.0):.6f}",
+        f"vwap_break_within_60s (exec_diag): {int(exec_diag.get('vwap_break_within_60s') or 0)}",
+        f"vwap_break_within_180s (exec_diag): {int(exec_diag.get('vwap_break_within_180s') or 0)}",
+        f"vwap_break_within_300s (exec_diag): {int(exec_diag.get('vwap_break_within_300s') or 0)}",
+        f"take_hit_count: {int(exec_diag.get('take_hit_count') or 0)}",
+        f"early_weak_exit_count: {int(exec_diag.get('early_weak_exit_count') or 0)}",
+        f"shadow_dynamic_low_rr_filter: {json.dumps(exec_diag.get('shadow_dynamic_low_rr_filter') or {}, ensure_ascii=False)}",
+        f"avg_vwap_break_progress_pct: {float(exec_diag.get('vwap_break_progress_sum') or 0.0) / n:.6f}",
+        f"avg_vwap_break_peak_progress_pct: {float(exec_diag.get('vwap_break_peak_progress_sum') or 0.0) / n:.6f}",
+        f"avg_vwap_break_hold_sec: {float(exec_diag.get('vwap_break_hold_sec_sum') or 0.0) / n:.6f}",
+        f"avg_vwap_break_extension_pct: {float(exec_diag.get('vwap_break_extension_sum') or 0.0) / n:.6f}",
+        f"avg_vwap_break_failure_risk: {float(exec_diag.get('vwap_break_failure_risk_sum') or 0.0) / n:.6f}",
+        f"opened_positions_count: {int(exec_diag.get('opened_positions_count') or 0)}",
+        f"closed_positions_count: {int(exec_diag.get('closed_positions_count') or 0)}",
+    ]
+    with open(os.path.join(out_dir, "paper_trade_summary.txt"), "w", encoding="utf-8") as sf:
+        sf.write("\n".join(summary_lines) + "\n")
+
+    with open(os.path.join(out_dir, "paper_trade_runtime_state.json"), "w", encoding="utf-8") as rf:
+        json.dump(
+            {
+                "paper_trade_dry_run": True,
+                "day_jst": day_jst,
+                "replay_batch_stamp": str(replay_batch_stamp or ""),
+                "replay_logic_version": logic_v,
+                "replay_config_hash": cfg_hash,
+                "replay_range_label": str(replay_range_label or ""),
+                "replay_output_subdir": str(replay_output_subdir or ""),
+                "replay_config_path": str(replay_config_path or ""),
+                "replay_results_dir": str(replay_results_dir or ""),
+                "structure_exec_diag": _paper_trade_exec_diag_structure_bundle(exec_diag),
+            },
+            rf,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+def run_paper_trade_dry_run_replay_impl(*, dry_run_day: str, replay_config_path: str, script_dir: str) -> int:
+    dj = str(dry_run_day or "").strip()
+    try:
+        datetime.strptime(dj, "%Y-%m-%d")
+    except ValueError:
+        print("[paper-trade-dry-run-replay] invalid --paper-trade-dry-run-day")
+        return 2
+    intr_dir = os.path.join(script_dir, "data", "intraday_1m", dj)
+    syms: list[str] = []
+    if os.path.isdir(intr_dir):
+        for fn in sorted(os.listdir(intr_dir)):
+            if str(fn).lower().endswith(".csv"):
+                syms.append(str(fn).replace(".csv", ""))
+    if not syms:
+        print("[paper-trade-dry-run-replay] no intraday CSV for day; check data/intraday_1m/")
+        return 2
+    ymd = dj.replace("-", "")
+    out_dir = os.path.join(script_dir, "results", "paper_trade_dry_run", ymd)
+    rcp = str(replay_config_path or "").strip()
+    if not rcp:
+        rcp = _resolve_replay_config_path("configs/replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json")
+    else:
+        rcp = _resolve_replay_config_path(rcp)
+    cfg_raw = _load_replay_config(rcp)
+    f = _apply_replay_config_to_flags(cfg=cfg_raw)
+    return int(
+        run_replay(
+            interval_sec=0.0,
+            only_changes=False,
+            fixed_watch=syms,
+            replay_range="1d",
+            replay_random_days=0,
+            replay_random_months=3,
+            replay_seed=None,
+            replay_mode="fast",
+            replay_fast_discord=False,
+            replay_fast_verbose=False,
+            replay_fast_print_signal_details=False,
+            replay_market_debug=False,
+            replay_repeat_run_no=1,
+            replay_repeat_total=1,
+            replay_output_subdir=f"paper_trade_dry_run_{ymd}",
+            replay_batch_stamp=f"dry_run_{ymd}",
+            replay_morning_screen_hhmm="",
+            one_trade_per_symbol_per_day=False,
+            enable_add=False,
+            replay_early_exit_before_stop=bool(f.get("replay_early_exit_before_stop", False)),
+            replay_early_exit_vwap=bool(f.get("replay_early_exit_vwap", True)),
+            replay_early_exit_recent_low=bool(f.get("replay_early_exit_recent_low", True)),
+            replay_disable_afternoon_entry=bool(f.get("replay_disable_afternoon_entry", False)),
+            replay_strict_afternoon_entry=bool(f.get("replay_strict_afternoon_entry", False)),
+            replay_afternoon_topix_weak_block=bool(f.get("replay_afternoon_topix_weak_block", True)),
+            replay_config_name=str(f.get("replay_config_name") or ""),
+            replay_config_path=str(rcp or ""),
+            aft_volume_spike_ratio_min=float(f.get("aft_volume_spike_ratio_min", AFTERNOON_ENTRY_STRICT_VOLUME_SPIKE_RATIO_MIN)),
+            aft_vwap_dist_pct_max=float(f.get("aft_vwap_dist_pct_max", AFTERNOON_ENTRY_STRICT_VWAP_DIST_PCT_MAX)),
+            aft_rebreak_mult=float(f.get("aft_rebreak_mult", AFTERNOON_ENTRY_STRICT_REBREAK_MULT)),
+            entry_filter_rsi_enabled=bool(f.get("entry_filter_rsi_enabled", False)),
+            entry_filter_rsi_exclude_above=float(f.get("entry_filter_rsi_exclude_above", 75.0)),
+            entry_filter_vwap_distance_enabled=bool(f.get("entry_filter_vwap_distance_enabled", False)),
+            entry_filter_vwap_distance_exclude_above=float(f.get("entry_filter_vwap_distance_exclude_above", 2.0)),
+            entry_filter_atr_pct_enabled=bool(f.get("entry_filter_atr_pct_enabled", False)),
+            entry_filter_atr_pct_exclude_above=float(f.get("entry_filter_atr_pct_exclude_above", 4.0)),
+            daily_loss_stop_enabled=bool(f.get("daily_loss_stop_enabled", False)),
+            daily_loss_stop_threshold_yen_100_shares=float(f.get("daily_loss_stop_threshold_yen_100_shares", 50_000.0)),
+            regime_filter_disable_morning_weak=bool(f.get("regime_filter_disable_morning_weak", False)),
+            regime_filter_disable_rising_ratio_lt50=bool(f.get("regime_filter_disable_rising_ratio_lt50", False)),
+            regime_filter_disable_topix_weak=bool(f.get("regime_filter_disable_topix_weak", False)),
+            regime_filter_topix_weak_threshold_pct=f.get("regime_filter_topix_weak_threshold_pct"),
+            regime_filter_rising_ratio_threshold_pct=f.get("regime_filter_rising_ratio_threshold_pct"),
+            signal_filter_disable_gap_ge_pct=bool(f.get("signal_filter_disable_gap_ge_pct", False)),
+            signal_filter_gap_ge_threshold_pct=float(f.get("signal_filter_gap_ge_threshold_pct", 3.0)),
+            signal_filter_disable_vwap_distance_ge_pct=bool(f.get("signal_filter_disable_vwap_distance_ge_pct", False)),
+            signal_filter_vwap_distance_ge_threshold_pct=float(f.get("signal_filter_vwap_distance_ge_threshold_pct", 1.5)),
+            signal_filter_disable_entry_after_hhmm=bool(f.get("signal_filter_disable_entry_after_hhmm", False)),
+            signal_filter_entry_after_hhmm=str(f.get("signal_filter_entry_after_hhmm", "10:30")),
+            **_replay_composite_signal_filter_kwargs_from_flags(f),
+            **_replay_regime_control_kwargs_from_flags(f),
+            replay_settings=None,
+            paper_trade_mode=True,
+            paper_trade_dry_run_artifacts_dir=out_dir,
+            replay_date_fixed=dj,
+        )
+    )
+
+
 def _paper_trade_merge_skip_reason_counts(rep: dict[str, Any]) -> dict[str, int]:
     out: dict[str, int] = {}
     ov = rep.get("overall_summary") if isinstance(rep.get("overall_summary"), dict) else {}
@@ -11873,31 +12813,187 @@ def _paper_trade_signal_stable_id(s: ReplaySignalEval, *, fallback: str) -> str:
     return f"{s.symbol}|{fallback}"
 
 
-def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[list[str]]) -> int:
+def _paper_trade_lock_path(*, script_dir: str) -> str:
+    root = os.path.join(_results_root_abs(script_dir), "paper_trade")
+    os.makedirs(root, exist_ok=True)
+    return os.path.join(root, "paper_trade.lock")
+
+
+def _paper_trade_lock_owner_pid(lock_path: str) -> int:
+    try:
+        with open(lock_path, "r", encoding="utf-8") as lf:
+            meta = json.load(lf)
+        if isinstance(meta, dict):
+            return int(meta.get("pid") or 0)
+    except Exception:
+        return 0
+    return 0
+
+
+def _paper_trade_pid_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    # Windows: os.kill は TerminateProcess 相当でプロセスを落とすため、生存確認に使わない。
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            k32 = ctypes.windll.kernel32
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            pid_u = ctypes.c_uint32(int(pid))
+            h = int(k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid_u) or 0)
+            if h:
+                k32.CloseHandle(ctypes.c_void_p(h))
+                return True
+            err = int(k32.GetLastError() or 0)
+            # 5 = ERROR_ACCESS_DENIED — プロセスは存在するが開けない
+            return err == 5
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _paper_trade_acquire_live_lock(*, script_dir: str, force_start: bool) -> tuple[bool, str]:
+    lp = _paper_trade_lock_path(script_dir=script_dir)
+    if os.path.isfile(lp):
+        if force_start:
+            try:
+                os.remove(lp)
+            except OSError as e:
+                return False, f"[PAPER] lock remove failed: {lp} ({e})"
+        else:
+            opid = _paper_trade_lock_owner_pid(lp)
+            if opid and (not _paper_trade_pid_exists(opid)):
+                try:
+                    os.remove(lp)
+                except OSError:
+                    return False, f"[PAPER] stale lock but could not remove: {lp}"
+            else:
+                return (
+                    False,
+                    f"[PAPER] lock exists: {lp} (pid={opid or 'unknown'}). "
+                    "終了を確認するか --paper-trade-force-start で上書きしてください。",
+                )
+    try:
+        with open(lp, "w", encoding="utf-8") as lf:
+            json.dump(
+                {
+                    "pid": int(os.getpid()),
+                    "started_at_jst": datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+                },
+                lf,
+                ensure_ascii=False,
+                indent=2,
+            )
+    except OSError as e:
+        return False, f"[PAPER] lock write failed: {lp} ({e})"
+    return True, lp
+
+
+def _paper_trade_release_live_lock(*, script_dir: str) -> None:
+    lp = _paper_trade_lock_path(script_dir=script_dir)
+    try:
+        if os.path.isfile(lp):
+            opid = _paper_trade_lock_owner_pid(lp)
+            if opid and opid != int(os.getpid()):
+                return
+            os.remove(lp)
+    except OSError:
+        pass
+
+
+def _paper_trade_live_log_blank_row(fieldnames: list[str]) -> dict[str, str]:
+    return {str(k): "" for k in fieldnames}
+
+
+PAPER_TRADE_STALE_INTRADAY_MAX_AGE_SEC = 900.0
+
+
+def _paper_trade_is_weekend_jst(dt: datetime) -> bool:
+    return int(dt.weekday()) >= 5
+
+
+def _paper_trade_is_jp_exchange_holiday(dt: datetime) -> bool:
+    try:
+        import jpholiday
+
+        return bool(jpholiday.is_holiday(dt.date()))
+    except Exception:
+        return False
+
+
+def _paper_trade_in_regular_session_jst(dt: datetime) -> bool:
+    """東証現物の当面想定セッション: 前場 09:00〜11:30、後場 12:30〜15:30（分単位）。"""
+    hm = dt.hour * 60 + dt.minute
+    if hm < 9 * 60:
+        return False
+    if hm > 15 * 60 + 30:
+        return False
+    if hm <= 11 * 60 + 30:
+        return True
+    if hm >= 12 * 60 + 30:
+        return True
+    return False
+
+
+def _paper_trade_market_closed_reason_jst(dt: datetime) -> str:
+    hm = dt.hour * 60 + dt.minute
+    if hm < 9 * 60:
+        return "before_market_open"
+    if hm > 15 * 60 + 30:
+        return "after_market_close"
+    if 11 * 60 + 30 < hm < 12 * 60 + 30:
+        return "lunch_break"
+    return "outside_session"
+
+
+def _paper_trade_intraday_is_stale(
+    last_bar_end_utc: Optional[datetime], *, now_utc: datetime
+) -> tuple[bool, str]:
+    if last_bar_end_utc is None:
+        return True, "no_timestamp"
+    ts = last_bar_end_utc
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    age = (now_utc - ts.astimezone(timezone.utc)).total_seconds()
+    if age > float(PAPER_TRADE_STALE_INTRADAY_MAX_AGE_SEC):
+        return True, f"age_sec={age:.0f}"
+    return False, ""
+
+
+def run_paper_trade(
+    *,
+    paper_trade_interval_sec: float,
+    fixed_watch: Optional[list[str]],
+    force_start: bool = False,
+    ignore_market_hours: bool = False,
+    kabu_signal_shadow: bool = False,
+) -> int:
     """
     Yahoo 1d 1分足を一定間隔で取り直し、live fetch のみで「候補シグナル」を記録します（実注文なし）。
     実証券API・発注処理には接続しません。
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    ok_lk, lk_msg = _paper_trade_acquire_live_lock(script_dir=script_dir, force_start=bool(force_start))
+    if not ok_lk:
+        print(f"[{now_str()}] {lk_msg}")
+        return 2
+    cfg_hash_live = ""
+    try:
+        _rcp_live = _resolve_replay_config_path("configs/replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json")
+        cfg_hash_live = _replay_config_file_sha256(_rcp_live)
+    except Exception:
+        cfg_hash_live = ""
     seen_ids: set[str] = set()
-    csv_header = [
-        "datetime_jst",
-        "symbol",
-        "signal_type",
-        "entry_price",
-        "exit_price",
-        "exit_reason",
-        "pnl_yen_100_shares",
-        "market_regime",
-        "rising_ratio",
-        "topix_pct",
-        "entry_vwap_distance_pct",
-        "high_update_count_before_entry",
-        "skipped",
-        "skip_reason",
-        "shadow_block_hit",
-        "shadow_block_rule_names",
-    ]
+    csv_header = _paper_trade_dry_run_csv_fieldnames()
     print(f"[{now_str()}] [PAPER] live market mode enabled")
     print(f"[{now_str()}] [PAPER] replay cache disabled")
     # Discord channel separation（paper_trade専用）
@@ -11939,13 +13035,41 @@ def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[li
 
     print(f"[{now_str()}] [PAPER] alert_channel={_paper_alert_ch}")
     print(f"[{now_str()}] [PAPER] log_channel={_paper_log_ch}")
+    _mdp = str(os.environ.get("MARKET_DATA_PROVIDER", "yahoo") or "yahoo").strip().lower()
+    print(f"[{now_str()}] [PAPER] MARKET_DATA_PROVIDER={_mdp}")
+    _kabu_shadow_runner = None
+    try:
+        from src.kabu_signal_shadow import (
+            KabuSignalShadowRunner,
+            default_shadow_tier,
+            kabu_signal_shadow_enabled,
+        )
+
+        if kabu_signal_shadow_enabled(cli_flag=bool(kabu_signal_shadow)):
+            _kabu_shadow_runner = KabuSignalShadowRunner(
+                script_dir=script_dir,
+                tier=default_shadow_tier(),
+            )
+            print(
+                f"[{now_str()}] [PAPER] KABU_SIGNAL_SHADOW=1 "
+                f"tier={default_shadow_tier()} (kabu_signal_v1 log only — no ENTRY/EXIT/Discord)"
+            )
+    except Exception as _kabu_shadow_init_err:
+        print(f"[{now_str()}] [PAPER] KABU_SIGNAL_SHADOW init failed: {_kabu_shadow_init_err!r}")
+        _kabu_shadow_runner = None
+    _imh = bool(ignore_market_hours)
+    _clk = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
+    print(
+        f"[{now_str()}] [PAPER] clock_jst={_clk} ignore_market_hours={_imh} "
+        f"stale_intraday_max_age_sec={PAPER_TRADE_STALE_INTRADAY_MAX_AGE_SEC:.0f}"
+    )
     print(f"[{now_str()}] [PAPER] poll_interval={float(paper_trade_interval_sec):g}s（実注文なし） Ctrl+C で終了")
     try:
         _paper_send_log(f"[PAPER] startup: poll_interval={float(paper_trade_interval_sec):g}s")
     except Exception:
         pass
-    # 現物寄り前後の扱い: 09:00 未満は run_replay しない / 15:30 以降は当日1回だけ EOD summary の後は idle
-    _HM_OPEN_MIN = 9 * 60
+    # ループ内: 休日/土日/取引時間外は [PAPER] market_closed でスキップ。
+    # 平日 15:30 以降は当日1回 EOD summary の後は idle（既存）。
     _HM_CLOSE_MIN = 15 * 60 + 30
     eod_summary_day: Optional[str] = None
     # MA25 / avg5 は必要になった銘柄だけ取得し、短時間キャッシュする
@@ -11954,23 +13078,21 @@ def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[li
 
     try:
         n_poll = 0
+        _paper_runtime_restore_day: Optional[str] = None
         while True:
             now_loop_jst = datetime.now(JST)
             day_key = now_loop_jst.strftime("%Y%m%d")
             hm = now_loop_jst.hour * 60 + now_loop_jst.minute
 
-            if hm < _HM_OPEN_MIN:
-                msg_nopen = (
-                    f"[{now_str()}] [paper_trade] market not open — sleeping "
-                    f"{float(paper_trade_interval_sec):g}s"
-                )
-                print(msg_nopen)
-                try:
-                    _paper_send_log(msg_nopen)
-                except Exception:
-                    pass
-                time.sleep(max(0.5, float(paper_trade_interval_sec)))
-                continue
+            if not ignore_market_hours:
+                if _paper_trade_is_weekend_jst(now_loop_jst):
+                    print(f"[{now_str()}] [PAPER] market_closed skip poll reason=weekend")
+                    time.sleep(max(0.5, float(paper_trade_interval_sec)))
+                    continue
+                if _paper_trade_is_jp_exchange_holiday(now_loop_jst):
+                    print(f"[{now_str()}] [PAPER] market_closed skip poll reason=holiday")
+                    time.sleep(max(0.5, float(paper_trade_interval_sec)))
+                    continue
 
             if hm >= _HM_CLOSE_MIN and eod_summary_day == day_key:
                 msg_closed = f"[{now_str()}] [paper_trade] market closed — idle (no new signals)"
@@ -11982,10 +13104,34 @@ def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[li
                 time.sleep(max(0.5, float(paper_trade_interval_sec)))
                 continue
 
+            if not ignore_market_hours:
+                _in_sess = _paper_trade_in_regular_session_jst(now_loop_jst)
+                _eod_pending = hm >= _HM_CLOSE_MIN and eod_summary_day != day_key
+                if (not _in_sess) and (not _eod_pending):
+                    _rs = _paper_trade_market_closed_reason_jst(now_loop_jst)
+                    print(f"[{now_str()}] [PAPER] market_closed skip poll reason={_rs}")
+                    time.sleep(max(0.5, float(paper_trade_interval_sec)))
+                    continue
+
+            out_dir = _build_paper_trade_output_dir(day_key, script_dir=script_dir)
+            if _paper_runtime_restore_day != day_key:
+                _paper_runtime_restore_day = day_key
+                n_poll = 0
+                rsp0 = os.path.join(out_dir, "paper_trade_runtime_state.json")
+                if os.path.isfile(rsp0):
+                    try:
+                        with open(rsp0, encoding="utf-8") as rf:
+                            rj = json.load(rf)
+                        if isinstance(rj, dict):
+                            dj = str(rj.get("day_jst") or "").strip().replace("-", "")
+                            if dj == day_key:
+                                n_poll = int(rj.get("total_poll_count") or 0)
+                    except Exception:
+                        pass
+
             n_poll += 1
             is_eod_summary_only = hm >= _HM_CLOSE_MIN and eod_summary_day != day_key
 
-            out_dir = _build_paper_trade_output_dir(day_key, script_dir=script_dir)
             state_path = os.path.join(out_dir, "paper_trade_seen_ids.json")
             try:
                 if os.path.isfile(state_path):
@@ -12029,9 +13175,14 @@ def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[li
             paper_signal_dicts: list[dict[str, Any]] = []
             if (not is_eod_summary_only) and watch:
                 with requests.Session() as session:
+                    from src.providers import resolve_paper_trade_quote_provider
+
+                    quote_provider = resolve_paper_trade_quote_provider(session)
                     for sym in watch:
                         try:
-                            q, intr, _vwap = fetch_latest_intraday_data_for_paper_trade(session, sym)
+                            q, intr, _vwap, last_1m_utc = fetch_latest_intraday_data_for_paper_trade(
+                                session, sym, quote_provider=quote_provider
+                            )
                         except Exception as e:
                             # paper_trade は replay 経路に入らないため、「リプレイ用」等の文言は出さない
                             msg_ff = f"[{now_str()}] [PAPER] fetch_failed symbol={sym} err={e}"
@@ -12042,8 +13193,21 @@ def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[li
                                 pass
                             continue
 
+                        now_utc = datetime.now(timezone.utc)
+                        _stale, _stale_why = _paper_trade_intraday_is_stale(last_1m_utc, now_utc=now_utc)
+                        if _stale:
+                            _ls = "none"
+                            if isinstance(last_1m_utc, datetime):
+                                _ls = last_1m_utc.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S JST")
+                            print(
+                                f"[{now_str()}] [PAPER] stale_intraday_data skip symbol={sym} "
+                                f"last_ts={_ls} ({_stale_why})"
+                            )
+
                         detected += 1
                         reasons: list[str] = []
+                        if _stale:
+                            reasons.append("1分足データが古い")
                         # 必須項目が欠けていると判定不能
                         if q.change_percent is None:
                             reasons.append("前日終値取得失敗")
@@ -12102,26 +13266,37 @@ def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[li
                         seen_ids.add(sid)
 
                         skip_reason = " / ".join([x for x in reasons if x])
-                        row = {
-                            "datetime_jst": poll_ts,
-                            "symbol": str(sym),
-                            "signal_type": "LIVE",
-                            "entry_price": f"{float(entry_price):.2f}" if isinstance(entry_price, float) else "",
-                            "exit_price": "",
-                            "exit_reason": "",
-                            "pnl_yen_100_shares": "",
-                            "market_regime": "",
-                            "rising_ratio": "",
-                            "topix_pct": "",
-                            "entry_vwap_distance_pct": (
-                                f"{float(intr.vwap_distance_pct):.3f}" if isinstance(intr.vwap_distance_pct, (int, float)) else ""
-                            ),
-                            "high_update_count_before_entry": "",
-                            "skipped": "0" if entry_allowed else "1",
-                            "skip_reason": skip_reason,
-                            "shadow_block_hit": "0",
-                            "shadow_block_rule_names": "",
-                        }
+                        row = _paper_trade_live_log_blank_row(csv_header)
+                        ep_cell = f"{float(entry_price):.4f}" if isinstance(entry_price, float) else ""
+                        row.update(
+                            {
+                                "datetime_jst": poll_ts,
+                                "entry_time_utc": "",
+                                "exit_time_utc": "",
+                                "entry_side": "LONG",
+                                "symbol": str(sym),
+                                "signal_type": "LIVE",
+                                "notify_sent": "0",
+                                "entry_price": ep_cell,
+                                "stop_price": "",
+                                "take_price": "",
+                                "market_regime": "",
+                                "rising_ratio": "",
+                                "topix_pct": "",
+                                "entry_vwap_distance_pct": (
+                                    f"{float(intr.vwap_distance_pct):.6f}"
+                                    if isinstance(intr.vwap_distance_pct, (int, float))
+                                    else ""
+                                ),
+                                "high_update_count_before_entry": "",
+                                "skipped": "false" if entry_allowed else "true",
+                                "skip_reason": skip_reason,
+                                "shadow_block_hit": "0",
+                                "shadow_block_rule_names": "",
+                                "signal_lag_sec": "",
+                                "position_status": "",
+                            }
+                        )
                         new_rows.append(row)
                         # summary 用に dict も保持（shadow_block_candidate_flags は保持するだけで影響しない）
                         try:
@@ -12136,10 +13311,44 @@ def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[li
                         except Exception:
                             pass
 
+            if _kabu_shadow_runner is not None and (not is_eod_summary_only) and watch:
+                try:
+                    _kabu_shadow_runner.evaluate_watch_list(
+                        list(watch),
+                        day_key=day_key,
+                        poll_ts_jst=poll_ts,
+                        poll_number=n_poll,
+                        now_str_fn=now_str,
+                    )
+                except Exception as _kabu_shadow_batch_err:
+                    print(
+                        f"[{now_str()}] [KABU_SHADOW] error batch poll#{n_poll} err={_kabu_shadow_batch_err!r}"
+                    )
+
+            entry_rows = [
+                r
+                for r in new_rows
+                if str(r.get("skipped") or "").lower() == "false" and (not is_eod_summary_only)
+            ]
+            if entry_rows:
+                lines = [
+                    f"- {r.get('symbol', '')} entry={r.get('entry_price', '')} "
+                    f"vwap_dist={r.get('entry_vwap_distance_pct', '')}"
+                    for r in entry_rows
+                ]
+                try:
+                    _paper_send_alert(
+                        f"[paper_trade] ENTRY poll#{n_poll} {poll_ts} JST\n" + "\n".join(lines)
+                    )
+                except Exception:
+                    pass
+                for r in entry_rows:
+                    r["notify_sent"] = "1"
+
             if new_rows:
                 write_header = not os.path.isfile(log_path)
                 with open(log_path, "a", encoding="utf-8", newline="") as fcsv:
-                    w = csv.DictWriter(fcsv, fieldnames=csv_header)
+                    w = csv.DictWriter(fcsv, fieldnames=csv_header, extrasaction="raise")
                     if write_header:
                         w.writeheader()
                     for row in new_rows:
@@ -12172,6 +13381,47 @@ def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[li
             }
             _paper_trade_write_summary_txt(path=summary_path, report=rep, poll_ts_jst=poll_ts)
 
+            day_jst_iso = f"{day_key[:4]}-{day_key[4:6]}-{day_key[6:]}"
+            rsp_state = os.path.join(out_dir, "paper_trade_runtime_state.json")
+            prev_s: dict[str, Any] = {}
+            if os.path.isfile(rsp_state):
+                try:
+                    with open(rsp_state, encoding="utf-8") as rf:
+                        pj = json.load(rf)
+                    if isinstance(pj, dict):
+                        prev_s = pj
+                except Exception:
+                    prev_s = {}
+            try:
+                pop = prev_s.get("paper_open_positions")
+                if not isinstance(pop, list):
+                    pop = []
+                pt2 = prev_s.get("paper_tier2_symbols")
+                if not isinstance(pt2, list):
+                    pt2 = []
+                osh = rep.get("overall_summary")
+                if not isinstance(osh, dict):
+                    osh = {}
+                with open(rsp_state, "w", encoding="utf-8") as wf:
+                    json.dump(
+                        {
+                            **prev_s,
+                            "paper_trade_live": True,
+                            "paper_trade_dry_run": False,
+                            "day_jst": day_jst_iso,
+                            "total_poll_count": int(n_poll),
+                            "config_hash": str(cfg_hash_live or ""),
+                            "paper_open_positions": pop,
+                            "paper_trade_execution_summary": osh,
+                            "paper_tier2_symbols": pt2,
+                        },
+                        wf,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+            except Exception:
+                pass
+
             try:
                 ov = rep.get("overall_summary") if isinstance(rep.get("overall_summary"), dict) else {}
                 st = ov.get("stats") if isinstance(ov.get("stats"), dict) else {}
@@ -12180,12 +13430,12 @@ def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[li
                 pnl = float(st.get("pnl_yen_100_shares") or 0.0)
                 wr = float(st.get("win_rate_pct") or 0.0)
                 tag = "eod_summary" if is_eod_summary_only else "poll"
-                alert_msg = (
+                digest_msg = (
                     f"[paper_trade] {tag} #{n_poll} {poll_ts} JST\n"
                     f"signals={n_sig} eval={n_ev} pnl_100sh={pnl:+.0f}円 win_rate={wr:.1f}%\n"
                     f"+csv rows: {len(new_rows)}"
                 )
-                _paper_send_alert(alert_msg)
+                _paper_send_log(digest_msg)
             except Exception:
                 pass
 
@@ -12207,6 +13457,8 @@ def run_paper_trade(*, paper_trade_interval_sec: float, fixed_watch: Optional[li
         except Exception:
             pass
         return 0
+    finally:
+        _paper_trade_release_live_lock(script_dir=script_dir)
 
 
 def _aggregate_replay_repeat_run_summaries(run_summaries: list[dict[str, Any]]) -> dict[str, Any]:
@@ -25466,7 +26718,33 @@ def main(argv: list[str]) -> int:
         return run_morning_screen()
 
     paper_trade = bool(getattr(args, "paper_trade", False))
-    if paper_trade and bool(getattr(args, "replay", False)):
+    replay = bool(getattr(args, "replay", False))
+    paper_dry_run = bool(getattr(args, "paper_trade_dry_run_replay", False))
+    if paper_dry_run:
+        if paper_trade or replay:
+            print(f"[{now_str()}] --paper-trade-dry-run-replay は --paper-trade / --replay と併用できません。")
+            return 2
+        _dj = str(getattr(args, "paper_trade_dry_run_day", "") or "").strip()
+        if not _dj:
+            print(f"[{now_str()}] --paper-trade-dry-run-day YYYY-MM-DD を指定してください。")
+            return 2
+        _script_d = os.path.dirname(os.path.abspath(__file__))
+        _rcp_d = str(getattr(args, "replay_config", "") or "").strip()
+        if not _rcp_d:
+            _rcp_d = _resolve_replay_config_path(
+                "configs/replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json"
+            )
+        else:
+            _rcp_d = _resolve_replay_config_path(_rcp_d)
+        return int(
+            run_paper_trade_dry_run_replay(
+                dry_run_day=_dj,
+                replay_config_path=str(_rcp_d or ""),
+                script_dir=_script_d,
+            )
+        )
+
+    if paper_trade and replay:
         print(f"[{now_str()}] --paper-trade と --replay は同時指定できません。")
         return 2
 
@@ -25474,6 +26752,7 @@ def main(argv: list[str]) -> int:
     # （指定しなければ False のまま = いつものリアルタイム監視に戻ります）
     global TEST_REPLAY_MODE
     TEST_REPLAY_MODE = bool(getattr(args, "replay", False)) and (not paper_trade)
+    replay_date_fixed_main: str = ""
     replay_range: str = str(getattr(args, "replay_range", "1d"))
     replay_random_days: int = int(getattr(args, "replay_random_days", 0) or 0)
     replay_random_months: int = int(getattr(args, "replay_random_months", 3) or 3)
@@ -25697,6 +26976,28 @@ def main(argv: list[str]) -> int:
             f"hu_eq={_fc_t.get('high_update_count_before_entry_eq')}"
         )
         print(f"regime_controls: enabled={bool(regime_control_enabled)}")
+
+    # --replay-date（単日 fixed）: shadow-multi-day より後段で処理するが、replay_settings に正しい replay_range を載せるため先に確定
+    if bool(TEST_REPLAY_MODE):
+        _rmd0 = str(getattr(args, "replay_shadow_multi_day", "") or "").strip()
+        _rdx0 = str(getattr(args, "replay_date", "") or "").strip()
+        if _rmd0 and _rdx0:
+            print("Replay validation failed:\nreplay_date_conflict_with_replay_shadow_multi_day")
+            return 2
+        if _rdx0:
+            try:
+                datetime.strptime(_rdx0, "%Y-%m-%d")
+            except ValueError:
+                print(f"Replay validation failed:\nreplay_date_invalid day='{_rdx0}'")
+                return 2
+            replay_date_fixed_main = _rdx0
+            if str(replay_range).strip() != "1d":
+                print(
+                    f"[{now_str()}] --replay-date: replay-range was {replay_range!r}; "
+                    "forcing 1d for single-day replay."
+                )
+            replay_range = "1d"
+            replay_random_days = 0
 
     # =========================
     # Replay設定（値 + source）を作って run_replay へ渡す
@@ -26326,7 +27627,15 @@ def main(argv: list[str]) -> int:
         if _pti <= 0:
             print(f"[{now_str()}] --paper-trade-interval は 0 より大きい値にしてください。")
             return 2
-        return int(run_paper_trade(paper_trade_interval_sec=_pti, fixed_watch=fixed_watch))
+        return int(
+            run_paper_trade(
+                paper_trade_interval_sec=_pti,
+                fixed_watch=fixed_watch,
+                force_start=bool(getattr(args, "paper_trade_force_start", False)),
+                ignore_market_hours=bool(getattr(args, "paper_trade_ignore_market_hours", False)),
+                kabu_signal_shadow=bool(getattr(args, "kabu_signal_shadow", False)),
+            )
+        )
 
     # -----------------------------
     # テスト用リプレイモード
@@ -26335,6 +27644,21 @@ def main(argv: list[str]) -> int:
     # - 相場時間外でも、過去の1分足を「1秒ごとに1分」進めて判定/Discord通知を確認できます。
     # - 通常モード（TEST_REPLAY_MODE=False）側は、既存コードをできるだけ触らない方針です。
     if TEST_REPLAY_MODE:
+        _rmd_cli = str(getattr(args, "replay_shadow_multi_day", "") or "").strip()
+        if _rmd_cli:
+            _days_md, _err_md = _parse_replay_shadow_multi_day_list(_rmd_cli)
+            if _err_md:
+                print(f"[replay-shadow-multi-day] {_err_md}")
+                return 2
+            _script_dir_md = os.path.dirname(os.path.abspath(__file__))
+            return int(
+                run_replay_multi_day_shadow_validation_impl(
+                    days=_days_md,
+                    replay_config_path=str(replay_config_path or ""),
+                    run_replay_fn=run_replay,
+                    script_dir=_script_dir_md,
+                )
+            )
         # --replay-range random_5d をショートカットとして扱う
         if str(replay_range) == "random_5d" and int(replay_random_days or 0) <= 0:
             replay_random_days = 5
@@ -26437,6 +27761,7 @@ def main(argv: list[str]) -> int:
                     replay_settings=replay_settings,
                     forward_split_validation=bool(forward_split_validation),
                     forward_split_periods_path=str(forward_split_periods_path_cli or ""),
+                    replay_date_fixed=str(replay_date_fixed_main or ""),
                 )
                 if int(code) != 0:
                     print(f"[{now_str()}] Replay repeat run{run_no:02d} が失敗しました（exit_code={int(code)}）")
@@ -29236,8 +30561,10 @@ def main(argv: list[str]) -> int:
     vwap_cache: dict[str, tuple[Optional[float], float]] = {}
 
     # 1分足系列（直近シグナル計算用）のキャッシュ:
-    # - symbol ごとに (closes, highs, vols, fetched_at)
-    intraday_series_cache: dict[str, tuple[list[Optional[float]], list[Optional[float]], list[Optional[float]], float]] = {}
+    # - symbol ごとに (closes, highs, vols, last_bar_end_utc, fetched_at)
+    intraday_series_cache: dict[
+        str, tuple[list[Optional[float]], list[Optional[float]], list[Optional[float]], Optional[datetime], float]
+    ] = {}
 
     # watchlist.json のリアルタイム反映用:
     # - 前回の監視銘柄リスト（壊れたJSONを読んだ場合に「前回のリストを維持」するため）
@@ -29500,13 +30827,16 @@ def main(argv: list[str]) -> int:
                             try:
                                 cached = intraday_series_cache.get(q.symbol)
                                 if cached:
-                                    c_closes, c_highs, c_vols, fetched_at = cached
+                                    if len(cached) == 5:
+                                        c_closes, c_highs, c_vols, _c_ts, fetched_at = cached
+                                    else:
+                                        c_closes, c_highs, c_vols, fetched_at = cached
                                     if (time.perf_counter() - fetched_at) < INTRADAY_SERIES_CACHE_TTL_SEC:
                                         closes_1m, highs_1m, vols_1m = c_closes, c_highs, c_vols
                                 if not closes_1m:
-                                    c2, h2, v2 = fetch_intraday_1m_series(session, q.symbol)
+                                    c2, h2, v2, t2 = fetch_intraday_1m_series(session, q.symbol)
                                     closes_1m, highs_1m, vols_1m = c2, h2, v2
-                                    intraday_series_cache[q.symbol] = (closes_1m, highs_1m, vols_1m, time.perf_counter())
+                                    intraday_series_cache[q.symbol] = (closes_1m, highs_1m, vols_1m, t2, time.perf_counter())
                             except Exception:
                                 closes_1m, highs_1m, vols_1m = [], [], []
 

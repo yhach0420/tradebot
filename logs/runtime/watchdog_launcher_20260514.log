@@ -1,0 +1,35 @@
+
+[2026/05/14  0:06:47.87] === tradebot_watchdog launcher ===
+[2026/05/14  0:06:47.87] CD_AT_LAUNCH=C:\Windows\System32
+[2026/05/14  0:06:47.88] ROOT=c:\Users\yhach\Documents\tradebotfile
+[2026/05/14  0:06:47.88] CD_AFTER_pushd_ROOT=c:\Users\yhach\Documents\tradebotfile
+[2026/05/14  0:06:47.89] whoami:
+yhachi5080\yhach
+[2026/05/14  0:06:47.91] where python:
+C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe
+C:\Users\yhach\AppData\Local\Microsoft\WindowsApps\python.exe
+[2026/05/14  0:06:47.99] python --version (C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe):
+Python 3.14.3
+[2026/05/14  0:06:48.00] PATH=c:\Users\yhach\AppData\Local\Programs\cursor\resources\app\resources\helpers;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\NVIDIA Corporation\NVIDIA App\NvDLISR;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\Git\cmd;C:\Users\yhach\AppData\Local\Programs\Python\Python314\Scripts\;C:\Users\yhach\AppData\Local\Programs\Python\Python314\;C:\Users\yhach\AppData\Local\Programs\Python\Launcher\;C:\Users\yhach\AppData\Local\Microsoft\WindowsApps;C:\Users\yhach\AppData\Local\Programs\cursor\resources\app\bin;C:\Users\yhach\AppData\Local\Pandoc\;C:\Users\yhach\AppData\Local\Microsoft\WinGet\Packages\Typst.Typst_Microsoft.Winget.Source_8wekyb3d8bbwe\typst-x86_64-pc-windows-msvc;
+[2026/05/14  0:06:48.33] check_watchdog_running.ps1 exitcode=1
+[2026/05/14  0:06:48.33] EXEC: start "tradebot_watchdog" /MIN "C:\WINDOWS\system32\cmd.exe" /c call "c:\Users\yhach\Documents\tradebotfile\scripts\run_watchdog_inner.bat"
+[2026/05/14  0:06:48.34] start_inner_immediate_errorlevel=1
+[2026/05/14  0:06:48.35] launcher_exit=0
+
+[2026/05/14  0:12:26.16] === tradebot_watchdog launcher ===
+[2026/05/14  0:12:26.17] CD_AT_LAUNCH=C:\Users\yhach\Documents\tradebotfile
+[2026/05/14  0:12:26.18] ROOT=C:\Users\yhach\Documents\tradebotfile
+[2026/05/14  0:12:26.19] CD_AFTER_pushd_ROOT=C:\Users\yhach\Documents\tradebotfile
+[2026/05/14  0:12:26.19] whoami:
+yhachi5080\yhach
+[2026/05/14  0:12:26.21] where python:
+C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe
+C:\Users\yhach\AppData\Local\Microsoft\WindowsApps\python.exe
+[2026/05/14  0:12:26.30] python --version (C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe):
+Python 3.14.3
+[2026/05/14  0:12:26.31] PATH=C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\NVIDIA Corporation\NVIDIA App\NvDLISR;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\Git\cmd;C:\Users\yhach\AppData\Local\Programs\Python\Python314\Scripts\;C:\Users\yhach\AppData\Local\Programs\Python\Python314\;C:\Users\yhach\AppData\Local\Programs\Python\Launcher\;C:\Users\yhach\AppData\Local\Microsoft\WindowsApps;C:\Users\yhach\AppData\Local\Programs\cursor\resources\app\bin;C:\Users\yhach\AppData\Local\Pandoc\;C:\Users\yhach\AppData\Local\Microsoft\WinGet\Packages\Typst.Typst_Microsoft.Winget.Source_8wekyb3d8bbwe\typst-x86_64-pc-windows-msvc
+[2026-05-14 00:12:26] start_watchdog: skip duplicate (watchdog.py already running)
+[2026-05-14 00:12:26] PID=18724 CommandLine="C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe"  "C:\Users\yhach\Documents\tradebotfile\scripts\watchdog.py" 
+[2026/05/14  0:12:26.55] check_watchdog_running.ps1 exitcode=0
+[2026/05/14  0:12:26.57] duplicate watchdog detected, not starting inner.
+[2026/05/14  0:12:26.57] launcher_exit=0

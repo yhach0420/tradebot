@@ -1,0 +1,15 @@
+2026-05-16 11:18:23,955 ERROR KABU_API_PASSWORD が .env に未設定です。（プロジェクト直下の .env を使用）
+2026-05-16 11:18:47,567 ERROR kabustation API エラー: ネットワークエラー (http://localhost:18080/kabusapi/token): HTTPConnectionPool(host='localhost', port=18080): Max retries exceeded with url: /kabusapi/token (Caused by NewConnectionError("HTTPConnection(host='localhost', port=18080): Failed to establish a new connection: [WinError 10061] 対象のコンピューターによって拒否されたため、接続できませんでした。"))
+2026-05-16 11:18:47,569 ERROR エラー内容を書き込みました: C:\Users\yhach\Documents\tradebotfile\results\kabu_api\20260516\kabu_api_check_9984_1_111843.error.json
+2026-05-16 11:41:04,375 ERROR kabustation API エラー: token issue failed HTTP 401 url='http://localhost:18080/kabusapi/token' body='{"Code":4001013,"Message":"トークン取得失敗"}'
+2026-05-16 11:41:04,376 ERROR エラー内容を書き込みました: C:\Users\yhach\Documents\tradebotfile\results\kabu_api\20260516\kabu_api_check_9984_1_114104.error.json
+2026-05-16 11:42:19,870 ERROR kabustation API エラー: token issue failed HTTP 401 url='http://localhost:18080/kabusapi/token' body='{"Code":4001013,"Message":"トークン取得失敗"}'
+2026-05-16 11:42:19,872 ERROR エラー内容を書き込みました: C:\Users\yhach\Documents\tradebotfile\results\kabu_api\20260516\kabu_api_check_9984_1_114219.error.json
+2026-05-16 11:42:56,925 INFO token 取得成功 prefix=8556b325…
+2026-05-16 11:43:01,979 INFO 板取得成功 CurrentPrice=5745.0 Symbol='9984'
+2026-05-16 11:43:01,979 INFO 板要約キー (10): ['Buy1', 'Buy2', 'Buy3', 'Buy4', 'Buy5', 'Sell1', 'Sell2', 'Sell3', 'Sell4', 'Sell5']
+2026-05-16 11:43:01,980 INFO JSON 出力: C:\Users\yhach\Documents\tradebotfile\results\kabu_api\20260516\kabu_api_check_9984_1_114256.json
+2026-05-16 12:18:46,441 INFO token 取得成功
+2026-05-16 12:18:46,443 INFO 板取得成功 CurrentPrice=5745.0 Symbol='9984'
+2026-05-16 12:18:46,443 INFO 板要約キー (10): ['Buy1', 'Buy2', 'Buy3', 'Buy4', 'Buy5', 'Sell1', 'Sell2', 'Sell3', 'Sell4', 'Sell5']
+2026-05-16 12:18:46,444 INFO JSON 出力: C:\Users\yhach\Documents\tradebotfile\results\kabu_api\20260516\kabu_api_check_9984_1_121846.json

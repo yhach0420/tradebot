@@ -1,0 +1,46 @@
+
+[2026/05/16  5:08:39.65] start_issue_bot: launching inner bat
+[2026/05/16  5:08:39.65] ROOT=C:\Users\yhach\Documents\tradebotfile
+[2026/05/16  5:08:39.65] LOG=C:\Users\yhach\Documents\tradebotfile\logs\runtime\issue_bot_20260516.log
+
+=== run_issue_bot_inner 2026/05/16  5:08:40.03 ===
+ROOT=C:\Users\yhach\Documents\tradebotfile
+LOG=C:\Users\yhach\Documents\tradebotfile\logs\runtime\issue_bot_20260516.log
+where python:
+C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe
+C:\Users\yhach\AppData\Local\Microsoft\WindowsApps\python.exe
+python --version:
+Python 3.14.3
+CD=C:\Users\yhach\Documents\tradebotfile
+CMD=python .\discord_issue_bot\discord_issue_bot.py
+========================================
+[2026-05-16 05:08:42] [INFO    ] discord.client: logging in using static token
+[2026-05-16 05:08:43] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: 5c16e63cb296659ad8fb5ae901924692).
+Logged in as: tradebot#9176 (id=1501278932404801638)
+^C
+[2026/05/16  5:23:41.55] start_issue_bot: launching inner bat
+[2026/05/16  5:23:41.56] ROOT=C:\Users\yhach\Documents\tradebotfile
+[2026/05/16  5:23:41.56] LOG=C:\Users\yhach\Documents\tradebotfile\logs\runtime\issue_bot_20260516.log
+
+=== run_issue_bot_inner 2026/05/16  5:23:41.75 ===
+ROOT=C:\Users\yhach\Documents\tradebotfile
+LOG=C:\Users\yhach\Documents\tradebotfile\logs\runtime\issue_bot_20260516.log
+where python:
+C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe
+C:\Users\yhach\AppData\Local\Microsoft\WindowsApps\python.exe
+python --version:
+Python 3.14.3
+CD=C:\Users\yhach\Documents\tradebotfile
+CMD=python .\discord_issue_bot\discord_issue_bot.py
+========================================
+[2026-05-16 05:23:42] [INFO    ] discord.client: logging in using static token
+[2026-05-16 05:23:43] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: 3b467542aca8d91c3b636a517ab5bc73).
+Logged in as: tradebot#9176 (id=1501278932404801638)
+[2026-05-16 06:25:16] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 3b467542aca8d91c3b636a517ab5bc73.
+[2026-05-16 07:13:41] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 3b467542aca8d91c3b636a517ab5bc73.
+[2026-05-16 10:51:53] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 3b467542aca8d91c3b636a517ab5bc73.
+[2026-05-16 11:30:54] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 3b467542aca8d91c3b636a517ab5bc73.
+[2026-05-16 14:42:25] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 3b467542aca8d91c3b636a517ab5bc73.
+[2026-05-16 16:55:07] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 3b467542aca8d91c3b636a517ab5bc73.
+[2026-05-16 18:01:57] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 3b467542aca8d91c3b636a517ab5bc73.
+[2026-05-16 19:48:54] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 3b467542aca8d91c3b636a517ab5bc73.
