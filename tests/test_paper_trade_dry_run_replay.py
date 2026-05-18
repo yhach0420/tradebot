@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from yahoo_kabu_watch import (
+from market.yahoo.watch import (
     JST,
     IntradaySignals,
     PAPER_TRADE_LOGIC_VERSION,

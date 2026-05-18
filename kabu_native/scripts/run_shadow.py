@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-kabu_native shadow — live kabu_signal_v1 / kabu_exit_v1 evaluation (no orders, no Discord).
+kabu_native shadow — live kabu_signal_v1 / kabu_exit_v1 evaluation (no orders).
+
+Optional [KABU_PAPER] Discord virtual ENTRY/EXIT via KABU_SHADOW_DISCORD_WEBHOOK_URL (default OFF).
 
 例::
     python kabu_native/scripts/run_shadow.py --max-polls 2

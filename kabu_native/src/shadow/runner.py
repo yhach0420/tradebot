@@ -1,5 +1,7 @@
 """
-kabu_native shadow runner — REST board (+ optional PUSH), no orders, no Discord.
+kabu_native shadow runner — REST board (+ optional PUSH), no orders.
+
+Optional [KABU_PAPER] Discord virtual ENTRY/EXIT notify (kabu_native/notify only).
 """
 
 from __future__ import annotations
@@ -58,6 +60,7 @@ class ShadowRunner:
     _csv_header_written: bool = False
     _poll_count: int = 0
     _push_stop: threading.Event = field(default_factory=threading.Event)
+    _discord_notifier: Any = None
 
     def _ensure_repo_imports(self) -> None:
         root = str(self.repo_root)
@@ -118,6 +121,66 @@ class ShadowRunner:
                 self._csv_header_written = True
             w.writerow(row)
 
+    def _init_discord_notifier(self) -> None:
+        from notify.discord import ShadowDiscordNotifier
+
+        self._discord_notifier = ShadowDiscordNotifier(self.config.discord)
+        if self._discord_notifier.active:
+            log.info(
+                "shadow [KABU_PAPER] discord ON env=%s",
+                self.config.discord.webhook_env,
+            )
+        else:
+            log.info("shadow discord OFF (default)")
+
+    def _symbol_display_name(self, ws: WatchSymbol, board_flat: dict[str, Any]) -> str:
+        return (
+            str(board_flat.get("SymbolName") or board_flat.get("symbol_name") or "").strip()
+            or ws.symbol.replace(".T", "")
+        )
+
+    def _maybe_discord_paper_entry(
+        self,
+        ws: WatchSymbol,
+        rd: dict[str, Any],
+        board_flat: dict[str, Any],
+    ) -> bool:
+        notifier = self._discord_notifier
+        pos = self._positions.get(ws.symbol)
+        if notifier is None or pos is None or not getattr(notifier, "active", False):
+            return False
+        try:
+            return notifier.notify_paper_entry(
+                symbol=ws.symbol,
+                symbol_name=self._symbol_display_name(ws, board_flat),
+                entry_price=pos.entry_price,
+                entry_time=pos.entry_time,
+                trigger_level=pos.trigger_level,
+                rd=rd,
+            )
+        except Exception as e:
+            log.warning("[KABU_NOTIFY] error %s", e, exc_info=False)
+            return False
+
+    def _maybe_discord_paper_exit(self, exit_snapshot: Optional[dict[str, Any]]) -> bool:
+        notifier = self._discord_notifier
+        if notifier is None or not exit_snapshot or not getattr(notifier, "active", False):
+            return False
+        try:
+            return notifier.notify_paper_exit(
+                symbol=str(exit_snapshot["symbol"]),
+                entry_price=float(exit_snapshot["entry_price"]),
+                exit_price=float(exit_snapshot["exit_price"]),
+                entry_time=exit_snapshot["entry_time"],
+                exit_reason=str(exit_snapshot.get("exit_reason") or ""),
+                pnl_pct=exit_snapshot.get("pnl_pct"),
+                mfe_pct=exit_snapshot.get("mfe_pct"),
+                elapsed_min=exit_snapshot.get("elapsed_min"),
+            )
+        except Exception as e:
+            log.warning("[KABU_NOTIFY] error %s", e, exc_info=False)
+            return False
+
     def _now_jst_str(self) -> str:
         if JST is None:
             return datetime.now().isoformat(timespec="seconds")
@@ -177,7 +240,7 @@ class ShadowRunner:
         board_flat: dict[str, Any],
         ring: Any,
         now: datetime,
-    ) -> tuple[dict[str, Any], bool]:
+    ) -> tuple[dict[str, Any], bool, Optional[dict[str, Any]]]:
         from src.kabu_exit_engine import KabuExitEvalInput, evaluate_kabu_exit_v1
         from src.kabu_signal_engine import board_current_price
 
@@ -209,6 +272,7 @@ class ShadowRunner:
                     "bf_confirm_streak": 0,
                 },
                 False,
+                None,
             )
 
         price = board_current_price(board_flat) or rd.get("current_price")
@@ -249,23 +313,37 @@ class ShadowRunner:
         )
 
         virtual_exit = False
+        exit_snapshot: Optional[dict[str, Any]] = None
         would_exit = exit_res.would_exit
         exit_reason = exit_res.exit_reason
         confirm_n = max(1, int(self.config.rules.bf_confirm_count))
 
+        def _capture_exit() -> None:
+            nonlocal virtual_exit, exit_snapshot
+            virtual_exit = True
+            exit_snapshot = {
+                "symbol": ws.symbol,
+                "entry_price": pos.entry_price,
+                "exit_price": px,
+                "entry_time": pos.entry_time,
+                "exit_reason": exit_reason,
+                "pnl_pct": exit_res.unrealized_pct,
+                "mfe_pct": exit_res.mfe_pct,
+                "elapsed_min": exit_res.elapsed_min,
+            }
+            del self._positions[ws.symbol]
+
         if exit_res.would_exit and exit_res.exit_reason == "breakout_failure":
             pos.bf_streak += 1
             if pos.bf_streak >= confirm_n:
-                del self._positions[ws.symbol]
-                virtual_exit = True
+                _capture_exit()
             else:
                 would_exit = False
                 exit_reason = "HOLD_SHADOW"
         else:
             pos.bf_streak = 0
             if exit_res.would_exit:
-                del self._positions[ws.symbol]
-                virtual_exit = True
+                _capture_exit()
 
         return (
             {
@@ -279,6 +357,7 @@ class ShadowRunner:
                 "bf_confirm_streak": pos.bf_streak if ws.symbol in self._positions else 0,
             },
             virtual_exit,
+            exit_snapshot,
         )
 
     def evaluate_symbol(self, ws: WatchSymbol, *, poll_ts_jst: str) -> None:
@@ -305,8 +384,9 @@ class ShadowRunner:
         rd = result.to_dict()
 
         opened = self._maybe_entry(ws, rd, board_flat, now)
+        exit_snapshot: Optional[dict[str, Any]] = None
         try:
-            exit_fields, closed = self._evaluate_exit(ws, rd, board_flat, ring, now)
+            exit_fields, closed, exit_snapshot = self._evaluate_exit(ws, rd, board_flat, ring, now)
         except Exception as e:
             log.exception("exit eval failed symbol=%s", ws.symbol)
             exit_fields = {
@@ -320,12 +400,21 @@ class ShadowRunner:
                 "bf_confirm_streak": 0,
             }
             closed = False
+            exit_snapshot = None
 
         rejects = rd.get("reject_reasons") or []
         if isinstance(rejects, list):
             rejects_str = ";".join(str(x) for x in rejects)
         else:
             rejects_str = str(rejects)
+
+        session_ok = self._session_entry_allowed(now)
+        discord_entry_sent = False
+        discord_exit_sent = False
+        if opened:
+            discord_entry_sent = self._maybe_discord_paper_entry(ws, rd, board_flat)
+        if closed and exit_snapshot:
+            discord_exit_sent = self._maybe_discord_paper_exit(exit_snapshot)
 
         row = {
             "timestamp_utc": now.isoformat(),
@@ -344,11 +433,15 @@ class ShadowRunner:
             "vwap_distance_pct": rd.get("vwap_distance_pct"),
             "push_samples_1m": rd.get("push_samples_1m"),
             "trigger_level": rd.get("trigger_level"),
-            "entry_allowed_session": self._session_entry_allowed(now),
+            "quote_age_sec": rd.get("quote_age_sec"),
+            "notify_entry_eligible": rd.get("notify_breakout_eligible"),
+            "entry_allowed_session": session_ok,
             "market_session_control": self.config.rules.market_session_control,
             "shadow_virtual_position": ws.symbol in self._positions,
             "shadow_virtual_entry": opened,
             "shadow_virtual_exit": closed,
+            "shadow_discord_entry_notified": discord_entry_sent,
+            "shadow_discord_exit_notified": discord_exit_sent,
             "data_mode": "rest_board",
             **exit_fields,
         }
@@ -405,6 +498,7 @@ class ShadowRunner:
             self.config.rules.bf_confirm_count,
             self.config.runtime.use_push,
         )
+        self._init_discord_notifier()
         self._start_push_thread()
 
         max_polls = self.config.runtime.max_polls

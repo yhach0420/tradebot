@@ -52,17 +52,31 @@ def _bool_from_raw(raw: dict[str, Any], *keys: str, default: bool = False) -> bo
     return default
 
 
+def _discord_flags(raw: dict[str, Any]) -> tuple[bool, bool, bool]:
+    dc = raw.get("discord") if isinstance(raw.get("discord"), dict) else {}
+    safety = raw.get("safety") or {}
+    if not isinstance(safety, dict):
+        safety = {}
+    enabled = _bool_from_raw(raw, "discord_enabled", default=False)
+    if not enabled:
+        enabled = _bool_from_raw(dc, "enabled", default=False)
+    if not enabled:
+        enabled = _bool_from_raw(safety, "discord_enabled", "discord_notify", default=False)
+    shadow_notify = _bool_from_raw(raw, "discord_shadow_notify", default=False)
+    if not shadow_notify:
+        shadow_notify = _bool_from_raw(dc, "shadow_notify", default=False)
+    paper_notify = _bool_from_raw(raw, "discord_paper_trade_notify", default=False)
+    if not paper_notify:
+        paper_notify = _bool_from_raw(dc, "paper_trade_notify", default=False)
+    return enabled, shadow_notify, paper_notify
+
+
 def check_safety_flags(raw: dict[str, Any]) -> CheckResult:
     safety = raw.get("safety") or {}
     if not isinstance(safety, dict):
         return CheckResult("safety_flags", False, "safety section missing or invalid")
 
-    discord = _bool_from_raw(
-        safety,
-        "discord_enabled",
-        "discord_notify",
-        default=True,
-    )
+    discord_enabled, discord_shadow_notify, discord_paper_notify = _discord_flags(raw)
     orders = _bool_from_raw(
         safety,
         "order_enabled",
@@ -78,20 +92,51 @@ def check_safety_flags(raw: dict[str, Any]) -> CheckResult:
         default=True,
     )
 
-    ok = not discord and not orders and not legacy
+    ok = not orders and not legacy
+    msg = "orders and legacy yahoo disabled"
+    if not ok:
+        msg = "unsafe safety flag detected"
     return CheckResult(
         "safety_flags",
         ok,
-        "all safety flags false" if ok else "unsafe safety flag detected",
+        msg,
         {
-            "discord_enabled": discord,
+            "discord_enabled": discord_enabled,
+            "discord_shadow_notify": discord_shadow_notify,
+            "discord_paper_trade_notify": discord_paper_notify,
             "order_enabled": orders,
             "legacy_yahoo_watch_enabled": legacy,
             "expected": {
-                "discord_enabled": False,
                 "order_enabled": False,
                 "legacy_yahoo_watch_enabled": False,
             },
+        },
+    )
+
+
+def check_discord_order_mutex(raw: dict[str, Any]) -> CheckResult:
+    safety = raw.get("safety") or {}
+    if not isinstance(safety, dict):
+        safety = {}
+    discord_enabled, discord_shadow_notify, discord_paper_notify = _discord_flags(raw)
+    orders = _bool_from_raw(
+        safety,
+        "order_enabled",
+        "place_orders",
+        "orders_enabled",
+        default=False,
+    )
+    notify_on = discord_enabled and discord_shadow_notify and discord_paper_notify
+    ok = not orders or not notify_on
+    return CheckResult(
+        "discord_order_mutex",
+        ok,
+        "discord [KABU_PAPER] notify requires order_enabled=false"
+        if ok
+        else "forbidden: discord paper notify and orders both enabled",
+        {
+            "discord_paper_notify_active": notify_on,
+            "order_enabled": orders,
         },
     )
 
@@ -352,6 +397,7 @@ def main() -> int:
     checks: list[CheckResult] = []
     checks.append(check_no_yahoo_shadow_import())
     checks.append(check_safety_flags(raw))
+    checks.append(check_discord_order_mutex(raw))
     checks.append(check_no_entry_until(raw))
     checks.append(check_market_session_control(raw))
     checks.append(check_output_layout(native_root))

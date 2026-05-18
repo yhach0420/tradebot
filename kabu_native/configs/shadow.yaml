@@ -1,41 +1,100 @@
-# kabu_native shadow（発注なし・Discord なし・yahoo_kabu_watch 非接続）
+# kabu_native shadow（発注なし・yahoo_kabu_watch 非接続）
+
 # 採用ルール: Phase 13 market_session_plus_B
 
+# Discord 仮想売買通知 [KABU_PAPER]: 既定 OFF（旧 Yahoo DISCORD_WEBHOOK_URL とは別 Webhook）
+
+
+
 rules:
+
   market_session_control: true
+
   bf_confirm_count: 2
+
   fail_window_min: 2
+
   fail_buffer_pct: 0.12
+
   hard_stop_pct: 1.20
+
   tier: B
+
   entry_score_min: 60
+
   require_timing_ok: true
 
+
+
 # 市場セッション（configs/session_control.yaml と同一）
+
 session:
+
   entry_start_jst: "09:05"
+
   entry_end_jst: "14:50"
 
+
+
 watchlist:
+
   # universe | morning_screen
+
   source: morning_screen
+
   # ディレクトリまたは CSV。未指定時は results/morning_screen 最新
+
   path: null
+
   universe_path: kabu_native/data/universe/universe_intraday_full.csv
+
   top_n: 10
+
   passed_only: true
 
+
+
 runtime:
+
   poll_interval_sec: 15
+
   use_push: false
+
   max_polls: null
+
   continue_on_error: true
 
+
+
+# [KABU_PAPER] 仮想 ENTRY/EXIT Discord（3 フラグすべて true + Webhook URL 必須）
+
+discord_enabled: true
+
+discord_shadow_notify: true
+
+discord_paper_trade_notify: true
+
+discord_webhook_env: KABU_SHADOW_DISCORD_WEBHOOK_URL
+
+discord_cooldown_sec: 300
+
+discord_dedupe: true
+
+
+
 safety:
-  # Phase 15 チェック名: discord_enabled / order_enabled / legacy_yahoo_watch_enabled
+
+  # Phase 15: order / legacy yahoo は常に false
+
   discord_notify: false
+
   discord_enabled: false
+
   place_orders: false
+
   order_enabled: false
+
   connect_yahoo_watch: false
+
   legacy_yahoo_watch_enabled: false
+

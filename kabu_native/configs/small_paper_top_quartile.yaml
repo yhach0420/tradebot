@@ -1,0 +1,25 @@
+# Phase 39: Top-quartile small paper exposure gate (simulation only — not live).
+# No new EXIT logic; v13 EXIT frozen; ENTRY remains momentum_volume_v2.
+
+profile: momentum_volume_v13_combined
+
+min_continuation_quality: 0.55
+max_concurrent_positions: 3
+reject_below_quality: true
+low_quality_log_only: true
+
+order_enabled: false
+discord_enabled: false
+
+# Optional guards (simulation replay order)
+daily_loss_guard_pct: -2.5
+risk_cluster_consecutive_losses: 5
+
+candidate_gates:
+  pf_min: 1.20
+  avg_pnl_min: 0.0
+  min_trades: 100
+  combined_min_trades: 100
+  symbols_coverage_min_ratio: 0.70
+  concentration_top_symbol_max_pct: 35.0
+  oos_deterioration_max_pct: 20.0

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from yahoo_kabu_watch import (
+from market.yahoo.watch import (
     _apply_replay_config_to_flags,
     _build_multi_day_shadow_summary,
     _build_replay_shadow_filter_validation,

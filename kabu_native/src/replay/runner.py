@@ -31,6 +31,10 @@ class ReplayRunConfig:
     synthetic_events_per_minute: int = 10
     eod_exit_reason: str = "eod_close"
     repo_root: Path | None = None
+    discord_replay_notify: bool = False
+    discord_webhook_env: str = "KABU_SHADOW_DISCORD_WEBHOOK_URL"
+    discord_replay_max_messages: int = 50
+    discord_replay_send_delay_sec: float = 0.2
 
 
 @dataclass
@@ -142,8 +146,29 @@ def run_replay_batch(config: ReplayRunConfig) -> ReplayRunResult:
             for t in result.trades:
                 all_trades.append(_TradeWithDate(t, trade_date))
 
+    discord_stats: dict[str, Any] | None = None
+    if config.discord_replay_notify and all_trades:
+        from replay.replay_notify import ReplayNotifyConfig, notify_replay_trades
+
+        stats = notify_replay_trades(
+            all_trades,
+            cfg=ReplayNotifyConfig(
+                enabled=True,
+                webhook_env=config.discord_webhook_env,
+                max_messages=config.discord_replay_max_messages,
+                send_delay_sec=config.discord_replay_send_delay_sec,
+            ),
+        )
+        discord_stats = {
+            "messages_sent": stats.messages_sent,
+            "trades_notified": stats.trades_notified,
+            "truncated": stats.truncated,
+            "errors": stats.errors,
+            "max_messages": config.discord_replay_max_messages,
+        }
+
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    _write_outputs(config.output_dir, all_trades, skipped, config)
+    _write_outputs(config.output_dir, all_trades, skipped, config, discord_stats=discord_stats)
 
     return ReplayRunResult(trades=all_trades, skipped=skipped, output_dir=config.output_dir)
 
@@ -184,6 +209,8 @@ def _write_outputs(
     trades: Sequence[Any],
     skipped: list[SkippedInput],
     config: ReplayRunConfig,
+    *,
+    discord_stats: dict[str, Any] | None = None,
 ) -> None:
     import csv
 
@@ -246,7 +273,10 @@ def _write_outputs(
         "tier": config.tier,
         "entry_score_min": config.entry_score_min,
         "data_roots": [str(p) for p in config.data_roots],
+        "discord_replay_notify": config.discord_replay_notify,
     }
+    if discord_stats is not None:
+        meta["discord_replay_notify_stats"] = discord_stats
     agg = aggregate_summary(trades, meta=meta, skipped=skipped_rows)
     (out_dir / "aggregate_summary.json").write_text(
         json.dumps(agg, ensure_ascii=False, indent=2),
@@ -274,4 +304,8 @@ def load_replay_config(path: Path, *, native_root: Path, repo_root: Path) -> dic
         ]
 
     raw["data_roots"] = roots
+    raw.setdefault("discord_replay_notify", False)
+    raw.setdefault("discord_webhook_env", "KABU_SHADOW_DISCORD_WEBHOOK_URL")
+    raw.setdefault("discord_replay_max_messages", 50)
+    raw.setdefault("discord_replay_send_delay_sec", 0.2)
     return raw

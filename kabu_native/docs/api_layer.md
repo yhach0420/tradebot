@@ -14,7 +14,7 @@
 | リトライ | なし | ネットワーク / 502–504 で指数バックオフ |
 | 依存 | 旧 `src` パッケージ | **`kabu_native/src` のみ**（旧ファイルは参照用・未削除） |
 
-旧系は **削除・移動していません**。paper_trade / watchdog は従来どおりルートの `yahoo_kabu_watch.py` 系を利用してください。
+旧系 Yahoo コードは **`market/yahoo/`** に集約（エントリ: `python -m market.yahoo.watch`）。ルートの `yahoo_kabu_watch.py` は互換シム。paper_trade / watchdog は新エントリまたはシムのどちらでも可。
 
 ## 認証
 

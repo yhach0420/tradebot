@@ -1,0 +1,62 @@
+# Phase 44: Small paper pilot (dry-run / paper_only — no live orders).
+# EXIT v13 frozen; ENTRY momentum_volume_v2; exposure gate from Phase 39.
+
+profile: momentum_volume_v13_combined
+entry_profile: momentum_volume_v2
+
+min_continuation_quality: 0.55
+max_concurrent_positions: 3
+reject_below_quality: true
+
+# Phase52: operational allowed windows only (not time-band optimization)
+allowed_trading_windows:
+  - start: "09:05"
+    end: "11:23"
+  - start: "12:33"
+    end: "15:20"
+
+order_enabled: false
+paper_only: true
+
+# Phase 46: Discord observer (notification only — no orders)
+discord_enabled: true
+discord_observer_only: true
+discord_send_rejects: false
+discord_heartbeat_min: 30
+discord_webhook_env: KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL
+discord_hold_min: 15
+discord_hold_quality_delta: 0.03
+discord_take_quality_drop: 0.08
+
+require_phase43_pass: true
+
+# Exposure guards (same as top-quartile validation)
+daily_loss_guard_pct: -2.5
+risk_cluster_consecutive_losses: 5
+risk_cluster_block_enabled: true
+daily_loss_guard_enabled: true
+
+# Runtime
+dry_run_required: true
+default_source: replay
+max_polls: 1
+poll_interval_sec: 30.0
+
+# Phase 45: live session (full-day weekday observation — dry-run, no orders)
+live:
+  session_start: "09:00"
+  session_end: "15:30"
+  poll_interval_sec: 5.0
+  heartbeat_sec: 300
+  stale_tick_sec: 120
+  max_consecutive_api_errors: 10
+  record_push_jsonl: true
+  duration_sec: 600  # short test only; use --full-session for market hours
+
+output:
+  base_dir: kabu_native/results/small_paper
+
+phase43_diagnosis_glob: kabu_native/results/reports/small_paper_gate_diagnosis_*.json
+
+reference:
+  trades_csv: kabu_native/results/research/logic_lab/20260517/run_225513/trades_by_profile.csv

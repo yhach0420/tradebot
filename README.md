@@ -27,7 +27,7 @@ PC 再起動・更新後も **`discord_issue_bot`** と **`paper_trade`** を自
 | `scripts/start_watchdog.bat` | **ランチャー**: `ROOT` 正規化・`watchdog_launcher_YYYYMMDD.log` に環境診断・**`check_watchdog_running.ps1`** で二重起動抑止後、**`run_watchdog_inner.bat`** を `start` で起動。タスク スケジューラの **cwd / PATH が空でも** inner 側でルート固定と `where python` 先頭を使う。 |
 | `scripts/run_watchdog_inner.bat` | **実体**: `pushd` でルート固定、`where python` の **先頭 1 件**で `python "%ROOT%\\scripts\\watchdog.py"` を実行し、**`PYTHONUNBUFFERED=1`**。stdout/stderr を **`logs/runtime/watchdog_YYYYMMDD.log`** へ追記。 |
 | `scripts/check_watchdog_running.ps1` | `Get-CimInstance -ClassName Win32_Process` で **`watchdog.py` を含む `python.exe`** がいればスキップ（ランチャーログへ PID/CommandLine）。 |
-| `scripts/watchdog.py` | 5 分ごとにプロセス確認。起動時に **cwd / `sys.executable` / `.env` 絶対パス / 各 bat 絶対パス** をログ。`discord_issue_bot.py` は常時。`yahoo_kabu_watch.py --paper-trade` は **平日 JST 08:45〜15:40** のみ。 |
+| `scripts/watchdog.py` | 5 分ごとにプロセス確認。起動時に **cwd / `sys.executable` / `.env` 絶対パス / 各 bat 絶対パス** をログ。`discord_issue_bot.py` は常時。`python -m market.yahoo.watch --paper-trade`（旧 `yahoo_kabu_watch.py` シム可）は **平日 JST 08:45〜15:40** のみ。 |
 | `scripts/start_issue_bot.bat` | Issue Bot 起動（`run_issue_bot_inner.bat` 経由・**`check_issue_bot_running.ps1`** で重複抑止・`logs/runtime/issue_bot_YYYYMMDD.log`）。確認手順は **README「Issue Bot（bat 経由）の動作確認」** を参照。 |
 | `scripts/start_paper_trade.bat` | paper_trade 既定コマンド起動（二重起動抑止・`logs/runtime/paper_trade_YYYYMMDD.log`） |
 

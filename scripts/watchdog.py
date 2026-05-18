@@ -124,7 +124,10 @@ def paper_trade_running() -> bool:
             if not _is_python_proc(p):
                 continue
             cl = _proc_cmdline(p)
-            if "yahoo_kabu_watch.py" in cl and "--paper-trade" in cl:
+            if (
+                ("yahoo_kabu_watch.py" in cl or "market.yahoo.watch" in cl)
+                and "--paper-trade" in cl
+            ):
                 return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue

@@ -5,3 +5,12 @@ results/
 !kabu_native/results/
 !kabu_native/results/**/
 !kabu_native/results/**/.gitkeep
+# generated data / results
+kabu_native/results/
+kabu_native/data/push_jsonl/
+kabu_native/data/intraday_1m/
+logs/runtime/
+
+# python cache
+__pycache__/
+*.pyc

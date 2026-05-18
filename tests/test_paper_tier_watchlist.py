@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-import yahoo_kabu_watch as ykw
+import market.yahoo.watch as ykw
 
 
 class PaperTierWatchlistTests(unittest.TestCase):

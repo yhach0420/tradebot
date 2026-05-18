@@ -1,0 +1,65 @@
+# Phase 51: Live observer TRIAL policy (not production adoption).
+# What-if best candidate from Phase50: min_quality 0.70, cap=3.
+# Base settings match small_paper_pilot.yaml except quality threshold.
+
+profile: momentum_volume_v13_combined
+entry_profile: momentum_volume_v2
+
+min_continuation_quality: 0.70
+max_concurrent_positions: 3
+reject_below_quality: true
+
+allowed_trading_windows:
+  - start: "09:05"
+    end: "11:23"
+  - start: "12:33"
+    end: "15:20"
+
+policy_label: q070_cap3_trial
+policy_trial: true
+baseline_policy: q055_cap3
+comparison_note: >
+  Phase50 push-replay what-if; not production yaml. Trial vs baseline q055_cap3
+  (PF~0.94 / avg~-0.008% vs what-if PF~1.38 / avg~+0.038% on 2026-05-18).
+
+order_enabled: false
+paper_only: true
+
+discord_enabled: true
+discord_observer_only: true
+discord_send_rejects: false
+discord_heartbeat_min: 30
+discord_webhook_env: KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL
+discord_hold_min: 15
+discord_hold_quality_delta: 0.03
+discord_take_quality_drop: 0.08
+
+require_phase43_pass: true
+
+daily_loss_guard_pct: -2.5
+risk_cluster_consecutive_losses: 5
+risk_cluster_block_enabled: true
+daily_loss_guard_enabled: true
+
+dry_run_required: true
+default_source: replay
+max_polls: 1
+poll_interval_sec: 30.0
+
+live:
+  session_start: "09:00"
+  session_end: "15:30"
+  poll_interval_sec: 5.0
+  heartbeat_sec: 300
+  stale_tick_sec: 120
+  max_consecutive_api_errors: 10
+  record_push_jsonl: true
+  duration_sec: 600
+
+output:
+  base_dir: kabu_native/results/small_paper
+
+phase43_diagnosis_glob: kabu_native/results/reports/small_paper_gate_diagnosis_*.json
+
+reference:
+  trades_csv: kabu_native/results/research/logic_lab/20260517/run_225513/trades_by_profile.csv

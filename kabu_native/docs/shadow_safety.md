@@ -4,7 +4,8 @@
 
 平日場中に `run_shadow.py` を動かす前に、次を **機械的に確認** する。
 
-- 実 Discord 通知・実発注・旧 `yahoo_kabu_watch` 接続が **無効**
+- **実発注・旧 `yahoo_kabu_watch` 接続が無効**
+- Discord **[KABU_PAPER] 仮想売買通知**（任意）を使う場合も **発注と同時有効化されていない**
 - `no_entry_until` 等の廃止パラメータが残っていない
 - watchlist・API・1 ポール実行・CSV/JSONL 出力が問題ない
 
@@ -24,7 +25,8 @@ python kabu_native/scripts/check_shadow_safety.py --skip-api --skip-run
 
 | ID | 内容 |
 |----|------|
-| `safety_flags` | `discord_enabled` / `order_enabled` / `legacy_yahoo_watch_enabled` がすべて **false**（`shadow.yaml` の `discord_notify` / `place_orders` / `connect_yahoo_watch` も同義で受理） |
+| `safety_flags` | **`order_enabled` / `legacy_yahoo_watch_enabled` が false**（`place_orders` / `connect_yahoo_watch` 同義）。Discord 3 フラグは **true でも可**（発注は不可） |
+| `discord_order_mutex` | `discord_enabled` + `discord_shadow_notify` + `discord_paper_trade_notify` が ON のとき **`order_enabled` は必ず false** |
 | `no_entry_until_absent` | 設定に `no_entry_until` が無いこと（あれば **警告**、使用しない） |
 | `market_session_control` | `rules.market_session_control: true` |
 | `output_paths` | `kabu_native/results/shadow/YYYYMMDD/` が作成可能 |
@@ -33,6 +35,18 @@ python kabu_native/scripts/check_shadow_safety.py --skip-api --skip-run
 | `api` | token 発行 + board 取得（**token をファイル保存しない**） |
 | `shadow_run` | `--max-polls 1` 相当の 1 ポール（`continue_on_error` 維持） |
 | `no_legacy_modules_loaded` | 当該プロセスで旧 shadow / yahoo モジュール未 import |
+
+## Discord [KABU_PAPER] 仮想売買通知の安全
+
+| 設定 | 既定 | 許可 |
+|------|------|------|
+| `discord_enabled` | false | true（明示時のみ） |
+| `discord_shadow_notify` | false | true |
+| `discord_paper_trade_notify` | false | **3 つすべて true で送信** |
+| `discord_webhook_env` | `KABU_SHADOW_DISCORD_WEBHOOK_URL` | 旧 `DISCORD_WEBHOOK_URL` は **使わない** |
+| `order_enabled` | false | **true 禁止** |
+
+`check_shadow_safety.py` は **発注 ON + Discord 仮想売買通知 ON** の組み合わせを **不合格** にする。
 
 ## レポート
 
@@ -60,5 +74,5 @@ python kabu_native/scripts/run_shadow.py
 
 ## 関連
 
-- [shadow.md](shadow.md) — shadow 運用
+- [shadow.md](shadow.md) — shadow 運用・Discord 参考通知
 - [market_session_control.md](market_session_control.md) — ENTRY 09:05–14:50

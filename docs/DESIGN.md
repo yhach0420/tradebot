@@ -1,8 +1,37 @@
-# 日本株デイトレ支援システム — 設計仕様書
+# 日本株デイトレ支援システム — 設計仕様書（旧 Yahoo 系）
 
 **対象リポジトリ:** tradebotfile  
 **想定読者:** 本システムを初めて触れる開発者・運用者  
-**PDF 化:** 推奨は `python tools/md_to_pdf.py docs/DESIGN.md docs/DESIGN.pdf`（日本語フォントを PDF に埋め込み、表・コードの視認性を調整済み）。代替として VS Code / Cursor のプレビューから「印刷 → PDFへ保存」、または `pandoc docs/DESIGN.md -d tools/design-pandoc-pdf.yaml -o docs/DESIGN.pdf`（要: Pandoc + Typst）。
+**位置づけ:** 本文書は **Yahoo Finance 非公式 API ベースの旧系**（監視・Replay・paper_trade・Discord 通知）の設計仕様である。**売買ロジック・Replay ロジックの意味は変更しない**前提で、パスと起動方法のみ 2026-05-16 時点のディレクトリ構成に合わせて記述する。  
+**別系統:** **kabuステーション統合の新系**はリポジトリ内 **`kabu_native/`** に分離されている（shadow・replay・sweep・API 層など）。設計仕様の正は **`kabu_native/docs/kabu_station_system_design.md`**（本書 `DESIGN.md` と同構成・PDF 可）。補助: `architecture.md`, `shadow.md`, `TODO.md`。**本書は kabu_native の仕様書ではない。**
+
+**PDF 化:** 推奨は `python tools/md_to_pdf.py docs/DESIGN.md docs/DESIGN.pdf`（日本語フォントを PDF に埋め込み、表・コードの視認性を調整済み）。代替として VS Code / Cursor のプレビューから「印刷 → PDFへ保存」、または `pandoc docs/DESIGN.md -d tools/design-pandoc-pdf.yaml -o docs/DESIGN.pdf`（要: Pandoc + Typst）。**2026-05-16 のパス整理反映後の PDF 再生成は任意**（未実施でも可）。
+
+### 現在のコード配置（2026-05-16）
+
+| 役割 | 実体（編集・import の正） | ルート互換シム |
+|------|---------------------------|----------------|
+| 監視・Replay・CLI エントリ | **`market/yahoo/watch.py`**（旧 `yahoo_kabu_watch.py`） | `yahoo_kabu_watch.py` |
+| paper_trade コア | **`market/yahoo/paper_trade.py`**（旧 `yahoo_kabu_paper_trade_impl.py`） | `yahoo_kabu_paper_trade_impl.py` |
+| paper_trade 拡張 | **`market/yahoo/paper_trade_extended.py`**（旧 `yahoo_kabu_paper_trade_extended.py`） | `yahoo_kabu_paper_trade_extended.py` |
+
+- **推奨起動:** リポジトリルートを cwd に **`python -m market.yahoo.watch`**（例: `python -m market.yahoo.watch --paper-trade`）。
+- **互換起動:** **`python yahoo_kabu_watch.py`** — ルートシムが同一モジュール（`market.yahoo.watch`）へ委譲する。**挙動は推奨起動と同じ**。
+- **import:** 新規コードは **`from market.yahoo.watch import …`** / **`import market.yahoo.watch as yw`** を用いる。ルートシム経由の `import yahoo_kabu_watch` は後方互換のみ。
+- **混同注意:** ルートの `yahoo_kabu_watch.py` は **数行のシム**であり、実装は **`market/yahoo/`** にある。ドキュメント・コードレビューでは「実体パス」と「シム」を区別すること。
+
+### 起動コマンド対応表（新旧）
+
+| 用途 | 推奨（新） | 互換（旧・シム） |
+|------|-----------|------------------|
+| リアルタイム監視 | `python -m market.yahoo.watch` | `python yahoo_kabu_watch.py` |
+| paper_trade（live） | `python -m market.yahoo.watch --paper-trade …` | `python yahoo_kabu_watch.py --paper-trade …` |
+| Replay | `python -m market.yahoo.watch --replay …` | `python yahoo_kabu_watch.py --replay …` |
+| 朝スクリーニング | `python -m market.yahoo.watch --morning-screen` | `python yahoo_kabu_watch.py --morning-screen` |
+| Replay ショートハンド | `python -m market.yahoo.watch replay <range> <repeat> <mode> [config]` | `python yahoo_kabu_watch.py replay …`（同上） |
+| 構文チェック | `python -m py_compile market/yahoo/watch.py` | `python -m py_compile yahoo_kabu_watch.py`（シム経由でも可） |
+
+**watchdog / bat:** `scripts/start_paper_trade.bat` は **`python -m market.yahoo.watch`** を使用。`scripts/watchdog.py` はコマンドラインに **`market.yahoo.watch`** または **`yahoo_kabu_watch.py`** のいずれかが含まれる paper_trade プロセスを「稼働中」とみなす。
 
 ---
 
@@ -18,7 +47,7 @@
 8. [依存関係・実行](#8-依存関係実行)（**§8.1** Windows watchdog）
 9. [設計上の注意](#9-設計上の注意)
 10. [実装工程のトピック（これまでの経緯）](#10-実装工程のトピック)
-11. [コマンドライン引数・実行分岐（`yahoo_kabu_watch.py`）](#11-コマンドライン引数実行分岐yahoo_kabu_watch)
+11. [コマンドライン引数・実行分岐（`market.yahoo.watch`）](#11-コマンドライン引数実行分岐marketyahoowatch)
 12. [成果物の命名とディレクトリ規則](#12-成果物の命名とディレクトリ規則)
 13. [continuation-v1: 共有エンジン・paper dry-run・Phase2 shadow](#13-continuation-v1-共有エンジンペーパードライランphase2-shadow)（**§13.1** 現実装の整理／**§13.2** 目標アーキテクチャ）
 
@@ -26,11 +55,13 @@
 
 ## 1. 目的と位置づけ {#1-目的と位置づけ}
 
-本システムは **Yahoo Finance の非公式 API** から日本株の相場データを取得し、**ユーザーが定義した条件に合う銘柄を検出して通知する**ためのツール群である。
+本書が扱う **旧 Yahoo 系**は、**Yahoo Finance の非公式 API** から日本株の相場データを取得し、**ユーザーが定義した条件に合う銘柄を検出して通知する**ためのツール群である。
 
-- **証券会社への発注機能はない**（スクリーニング・通知・検証用途）。
-- 中核は **`yahoo_kabu_watch.py`**（監視・Replay・朝スクリーニング・1分足キャッシュ・集計が集約）。
-- 補助は **`discord_issue_bot/discord_issue_bot.py`**（Discord から GitHub Issue 作成、`watchlist.json` 更新など）。
+- **証券会社への発注機能はない**（スクリーニング・通知・検証用途）。**kabu_native** 側の shadow / 将来の発注経路とは **別系統**（本書 §冒頭の配置表・**`kabu_native/docs/`** 参照）。
+- **中核の実体**は **`market/yahoo/watch.py`**（監視・Replay・朝スクリーニング・1分足キャッシュ・集計が集約）。ルートの **`yahoo_kabu_watch.py`** は **互換シム**（起動・旧 import 用）。
+- **paper_trade 実装**は **`market/yahoo/paper_trade.py`** と **`market/yahoo/paper_trade_extended.py`** に分割。ルートの `yahoo_kabu_paper_trade_*.py` はシム。
+- **補助**は **`discord_issue_bot/discord_issue_bot.py`**（Discord から GitHub Issue 作成、`watchlist.json` 更新など）。Issue Bot は Yahoo 監視ループとは **別プロセス**。
+- **共有ロジックの一部**（エントリータイミング等）は **`src/signal_engine.py`** に抽出されているが、CLI・成果物・`data/`・`results/` の主経路は **旧 Yahoo 系**（本書）のまま。
 
 **注意:** 非公式 API のため仕様変更・レート制限で動作が変わる可能性がある。1分足の取得可能期間は実質 **直近約30日** 程度とコード上も想定されている。
 
@@ -41,7 +72,11 @@
 | 構成要素 | 役割 |
 |----------|------|
 | Yahoo Finance API | クォート、1分足、VWAP、5日平均出来高、日足（MA25 用）など |
-| `yahoo_kabu_watch.py` | リアルタイム監視、過去1分足 Replay、朝スクリーニング、CSV キャッシュ、サマリ出力 |
+| **`market/yahoo/watch.py`** | リアルタイム監視、過去1分足 Replay、朝スクリーニング、CSV キャッシュ、サマリ出力（**実体**） |
+| `yahoo_kabu_watch.py`（ルート） | 上記モジュールへの **互換シム**（`python yahoo_kabu_watch.py` / `import yahoo_kabu_watch`） |
+| **`market/yahoo/paper_trade.py`** | paper_trade / Phase2 / divergence 等のコア（旧 `yahoo_kabu_paper_trade_impl.py`） |
+| **`market/yahoo/paper_trade_extended.py`** | 損切・利確・entry quality・deferral・trace 等（旧 `yahoo_kabu_paper_trade_extended.py`） |
+| **`kabu_native/`**（別系統） | kabuステーション API・shadow・新 replay/sweep。**本書の Yahoo 監視ループとは成果物・エントリを分離**（`kabu_native/docs/`） |
 | `discord_issue_bot/discord_issue_bot.py` | `discord.py` ベースの Bot（Issue 作成、`!watch` 等） |
 | `watchlist.json` | 監視銘柄の「正」（存在すれば毎ループ読み直し） |
 | `symbols.csv` | 銘柄一覧（朝スクリーニングでは最優先で読む） |
@@ -56,7 +91,7 @@
 | `scripts/migrate_results_to_date_folders.py` | 旧 **`results/` 直下**に散在した replay/sweep フォルダを **`results/YYYYMMDD/`** へ移す移行用（`paper_trade`・日付バケット・`symbol_scores_latest.json` は触らない）。 |
 | `scripts/watchdog.py` + `scripts/start_*.bat` + `scripts/run_issue_bot_inner.bat` + `scripts/check_issue_bot_running.ps1` + `scripts/run_watchdog_inner.bat` + `scripts/check_watchdog_running.ps1` | **Windows 向け自動復帰**（`psutil` で `discord_issue_bot` / `paper_trade` を監視）。watchdog は **inner bat + 絶対パス `python`** でタスク スケジューラの PATH/cwd 差に強い。ログは **`logs/runtime/`**（**`watchdog_launcher_*.log`** / **`watchdog_*.log`** 等）。運用手順は **README.md** と **§8.1**。 |
 
-**`watchlist.json` が二箇所あることに注意:** 監視本番（`yahoo_kabu_watch.py`）は **リポジトリルート**の `watchlist.json` を読む。Discord Issue Bot の `!watch` は **`discord_issue_bot/watchlist.json`** を読み書きする（`discord_issue_bot.py` 内の `BASE_DIR` 基準）。運用で両方を同期したい場合はコピーやシンボリックリンクで揃える。
+**`watchlist.json` が二箇所あることに注意:** 監視本番（**`market.yahoo.watch`**）は **リポジトリルート**の `watchlist.json` を読む（cwd はルート想定）。Discord Issue Bot の `!watch` は **`discord_issue_bot/watchlist.json`** を読み書きする（`discord_issue_bot.py` 内の `BASE_DIR` 基準）。運用で両方を同期したい場合はコピーやシンボリックリンクで揃える。**kabu_native** の朝スクリーン等は **別パイプライン**（`kabu_native/docs/morning_screen.md`）。
 
 **固定ランダム日プール（`FIXED_REPLAY_RANDOM_POOLS`）:** `random_feb` / `random_mar` / `random_mar_cache_only` / `random_apr` / `random_60d` は、コード先頭の **暦日レンジ**から平日文字列を生成してランダム抽出の母集団にする（実際の営業日・キャッシュ有無は実行時に検証）。
 
@@ -66,7 +101,7 @@
 
 ## 3. 監視銘柄の解決順 {#3-監視銘柄の解決順}
 
-### 3.1 リアルタイム監視（`yahoo_kabu_watch.py` メインループ）
+### 3.1 リアルタイム監視（`market.yahoo.watch` メインループ）
 
 1. `--watch-file` があればそのファイル（1行1銘柄）
 2. なければ `--watch`（カンマ区切り）
@@ -83,7 +118,7 @@
 
 | 機能 | 起動の目安 | 概要 |
 |------|------------|------|
-| リアルタイム監視 | `python yahoo_kabu_watch.py` | 既定間隔（デフォルト 1秒）で取得・判定・（任意で）Discord 通知 |
+| リアルタイム監視 | `python -m market.yahoo.watch`（互換: `python yahoo_kabu_watch.py`） | 既定間隔（デフォルト 1秒）で取得・判定・（任意で）Discord 通知 |
 | 朝スクリーニング | `--morning-screen` | 寄り前の候補スコアリング、上位10銘柄を出力 |
 | Replay | `--replay` | 1分足を再生し判定・期待値集計・結果ファイル出力 |
 | 1分足 EOD 保存 | `--save-intraday-1m-eod` | 当日（または `--intraday-1m-eod-date`）の 1分足を `data/intraday_1m/` に保存。`--force-intraday-1m-eod-time` で引け前検証可 |
@@ -107,7 +142,7 @@
 
 多くの sweep は内部で **`random_apr`** を用いる（コード上 `SWEEP_REPLAY_RANGES`）。**各 sweep の Replay 回数 `n_repeat` は一律ではない**（§8・§11.3 参照）。`--replay-seed` で再現性を制御。例外として **`--strong-trend-quality-validation-sweep`** は `random_apr` / `random_mar` / `random_60d` を跨いで検証する。
 
-**出力レイアウト（現行）:** Replay・sweep の成果物の多くは **`results/YYYYMMDD/...`** に保存される（`yahoo_kabu_watch.py` の `_results_run_date_folder_from_timestamp` 等）。コンソールの `output_subdir: results/...` ログは **プロジェクトからの相対パス**であり、先頭の **`YYYYMMDD`** が省略されている場合があるので、実ディスクでは **`results`** 直下に日付フォルダを挟む形で解釈する。**`--replay-date`** 利用時は `run_replay` 内の表示用 `replay_range_label` が **`fixed_<YYYY-MM-DD>`** となる。`main` の `--replay` バッチでは `replay_output_subdir` に **`replay_<repeat_label>_<batch_stamp>`**（例: `replay_fixed_2026-05-12_20260513_000114`）を渡し、`_resolve_replay_results_dir` が **`_split_compound_results_slug`** により **`results/YYYYMMDD/replay_<repeat_label>_<batch_stamp>/`** を生成する（**ユーザー向け CLI でこの文字列を直接指定するオプションは無い**）。**`--replay-repeat` が 1 のとき**、フォルダ内の詳細ログの stem は **`replay_<保存時刻JST>_range-fixed_<日付>`**（`range-` に続けて **そのまま `replay_range_label`** が付く）となる（§12）。
+**出力レイアウト（現行）:** Replay・sweep の成果物の多くは **`results/YYYYMMDD/...`** に保存される（`market.yahoo.watch` の `_results_run_date_folder_from_timestamp` 等）。コンソールの `output_subdir: results/...` ログは **プロジェクトからの相対パス**であり、先頭の **`YYYYMMDD`** が省略されている場合があるので、実ディスクでは **`results`** 直下に日付フォルダを挟む形で解釈する。**`--replay-date`** 利用時は `run_replay` 内の表示用 `replay_range_label` が **`fixed_<YYYY-MM-DD>`** となる。`main` の `--replay` バッチでは `replay_output_subdir` に **`replay_<repeat_label>_<batch_stamp>`**（例: `replay_fixed_2026-05-12_20260513_000114`）を渡し、`_resolve_replay_results_dir` が **`_split_compound_results_slug`** により **`results/YYYYMMDD/replay_<repeat_label>_<batch_stamp>/`** を生成する（**ユーザー向け CLI でこの文字列を直接指定するオプションは無い**）。**`--replay-repeat` が 1 のとき**、フォルダ内の詳細ログの stem は **`replay_<保存時刻JST>_range-fixed_<日付>`**（`range-` に続けて **そのまま `replay_range_label`** が付く）となる（§12）。
 
 | CLI フラグ | 出力の目安（先頭はいずれも **`results/YYYYMMDD/`**） |
 |------------|--------------------------------------------------------|
@@ -239,7 +274,7 @@
 
 ## 6. 売買判断指標の数値と説明 {#6-売買判断指標の数値と説明}
 
-本章の数値は **`yahoo_kabu_watch.py` のモジュール定数**（および Replay の `configs/*.json` で上書きされる項目）に基づく。単位が `%` のものは **パーセント表示の値**（例: `1.0` = 1.0%）である。
+本章の数値は **`market/yahoo/watch.py` のモジュール定数**（および Replay の `configs/*.json` で上書きされる項目）に基づく。単位が `%` のものは **パーセント表示の値**（例: `1.0` = 1.0%）である。
 
 ### 6.1 日次クォート・銘柄フィルタ（実時間・Replay 共通の土台）
 
@@ -472,9 +507,11 @@ JSON 直下の **`risk_controls`**（省略可）。代表として **`daily_los
 
 ## 7. 環境変数・外部連携 {#7-環境変数外部連携}
 
-### 7.1 `yahoo_kabu_watch.py`（監視・Replay・paper_trade）
+### 7.1 `market.yahoo.watch`（監視・Replay・paper_trade）
 
-#### 7.1.1 `.env` の読み込み（`yahoo_kabu_watch.py`）
+実体: **`market/yahoo/watch.py`**。ルート **`yahoo_kabu_watch.py`** はシム。
+
+#### 7.1.1 `.env` の読み込み（`market.yahoo.watch`）
 
 - **読み込みパス:** `Path(__file__).resolve().parent / ".env"`（= **リポジトリ直下の `.env` のみ**）。**親ディレクトリを辿る探索は行わない**。
 - **手順:** 雛形は **`.env.example`** をコピーして編集する想定。
@@ -653,7 +690,7 @@ JSON 直下の **`risk_controls`**（省略可）。代表として **`daily_los
 
 #### 7.4.7 日次オペレーション例（運用の流れ）
 
-1. **08:50** 前後 — `python yahoo_kabu_watch.py --paper-trade --paper-trade-interval 60` を起動（前日の **`paper_trade.lock` が残っていないか**確認。必要なら手動削除か **`--paper-trade-force-start`** は運用ポリシーに従う）。
+1. **08:50** 前後 — `python -m market.yahoo.watch --paper-trade --paper-trade-interval 60` を起動（互換: `python yahoo_kabu_watch.py --paper-trade …`。前日の **`paper_trade.lock` が残っていないか**確認。必要なら手動削除か **`--paper-trade-force-start`** は運用ポリシーに従う）。
 2. **`PAPER_LOG`** — **startup self check** が想定通りか（`.env` / トークン set・`PAPER_*` set・`results` 書込可など）。
 3. **場中** — **`PAPER_ALERT`** で **Entry Embed** の頻度・内容を監視（quiet モードならファイルのみ）。
 4. **15:30 以降** — **EOD 行・health 通知**、および **`paper_trade_health_report.txt` / `paper_trade_runtime_state.json`** を確認。
@@ -669,46 +706,47 @@ JSON 直下の **`risk_controls`**（省略可）。代表として **`daily_los
 
 ## 8. 依存関係・実行 {#8-依存関係実行}
 
-- Python **3.10+** 想定、`requests` 必須。Issue Bot は `discord.py` 等（`requirements.txt` に従う）。**§8.1** の watchdog は **`psutil`** / **`tzdata`**（Windows で `zoneinfo` の IANA 名用。未導入時は watchdog 内で UTC+9 にフォールバック）を参照する。
+- Python **3.10+** 想定、`requests` 必須。Issue Bot は `discord.py` 等（`requirements.txt` に従う）。**Yahoo 系の追加パッケージは不要**（`market/yahoo/` 移動に伴う `requirements.txt` 変更なし）。**§8.1** の watchdog は **`psutil`** / **`tzdata`**（Windows で `zoneinfo` の IANA 名用。未導入時は watchdog 内で UTC+9 にフォールバック）を参照する。
+- **cwd:** いずれの起動方法でも **リポジトリルート**で実行する（`watchlist.json` / `data/` / `results/` / `.env` はルート基準）。`market.yahoo.watch` は内部でルートを `sys.path` に載せるが、**相対パスの成果物は cwd 依存**のためルート起動を推奨。
 
-**監視・データ・Replay（抜粋）**
+**監視・データ・Replay（抜粋）** — 以下は **推奨**コマンド。各末尾の `…` は旧来どおりフラグを付与。**互換:** 先頭を `python yahoo_kabu_watch.py` に置き換えても可（§冒頭の対応表）。
 
 ```text
-python yahoo_kabu_watch.py
-python yahoo_kabu_watch.py --morning-screen
-python yahoo_kabu_watch.py --replay --replay-config configs/replay_safe.json
-python yahoo_kabu_watch.py --replay --replay-mode fast --replay-range random_apr --replay-repeat 10 --replay-seed 1
-python yahoo_kabu_watch.py --replay --replay-range 60d --replay-date 2026-05-12 --replay-config configs/replay_safe.json
-python yahoo_kabu_watch.py --replay --replay-range forward_split --replay-random-days 5 --forward-split-periods-path configs/forward_split_periods.json
-python yahoo_kabu_watch.py --replay --replay-range forward_split --forward-split-validation
-python yahoo_kabu_watch.py --paper-trade --paper-trade-interval 60
-python yahoo_kabu_watch.py --paper-trade-dry-run-replay --paper-trade-dry-run-day 2026-05-12
-python yahoo_kabu_watch.py --same-day-replay-compare 2026-05-12
-python yahoo_kabu_watch.py --save-intraday-1m-eod
-python yahoo_kabu_watch.py --intraday-1m-cache-report-only
+python -m market.yahoo.watch
+python -m market.yahoo.watch --morning-screen
+python -m market.yahoo.watch --replay --replay-config configs/replay_safe.json
+python -m market.yahoo.watch --replay --replay-mode fast --replay-range random_apr --replay-repeat 10 --replay-seed 1
+python -m market.yahoo.watch --replay --replay-range 60d --replay-date 2026-05-12 --replay-config configs/replay_safe.json
+python -m market.yahoo.watch --replay --replay-range forward_split --replay-random-days 5 --forward-split-periods-path configs/forward_split_periods.json
+python -m market.yahoo.watch --replay --replay-range forward_split --forward-split-validation
+python -m market.yahoo.watch --paper-trade --paper-trade-interval 60
+python -m market.yahoo.watch --paper-trade-dry-run-replay --paper-trade-dry-run-day 2026-05-12
+python -m market.yahoo.watch --same-day-replay-compare 2026-05-12
+python -m market.yahoo.watch --save-intraday-1m-eod
+python -m market.yahoo.watch --intraday-1m-cache-report-only
 ```
 
 **一括 sweep（§4.1 参照）**
 
 ```text
-python yahoo_kabu_watch.py --vwap-distance-sweep
-python yahoo_kabu_watch.py --daily-loss-stop-sweep
-python yahoo_kabu_watch.py --regime-filter-sweep
-python yahoo_kabu_watch.py --topix-weak-threshold-sweep
-python yahoo_kabu_watch.py --signal-filter-sweep
-python yahoo_kabu_watch.py --composite-filter-sweep
-python yahoo_kabu_watch.py --regime-control-sweep
-python yahoo_kabu_watch.py --weak-risk-filter-sweep
-python yahoo_kabu_watch.py --strong-risk-filter-sweep
-python yahoo_kabu_watch.py --strong-combo-filter-sweep
-python yahoo_kabu_watch.py --strong-trend-quality-sweep
-python yahoo_kabu_watch.py --strong-trend-quality-validation-sweep
-python yahoo_kabu_watch.py --rising-lt50-validation-sweep
-python yahoo_kabu_watch.py --rising-ratio-threshold-sweep
-python yahoo_kabu_watch.py --weak-combo-filter-sweep
-python yahoo_kabu_watch.py --auto-block-momentum-sweep
-python yahoo_kabu_watch.py --strong-extension-threshold-sweep
-python yahoo_kabu_watch.py --forward-risk-virtual-block-sweep
+python -m market.yahoo.watch --vwap-distance-sweep
+python -m market.yahoo.watch --daily-loss-stop-sweep
+python -m market.yahoo.watch --regime-filter-sweep
+python -m market.yahoo.watch --topix-weak-threshold-sweep
+python -m market.yahoo.watch --signal-filter-sweep
+python -m market.yahoo.watch --composite-filter-sweep
+python -m market.yahoo.watch --regime-control-sweep
+python -m market.yahoo.watch --weak-risk-filter-sweep
+python -m market.yahoo.watch --strong-risk-filter-sweep
+python -m market.yahoo.watch --strong-combo-filter-sweep
+python -m market.yahoo.watch --strong-trend-quality-sweep
+python -m market.yahoo.watch --strong-trend-quality-validation-sweep
+python -m market.yahoo.watch --rising-lt50-validation-sweep
+python -m market.yahoo.watch --rising-ratio-threshold-sweep
+python -m market.yahoo.watch --weak-combo-filter-sweep
+python -m market.yahoo.watch --auto-block-momentum-sweep
+python -m market.yahoo.watch --strong-extension-threshold-sweep
+python -m market.yahoo.watch --forward-risk-virtual-block-sweep
 ```
 
 一括 sweep は内部で主に **`random_apr`**×**`n_repeat`** を用いるが、**`n_repeat` の決め方は sweep ごとに異なる**（下記）。再現性が必要なら **`--replay-seed`** を併用する。
@@ -735,11 +773,11 @@ python discord_issue_bot/discord_issue_bot.py
 |----------|------|
 | `scripts/start_issue_bot.bat` | ルートへ正規化した `ROOT` で重複チェック（**`check_issue_bot_running.ps1`** が `Get-CimInstance -ClassName Win32_Process` を使用）。スキップ時は **PID と CommandLine** を `issue_bot_*.log` へ追記。起動時は **`start` → `cmd /c` で `run_issue_bot_inner.bat` のみ**。 |
 | `scripts/run_issue_bot_inner.bat` | ルートで `cd` 後、`where python` / `python --version` / `CD` / 実行コマンドをログに出し、`python .\\discord_issue_bot\\discord_issue_bot.py` の **stdout/stderr を `logs/runtime/issue_bot_YYYYMMDD.log` へ追記**。 |
-| `scripts/start_paper_trade.bat` | ルートへ `cd` し、既定の **`--paper-trade` + `--paper-trade-force-start` + `--replay-config configs/replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json`** で `yahoo_kabu_watch.py` を起動。ログは **`logs/runtime/paper_trade_YYYYMMDD.log`**。既に `yahoo_kabu_watch.py` かつ `--paper-trade` を含むプロセスがあれば起動しない。 |
+| `scripts/start_paper_trade.bat` | ルートへ `cd` し、既定の **`--paper-trade` + `--paper-trade-force-start` + `--replay-config configs/replay_full_day_vwap2_dd30k_rlt50_hu2_vwap15.json`** で **`python -m market.yahoo.watch`** を起動。ログは **`logs/runtime/paper_trade_YYYYMMDD.log`**。既に **`market.yahoo.watch` または `yahoo_kabu_watch.py`** かつ **`--paper-trade`** を含むプロセスがあれば起動しない。 |
 | `scripts/start_watchdog.bat` | **ランチャー:** `ROOT` を `pushd "%~dp0.."` で正規化し、**`logs/runtime/watchdog_launcher_YYYYMMDD.log`** に起動時刻・`CD_AT_LAUNCH` / `ROOT` / `whoami` / `where python` / `python --version` / **`PATH`** / 実行コマンド / `check_watchdog_running.ps1` の終了コード / `start` 直後の `errorlevel` を追記。**`check_watchdog_running.ps1`** で `watchdog.py` 実行中の二重起動を抑止し、問題なければ **`run_watchdog_inner.bat`** を `start` で起動。 |
 | `scripts/run_watchdog_inner.bat` | **`pushd` でルート固定**後、**`where python` の先頭**で **`%ROOT%\scripts\watchdog.py`** を絶対パス実行（**`PYTHONUNBUFFERED=1`**）。stdout/stderr を **`logs/runtime/watchdog_YYYYMMDD.log`** へ追記。タスク スケジューラの cwd/PATH 差を吸収。 |
 | `scripts/check_watchdog_running.ps1` | **`Get-CimInstance -ClassName Win32_Process -Filter "name='python.exe'"`** から **`CommandLine` に `watchdog.py` を含む**プロセスのみ検出。該当時はランチャーログへ PID/CommandLine を追記して `exit 0`（起動スキップ）。 |
-| `scripts/watchdog.py` | **5 分間隔**で監視。起動時に **`os.getcwd()` / `sys.executable` / `__file__` / dotenv 絶対パス / 各 `start_*.bat` 絶対パス / JST タイムゾーン** を INFO ログ。`issue_bot` / `paper_trade` 復帰時は **restart attempt → bat spawn と child_pid → 4 秒後 alive チェック → `[WATCHDOG] restarted …`** をログ。`Asia/Tokyo` は **`tzdata` 未導入時は UTC+9 固定にフォールバック**（Windows 常駐向け）。 |
+| `scripts/watchdog.py` | **5 分間隔**で監視。起動時に **`os.getcwd()` / `sys.executable` / `__file__` / dotenv 絶対パス / 各 `start_*.bat` 絶対パス / JST タイムゾーン** を INFO ログ。`paper_trade_running()` は **`market.yahoo.watch` または `yahoo_kabu_watch.py`** + **`--paper-trade`** のコマンドラインを検出。`issue_bot` / `paper_trade` 復帰時は **restart attempt → bat spawn と child_pid → 4 秒後 alive チェック → `[WATCHDOG] restarted …`** をログ。`Asia/Tokyo` は **`tzdata` 未導入時は UTC+9 固定にフォールバック**（Windows 常駐向け）。 |
 
 **タスク スケジューラ（推奨）:** タスク名例 **`tradebot_watchdog_start`**。トリガーは **「コンピューターの起動時」または「ログオン時」**。操作は **`scripts/start_watchdog.bat` の絶対パス**（「最上位のフォルダー」にリポジトリルートを指定）。これ 1 本で watchdog が常駐し、上記 2 プロセスの自動復帰を担う。
 
@@ -756,7 +794,7 @@ python discord_issue_bot/discord_issue_bot.py
 5. **`regime_filters` / `signal_filters` / `composite_signal_filters`** のキー名 `disable_*`（signal/regime 系）は直感と逆に感じることがある。**true = その条件でシグナルを除外（集計対象外）** という意味で読む（詳細は **§6.11・§6.12**）。`composite_signal_filters` 側は **`enabled: true`** が明示的ブロックのオンになる。
 6. **`main()` のモード分岐は先勝ち**（§11.1）。例: `--intraday-1m-cache-report-only` と `--replay` を同時に付けても、**前者で即終了**し Replay は走らない。
 7. **`--paper-trade` と `--replay` は同時指定不可**（エラー終了）。`--replay-disable-afternoon-entry` と `--replay-strict-afternoon-entry` も **同時指定不可**。
-8. **後方互換 CLI:** 第1引数が `replay` のとき、`python yahoo_kabu_watch.py replay <range> <repeat> <mode> [config.json]` を **`--replay` 付きの argparse 形式**へ変換してから処理する（`main` 先頭）。
+8. **後方互換 CLI:** 第1引数が `replay` のとき、`python -m market.yahoo.watch replay …`（互換: `python yahoo_kabu_watch.py replay …`）を **`--replay` 付きの argparse 形式**へ変換してから処理する（`main` 先頭）。
 9. **ルートの `watchlist.json` と `discord_issue_bot/watchlist.json` は別ファイル**（§2）。Bot で追加した銘柄が監視に自動反映されない点に注意。
 10. **`--paper-trade`（live）は `run_replay` を呼ばない**（`run_paper_trade`）。Replay の累積 VWAP や `signal_generated_count` と **一致保証はない**（**§7.4.5**）。**`--paper-trade-dry-run-replay`** は **内部で `run_replay` を1回呼ぶ**（単日キャッシュ再生・§13.6）。
 
@@ -769,7 +807,7 @@ python discord_issue_bot/discord_issue_bot.py
 | | 内容 |
 |---|------|
 | **目的** | Yahoo 非公式 API 由来のデータで銘柄を継続評価し、条件一致・突破・水準変化を運用者に伝える。 |
-| **手段** | `yahoo_kabu_watch.py` のメインループ、`requests` によるクォート取得（v7 失敗時の chart フォールバック等）、`DISCORD_WEBHOOK_URL` による Embed 通知、候補・突破状態のスパム抑制ロジック。 |
+| **手段** | **`market.yahoo.watch`** のメインループ、`requests` によるクォート取得（v7 失敗時の chart フォールバック等）、`DISCORD_WEBHOOK_URL` による Embed 通知、候補・突破状態のスパム抑制ロジック。 |
 | **結果** | 監視銘柄の「候補」「Entry 上抜け」「条件外れ」を Discord で追跡可能。**発注は行わない**（通知・判断支援）。 |
 
 ### 10.2 Replay・1分足キャッシュ・再現性
@@ -846,9 +884,19 @@ python discord_issue_bot/discord_issue_bot.py
 
 ---
 
-## 11. コマンドライン引数・実行分岐（`yahoo_kabu_watch.py`） {#11-コマンドライン引数実行分岐yahoo_kabu_watch}
+## 11. コマンドライン引数・実行分岐（`market.yahoo.watch`） {#11-コマンドライン引数実行分岐marketyahoowatch}
 
-本章は **`parse_args` に登録された全オプション**と、**`main()` がどの順でモードを判定するか**をコードと一致させた一覧である（`yahoo_kabu_watch.py`）。
+本章は **`parse_args` に登録された全オプション**と、**`main()` がどの順でモードを判定するか**をコードと一致させた一覧である。実装モジュールは **`market/yahoo/watch.py`**（`argparse` の `prog` は `market.yahoo.watch`）。起動は **`python -m market.yahoo.watch [argv…]`** を推奨。ルート **`yahoo_kabu_watch.py`** は同一 `main` へ委譲する。**kabu_native** の CLI（`kabu_native/scripts/run_shadow.py` 等）は対象外。
+
+**パス・import（実装メモ）**
+
+| 旧パス（ルート） | 現行実体 |
+|------------------|----------|
+| `yahoo_kabu_watch.py` | `market/yahoo/watch.py` |
+| `yahoo_kabu_paper_trade_impl.py` | `market/yahoo/paper_trade.py` |
+| `yahoo_kabu_paper_trade_extended.py` | `market/yahoo/paper_trade_extended.py` |
+
+ルートの 3 ファイルは **`sys.modules[__name__] = 実体モジュール`** のシム。paper_trade 系は `watch` から `market.yahoo.paper_trade` / `paper_trade_extended` を import する。
 
 ### 11.1 `main()` の分岐順序（先に一致した処理だけ実行して終了）
 
@@ -872,10 +920,10 @@ python discord_issue_bot/discord_issue_bot.py
 ### 11.2 互換ショートハンド
 
 ```text
-python yahoo_kabu_watch.py replay <replay_range> <replay_repeat> <replay_mode> [replay_config.json]
+python -m market.yahoo.watch replay <replay_range> <replay_repeat> <replay_mode> [replay_config.json]
 ```
 
-は、内部で **`--replay --replay-range … --replay-repeat … --replay-mode … [--replay-config …]`** に変換される。
+（互換: `python yahoo_kabu_watch.py replay …`）は、内部で **`--replay --replay-range … --replay-repeat … --replay-mode … [--replay-config …]`** に変換される。
 
 ### 11.3 モード別 CLI 一覧（`argparse`）
 
@@ -994,7 +1042,7 @@ paper_trade（live）の Discord 振り分け・quiet モード・日次オペ�
 
 ## 13. continuation-v1: 共有エンジン・paper dry-run・Phase2 shadow {#13-continuation-v1-共有エンジンペーパードライランphase2-shadow}
 
-**continuation-v1** 系のコードは **`yahoo_kabu_paper_trade_impl.py`** / **`yahoo_kabu_paper_trade_extended.py`** に集約され、`yahoo_kabu_watch.py` から参照される。
+**continuation-v1** 系のコードは **`market/yahoo/paper_trade.py`** / **`market/yahoo/paper_trade_extended.py`** に集約され、`market/yahoo/watch.py` から参照される（ルートの `yahoo_kabu_paper_trade_*.py` はシム）。
 
 **読み方:** **§13.1** は **現実装**。**§13.2** は **目標アーキテクチャ**（達成したい状態）。理想とコードを混同しないこと。
 
@@ -1074,8 +1122,10 @@ paper_trade（live）の Discord 振り分け・quiet モード・日次オペ�
 **CLI（実装済み・`main` では `--morning-screen` の直後に評価）:**
 
 ```text
-python yahoo_kabu_watch.py --paper-trade-dry-run-replay --paper-trade-dry-run-day YYYY-MM-DD [--replay-config PATH]
+python -m market.yahoo.watch --paper-trade-dry-run-replay --paper-trade-dry-run-day YYYY-MM-DD [--replay-config PATH]
 ```
+
+（互換: `python yahoo_kabu_watch.py --paper-trade-dry-run-replay …`）
 
 **排他:** **`--paper-trade`** / **`--replay`** と **同時指定不可**。**`--paper-trade-dry-run-day`** は **必須**（空・形式不正・当日ディレクトリに CSV が1件も無い場合は終了コード 2）。
 
@@ -1129,7 +1179,7 @@ Phase2 列・structure / exit 列は §10 ユーザー票に列挙されたキ�
 
 **CLI:**
 
-`python yahoo_kabu_watch.py --replay --replay-shadow-multi-day 2026-05-13,2026-05-14,2026-05-15 --replay-config configs/...json`
+`python -m market.yahoo.watch --replay --replay-shadow-multi-day 2026-05-13,2026-05-14,2026-05-15 --replay-config configs/...json`
 
 実装では **各 JST 日を `replay_date_fixed` で `run_replay` に渡し**、`replay_shadow_collect` に **`_build_replay_shadow_filter_validation`** の結果を貯める。最後に **`multi_day_shadow_summary.json`**（`multi_day_shadow_summary` / `multi_day_chase_autoblock_summary` / `multi_day_cooldown_summary` / `multi_day_market_weakness_summary` と評価指標）。
 
@@ -1145,7 +1195,7 @@ dry-run 終了後に **`paper_replay_divergence_report.{json,txt}`** を必ず�
 
 ### 13.17 検証コマンド（最低限）
 
-1. `python -m py_compile yahoo_kabu_watch.py`  
+1. `python -m py_compile market/yahoo/watch.py`（互換: `yahoo_kabu_watch.py`）  
 2. `python -m unittest tests.test_paper_trade_dry_run_replay tests.test_replay_shadow_validation -v`  
 3. dry-run / multi-day（上記 CLI）  
 4. 成果物パス確認: `results/paper_trade_dry_run/...`、`results/.../multi_day_shadow_summary.json`
@@ -1175,3 +1225,4 @@ TODO は設計仕様書とは別ファイルで管理する。
 | 2026-05-09 | **§7.1.1 `.env`（プロジェクト直下のみ）**、**§7.4 paper_trade 運用**（Discord 2ch・quiet・成果物・runtime/health・lock・Replay 差分・`same_day_replay_compare`・フィンガープリント・日次オペ例・ドキュメントのみ変更の注意）、**`DISCORD_TOKEN` / `DISCORD_BOT_TOKEN` の推奨表記**を追記。**§10.10**・**§12.3** を現行実装に合わせて更新。 |
 | 2026-05-09 | **§13 設計レビュー反映**: **現実装（§13.1）と目標アーキ（§13.2）の分離**、`run_replay` の **legacy `ReplaySignalEval` 残骸** と **replay_fixed／paper_live の統計を直接対比しない** 明記、**logic_version は完全 shared を保証しない**（§13.4）、**機能別 status**・**SoT 表**・**禁止比較（§13.1.1）**、小节 **13.7〜13.17** へ繰り下げ。dry-run は **§13.6**。 |
 | 2026-05-16 | **§13 continuation-v1** ほか **`--paper-trade-dry-run-replay` を実装に整合**: §11.1（morning 直後に dry-run・`run_replay` 呼出し）、§11.3、`--replay-date`∧`--replay-shadow-multi-day` 排他、§13 の dry-run 節ほか更新、§12.3・§4・§7.4 冒頭・§8・§9・§10.10。continuation の「PDF 未更新」注記は **以降 `md_to_pdf` で再生成**すること。 |
+| 2026-05-16 | **Yahoo 系ディレクトリ整理のドキュメント反映:** 冒頭に **旧 Yahoo 系 / kabu_native 分離**・**`market/yahoo/` 実体とルートシム**・**起動コマンド対応表**を追加。§1・§2・§3・§4・§6・§7.1・§7.4.7・§8・§8.1・§9・§10・§11・§13.17 のパスと CLI を **`python -m market.yahoo.watch` 推奨**に更新（**`python yahoo_kabu_watch.py` は互換**として明記）。売買・Replay ロジックの記述は変更しない。PDF 再生成は任意。 |

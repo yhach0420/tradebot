@@ -53,7 +53,7 @@ def _board_market_time_utc(board: Mapping[str, Any]) -> Optional[datetime]:
 
 def quote_from_board(*, symbol_yahoo: str, board: Mapping[str, Any]) -> Any:
     """BoardSuccess JSON → Quote（yahoo_kabu_watch.Quote と同一形状）。"""
-    import yahoo_kabu_watch as yw
+    import market.yahoo.watch as yw
 
     price = board.get("CurrentPrice")
     if price is None and board.get("CalcPrice") is not None:
@@ -95,14 +95,14 @@ class KabuProvider(MarketDataProvider):
         self._token: Optional[str] = None
 
     def _yahoo_fallback_log(self, symbol: str, detail: str) -> None:
-        import yahoo_kabu_watch as yw
+        import market.yahoo.watch as yw
 
         ts = yw.now_str()
         tail = detail[:260] + ("…" if len(detail) > 260 else "")
         print(f"[{ts}] [PAPER] kabu_quote_fallback symbol={symbol} {tail}")
 
     def _yahoo_quote(self, symbol: str) -> Any:
-        import yahoo_kabu_watch as yw
+        import market.yahoo.watch as yw
 
         return yw.fetch_quote(self._session, symbol)
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from yahoo_kabu_watch import (
+from market.yahoo.watch import (
     Quote,
     _discord_embed_preview_prepend_level_emphasis,
     build_embed_paper_trade_breakout_minimal,

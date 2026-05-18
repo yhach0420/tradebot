@@ -425,7 +425,12 @@ def evaluate_kabu_signal_v1(
         if push_per_min < cfg.min_push_samples_per_min:
             rejects.append("G8_PUSH_DENSITY")
 
-    vol_thr = volume_threshold(tv, tier=tier, cfg=cfg)
+    # リプレイ合成板は MinuteTradingValue（1分足 TV）を付与。G6 の 30 秒出来高ゲートは
+    # 短期勢い用に分足スケールを使い、G7 のセッション累積 TV とは分離する。
+    tv_for_vol_gate = _as_float(flat.get("MinuteTradingValue"))
+    if tv_for_vol_gate is None:
+        tv_for_vol_gate = tv
+    vol_thr = volume_threshold(tv_for_vol_gate, tier=tier, cfg=cfg)
     if not has_history:
         rejects.append("G6_VOLUME_DELTA_UNAVAILABLE")
     elif vol_delta_30s is None:

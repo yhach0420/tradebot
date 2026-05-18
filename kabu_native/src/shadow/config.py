@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from notify.discord import ShadowDiscordConfig
+
 log = logging.getLogger("kabu_native.shadow")
 
 
@@ -43,9 +45,12 @@ class ShadowRuntime:
 
 @dataclass
 class ShadowSafety:
+    discord_enabled: bool = False
     discord_notify: bool = False
     place_orders: bool = False
+    order_enabled: bool = False
     connect_yahoo_watch: bool = False
+    legacy_yahoo_watch_enabled: bool = False
 
 
 @dataclass
@@ -54,6 +59,7 @@ class ShadowConfig:
     watchlist: ShadowWatchlistConfig = field(default_factory=ShadowWatchlistConfig)
     runtime: ShadowRuntime = field(default_factory=ShadowRuntime)
     safety: ShadowSafety = field(default_factory=ShadowSafety)
+    discord: ShadowDiscordConfig = field(default_factory=ShadowDiscordConfig)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -70,6 +76,13 @@ def _warn_deprecated_keys(raw: Mapping[str, Any], *, prefix: str = "") -> None:
             _warn_deprecated_keys(raw[key], prefix=f"{prefix}.{key}" if prefix else key)
 
 
+def _bool_from_section(section: Mapping[str, Any], *keys: str, default: bool = False) -> bool:
+    for k in keys:
+        if k in section:
+            return bool(section[k])
+    return default
+
+
 def load_shadow_config(path: Path) -> ShadowConfig:
     import yaml
 
@@ -78,7 +91,7 @@ def load_shadow_config(path: Path) -> ShadowConfig:
         raise ValueError(f"shadow config must be a mapping: {path}")
 
     _warn_deprecated_keys(raw)
-    for section in ("rules", "watchlist", "runtime", "session"):
+    for section in ("rules", "watchlist", "runtime", "session", "safety", "discord"):
         sub = raw.get(section)
         if isinstance(sub, dict):
             _warn_deprecated_keys(sub, prefix=section)
@@ -87,6 +100,7 @@ def load_shadow_config(path: Path) -> ShadowConfig:
     wl_raw = raw.get("watchlist") or {}
     rt_raw = raw.get("runtime") or {}
     sf_raw = raw.get("safety") or {}
+    dc_raw = raw.get("discord") if isinstance(raw.get("discord"), dict) else {}
 
     rules = ShadowRules(
         market_session_control=bool(rules_raw.get("market_session_control", True)),
@@ -102,21 +116,76 @@ def load_shadow_config(path: Path) -> ShadowConfig:
     if not rules.market_session_control:
         log.warning("shadow: market_session_control=false overrides Phase 13 adopted rules")
 
-    def _sf_false(*keys: str) -> bool:
-        for k in keys:
-            if k in sf_raw:
-                return bool(sf_raw[k])
-        return False
+    discord_enabled = _bool_from_section(
+        raw,
+        "discord_enabled",
+        default=_bool_from_section(dc_raw, "enabled", default=False),
+    )
+    if not discord_enabled:
+        discord_enabled = _bool_from_section(sf_raw, "discord_enabled", "discord_notify", default=False)
 
-    safety = ShadowSafety(
-        discord_notify=_sf_false("discord_notify", "discord_enabled"),
-        place_orders=_sf_false("place_orders", "order_enabled", "orders_enabled"),
-        connect_yahoo_watch=_sf_false(
-            "connect_yahoo_watch", "legacy_yahoo_watch_enabled", "yahoo_watch_enabled"
+    discord_shadow_notify = _bool_from_section(
+        raw,
+        "discord_shadow_notify",
+        default=_bool_from_section(dc_raw, "shadow_notify", default=False),
+    )
+    discord_paper_trade_notify = _bool_from_section(
+        raw,
+        "discord_paper_trade_notify",
+        default=_bool_from_section(dc_raw, "paper_trade_notify", default=False),
+    )
+
+    place_orders = _bool_from_section(
+        sf_raw, "place_orders", "order_enabled", "orders_enabled", default=False
+    )
+    connect_yahoo = _bool_from_section(
+        sf_raw,
+        "connect_yahoo_watch",
+        "legacy_yahoo_watch_enabled",
+        "yahoo_watch_enabled",
+        default=False,
+    )
+
+    if place_orders:
+        raise ValueError("shadow safety: order_enabled / place_orders must be false (no real orders)")
+    if connect_yahoo:
+        raise ValueError("shadow safety: legacy_yahoo_watch must stay false")
+    notify_on = discord_enabled and discord_shadow_notify and discord_paper_trade_notify
+    if place_orders and notify_on:
+        raise ValueError("shadow safety: cannot enable discord paper notify together with orders")
+
+    discord = ShadowDiscordConfig(
+        enabled=discord_enabled,
+        shadow_notify=discord_shadow_notify,
+        paper_trade_notify=discord_paper_trade_notify,
+        webhook_env=str(
+            raw.get("discord_webhook_env")
+            or dc_raw.get("webhook_env")
+            or "KABU_SHADOW_DISCORD_WEBHOOK_URL"
+        ),
+        cooldown_sec=float(raw.get("discord_cooldown_sec", dc_raw.get("cooldown_sec", 300))),
+        dedupe=bool(raw.get("discord_dedupe", dc_raw.get("dedupe", True))),
+        hard_stop_pct=float(
+            raw.get("discord_hard_stop_pct", dc_raw.get("hard_stop_pct", rules.hard_stop_pct))
         ),
     )
-    if safety.discord_notify or safety.place_orders or safety.connect_yahoo_watch:
-        raise ValueError("shadow safety flags must be false (no notify/orders/yahoo_watch)")
+
+    if notify_on:
+        log.info(
+            "shadow: [KABU_PAPER] Discord virtual paper notify ON (webhook env=%s)",
+            discord.webhook_env,
+        )
+    else:
+        log.debug("shadow: Discord virtual paper notify OFF (default)")
+
+    safety = ShadowSafety(
+        discord_enabled=discord.enabled,
+        discord_notify=discord.shadow_notify,
+        place_orders=place_orders,
+        order_enabled=place_orders,
+        connect_yahoo_watch=connect_yahoo,
+        legacy_yahoo_watch_enabled=connect_yahoo,
+    )
 
     return ShadowConfig(
         rules=rules,
@@ -136,5 +205,6 @@ def load_shadow_config(path: Path) -> ShadowConfig:
             continue_on_error=bool(rt_raw.get("continue_on_error", True)),
         ),
         safety=safety,
+        discord=discord,
         raw=raw,
     )

@@ -126,20 +126,29 @@ def push_messages_from_yahoo_df(
     emit_high_low: bool = True,
     spread_bps: float = 8.0,
     events_per_minute: int = 10,
+    trading_value_mode: str = "session_cumulative",
 ) -> list[dict[str, Any]]:
     """
     Yahoo 1分足 DataFrame から kabu board 相当 PUSH を生成。
 
     検証用のみ。実 kabu PUSH の品質・タイミングとは別物。
+
+    trading_value_mode:
+      - ``session_cumulative`` (default): ``TradingValue`` = セッション開始からの
+        volume×price 累積（本番 kabu 板の G7 想定に合わせる）。
+      - ``incremental``: Phase18 以前の増分 TV（診断比較用のみ）。
+    いずれも ``MinuteTradingValue`` / ``IncrementalTradingValue`` を付与する。
     """
     rng = random.Random(seed)
     code = yahoo_symbol_code(symbol)
     msgs: list[dict[str, Any]] = []
     cum_vol = 0.0
+    session_cum_tv = 0.0
     vwap_num = 0.0
     vwap_den = 0.0
     session_high = 0.0
     session_low = float("inf")
+    use_session_tv = trading_value_mode != "incremental"
 
     for _, row in df.iterrows():
         if keep_fraction < 1.0 and rng.random() > keep_fraction:
@@ -186,8 +195,19 @@ def push_messages_from_yahoo_df(
         bid_qty = 50_000.0 * imb_bias
         ask_qty = 50_000.0 / imb_bias
 
-        def _board(price: float, *, event_ts: datetime, cum: float, incr_vol: float) -> dict[str, Any]:
+        minute_tv = max(vol, 0.0) * close
+
+        def _board(
+            price: float,
+            *,
+            event_ts: datetime,
+            cum: float,
+            incr_vol: float,
+            session_tv: float,
+        ) -> dict[str, Any]:
             tstr = event_ts.isoformat()
+            incr_tv = max(incr_vol, 1.0) * price
+            g7_tv = session_tv if use_session_tv else incr_tv
             return {
                 "Symbol": code,
                 "CurrentPrice": price,
@@ -196,8 +216,9 @@ def push_messages_from_yahoo_df(
                 "LowPrice": board_session_low,
                 "VWAP": vwap,
                 "TradingVolume": cum,
-                # 累積出来高×価格は G6 閾値を不必要に巨大化するため、当該イベントの増分のみ
-                "TradingValue": max(incr_vol, 1.0) * price,
+                "TradingValue": g7_tv,
+                "MinuteTradingValue": minute_tv,
+                "IncrementalTradingValue": incr_tv,
                 "BidPrice": bid,
                 "AskPrice": ask,
                 "BidQty": bid_qty,
@@ -218,7 +239,16 @@ def push_messages_from_yahoo_df(
             event_ts = bar_ts + offset
             cum_vol += max(0.0, sub_vol)
             px = prices[i % len(prices)]
-            msgs.append(_board(px, event_ts=event_ts, cum=cum_vol, incr_vol=sub_vol))
+            session_cum_tv += max(sub_vol, 0.0) * px
+            msgs.append(
+                _board(
+                    px,
+                    event_ts=event_ts,
+                    cum=cum_vol,
+                    incr_vol=sub_vol,
+                    session_tv=session_cum_tv,
+                )
+            )
 
         session_high = max(session_high, high, close)
         session_low = min(session_low, low, close)

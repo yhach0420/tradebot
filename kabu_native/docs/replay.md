@@ -99,6 +99,40 @@ python kabu_native/scripts/run_replay.py \
 - `relaxed_signal` — 合成 PUSH 向け緩和（検証用）
 - `synthetic_*` — 1分足 → 合成 board の密度・スプレッド
 
+### Discord 仮想売買通知 [KABU_PAPER][REPLAY]（replay 専用）
+
+**realtime shadow とは別系統。** 市場時間外・日曜でも、バッチ replay 完了後に仮想トレードごと ENTRY/EXIT を Discord へ送れます（**実発注なし**）。
+
+| 設定 | 既定 | 説明 |
+|------|------|------|
+| `discord_replay_notify` | false | true で送信（CLI `--discord-notify` でも ON） |
+| `discord_webhook_env` | `KABU_SHADOW_DISCORD_WEBHOOK_URL` | `.env` の Webhook（旧 Yahoo URL は使わない） |
+| `discord_replay_max_messages` | 50 | 送信上限（ENTRY+EXIT で 1 トレードあたり最大 2 通） |
+| `discord_replay_send_delay_sec` | 0.2 | 送信間スリープ（0.1〜0.3 推奨） |
+
+| 種別 | タイトル |
+|------|----------|
+| ENTRY | `[KABU_PAPER][REPLAY] ENTRY EXECUTED <symbol>` |
+| EXIT | `[KABU_PAPER][REPLAY] EXIT EXECUTED <symbol>` |
+
+Embed: symbol, replay_day, replay_time, entry_price, exit_price, pnl_pct, exit_reason, mfe_pct, replay_source, note（replay simulation only）
+
+```bash
+python kabu_native/scripts/test_discord_notify.py
+```
+
+で Webhook 接続のみ先に確認できます。
+
+```bash
+python kabu_native/scripts/run_replay.py ^
+  --start-date 2026-05-15 ^
+  --end-date 2026-05-15 ^
+  --symbols 9984.T ^
+  --discord-notify
+```
+
+`aggregate_summary.json` に `discord_replay_notify_stats`（送信数・打ち切り有無）が載ります。
+
 ## 旧系リプレイとの違い
 
 | 項目 | 旧 `scripts/kabu_signal_replay.py` | kabu_native |

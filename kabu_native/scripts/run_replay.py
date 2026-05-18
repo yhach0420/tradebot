@@ -32,9 +32,16 @@ def _paths() -> tuple[Path, Path, Path]:
 
 def _bootstrap() -> tuple[Path, Path]:
     repo_root, native_root, src_root = _paths()
-    src_s = str(src_root)
-    if src_s not in sys.path:
-        sys.path.insert(0, src_s)
+    for p in (src_root, repo_root):
+        s = str(p)
+        if s not in sys.path:
+            sys.path.insert(0, s)
+    try:
+        from api.rest_client import load_kabu_env
+
+        load_kabu_env(repo_root=repo_root)
+    except ImportError:
+        pass
     return repo_root, native_root
 
 
@@ -131,6 +138,11 @@ def main() -> int:
     )
     parser.add_argument("--tier", default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument(
+        "--discord-notify",
+        action="store_true",
+        help="[KABU_PAPER][REPLAY] Discord へ仮想 ENTRY/EXIT を送信（replay 専用）",
+    )
     args = parser.parse_args()
 
     config_path = args.config if args.config.is_absolute() else (repo_root / args.config)
@@ -164,6 +176,8 @@ def main() -> int:
         native_root / "results" / "replay" / day_stamp / f"replay_{time_stamp}"
     )
 
+    discord_notify = bool(args.discord_notify or cfg_raw.get("discord_replay_notify", False))
+
     run_cfg = ReplayRunConfig(
         start_date=args.start_date,
         end_date=args.end_date,
@@ -179,6 +193,10 @@ def main() -> int:
         synthetic_events_per_minute=int(cfg_raw.get("synthetic_events_per_minute", 10)),
         eod_exit_reason=str(cfg_raw.get("eod_exit_reason", "eod_close")),
         repo_root=repo_root,
+        discord_replay_notify=discord_notify,
+        discord_webhook_env=str(cfg_raw.get("discord_webhook_env", "KABU_SHADOW_DISCORD_WEBHOOK_URL")),
+        discord_replay_max_messages=int(cfg_raw.get("discord_replay_max_messages", 50)),
+        discord_replay_send_delay_sec=float(cfg_raw.get("discord_replay_send_delay_sec", 0.2)),
     )
 
     log_path = repo_root / "logs" / "runtime" / f"kabu_native_run_replay_{day_stamp}.log"
@@ -195,7 +213,7 @@ def main() -> int:
     log.addHandler(sh)
     log.propagate = False
 
-    log.info("symbols=%s range=%s..%s", symbols, args.start_date, args.end_date)
+    log.info("symbols=%s range=%s..%s discord_notify=%s", symbols, args.start_date, args.end_date, discord_notify)
     result = run_replay_batch(run_cfg)
     log.info("trades=%s skipped=%s out=%s", len(result.trades), len(result.skipped), out_dir)
     return 0

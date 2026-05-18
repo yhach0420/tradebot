@@ -12,6 +12,6 @@ class YahooProvider(MarketDataProvider):
         self._session = session
 
     def get_quote(self, symbol: str):
-        import yahoo_kabu_watch as yw
+        import market.yahoo.watch as yw
 
         return yw.fetch_quote(self._session, symbol)
