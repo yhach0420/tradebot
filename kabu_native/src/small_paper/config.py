@@ -66,7 +66,16 @@ class SmallPaperPilotConfig:
     baseline_policy: str = ""
     comparison_note: str = ""
     allowed_trading_windows: list[TradingWindow] = field(default_factory=list)
+    structural_exit_policy: str = ""
+    favorable_mode: str = ""
+    favorable_mfe_scale: float = 0.003
+    use_market_time_window: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
+
+    def feature_bridge_config(self) -> Any:
+        from small_paper.live_feature_bridge import feature_bridge_config_from_pilot
+
+        return feature_bridge_config_from_pilot(self)
 
     def policy_summary_fields(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -81,6 +90,13 @@ class SmallPaperPilotConfig:
             out["comparison_note"] = self.comparison_note.strip()
         if self.allowed_trading_windows:
             out["allowed_trading_windows"] = windows_summary(self.allowed_trading_windows)
+        if self.structural_exit_policy:
+            out["structural_exit_policy"] = self.structural_exit_policy
+            out["observer_exit_mode"] = "combined_structural_exit_notification_only"
+        if self.favorable_mode:
+            out["favorable_mode"] = self.favorable_mode
+            out["favorable_mfe_scale"] = self.favorable_mfe_scale
+            out["use_market_time_window"] = self.use_market_time_window
         return out
 
     def exposure_gate_config(self) -> ExposureGateConfig:
@@ -160,6 +176,10 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         allowed_trading_windows=parse_allowed_trading_windows(
             raw.get("allowed_trading_windows")
         ),
+        structural_exit_policy=str(raw.get("structural_exit_policy", "")),
+        favorable_mode=str(raw.get("favorable_mode", "") or ""),
+        favorable_mfe_scale=float(raw.get("favorable_mfe_scale", 0.003)),
+        use_market_time_window=bool(raw.get("use_market_time_window", False)),
         raw=raw,
     )
 

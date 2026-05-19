@@ -1,6 +1,6 @@
 {
   "component": "kabu_native.check_shadow_safety",
-  "generated_at": "2026-05-17T01:29:03",
+  "generated_at": "2026-05-17T03:01:24",
   "overall_pass": true,
   "ready_for_weekday_shadow": true,
   "config_path": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\configs\\shadow.yaml",
@@ -18,16 +18,26 @@
     {
       "check_id": "safety_flags",
       "passed": true,
-      "message": "all safety flags false",
+      "message": "orders and legacy yahoo disabled",
       "details": {
-        "discord_enabled": false,
+        "discord_enabled": true,
+        "discord_shadow_notify": true,
+        "discord_paper_trade_notify": true,
         "order_enabled": false,
         "legacy_yahoo_watch_enabled": false,
         "expected": {
-          "discord_enabled": false,
           "order_enabled": false,
           "legacy_yahoo_watch_enabled": false
         }
+      }
+    },
+    {
+      "check_id": "discord_order_mutex",
+      "passed": true,
+      "message": "discord [KABU_PAPER] notify requires order_enabled=false",
+      "details": {
+        "discord_paper_notify_active": true,
+        "order_enabled": false
       }
     },
     {

@@ -989,3 +989,955 @@ CMD="C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe" "C:\User
 2026-05-17 02:03:47,195 [INFO] tick jst=2026-05-17 02:03 paper_window=no issue_bot=ok paper_trade=idle
 2026-05-17 02:08:47,201 [INFO] tick jst=2026-05-17 02:08 paper_window=no issue_bot=ok paper_trade=idle
 2026-05-17 02:13:47,208 [INFO] tick jst=2026-05-17 02:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 02:18:47,213 [INFO] tick jst=2026-05-17 02:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 02:23:47,218 [INFO] tick jst=2026-05-17 02:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 02:28:47,224 [INFO] tick jst=2026-05-17 02:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 02:33:47,228 [INFO] tick jst=2026-05-17 02:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 02:38:47,233 [INFO] tick jst=2026-05-17 02:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 02:43:47,238 [INFO] tick jst=2026-05-17 02:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 02:48:47,247 [INFO] tick jst=2026-05-17 02:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 02:53:47,254 [INFO] tick jst=2026-05-17 02:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 02:58:47,262 [INFO] tick jst=2026-05-17 02:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:03:47,268 [INFO] tick jst=2026-05-17 03:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:08:47,276 [INFO] tick jst=2026-05-17 03:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:13:47,283 [INFO] tick jst=2026-05-17 03:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:18:47,291 [INFO] tick jst=2026-05-17 03:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:23:47,299 [INFO] tick jst=2026-05-17 03:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:28:47,308 [INFO] tick jst=2026-05-17 03:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:33:47,317 [INFO] tick jst=2026-05-17 03:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:38:47,324 [INFO] tick jst=2026-05-17 03:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:43:47,333 [INFO] tick jst=2026-05-17 03:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:48:47,338 [INFO] tick jst=2026-05-17 03:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:53:47,343 [INFO] tick jst=2026-05-17 03:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 03:58:47,347 [INFO] tick jst=2026-05-17 03:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:03:47,352 [INFO] tick jst=2026-05-17 04:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:08:47,357 [INFO] tick jst=2026-05-17 04:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:13:47,362 [INFO] tick jst=2026-05-17 04:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:18:47,367 [INFO] tick jst=2026-05-17 04:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:23:47,373 [INFO] tick jst=2026-05-17 04:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:28:47,378 [INFO] tick jst=2026-05-17 04:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:33:47,386 [INFO] tick jst=2026-05-17 04:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:38:47,392 [INFO] tick jst=2026-05-17 04:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:43:47,400 [INFO] tick jst=2026-05-17 04:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:48:47,405 [INFO] tick jst=2026-05-17 04:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:53:47,410 [INFO] tick jst=2026-05-17 04:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 04:58:47,415 [INFO] tick jst=2026-05-17 04:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:03:47,420 [INFO] tick jst=2026-05-17 05:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:08:47,424 [INFO] tick jst=2026-05-17 05:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:13:47,429 [INFO] tick jst=2026-05-17 05:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:18:47,434 [INFO] tick jst=2026-05-17 05:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:23:47,439 [INFO] tick jst=2026-05-17 05:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:28:47,444 [INFO] tick jst=2026-05-17 05:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:33:47,449 [INFO] tick jst=2026-05-17 05:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:38:47,454 [INFO] tick jst=2026-05-17 05:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:43:47,459 [INFO] tick jst=2026-05-17 05:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:48:47,464 [INFO] tick jst=2026-05-17 05:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:53:47,469 [INFO] tick jst=2026-05-17 05:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 05:58:47,474 [INFO] tick jst=2026-05-17 05:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:03:47,479 [INFO] tick jst=2026-05-17 06:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:08:47,484 [INFO] tick jst=2026-05-17 06:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:13:47,490 [INFO] tick jst=2026-05-17 06:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:18:47,495 [INFO] tick jst=2026-05-17 06:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:23:47,500 [INFO] tick jst=2026-05-17 06:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:28:47,504 [INFO] tick jst=2026-05-17 06:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:33:47,508 [INFO] tick jst=2026-05-17 06:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:38:47,513 [INFO] tick jst=2026-05-17 06:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:43:47,518 [INFO] tick jst=2026-05-17 06:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:48:47,523 [INFO] tick jst=2026-05-17 06:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:53:47,528 [INFO] tick jst=2026-05-17 06:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 06:58:47,532 [INFO] tick jst=2026-05-17 06:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:03:47,537 [INFO] tick jst=2026-05-17 07:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:08:47,542 [INFO] tick jst=2026-05-17 07:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:13:47,546 [INFO] tick jst=2026-05-17 07:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:18:47,551 [INFO] tick jst=2026-05-17 07:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:23:47,557 [INFO] tick jst=2026-05-17 07:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:28:47,563 [INFO] tick jst=2026-05-17 07:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:33:47,569 [INFO] tick jst=2026-05-17 07:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:38:47,574 [INFO] tick jst=2026-05-17 07:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:43:47,580 [INFO] tick jst=2026-05-17 07:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:48:47,586 [INFO] tick jst=2026-05-17 07:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:53:47,593 [INFO] tick jst=2026-05-17 07:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 07:58:47,598 [INFO] tick jst=2026-05-17 07:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:03:47,604 [INFO] tick jst=2026-05-17 08:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:08:47,611 [INFO] tick jst=2026-05-17 08:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:13:47,617 [INFO] tick jst=2026-05-17 08:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:18:47,624 [INFO] tick jst=2026-05-17 08:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:23:47,630 [INFO] tick jst=2026-05-17 08:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:28:47,636 [INFO] tick jst=2026-05-17 08:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:33:47,642 [INFO] tick jst=2026-05-17 08:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:38:47,648 [INFO] tick jst=2026-05-17 08:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:43:47,653 [INFO] tick jst=2026-05-17 08:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:48:47,659 [INFO] tick jst=2026-05-17 08:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:53:47,665 [INFO] tick jst=2026-05-17 08:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 08:58:47,670 [INFO] tick jst=2026-05-17 08:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:03:47,676 [INFO] tick jst=2026-05-17 09:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:08:47,680 [INFO] tick jst=2026-05-17 09:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:13:47,685 [INFO] tick jst=2026-05-17 09:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:18:47,691 [INFO] tick jst=2026-05-17 09:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:23:47,696 [INFO] tick jst=2026-05-17 09:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:28:47,701 [INFO] tick jst=2026-05-17 09:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:33:47,706 [INFO] tick jst=2026-05-17 09:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:38:47,710 [INFO] tick jst=2026-05-17 09:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:43:47,715 [INFO] tick jst=2026-05-17 09:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:48:47,720 [INFO] tick jst=2026-05-17 09:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:53:47,725 [INFO] tick jst=2026-05-17 09:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 09:58:47,730 [INFO] tick jst=2026-05-17 09:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:03:47,736 [INFO] tick jst=2026-05-17 10:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:08:47,741 [INFO] tick jst=2026-05-17 10:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:13:47,745 [INFO] tick jst=2026-05-17 10:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:18:47,751 [INFO] tick jst=2026-05-17 10:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:23:47,756 [INFO] tick jst=2026-05-17 10:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:28:47,762 [INFO] tick jst=2026-05-17 10:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:33:47,767 [INFO] tick jst=2026-05-17 10:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:38:47,772 [INFO] tick jst=2026-05-17 10:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:43:47,778 [INFO] tick jst=2026-05-17 10:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:48:47,782 [INFO] tick jst=2026-05-17 10:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:53:47,788 [INFO] tick jst=2026-05-17 10:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 10:58:47,793 [INFO] tick jst=2026-05-17 10:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:03:47,798 [INFO] tick jst=2026-05-17 11:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:08:47,804 [INFO] tick jst=2026-05-17 11:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:13:47,809 [INFO] tick jst=2026-05-17 11:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:18:47,814 [INFO] tick jst=2026-05-17 11:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:23:47,821 [INFO] tick jst=2026-05-17 11:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:28:47,828 [INFO] tick jst=2026-05-17 11:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:33:47,833 [INFO] tick jst=2026-05-17 11:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:38:47,838 [INFO] tick jst=2026-05-17 11:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:43:47,845 [INFO] tick jst=2026-05-17 11:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:48:47,851 [INFO] tick jst=2026-05-17 11:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:53:47,858 [INFO] tick jst=2026-05-17 11:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 11:58:47,865 [INFO] tick jst=2026-05-17 11:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:03:47,872 [INFO] tick jst=2026-05-17 12:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:08:47,879 [INFO] tick jst=2026-05-17 12:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:13:47,886 [INFO] tick jst=2026-05-17 12:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:18:47,893 [INFO] tick jst=2026-05-17 12:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:23:47,899 [INFO] tick jst=2026-05-17 12:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:28:47,906 [INFO] tick jst=2026-05-17 12:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:33:47,913 [INFO] tick jst=2026-05-17 12:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:38:47,920 [INFO] tick jst=2026-05-17 12:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:43:47,928 [INFO] tick jst=2026-05-17 12:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:48:47,937 [INFO] tick jst=2026-05-17 12:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:53:47,946 [INFO] tick jst=2026-05-17 12:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 12:58:47,953 [INFO] tick jst=2026-05-17 12:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:03:47,959 [INFO] tick jst=2026-05-17 13:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:08:47,965 [INFO] tick jst=2026-05-17 13:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:13:47,971 [INFO] tick jst=2026-05-17 13:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:18:47,977 [INFO] tick jst=2026-05-17 13:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:23:47,983 [INFO] tick jst=2026-05-17 13:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:28:47,988 [INFO] tick jst=2026-05-17 13:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:33:47,994 [INFO] tick jst=2026-05-17 13:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:38:48,000 [INFO] tick jst=2026-05-17 13:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:43:48,006 [INFO] tick jst=2026-05-17 13:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:48:48,011 [INFO] tick jst=2026-05-17 13:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:53:48,016 [INFO] tick jst=2026-05-17 13:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 13:58:48,021 [INFO] tick jst=2026-05-17 13:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:03:48,028 [INFO] tick jst=2026-05-17 14:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:08:48,032 [INFO] tick jst=2026-05-17 14:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:13:48,038 [INFO] tick jst=2026-05-17 14:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:18:48,043 [INFO] tick jst=2026-05-17 14:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:23:48,048 [INFO] tick jst=2026-05-17 14:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:28:48,054 [INFO] tick jst=2026-05-17 14:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:33:48,059 [INFO] tick jst=2026-05-17 14:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:38:48,065 [INFO] tick jst=2026-05-17 14:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:43:48,070 [INFO] tick jst=2026-05-17 14:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:48:48,076 [INFO] tick jst=2026-05-17 14:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:53:48,081 [INFO] tick jst=2026-05-17 14:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 14:58:48,086 [INFO] tick jst=2026-05-17 14:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:03:48,091 [INFO] tick jst=2026-05-17 15:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:08:48,096 [INFO] tick jst=2026-05-17 15:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:13:48,101 [INFO] tick jst=2026-05-17 15:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:18:48,106 [INFO] tick jst=2026-05-17 15:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:23:48,112 [INFO] tick jst=2026-05-17 15:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:28:48,117 [INFO] tick jst=2026-05-17 15:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:33:48,121 [INFO] tick jst=2026-05-17 15:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:38:48,126 [INFO] tick jst=2026-05-17 15:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:43:48,132 [INFO] tick jst=2026-05-17 15:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:48:48,137 [INFO] tick jst=2026-05-17 15:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:53:48,142 [INFO] tick jst=2026-05-17 15:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 15:58:48,148 [INFO] tick jst=2026-05-17 15:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:03:48,153 [INFO] tick jst=2026-05-17 16:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:08:48,158 [INFO] tick jst=2026-05-17 16:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:13:48,163 [INFO] tick jst=2026-05-17 16:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:18:48,169 [INFO] tick jst=2026-05-17 16:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:23:48,175 [INFO] tick jst=2026-05-17 16:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:28:48,182 [INFO] tick jst=2026-05-17 16:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:33:48,188 [INFO] tick jst=2026-05-17 16:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:38:48,195 [INFO] tick jst=2026-05-17 16:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:43:48,202 [INFO] tick jst=2026-05-17 16:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:48:48,209 [INFO] tick jst=2026-05-17 16:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:53:48,216 [INFO] tick jst=2026-05-17 16:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 16:58:48,223 [INFO] tick jst=2026-05-17 16:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:03:48,230 [INFO] tick jst=2026-05-17 17:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:08:48,237 [INFO] tick jst=2026-05-17 17:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:13:48,245 [INFO] tick jst=2026-05-17 17:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:18:48,253 [INFO] tick jst=2026-05-17 17:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:23:48,259 [INFO] tick jst=2026-05-17 17:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:28:48,266 [INFO] tick jst=2026-05-17 17:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:33:48,273 [INFO] tick jst=2026-05-17 17:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:38:48,278 [INFO] tick jst=2026-05-17 17:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:43:48,285 [INFO] tick jst=2026-05-17 17:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:48:48,292 [INFO] tick jst=2026-05-17 17:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:53:48,299 [INFO] tick jst=2026-05-17 17:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 17:58:48,305 [INFO] tick jst=2026-05-17 17:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:03:48,312 [INFO] tick jst=2026-05-17 18:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:08:48,320 [INFO] tick jst=2026-05-17 18:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:13:48,327 [INFO] tick jst=2026-05-17 18:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:18:48,334 [INFO] tick jst=2026-05-17 18:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:23:48,340 [INFO] tick jst=2026-05-17 18:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:28:48,347 [INFO] tick jst=2026-05-17 18:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:33:48,352 [INFO] tick jst=2026-05-17 18:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:38:48,358 [INFO] tick jst=2026-05-17 18:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:43:48,365 [INFO] tick jst=2026-05-17 18:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:48:48,370 [INFO] tick jst=2026-05-17 18:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:53:48,376 [INFO] tick jst=2026-05-17 18:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 18:58:48,381 [INFO] tick jst=2026-05-17 18:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:03:48,386 [INFO] tick jst=2026-05-17 19:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:08:48,391 [INFO] tick jst=2026-05-17 19:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:13:48,395 [INFO] tick jst=2026-05-17 19:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:18:48,401 [INFO] tick jst=2026-05-17 19:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:23:48,406 [INFO] tick jst=2026-05-17 19:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:28:48,411 [INFO] tick jst=2026-05-17 19:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:33:48,417 [INFO] tick jst=2026-05-17 19:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:38:48,422 [INFO] tick jst=2026-05-17 19:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:43:48,427 [INFO] tick jst=2026-05-17 19:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:48:48,433 [INFO] tick jst=2026-05-17 19:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:53:48,438 [INFO] tick jst=2026-05-17 19:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 19:58:48,443 [INFO] tick jst=2026-05-17 19:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:03:48,448 [INFO] tick jst=2026-05-17 20:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:08:48,453 [INFO] tick jst=2026-05-17 20:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:13:48,459 [INFO] tick jst=2026-05-17 20:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:18:48,464 [INFO] tick jst=2026-05-17 20:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:23:48,469 [INFO] tick jst=2026-05-17 20:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:28:48,474 [INFO] tick jst=2026-05-17 20:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:33:48,479 [INFO] tick jst=2026-05-17 20:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:38:48,483 [INFO] tick jst=2026-05-17 20:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:43:48,488 [INFO] tick jst=2026-05-17 20:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:48:48,493 [INFO] tick jst=2026-05-17 20:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:53:48,499 [INFO] tick jst=2026-05-17 20:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 20:58:48,506 [INFO] tick jst=2026-05-17 20:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:03:48,512 [INFO] tick jst=2026-05-17 21:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:08:48,517 [INFO] tick jst=2026-05-17 21:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:13:48,525 [INFO] tick jst=2026-05-17 21:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:18:48,532 [INFO] tick jst=2026-05-17 21:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:23:48,537 [INFO] tick jst=2026-05-17 21:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:28:48,543 [INFO] tick jst=2026-05-17 21:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:33:48,549 [INFO] tick jst=2026-05-17 21:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:38:48,555 [INFO] tick jst=2026-05-17 21:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:43:48,561 [INFO] tick jst=2026-05-17 21:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:48:48,567 [INFO] tick jst=2026-05-17 21:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:53:48,572 [INFO] tick jst=2026-05-17 21:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 21:58:48,579 [INFO] tick jst=2026-05-17 21:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:03:48,585 [INFO] tick jst=2026-05-17 22:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:08:48,592 [INFO] tick jst=2026-05-17 22:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:13:48,597 [INFO] tick jst=2026-05-17 22:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:18:48,603 [INFO] tick jst=2026-05-17 22:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:23:48,608 [INFO] tick jst=2026-05-17 22:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:28:48,614 [INFO] tick jst=2026-05-17 22:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:33:48,620 [INFO] tick jst=2026-05-17 22:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:38:48,626 [INFO] tick jst=2026-05-17 22:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:43:48,632 [INFO] tick jst=2026-05-17 22:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:48:48,637 [INFO] tick jst=2026-05-17 22:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:53:48,642 [INFO] tick jst=2026-05-17 22:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 22:58:48,647 [INFO] tick jst=2026-05-17 22:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:03:48,652 [INFO] tick jst=2026-05-17 23:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:08:48,657 [INFO] tick jst=2026-05-17 23:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:13:48,662 [INFO] tick jst=2026-05-17 23:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:18:48,667 [INFO] tick jst=2026-05-17 23:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:23:48,672 [INFO] tick jst=2026-05-17 23:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:28:48,677 [INFO] tick jst=2026-05-17 23:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:33:48,682 [INFO] tick jst=2026-05-17 23:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:38:48,687 [INFO] tick jst=2026-05-17 23:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:43:48,692 [INFO] tick jst=2026-05-17 23:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:48:48,696 [INFO] tick jst=2026-05-17 23:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:53:48,702 [INFO] tick jst=2026-05-17 23:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-17 23:58:48,708 [INFO] tick jst=2026-05-17 23:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:03:48,714 [INFO] tick jst=2026-05-18 00:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:08:48,719 [INFO] tick jst=2026-05-18 00:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:13:48,726 [INFO] tick jst=2026-05-18 00:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:18:48,731 [INFO] tick jst=2026-05-18 00:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:23:48,737 [INFO] tick jst=2026-05-18 00:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:28:48,741 [INFO] tick jst=2026-05-18 00:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:33:48,746 [INFO] tick jst=2026-05-18 00:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:38:48,751 [INFO] tick jst=2026-05-18 00:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:43:48,756 [INFO] tick jst=2026-05-18 00:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:48:48,760 [INFO] tick jst=2026-05-18 00:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:53:48,765 [INFO] tick jst=2026-05-18 00:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 00:58:48,772 [INFO] tick jst=2026-05-18 00:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:03:48,777 [INFO] tick jst=2026-05-18 01:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:08:48,782 [INFO] tick jst=2026-05-18 01:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:13:48,787 [INFO] tick jst=2026-05-18 01:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:18:48,792 [INFO] tick jst=2026-05-18 01:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:23:48,797 [INFO] tick jst=2026-05-18 01:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:28:48,803 [INFO] tick jst=2026-05-18 01:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:33:48,808 [INFO] tick jst=2026-05-18 01:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:38:48,814 [INFO] tick jst=2026-05-18 01:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:43:48,821 [INFO] tick jst=2026-05-18 01:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:48:48,828 [INFO] tick jst=2026-05-18 01:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:53:48,834 [INFO] tick jst=2026-05-18 01:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 01:58:48,842 [INFO] tick jst=2026-05-18 01:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:03:48,850 [INFO] tick jst=2026-05-18 02:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:08:48,857 [INFO] tick jst=2026-05-18 02:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:13:48,864 [INFO] tick jst=2026-05-18 02:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:18:48,870 [INFO] tick jst=2026-05-18 02:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:23:48,878 [INFO] tick jst=2026-05-18 02:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:28:48,886 [INFO] tick jst=2026-05-18 02:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:33:48,892 [INFO] tick jst=2026-05-18 02:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:38:48,899 [INFO] tick jst=2026-05-18 02:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:43:48,905 [INFO] tick jst=2026-05-18 02:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:48:48,910 [INFO] tick jst=2026-05-18 02:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:53:48,917 [INFO] tick jst=2026-05-18 02:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 02:58:48,923 [INFO] tick jst=2026-05-18 02:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:03:48,929 [INFO] tick jst=2026-05-18 03:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:08:48,935 [INFO] tick jst=2026-05-18 03:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:13:48,940 [INFO] tick jst=2026-05-18 03:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:18:48,945 [INFO] tick jst=2026-05-18 03:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:23:48,950 [INFO] tick jst=2026-05-18 03:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:28:48,956 [INFO] tick jst=2026-05-18 03:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:33:48,962 [INFO] tick jst=2026-05-18 03:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:38:48,969 [INFO] tick jst=2026-05-18 03:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:43:48,974 [INFO] tick jst=2026-05-18 03:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:48:48,982 [INFO] tick jst=2026-05-18 03:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:53:48,987 [INFO] tick jst=2026-05-18 03:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 03:58:48,992 [INFO] tick jst=2026-05-18 03:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:03:48,998 [INFO] tick jst=2026-05-18 04:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:08:49,004 [INFO] tick jst=2026-05-18 04:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:13:49,009 [INFO] tick jst=2026-05-18 04:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:18:49,016 [INFO] tick jst=2026-05-18 04:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:23:49,024 [INFO] tick jst=2026-05-18 04:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:28:49,030 [INFO] tick jst=2026-05-18 04:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:33:49,035 [INFO] tick jst=2026-05-18 04:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:38:49,040 [INFO] tick jst=2026-05-18 04:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:43:49,046 [INFO] tick jst=2026-05-18 04:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:48:49,053 [INFO] tick jst=2026-05-18 04:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:53:49,061 [INFO] tick jst=2026-05-18 04:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 04:58:49,067 [INFO] tick jst=2026-05-18 04:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:03:49,074 [INFO] tick jst=2026-05-18 05:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:08:49,080 [INFO] tick jst=2026-05-18 05:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:13:49,085 [INFO] tick jst=2026-05-18 05:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:18:49,091 [INFO] tick jst=2026-05-18 05:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:23:49,097 [INFO] tick jst=2026-05-18 05:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:28:49,102 [INFO] tick jst=2026-05-18 05:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:33:49,109 [INFO] tick jst=2026-05-18 05:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:38:49,116 [INFO] tick jst=2026-05-18 05:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:43:49,122 [INFO] tick jst=2026-05-18 05:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:48:49,127 [INFO] tick jst=2026-05-18 05:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:53:49,134 [INFO] tick jst=2026-05-18 05:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 05:58:49,139 [INFO] tick jst=2026-05-18 05:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:03:49,145 [INFO] tick jst=2026-05-18 06:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:08:49,152 [INFO] tick jst=2026-05-18 06:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:13:49,159 [INFO] tick jst=2026-05-18 06:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:18:49,165 [INFO] tick jst=2026-05-18 06:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:23:49,171 [INFO] tick jst=2026-05-18 06:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:28:49,179 [INFO] tick jst=2026-05-18 06:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:33:49,186 [INFO] tick jst=2026-05-18 06:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:38:49,194 [INFO] tick jst=2026-05-18 06:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:43:49,201 [INFO] tick jst=2026-05-18 06:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:48:49,208 [INFO] tick jst=2026-05-18 06:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:53:49,215 [INFO] tick jst=2026-05-18 06:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 06:58:49,221 [INFO] tick jst=2026-05-18 06:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:03:49,228 [INFO] tick jst=2026-05-18 07:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:08:49,234 [INFO] tick jst=2026-05-18 07:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:13:49,241 [INFO] tick jst=2026-05-18 07:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:18:49,247 [INFO] tick jst=2026-05-18 07:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:23:49,253 [INFO] tick jst=2026-05-18 07:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:28:49,259 [INFO] tick jst=2026-05-18 07:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:33:49,270 [INFO] tick jst=2026-05-18 07:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:38:49,278 [INFO] tick jst=2026-05-18 07:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:43:49,284 [INFO] tick jst=2026-05-18 07:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:48:49,291 [INFO] tick jst=2026-05-18 07:48 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:53:49,297 [INFO] tick jst=2026-05-18 07:53 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 07:58:49,303 [INFO] tick jst=2026-05-18 07:58 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 08:03:49,309 [INFO] tick jst=2026-05-18 08:03 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 08:08:49,315 [INFO] tick jst=2026-05-18 08:08 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 08:13:49,320 [INFO] tick jst=2026-05-18 08:13 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 08:18:49,325 [INFO] tick jst=2026-05-18 08:18 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 08:23:49,330 [INFO] tick jst=2026-05-18 08:23 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 08:28:49,334 [INFO] tick jst=2026-05-18 08:28 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 08:33:49,339 [INFO] tick jst=2026-05-18 08:33 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 08:38:49,347 [INFO] tick jst=2026-05-18 08:38 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 08:43:49,352 [INFO] tick jst=2026-05-18 08:43 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 08:48:49,361 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 08:48:49,376 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=119792
+2026-05-18 08:48:49,378 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=119792
+2026-05-18 08:48:53,379 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 08:48:53,379 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 08:48:54,059 [INFO] tick jst=2026-05-18 08:48 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 08:53:54,067 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 08:53:54,081 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=134456
+2026-05-18 08:53:54,082 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=134456
+2026-05-18 08:53:58,084 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 08:53:58,084 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 08:53:58,561 [INFO] tick jst=2026-05-18 08:53 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 08:58:58,568 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 08:58:58,574 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=24808
+2026-05-18 08:58:58,575 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=24808
+2026-05-18 08:59:02,576 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 08:59:02,576 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 08:59:03,326 [INFO] tick jst=2026-05-18 08:58 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:04:03,333 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:04:03,338 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=92544
+2026-05-18 09:04:03,338 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=92544
+2026-05-18 09:04:07,339 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:04:07,339 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:04:07,993 [INFO] tick jst=2026-05-18 09:04 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:09:07,999 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:09:08,005 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=34316
+2026-05-18 09:09:08,005 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=34316
+2026-05-18 09:09:12,006 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:09:12,006 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:09:12,573 [INFO] tick jst=2026-05-18 09:09 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:14:12,578 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:14:12,581 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=95796
+2026-05-18 09:14:12,581 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=95796
+2026-05-18 09:14:16,583 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:14:16,583 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:14:17,103 [INFO] tick jst=2026-05-18 09:14 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:19:17,108 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:19:17,110 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=155884
+2026-05-18 09:19:17,110 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=155884
+2026-05-18 09:19:21,111 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:19:21,111 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:19:21,626 [INFO] tick jst=2026-05-18 09:19 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:24:21,633 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:24:21,638 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=127000
+2026-05-18 09:24:21,638 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=127000
+2026-05-18 09:24:25,639 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:24:25,639 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:24:26,236 [INFO] tick jst=2026-05-18 09:24 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:29:26,241 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:29:26,248 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=119968
+2026-05-18 09:29:26,249 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=119968
+2026-05-18 09:29:30,251 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:29:30,251 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:29:30,782 [INFO] tick jst=2026-05-18 09:29 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:34:30,788 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:34:30,791 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=35220
+2026-05-18 09:34:30,791 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=35220
+2026-05-18 09:34:34,793 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:34:34,793 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:34:35,319 [INFO] tick jst=2026-05-18 09:34 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:39:35,324 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:39:35,329 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=83972
+2026-05-18 09:39:35,329 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=83972
+2026-05-18 09:39:39,330 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:39:39,330 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:39:39,868 [INFO] tick jst=2026-05-18 09:39 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:44:39,876 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:44:39,882 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=150964
+2026-05-18 09:44:39,882 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=150964
+2026-05-18 09:44:43,883 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:44:43,883 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:44:44,526 [INFO] tick jst=2026-05-18 09:44 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:49:44,531 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:49:44,533 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=125744
+2026-05-18 09:49:44,533 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=125744
+2026-05-18 09:49:48,534 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:49:48,535 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:49:49,020 [INFO] tick jst=2026-05-18 09:49 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:54:49,025 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:54:49,029 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=140780
+2026-05-18 09:54:49,029 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=140780
+2026-05-18 09:54:53,030 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:54:53,031 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:54:53,645 [INFO] tick jst=2026-05-18 09:54 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 09:59:53,650 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 09:59:53,652 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=144692
+2026-05-18 09:59:53,652 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=144692
+2026-05-18 09:59:57,655 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 09:59:57,655 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 09:59:58,179 [INFO] tick jst=2026-05-18 09:59 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 10:04:58,185 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 10:04:58,189 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=39272
+2026-05-18 10:04:58,189 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=39272
+2026-05-18 10:05:02,190 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 10:05:02,190 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 10:05:02,762 [INFO] tick jst=2026-05-18 10:04 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 10:10:02,768 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 10:10:02,770 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=35792
+2026-05-18 10:10:02,770 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=35792
+2026-05-18 10:10:06,772 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 10:10:06,772 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 10:10:07,378 [INFO] tick jst=2026-05-18 10:10 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 10:15:07,383 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 10:15:07,385 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=22216
+2026-05-18 10:15:07,386 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=22216
+2026-05-18 10:15:11,387 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 10:15:11,387 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 10:15:12,009 [INFO] tick jst=2026-05-18 10:15 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 10:20:12,014 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 10:20:12,016 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=74296
+2026-05-18 10:20:12,016 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=74296
+2026-05-18 10:20:16,018 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 10:20:16,018 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 10:20:16,500 [INFO] tick jst=2026-05-18 10:20 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 10:25:16,506 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 10:25:16,508 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=121124
+2026-05-18 10:25:16,508 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=121124
+2026-05-18 10:25:20,508 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 10:25:20,509 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 10:25:21,285 [INFO] tick jst=2026-05-18 10:25 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 10:30:21,291 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 10:30:21,294 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=31936
+2026-05-18 10:30:21,294 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=31936
+2026-05-18 10:30:25,295 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 10:30:25,295 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 10:30:25,837 [INFO] tick jst=2026-05-18 10:30 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 10:35:25,843 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 10:35:25,846 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=38500
+2026-05-18 10:35:25,846 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=38500
+2026-05-18 10:35:29,847 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 10:35:29,848 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 10:35:30,380 [INFO] tick jst=2026-05-18 10:35 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 10:40:30,386 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 10:40:30,394 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=91760
+2026-05-18 10:40:30,395 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=91760
+2026-05-18 10:40:34,395 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 10:40:34,395 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 10:40:34,906 [INFO] tick jst=2026-05-18 10:40 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 10:45:34,915 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 10:45:34,920 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=140336
+2026-05-18 10:45:34,921 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=140336
+2026-05-18 10:45:38,922 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 10:45:38,922 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 10:45:39,424 [INFO] tick jst=2026-05-18 10:45 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 10:50:39,431 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 10:50:39,438 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=117112
+2026-05-18 10:50:39,438 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=117112
+2026-05-18 10:50:43,439 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 10:50:43,439 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 10:50:43,948 [INFO] tick jst=2026-05-18 10:50 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 10:55:43,955 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 10:55:43,959 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=154852
+2026-05-18 10:55:43,959 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=154852
+2026-05-18 10:55:47,960 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 10:55:47,960 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 10:55:48,479 [INFO] tick jst=2026-05-18 10:55 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:00:48,486 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:00:48,492 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=154440
+2026-05-18 11:00:48,492 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=154440
+2026-05-18 11:00:52,496 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:00:52,496 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:00:53,049 [INFO] tick jst=2026-05-18 11:00 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:05:53,056 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:05:53,058 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=158292
+2026-05-18 11:05:53,058 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=158292
+2026-05-18 11:05:57,059 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:05:57,059 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:05:57,555 [INFO] tick jst=2026-05-18 11:05 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:10:57,561 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:10:57,563 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=100816
+2026-05-18 11:10:57,563 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=100816
+2026-05-18 11:11:01,564 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:11:01,564 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:11:02,104 [INFO] tick jst=2026-05-18 11:10 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:16:02,110 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:16:02,113 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=85832
+2026-05-18 11:16:02,114 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=85832
+2026-05-18 11:16:06,115 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:16:06,116 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:16:06,609 [INFO] tick jst=2026-05-18 11:16 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:21:06,615 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:21:06,617 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=8768
+2026-05-18 11:21:06,617 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=8768
+2026-05-18 11:21:10,618 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:21:10,618 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:21:11,106 [INFO] tick jst=2026-05-18 11:21 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:26:11,112 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:26:11,114 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=146880
+2026-05-18 11:26:11,114 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=146880
+2026-05-18 11:26:15,115 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:26:15,115 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:26:15,637 [INFO] tick jst=2026-05-18 11:26 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:31:15,645 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:31:15,651 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=64252
+2026-05-18 11:31:15,651 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=64252
+2026-05-18 11:31:19,655 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:31:19,656 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:31:20,204 [INFO] tick jst=2026-05-18 11:31 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:36:20,212 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:36:20,217 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=119864
+2026-05-18 11:36:20,218 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=119864
+2026-05-18 11:36:24,220 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:36:24,220 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:36:24,764 [INFO] tick jst=2026-05-18 11:36 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:41:24,772 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:41:24,781 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=73092
+2026-05-18 11:41:24,782 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=73092
+2026-05-18 11:41:28,783 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:41:28,783 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:41:29,405 [INFO] tick jst=2026-05-18 11:41 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:46:29,412 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:46:29,419 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=75688
+2026-05-18 11:46:29,420 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=75688
+2026-05-18 11:46:33,421 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:46:33,421 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:46:33,987 [INFO] tick jst=2026-05-18 11:46 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:51:33,993 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:51:33,998 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=99176
+2026-05-18 11:51:33,998 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=99176
+2026-05-18 11:51:38,000 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:51:38,000 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:51:38,654 [INFO] tick jst=2026-05-18 11:51 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 11:56:38,661 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 11:56:38,666 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=109108
+2026-05-18 11:56:38,666 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=109108
+2026-05-18 11:56:42,668 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 11:56:42,668 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 11:56:43,195 [INFO] tick jst=2026-05-18 11:56 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:01:43,203 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:01:43,208 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=16788
+2026-05-18 12:01:43,208 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=16788
+2026-05-18 12:01:47,210 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:01:47,210 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:01:48,057 [INFO] tick jst=2026-05-18 12:01 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:06:48,063 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:06:48,067 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=28868
+2026-05-18 12:06:48,067 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=28868
+2026-05-18 12:06:52,068 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:06:52,068 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:06:52,561 [INFO] tick jst=2026-05-18 12:06 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:11:52,569 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:11:52,580 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=115120
+2026-05-18 12:11:52,581 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=115120
+2026-05-18 12:11:56,582 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:11:56,582 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:11:57,094 [INFO] tick jst=2026-05-18 12:11 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:16:57,100 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:16:57,103 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=69640
+2026-05-18 12:16:57,104 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=69640
+2026-05-18 12:17:01,105 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:17:01,105 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:17:01,586 [INFO] tick jst=2026-05-18 12:16 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:22:01,593 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:22:01,605 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=125580
+2026-05-18 12:22:01,605 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=125580
+2026-05-18 12:22:05,606 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:22:05,606 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:22:06,140 [INFO] tick jst=2026-05-18 12:22 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:27:06,146 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:27:06,149 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=31708
+2026-05-18 12:27:06,149 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=31708
+2026-05-18 12:27:10,150 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:27:10,150 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:27:10,679 [INFO] tick jst=2026-05-18 12:27 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:32:10,684 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:32:10,687 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=73148
+2026-05-18 12:32:10,687 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=73148
+2026-05-18 12:32:14,688 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:32:14,688 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:32:15,200 [INFO] tick jst=2026-05-18 12:32 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:37:15,207 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:37:15,211 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=60584
+2026-05-18 12:37:15,212 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=60584
+2026-05-18 12:37:19,213 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:37:19,213 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:37:19,689 [INFO] tick jst=2026-05-18 12:37 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:42:19,694 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:42:19,697 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=56268
+2026-05-18 12:42:19,698 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=56268
+2026-05-18 12:42:23,699 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:42:23,699 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:42:24,227 [INFO] tick jst=2026-05-18 12:42 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:47:24,234 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:47:24,241 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=79552
+2026-05-18 12:47:24,242 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=79552
+2026-05-18 12:47:28,243 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:47:28,243 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:47:28,746 [INFO] tick jst=2026-05-18 12:47 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:52:28,752 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:52:28,757 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=128580
+2026-05-18 12:52:28,757 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=128580
+2026-05-18 12:52:32,758 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:52:32,758 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:52:33,339 [INFO] tick jst=2026-05-18 12:52 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 12:57:33,345 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 12:57:33,348 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=60024
+2026-05-18 12:57:33,349 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=60024
+2026-05-18 12:57:37,350 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 12:57:37,350 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 12:57:37,837 [INFO] tick jst=2026-05-18 12:57 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:02:37,842 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:02:37,844 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=88448
+2026-05-18 13:02:37,844 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=88448
+2026-05-18 13:02:41,846 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:02:41,846 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:02:42,419 [INFO] tick jst=2026-05-18 13:02 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:07:42,424 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:07:42,426 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=25428
+2026-05-18 13:07:42,426 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=25428
+2026-05-18 13:07:46,428 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:07:46,428 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:07:46,938 [INFO] tick jst=2026-05-18 13:07 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:12:46,943 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:12:46,946 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=41868
+2026-05-18 13:12:46,946 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=41868
+2026-05-18 13:12:50,947 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:12:50,947 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:12:51,405 [INFO] tick jst=2026-05-18 13:12 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:17:51,411 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:17:51,413 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=103324
+2026-05-18 13:17:51,413 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=103324
+2026-05-18 13:17:55,414 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:17:55,414 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:17:55,945 [INFO] tick jst=2026-05-18 13:17 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:22:55,951 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:22:55,953 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=30028
+2026-05-18 13:22:55,953 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=30028
+2026-05-18 13:22:59,954 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:22:59,954 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:23:00,479 [INFO] tick jst=2026-05-18 13:22 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:28:00,484 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:28:00,486 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=155072
+2026-05-18 13:28:00,486 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=155072
+2026-05-18 13:28:04,487 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:28:04,487 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:28:05,026 [INFO] tick jst=2026-05-18 13:28 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:33:05,031 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:33:05,034 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=112256
+2026-05-18 13:33:05,034 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=112256
+2026-05-18 13:33:09,036 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:33:09,036 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:33:09,483 [INFO] tick jst=2026-05-18 13:33 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:38:09,489 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:38:09,499 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=158292
+2026-05-18 13:38:09,500 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=158292
+2026-05-18 13:38:13,501 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:38:13,501 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:38:14,098 [INFO] tick jst=2026-05-18 13:38 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:43:14,106 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:43:14,110 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=41884
+2026-05-18 13:43:14,111 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=41884
+2026-05-18 13:43:18,111 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:43:18,111 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:43:18,722 [INFO] tick jst=2026-05-18 13:43 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:48:18,727 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:48:18,729 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=30236
+2026-05-18 13:48:18,729 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=30236
+2026-05-18 13:48:22,729 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:48:22,729 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:48:23,240 [INFO] tick jst=2026-05-18 13:48 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:53:23,246 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:53:23,255 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=149464
+2026-05-18 13:53:23,255 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=149464
+2026-05-18 13:53:27,257 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:53:27,257 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:53:27,789 [INFO] tick jst=2026-05-18 13:53 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 13:58:27,794 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 13:58:27,797 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=78184
+2026-05-18 13:58:27,797 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=78184
+2026-05-18 13:58:31,799 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 13:58:31,799 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 13:58:32,320 [INFO] tick jst=2026-05-18 13:58 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:03:32,325 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:03:32,327 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=80048
+2026-05-18 14:03:32,327 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=80048
+2026-05-18 14:03:36,328 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:03:36,328 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:03:36,859 [INFO] tick jst=2026-05-18 14:03 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:08:36,865 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:08:36,871 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=98516
+2026-05-18 14:08:36,871 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=98516
+2026-05-18 14:08:40,872 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:08:40,872 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:08:41,411 [INFO] tick jst=2026-05-18 14:08 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:13:41,416 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:13:41,418 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=81856
+2026-05-18 14:13:41,418 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=81856
+2026-05-18 14:13:45,420 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:13:45,420 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:13:45,932 [INFO] tick jst=2026-05-18 14:13 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:18:45,937 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:18:45,940 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=95164
+2026-05-18 14:18:45,940 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=95164
+2026-05-18 14:18:49,941 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:18:49,941 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:18:50,466 [INFO] tick jst=2026-05-18 14:18 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:23:50,471 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:23:50,473 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=115092
+2026-05-18 14:23:50,473 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=115092
+2026-05-18 14:23:54,475 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:23:54,475 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:23:55,120 [INFO] tick jst=2026-05-18 14:23 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:28:55,125 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:28:55,129 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=139356
+2026-05-18 14:28:55,129 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=139356
+2026-05-18 14:28:59,130 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:28:59,130 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:28:59,592 [INFO] tick jst=2026-05-18 14:28 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:33:59,599 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:33:59,608 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=65784
+2026-05-18 14:33:59,608 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=65784
+2026-05-18 14:34:03,609 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:34:03,609 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:34:04,139 [INFO] tick jst=2026-05-18 14:33 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:39:04,144 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:39:04,146 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=83472
+2026-05-18 14:39:04,146 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=83472
+2026-05-18 14:39:08,147 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:39:08,147 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:39:08,665 [INFO] tick jst=2026-05-18 14:39 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:44:08,671 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:44:08,673 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=101468
+2026-05-18 14:44:08,674 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=101468
+2026-05-18 14:44:12,675 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:44:12,675 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:44:13,163 [INFO] tick jst=2026-05-18 14:44 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:49:13,168 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:49:13,175 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=21816
+2026-05-18 14:49:13,175 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=21816
+2026-05-18 14:49:17,176 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:49:17,176 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:49:17,873 [INFO] tick jst=2026-05-18 14:49 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:54:17,879 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:54:17,887 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=35108
+2026-05-18 14:54:17,887 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=35108
+2026-05-18 14:54:21,889 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:54:21,889 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:54:22,422 [INFO] tick jst=2026-05-18 14:54 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 14:59:22,428 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 14:59:22,432 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=103948
+2026-05-18 14:59:22,432 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=103948
+2026-05-18 14:59:26,433 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 14:59:26,433 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 14:59:26,995 [INFO] tick jst=2026-05-18 14:59 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 15:04:27,001 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 15:04:27,004 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=92768
+2026-05-18 15:04:27,004 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=92768
+2026-05-18 15:04:31,007 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 15:04:31,007 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 15:04:31,579 [INFO] tick jst=2026-05-18 15:04 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 15:09:31,585 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 15:09:31,589 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=42116
+2026-05-18 15:09:31,589 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=42116
+2026-05-18 15:09:35,590 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 15:09:35,591 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 15:09:36,170 [INFO] tick jst=2026-05-18 15:09 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 15:14:36,177 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 15:14:36,182 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=47044
+2026-05-18 15:14:36,182 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=47044
+2026-05-18 15:14:40,183 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 15:14:40,183 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 15:14:40,692 [INFO] tick jst=2026-05-18 15:14 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 15:19:40,700 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 15:19:40,704 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=61464
+2026-05-18 15:19:40,704 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=61464
+2026-05-18 15:19:44,705 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 15:19:44,705 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 15:19:45,398 [INFO] tick jst=2026-05-18 15:19 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 15:24:45,404 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 15:24:45,407 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=124332
+2026-05-18 15:24:45,407 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=124332
+2026-05-18 15:24:49,408 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 15:24:49,408 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 15:24:49,977 [INFO] tick jst=2026-05-18 15:24 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 15:29:49,984 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 15:29:49,993 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=133220
+2026-05-18 15:29:49,993 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=133220
+2026-05-18 15:29:53,995 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 15:29:53,995 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 15:29:54,512 [INFO] tick jst=2026-05-18 15:29 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 15:34:54,519 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 15:34:54,524 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=154816
+2026-05-18 15:34:54,524 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=154816
+2026-05-18 15:34:58,526 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 15:34:58,526 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 15:34:59,182 [INFO] tick jst=2026-05-18 15:34 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 15:39:59,190 [WARNING] paper_trade: restart attempt (running=False bat=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile)
+2026-05-18 15:39:59,195 [INFO] spawned bat=start_paper_trade.bat abs=C:\Users\yhach\Documents\tradebotfile\scripts\start_paper_trade.bat cwd=C:\Users\yhach\Documents\tradebotfile child_pid=28096
+2026-05-18 15:39:59,196 [INFO] paper_trade: start_paper_trade.bat spawn OK child_pid=28096
+2026-05-18 15:40:03,196 [INFO] paper_trade: post-restart alive check after 4s running=False
+2026-05-18 15:40:03,197 [INFO] [WATCHDOG] restarted paper_trade
+2026-05-18 15:40:03,739 [INFO] tick jst=2026-05-18 15:39 paper_window=yes issue_bot=ok paper_trade=restarted
+2026-05-18 15:45:03,747 [INFO] tick jst=2026-05-18 15:45 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 15:50:03,755 [INFO] tick jst=2026-05-18 15:50 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 15:55:03,762 [INFO] tick jst=2026-05-18 15:55 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:00:03,769 [INFO] tick jst=2026-05-18 16:00 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:05:03,776 [INFO] tick jst=2026-05-18 16:05 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:10:03,784 [INFO] tick jst=2026-05-18 16:10 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:15:03,790 [INFO] tick jst=2026-05-18 16:15 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:20:03,797 [INFO] tick jst=2026-05-18 16:20 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:25:03,803 [INFO] tick jst=2026-05-18 16:25 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:30:03,809 [INFO] tick jst=2026-05-18 16:30 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:35:03,816 [INFO] tick jst=2026-05-18 16:35 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:40:03,822 [INFO] tick jst=2026-05-18 16:40 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:45:03,828 [INFO] tick jst=2026-05-18 16:45 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:50:03,836 [INFO] tick jst=2026-05-18 16:50 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 16:55:03,844 [INFO] tick jst=2026-05-18 16:55 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:00:03,850 [INFO] tick jst=2026-05-18 17:00 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:05:03,857 [INFO] tick jst=2026-05-18 17:05 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:10:03,864 [INFO] tick jst=2026-05-18 17:10 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:15:03,870 [INFO] tick jst=2026-05-18 17:15 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:20:03,876 [INFO] tick jst=2026-05-18 17:20 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:25:03,883 [INFO] tick jst=2026-05-18 17:25 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:30:03,889 [INFO] tick jst=2026-05-18 17:30 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:35:03,894 [INFO] tick jst=2026-05-18 17:35 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:40:03,900 [INFO] tick jst=2026-05-18 17:40 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:45:03,906 [INFO] tick jst=2026-05-18 17:45 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:50:03,911 [INFO] tick jst=2026-05-18 17:50 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 17:55:03,917 [INFO] tick jst=2026-05-18 17:55 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:00:03,924 [INFO] tick jst=2026-05-18 18:00 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:05:03,931 [INFO] tick jst=2026-05-18 18:05 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:10:03,937 [INFO] tick jst=2026-05-18 18:10 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:15:03,943 [INFO] tick jst=2026-05-18 18:15 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:20:03,949 [INFO] tick jst=2026-05-18 18:20 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:25:03,954 [INFO] tick jst=2026-05-18 18:25 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:30:03,960 [INFO] tick jst=2026-05-18 18:30 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:35:03,966 [INFO] tick jst=2026-05-18 18:35 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:40:03,973 [INFO] tick jst=2026-05-18 18:40 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:45:03,978 [INFO] tick jst=2026-05-18 18:45 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:50:03,984 [INFO] tick jst=2026-05-18 18:50 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 18:55:03,992 [INFO] tick jst=2026-05-18 18:55 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:00:03,997 [INFO] tick jst=2026-05-18 19:00 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:05:04,003 [INFO] tick jst=2026-05-18 19:05 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:10:04,009 [INFO] tick jst=2026-05-18 19:10 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:15:04,015 [INFO] tick jst=2026-05-18 19:15 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:20:04,021 [INFO] tick jst=2026-05-18 19:20 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:25:04,027 [INFO] tick jst=2026-05-18 19:25 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:30:04,033 [INFO] tick jst=2026-05-18 19:30 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:35:04,039 [INFO] tick jst=2026-05-18 19:35 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:40:04,044 [INFO] tick jst=2026-05-18 19:40 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:45:04,054 [INFO] tick jst=2026-05-18 19:45 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:50:04,062 [INFO] tick jst=2026-05-18 19:50 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 19:55:04,070 [INFO] tick jst=2026-05-18 19:55 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:00:04,076 [INFO] tick jst=2026-05-18 20:00 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:05:04,083 [INFO] tick jst=2026-05-18 20:05 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:10:04,090 [INFO] tick jst=2026-05-18 20:10 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:15:04,097 [INFO] tick jst=2026-05-18 20:15 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:20:04,104 [INFO] tick jst=2026-05-18 20:20 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:25:04,116 [INFO] tick jst=2026-05-18 20:25 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:30:04,125 [INFO] tick jst=2026-05-18 20:30 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:35:04,132 [INFO] tick jst=2026-05-18 20:35 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:40:04,138 [INFO] tick jst=2026-05-18 20:40 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:45:04,144 [INFO] tick jst=2026-05-18 20:45 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:50:04,150 [INFO] tick jst=2026-05-18 20:50 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 20:55:04,156 [INFO] tick jst=2026-05-18 20:55 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:00:04,163 [INFO] tick jst=2026-05-18 21:00 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:05:04,169 [INFO] tick jst=2026-05-18 21:05 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:10:04,176 [INFO] tick jst=2026-05-18 21:10 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:15:04,182 [INFO] tick jst=2026-05-18 21:15 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:20:04,188 [INFO] tick jst=2026-05-18 21:20 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:25:04,194 [INFO] tick jst=2026-05-18 21:25 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:30:04,200 [INFO] tick jst=2026-05-18 21:30 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:35:04,207 [INFO] tick jst=2026-05-18 21:35 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:40:04,214 [INFO] tick jst=2026-05-18 21:40 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:45:04,221 [INFO] tick jst=2026-05-18 21:45 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:50:04,227 [INFO] tick jst=2026-05-18 21:50 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 21:55:04,233 [INFO] tick jst=2026-05-18 21:55 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:00:04,238 [INFO] tick jst=2026-05-18 22:00 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:05:04,245 [INFO] tick jst=2026-05-18 22:05 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:10:04,251 [INFO] tick jst=2026-05-18 22:10 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:15:04,257 [INFO] tick jst=2026-05-18 22:15 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:20:04,263 [INFO] tick jst=2026-05-18 22:20 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:25:04,269 [INFO] tick jst=2026-05-18 22:25 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:30:04,277 [INFO] tick jst=2026-05-18 22:30 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:35:04,284 [INFO] tick jst=2026-05-18 22:35 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:40:04,290 [INFO] tick jst=2026-05-18 22:40 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:45:04,295 [INFO] tick jst=2026-05-18 22:45 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:50:04,301 [INFO] tick jst=2026-05-18 22:50 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 22:55:04,307 [INFO] tick jst=2026-05-18 22:55 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 23:00:04,314 [INFO] tick jst=2026-05-18 23:00 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 23:05:04,324 [INFO] tick jst=2026-05-18 23:05 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 23:10:04,332 [INFO] tick jst=2026-05-18 23:10 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 23:15:04,337 [INFO] tick jst=2026-05-18 23:15 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 23:20:04,343 [INFO] tick jst=2026-05-18 23:20 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 23:25:04,349 [INFO] tick jst=2026-05-18 23:25 paper_window=no issue_bot=ok paper_trade=idle
+2026-05-18 23:30:04,357 [INFO] tick jst=2026-05-18 23:30 paper_window=no issue_bot=ok paper_trade=idle

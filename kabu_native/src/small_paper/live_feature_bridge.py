@@ -8,10 +8,17 @@ import json
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Mapping, Optional
+from zoneinfo import ZoneInfo
 
 from research.continuation_quality_ranking import continuation_components
 from research.research_exit_criteria import _as_float
+
+JST = ZoneInfo("Asia/Tokyo")
+
+FAVORABLE_MODE_TICK_HIT = "tick_hit_ratio"
+FAVORABLE_MODE_MFE_LINKED = "mfe_linked"
 
 
 def _price(payload: Mapping[str, Any]) -> Optional[float]:
@@ -35,12 +42,15 @@ class LiveFeatureBridgeConfig:
     min_ticks_for_complete: int = 3
     tracking_reset_sec: float = 300.0
     momentum_lookback: int = 5
+    favorable_mode: str = FAVORABLE_MODE_TICK_HIT
+    favorable_mfe_scale: float = 0.003
+    use_market_time_window: bool = False
 
 
 @dataclass
 class SymbolTickState:
     ref_price: float = 0.0
-    window_start_mono: float = 0.0
+    window_start: float = 0.0
     running_max: float = 0.0
     running_min: float = 0.0
     peak_mae_pct: float = 0.0
@@ -86,12 +96,35 @@ class LiveFeatureSnapshot:
         }
 
 
+def mfe_linked_favorable(rolling_mfe_pct: float, *, scale: float) -> float:
+    if scale <= 0:
+        return 0.0
+    return min(1.0, max(0.0, float(rolling_mfe_pct) / scale))
+
+
 class LiveFeatureBridge:
     """Per-symbol rolling state; approximates replay MFE/MAE/duration on live PUSH."""
 
     def __init__(self, config: Optional[LiveFeatureBridgeConfig] = None) -> None:
         self.config = config or LiveFeatureBridgeConfig()
         self._symbols: dict[str, SymbolTickState] = {}
+
+    def _tick_time(self, payload: Mapping[str, Any]) -> float:
+        if self.config.use_market_time_window:
+            from storage.intraday_recorder import parse_kabu_time
+
+            raw = payload.get("CurrentPriceTime") or payload.get("recorded_at")
+            if raw is not None and str(raw).strip():
+                return parse_kabu_time(raw, fallback=datetime.now(JST)).timestamp()
+        return time.monotonic()
+
+    def _resolve_favorable(
+        self, *, tick_hit_favorable: float, rolling_mfe: float
+    ) -> float:
+        cfg = self.config
+        if cfg.favorable_mode == FAVORABLE_MODE_MFE_LINKED:
+            return mfe_linked_favorable(rolling_mfe, scale=cfg.favorable_mfe_scale)
+        return tick_hit_favorable
 
     def update(self, symbol: str, payload: Mapping[str, Any]) -> LiveFeatureSnapshot:
         price = _price(payload)
@@ -105,19 +138,19 @@ class LiveFeatureBridge:
             )
 
         cfg = self.config
-        now_m = time.monotonic()
+        now_t = self._tick_time(payload)
         st = self._symbols.get(symbol)
-        if st is None or (now_m - st.window_start_mono) > cfg.tracking_reset_sec:
+        if st is None or (now_t - st.window_start) > cfg.tracking_reset_sec:
             st = SymbolTickState(
                 ref_price=price,
-                window_start_mono=now_m,
+                window_start=now_t,
                 running_max=price,
                 running_min=price,
             )
             self._symbols[symbol] = st
 
         vwap = _vwap(payload)
-        st.ticks.append((now_m, price, vwap))
+        st.ticks.append((now_t, price, vwap))
         while len(st.ticks) > cfg.window_ticks:
             st.ticks.popleft()
 
@@ -137,7 +170,11 @@ class LiveFeatureBridge:
         recent = list(st.ticks)[-cfg.favorable_lookback :]
         recent_low = min(p for _, p, _ in recent) if recent else price
         fav_hits = sum(1 for _, p, _ in recent if p > ref or p > recent_low * 1.0001)
-        favorable = fav_hits / len(recent) if recent else 0.0
+        tick_hit_favorable = fav_hits / len(recent) if recent else 0.0
+        favorable = self._resolve_favorable(
+            tick_hit_favorable=tick_hit_favorable,
+            rolling_mfe=rolling_mfe,
+        )
 
         if price > ref or price > recent_low:
             st.favorable_streak += 1
@@ -172,6 +209,10 @@ class LiveFeatureBridge:
             "reason_if_incomplete": incomplete_reason,
             "window_ticks": len(st.ticks),
             "ref_price": round(ref, 4),
+            "favorable_mode": cfg.favorable_mode,
+            "tick_hit_favorable": round(tick_hit_favorable, 4),
+            "favorable_mfe_scale": cfg.favorable_mfe_scale,
+            "use_market_time_window": cfg.use_market_time_window,
         }
 
         return LiveFeatureSnapshot(
@@ -247,3 +288,22 @@ class LiveFeatureBridge:
             recovery = min(1.0, (price - st.running_min) / max(st.ref_price - st.running_min, 1e-9))
         mae_improving = st.last_mae_pct >= st.peak_mae_pct * 0.98
         return min(1.0, max(0.0, 0.5 * recovery + 0.5 * (1.0 if mae_improving else 0.0)))
+
+
+def feature_bridge_config_from_pilot(config: Any) -> LiveFeatureBridgeConfig:
+    """Build bridge config from SmallPaperPilotConfig / yaml raw fields."""
+    raw = getattr(config, "raw", None) or {}
+    mode = str(raw.get("favorable_mode", FAVORABLE_MODE_TICK_HIT) or FAVORABLE_MODE_TICK_HIT)
+    scale = float(raw.get("favorable_mfe_scale", 0.003))
+    use_market = bool(raw.get("use_market_time_window", False))
+    if getattr(config, "favorable_mode", None):
+        mode = str(config.favorable_mode)
+    if getattr(config, "favorable_mfe_scale", None) is not None:
+        scale = float(config.favorable_mfe_scale)
+    if getattr(config, "use_market_time_window", None) is not None:
+        use_market = bool(config.use_market_time_window)
+    return LiveFeatureBridgeConfig(
+        favorable_mode=mode,
+        favorable_mfe_scale=scale,
+        use_market_time_window=use_market,
+    )

@@ -22,6 +22,7 @@ from small_paper.safety import (
     check_discord_observer_only,
     check_discord_webhook_env,
     check_kabu_station_connection,
+    check_mfe_favorable_trial_config,
     check_no_live_order_paths,
     check_order_disabled,
     check_output_path_writable,
@@ -32,12 +33,18 @@ from small_paper.safety import (
 JST = ZoneInfo("Asia/Tokyo")
 
 EXPECTED_POLICY_LABEL = "q070_cap3_trial"
+EXPECTED_MFE_FAV_POLICY_LABEL = "q070_cap3_mfe_fav_trial"
 EXPECTED_MIN_QUALITY = 0.70
 EXPECTED_MAX_CONCURRENT = 3
 MIN_PHASE54_PF = 1.20
+MIN_PHASE60_STRUCTURAL_PF = 1.20
 DEFAULT_PHASE54_SESSION_REL = (
     "kabu_native/results/small_paper/20260518/push_replay_220451"
 )
+DEFAULT_PHASE60_STRUCTURAL_SESSION_REL = (
+    "kabu_native/results/small_paper/20260519/live_full_session_081047"
+)
+EXPECTED_STRUCTURAL_EXIT_POLICY = "combined_structural_exit_v1"
 
 
 @dataclass
@@ -65,6 +72,35 @@ def _expected_windows_match(config: SmallPaperPilotConfig) -> bool:
         if a.start != e.start or a.end != e.end:
             return False
     return True
+
+
+def check_phase67_mfe_fav_config(config: SmallPaperPilotConfig) -> ReadinessCheck:
+    ok = (
+        config.policy_label == EXPECTED_MFE_FAV_POLICY_LABEL
+        and config.policy_trial
+        and config.baseline_policy == "q070_cap3_trial"
+        and abs(config.min_continuation_quality - EXPECTED_MIN_QUALITY) < 1e-6
+        and config.max_concurrent_positions == EXPECTED_MAX_CONCURRENT
+        and config.favorable_mode == "mfe_linked"
+        and config.favorable_mfe_scale > 0
+        and config.use_market_time_window
+        and config.structural_exit_policy == EXPECTED_STRUCTURAL_EXIT_POLICY
+    )
+    return ReadinessCheck(
+        "phase67_mfe_fav_trial_config",
+        ok,
+        "q070_cap3_mfe_fav trial config OK"
+        if ok
+        else "expected q070_cap3_mfe_fav_trial with mfe_linked favorable + market time window",
+        {
+            "policy_label": config.policy_label,
+            "baseline_policy": config.baseline_policy,
+            "favorable_mode": config.favorable_mode,
+            "favorable_mfe_scale": config.favorable_mfe_scale,
+            "use_market_time_window": config.use_market_time_window,
+            "structural_exit_policy": config.structural_exit_policy,
+        },
+    )
 
 
 def check_phase51_config(config: SmallPaperPilotConfig) -> ReadinessCheck:
@@ -148,6 +184,11 @@ def check_phase54_baseline_pf(reference_session_dir: Path) -> ReadinessCheck:
     )
 
 
+def check_mfe_favorable_trial_readiness(config: SmallPaperPilotConfig) -> ReadinessCheck:
+    sc = check_mfe_favorable_trial_config(config)
+    return ReadinessCheck(sc.check_id, sc.passed, sc.message, sc.details)
+
+
 def check_take_observer_only(config: SmallPaperPilotConfig) -> ReadinessCheck:
     sc = check_discord_observer_only(config)
     nlo = check_no_live_order_paths(config)
@@ -229,21 +270,73 @@ def phase54_reference_pf(reference_session_dir: Path) -> Optional[float]:
     return float(pf) if isinstance(pf, (int, float)) else None
 
 
+def check_phase60_combined_structural_pass(
+    structural_session_dir: Path,
+    *,
+    config: SmallPaperPilotConfig,
+) -> ReadinessCheck:
+    path = structural_session_dir / "structural_observer_review.json"
+    data = _load_json(path)
+    policy = str(data.get("structural_exit_policy") or data.get("policy") or "")
+    verdict = str(data.get("official_verdict") or "")
+    pf = data.get("structural_pf")
+    pf_val = float(pf) if isinstance(pf, (int, float)) else 0.0
+    cfg_ok = (
+        config.structural_exit_policy == EXPECTED_STRUCTURAL_EXIT_POLICY
+        or policy == EXPECTED_STRUCTURAL_EXIT_POLICY
+    )
+    ok = (
+        bool(data)
+        and cfg_ok
+        and verdict == "structural_pass"
+        and round(pf_val, 2) >= MIN_PHASE60_STRUCTURAL_PF
+    )
+    return ReadinessCheck(
+        "phase60_combined_structural_pass",
+        ok,
+        f"combined_structural_exit_v1 official_verdict={verdict} PF={pf_val}"
+        if ok
+        else f"missing review or verdict={verdict} PF={pf} policy={policy}",
+        {
+            "structural_exit_policy": policy or config.structural_exit_policy,
+            "official_verdict": verdict,
+            "structural_pf": pf,
+            "structural_avg_pnl": data.get("structural_avg_pnl"),
+            "reference": str(structural_session_dir),
+        },
+    )
+
+
 def live_observer_retrial_summary_fields(
     config: SmallPaperPilotConfig,
     *,
     reference_session_dir: Optional[Path] = None,
+    structural_session_dir: Optional[Path] = None,
 ) -> dict[str, Any]:
     pf = phase54_reference_pf(reference_session_dir) if reference_session_dir else None
+    struct_data = (
+        _load_json(structural_session_dir / "structural_observer_review.json")
+        if structural_session_dir
+        else {}
+    )
     return {
-        "live_observer_retrial_phase": 55,
+        "live_observer_retrial_phase": 61,
         "runtime_policy": config.policy_label,
-        "exit_policy": "baseline_observer",
+        "exit_policy": config.structural_exit_policy or EXPECTED_STRUCTURAL_EXIT_POLICY,
+        "structural_exit_policy": config.structural_exit_policy or EXPECTED_STRUCTURAL_EXIT_POLICY,
+        "observer_exit_mode": "combined_structural_exit_notification_only",
         "take_is_observer_only": True,
         "allowed_trading_windows": windows_summary(config.allowed_windows()),
         "phase54_reference_pf": pf,
         "phase54_reference_session": str(reference_session_dir) if reference_session_dir else None,
-        "phase54_take_note": "Replay TAKE after-extension rate was high; TAKE is not EXIT",
+        "phase60_structural_pf": struct_data.get("structural_pf"),
+        "phase60_official_verdict": struct_data.get("official_verdict"),
+        "phase60_structural_session": str(structural_session_dir) if structural_session_dir else None,
+        "phase54_take_note": "TAKE is observer signal only; combined structural rules may EXIT notify",
+        "post_session_review_cmd": (
+            "python kabu_native/scripts/review_structural_observer.py "
+            "--structural-exit-policy combined_structural_exit_v1"
+        ),
     }
 
 
@@ -253,15 +346,23 @@ def run_live_observer_readiness(
     repo_root: Path,
     day_key: str,
     reference_session_dir: Path,
+    structural_session_dir: Optional[Path] = None,
     skip_kabu: bool = False,
     skip_safety_bundle: bool = False,
 ) -> dict[str, Any]:
     config = load_pilot_config(config_path)
+    struct_dir = structural_session_dir or (repo_root / DEFAULT_PHASE60_STRUCTURAL_SESSION_REL)
+    policy_checks: list[ReadinessCheck] = (
+        [check_phase67_mfe_fav_config(config), check_mfe_favorable_trial_readiness(config)]
+        if config.policy_label == EXPECTED_MFE_FAV_POLICY_LABEL
+        else [check_phase51_config(config)]
+    )
     checks: list[ReadinessCheck] = [
-        check_phase51_config(config),
+        *policy_checks,
         check_phase52_allowed_windows(config),
         check_phase53_cap_not_recommended(reference_session_dir),
         check_phase54_baseline_pf(reference_session_dir),
+        check_phase60_combined_structural_pass(struct_dir, config=config),
         check_take_observer_only(config),
         *check_safety_core(config),
         check_discord_ready(config),
@@ -305,15 +406,18 @@ def run_live_observer_readiness(
     ready = len(failed) == 0
 
     return {
-        "phase": 55,
+        "phase": 61,
         "component": "live_observer_readiness",
         "generated_at": datetime.now(JST).isoformat(timespec="seconds"),
         "readiness": ready,
         "ready_for_live_observer_retrial": ready,
         "config_path": str(config_path),
         "reference_session_dir": str(reference_session_dir),
+        "structural_session_dir": str(struct_dir),
         "retrial_policy": live_observer_retrial_summary_fields(
-            config, reference_session_dir=reference_session_dir
+            config,
+            reference_session_dir=reference_session_dir,
+            structural_session_dir=struct_dir,
         ),
         "live_run_command": (
             "python kabu_native/scripts/run_small_paper_pilot.py --dry-run --source live "

@@ -366,41 +366,62 @@ class SmallPaperDiscordNotifier:
         )
 
     def notify_exit(self, *, context: Mapping[str, Any]) -> bool:
+        if not context.get("is_structural_exit"):
+            return False
         sym = str(context.get("symbol", ""))
         comps = context.get("components") or {}
+        reason = str(context.get("exit_reason", "—"))
         fields = [
             *self._policy_fields(),
+            {
+                "name": "STRUCTURAL EXIT",
+                "value": "Observer notification only — NOT an order",
+                "inline": False,
+            },
             {"name": "symbol", "value": sym, "inline": True},
+            {"name": "exit_reason", "value": reason, "inline": True},
+            {
+                "name": "continuation_quality",
+                "value": _fmt_num(context.get("continuation_quality") or comps.get("continuation_quality"), digits=4),
+                "inline": True,
+            },
+            {
+                "name": "momentum_continuation",
+                "value": _fmt_num(
+                    context.get("momentum_continuation") or comps.get("momentum_continuation"),
+                    digits=4,
+                ),
+                "inline": True,
+            },
             {
                 "name": "realized_pnl_pct",
                 "value": _fmt_num(context.get("realized_pnl_pct") or context.get("unrealized_pnl_pct")),
                 "inline": True,
             },
-            {"name": "exit_reason", "value": str(context.get("exit_reason", "—")), "inline": True},
+            {"name": "MFE_pct", "value": _fmt_num(context.get("mfe_pct") or context.get("max_favorable")), "inline": True},
+            {"name": "MAE_pct", "value": _fmt_num(context.get("mae_pct") or context.get("max_adverse")), "inline": True},
+            {
+                "name": "TAKE was not exit",
+                "value": str(context.get("take_was_not_exit", True)),
+                "inline": False,
+            },
             {
                 "name": "hold_duration_sec",
                 "value": _fmt_num(context.get("hold_duration_sec"), digits=0),
                 "inline": True,
             },
             {
-                "name": "continuation_breakdown",
-                "value": str(context.get("continuation_breakdown", False)),
+                "name": "structural_exit_policy",
+                "value": str(context.get("structural_exit_policy", "—")),
                 "inline": True,
             },
-            {
-                "name": "bearish_accumulation",
-                "value": _fmt_num(context.get("bearish_accumulation") or comps.get("bearish_accumulation")),
-                "inline": True,
-            },
-            {"name": "max_favorable", "value": _fmt_num(context.get("max_favorable")), "inline": True},
-            {"name": "max_adverse", "value": _fmt_num(context.get("max_adverse")), "inline": True},
         ]
         return self._post(
-            event_tag="EXIT",
-            title_line=f"EXIT {sym}",
+            event_tag="STRUCTURAL EXIT",
+            title_line=f"[STRUCTURAL EXIT] {sym} | {reason}",
             fields=fields,
             color=0xC05621,
-            dedupe_key=f"exit|{sym}|{context.get('exit_reason')}",
+            dedupe_key=f"structural_exit|{sym}|{reason}",
         )
 
     def notify_rejected(
@@ -485,6 +506,31 @@ class SmallPaperDiscordNotifier:
             *self._policy_fields(),
             {"name": "ENTRY_count", "value": str(summary.get("observer_entry_count", 0)), "inline": True},
             {"name": "EXIT_count", "value": str(summary.get("observer_exit_count", 0)), "inline": True},
+            {
+                "name": "structural_exit_policy",
+                "value": str(summary.get("structural_exit_policy", "—")),
+                "inline": True,
+            },
+            {
+                "name": "official_exit_count",
+                "value": str(summary.get("official_exit_count", 0)),
+                "inline": True,
+            },
+            {
+                "name": "structural_exit_count",
+                "value": str(summary.get("structural_exit_count", 0)),
+                "inline": True,
+            },
+            {
+                "name": "virtual_hold_ignored",
+                "value": str(summary.get("virtual_hold_expired_ignored_count", 0)),
+                "inline": True,
+            },
+            {
+                "name": "structural_exit_reasons",
+                "value": str(summary.get("structural_exit_reason_counts", {}))[:900],
+                "inline": False,
+            },
             {"name": "HOLD_notifications", "value": str(summary.get("observer_hold_count", 0)), "inline": True},
             {"name": "TAKE_signals", "value": str(summary.get("observer_take_count", 0)), "inline": True},
             {"name": "avg_hold_sec", "value": _fmt_num(avg_hold, digits=0), "inline": True},
@@ -575,6 +621,14 @@ def build_session_summary_extras(
                 "observer_avg_hold_sec": (
                     sum(durations) / len(durations) if durations else None
                 ),
+                "structural_exit_policy": observer_stats.get("structural_exit_policy"),
+                "structural_exit_count": observer_stats.get("structural_exit_count", 0),
+                "structural_exit_reason_counts": observer_stats.get("structural_exit_reason_counts", {}),
+                "virtual_hold_expired_ignored_count": observer_stats.get(
+                    "virtual_hold_expired_ignored_count", 0
+                ),
+                "official_exit_count": observer_stats.get("official_exit_count", 0),
+                "session_end_exit_count": observer_stats.get("session_end_exit_count", 0),
             }
         )
     return out
@@ -611,11 +665,18 @@ def discord_config_from_pilot(config: Any) -> SmallPaperDiscordConfig:
 
 
 def observer_tracker_config_from_pilot(config: Any) -> Any:
+    from research.structural_exit_policies import POLICY_COMBINED_STRUCTURAL_EXIT_V1
     from small_paper.observer_position_tracker import ObserverTrackerConfig
 
+    policy = str(
+        getattr(config, "structural_exit_policy", None)
+        or POLICY_COMBINED_STRUCTURAL_EXIT_V1
+    )
     return ObserverTrackerConfig(
         hold_min=float(config.discord_hold_min),
         hold_quality_delta=float(config.discord_hold_quality_delta),
         take_quality_drop=float(config.discord_take_quality_drop),
         hard_stop_pct=float(config.discord_hard_stop_pct),
+        structural_exit_policy=policy,
+        live_session_end=str(getattr(config, "live_session_end", "15:30")),
     )

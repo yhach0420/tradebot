@@ -353,6 +353,8 @@ def _dispatch_observer_events(
             elif ev.kind == OBSERVER_TAKE:
                 discord.notify_take(context=ev.context)
             elif ev.kind == OBSERVER_EXIT:
+                if not ev.context.get("is_structural_exit"):
+                    continue
                 discord.notify_exit(context=ev.context)
         except Exception:
             pass
@@ -478,17 +480,27 @@ def _process_push_payload(
             },
             fields=ctx.pos_fields,
         )
-        if ctx.observer and not ctx.observer.has_open(sym):
+        if ctx.observer:
             try:
                 entry_px = float(payload.get("CurrentPrice") or 0)
             except (TypeError, ValueError):
                 entry_px = 0.0
-            ctx.observer.register_entry(
-                trade=trade,
-                payload=enriched,
-                quality_tier=str(decision.quality_tier or ""),
-                entry_price=entry_px,
-            )
+            if entry_px > 0 and ctx.observer.has_open(sym):
+                overlap_events = ctx.observer.close_for_overlap(
+                    symbol=sym,
+                    trade=trade,
+                    payload=enriched,
+                    current_price=entry_px,
+                    session_bucket=bucket,
+                )
+                _dispatch_observer_events(overlap_events, discord=ctx.discord)
+            if entry_px > 0 and not ctx.observer.has_open(sym):
+                ctx.observer.register_entry(
+                    trade=trade,
+                    payload=enriched,
+                    quality_tier=str(decision.quality_tier or ""),
+                    entry_price=entry_px,
+                )
         if ctx.discord and ctx.discord.active:
             ctx.discord.notify_entry(
                 event=acc,
@@ -526,12 +538,26 @@ def _quality_ge_0_55_count(scores: Sequence[float]) -> int:
 
 def _policy_summary_extras(config: SmallPaperPilotConfig) -> dict[str, Any]:
     out = dict(config.policy_summary_fields())
-    if config.policy_trial and config.policy_label == "q070_cap3_trial":
-        from small_paper.live_observer_readiness import live_observer_retrial_summary_fields
+    if config.policy_trial and config.policy_label in (
+        "q070_cap3_trial",
+        "q070_cap3_mfe_fav_trial",
+    ):
+        from small_paper.live_observer_readiness import (
+            DEFAULT_PHASE60_STRUCTURAL_SESSION_REL,
+            DEFAULT_PHASE54_SESSION_REL,
+            live_observer_retrial_summary_fields,
+        )
 
         repo_root = Path(__file__).resolve().parents[3]
-        ref = repo_root / "kabu_native/results/small_paper/20260518/push_replay_220451"
-        out.update(live_observer_retrial_summary_fields(config, reference_session_dir=ref))
+        ref = repo_root / DEFAULT_PHASE54_SESSION_REL
+        struct_ref = repo_root / DEFAULT_PHASE60_STRUCTURAL_SESSION_REL
+        out.update(
+            live_observer_retrial_summary_fields(
+                config,
+                reference_session_dir=ref,
+                structural_session_dir=struct_ref,
+            )
+        )
     return out
 
 
@@ -587,6 +613,59 @@ def _load_push_replay_records(
                 if max_rows is not None and len(rows) >= max_rows:
                     return sorted(rows, key=lambda r: r[0])
     return sorted(rows, key=lambda r: r[0])
+
+
+_C_GROUP_FAVORABLE_FADE_KEYS = frozenset(
+    {
+        ("7013.T", "2026-05-19T10:11:57+09:00"),
+        ("9412.T", "2026-05-19T10:37:03+09:00"),
+        ("9434.T", "2026-05-19T10:59:28+09:00"),
+        ("8306.T", "2026-05-19T12:54:03+09:00"),
+        ("7974.T", "2026-05-19T13:15:04+09:00"),
+        ("8058.T", "2026-05-19T14:55:45+09:00"),
+    }
+)
+
+
+def _structural_metrics_for_push_replay(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    config: SmallPaperPilotConfig,
+    poll_interval_sec: float,
+) -> dict[str, Any]:
+    from research.structural_observer_review import (
+        _session_end_time,
+        _summarize_structural_trades,
+        replay_combined_structural_exit_v1,
+    )
+
+    if not config.structural_exit_policy:
+        return {}
+    session_end = _session_end_time(events)
+    trades, _ = replay_combined_structural_exit_v1(
+        events,
+        pilot_config=config,
+        poll_interval_sec=poll_interval_sec,
+        session_end=session_end,
+    )
+    met = _summarize_structural_trades(trades)
+    accepted_keys = {
+        (str(e.get("symbol") or ""), str(e.get("entry_time") or ""))
+        for e in events
+        if e.get("event_type") == "accepted"
+    }
+    exit_dist = met.get("exit_reason_distribution") or {}
+    return {
+        "structural_exit_policy": config.structural_exit_policy,
+        "structural_pf": met.get("structural_pf"),
+        "structural_avg_pnl_pct": met.get("structural_avg_pnl"),
+        "structural_trade_count": met.get("structural_trade_count"),
+        "favorable_fade_exit_count": int(exit_dist.get("favorable_fade_exit", 0)),
+        "c_group_pass_count": sum(1 for k in _C_GROUP_FAVORABLE_FADE_KEYS if k in accepted_keys),
+        "favorable_mode": config.favorable_mode,
+        "favorable_mfe_scale": config.favorable_mfe_scale,
+        "use_market_time_window": config.use_market_time_window,
+    }
 
 
 def _build_push_replay_summary(
@@ -681,7 +760,7 @@ def run_push_replay_dry_run(
 
     gate = replay_config.make_exposure_gate()
     gate_cfg = replay_config.exposure_gate_config()
-    feature_bridge = LiveFeatureBridge()
+    feature_bridge = LiveFeatureBridge(replay_config.feature_bridge_config())
     output_dir.mkdir(parents=True, exist_ok=True)
     writer = LiveSessionWriter(output_dir, incremental=True, event_fields=EVENT_FIELDS)
     state = _LiveRunState(started_mono=time.monotonic())
@@ -753,6 +832,13 @@ def run_push_replay_dry_run(
         runtime_sec=runtime_sec,
         poll_interval_sec=poll_interval_sec,
         replay_speed_sec=replay_speed_sec,
+    )
+    summary.update(
+        _structural_metrics_for_push_replay(
+            state.events,
+            config=replay_config,
+            poll_interval_sec=poll_interval_sec,
+        )
     )
     if discord and discord.active:
         summary.update(
@@ -989,7 +1075,7 @@ def run_live_dry_run(
 
     gate = config.make_exposure_gate()
     gate_cfg = config.exposure_gate_config()
-    feature_bridge = LiveFeatureBridge()
+    feature_bridge = LiveFeatureBridge(config.feature_bridge_config())
     code_to_symbol: dict[str, str] = {}
     sym_specs: list[tuple[str, int]] = []
     for sym, sym_key, ex in symbols:
@@ -1273,6 +1359,7 @@ def _observer_stats_dict(observer: Optional[ObserverPositionTracker]) -> Optiona
     if observer is None:
         return None
     s = observer.stats
+    cfg = observer.cfg
     return {
         "entry_count": s.entry_count,
         "exit_count": s.exit_count,
@@ -1280,6 +1367,12 @@ def _observer_stats_dict(observer: Optional[ObserverPositionTracker]) -> Optiona
         "take_count": s.take_count,
         "holding_count": observer.open_count(),
         "hold_durations_sec": list(s.hold_durations_sec),
+        "structural_exit_policy": cfg.structural_exit_policy,
+        "structural_exit_count": s.structural_exit_count,
+        "structural_exit_reason_counts": dict(s.structural_exit_reason_counts),
+        "virtual_hold_expired_ignored_count": s.virtual_hold_expired_ignored_count,
+        "official_exit_count": s.official_exit_count,
+        "session_end_exit_count": s.session_end_exit_count,
     }
 
 

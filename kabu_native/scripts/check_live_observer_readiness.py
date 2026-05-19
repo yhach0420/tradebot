@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Phase 55: Live observer re-trial readiness (q070_cap3).
+Phase 61: Live observer re-trial readiness (q070_cap3 + combined_structural_exit_v1).
 
 Example::
     python kabu_native/scripts/check_live_observer_readiness.py \\
@@ -34,6 +34,7 @@ def main() -> int:
     repo_root, native_root = _bootstrap()
     from small_paper.live_observer_readiness import (
         DEFAULT_PHASE54_SESSION_REL,
+        DEFAULT_PHASE60_STRUCTURAL_SESSION_REL,
         run_live_observer_readiness,
         write_readiness_report,
     )
@@ -51,6 +52,12 @@ def main() -> int:
         default=repo_root / DEFAULT_PHASE54_SESSION_REL,
         help="Push-replay dir with Phase53/54 review artifacts",
     )
+    parser.add_argument(
+        "--structural-session-dir",
+        type=Path,
+        default=repo_root / DEFAULT_PHASE60_STRUCTURAL_SESSION_REL,
+        help="Session dir with structural_observer_review.json (Phase60)",
+    )
     parser.add_argument("--report-date", default=None)
     parser.add_argument("--skip-kabu", action="store_true")
     parser.add_argument("--skip-safety", action="store_true")
@@ -65,6 +72,9 @@ def main() -> int:
     ref_dir = args.reference_session_dir
     if not ref_dir.is_absolute():
         ref_dir = repo_root / ref_dir
+    struct_dir = args.structural_session_dir
+    if not struct_dir.is_absolute():
+        struct_dir = repo_root / struct_dir
 
     from small_paper.config import load_pilot_config
 
@@ -82,6 +92,7 @@ def main() -> int:
         repo_root=repo_root,
         day_key=day_key,
         reference_session_dir=ref_dir,
+        structural_session_dir=struct_dir,
         skip_kabu=args.skip_kabu,
         skip_safety_bundle=args.skip_safety,
     )

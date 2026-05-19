@@ -832,6 +832,245 @@ python kabu_native/scripts/review_exposure_cap_whatif.py --session-dir <live_ful
 
 
 
+## Phase 56 — TAKE 診断 / Quality Inflation（分析のみ）
+
+
+
+ENTRY/EXIT/cap/quality 閾値/時間帯は**変更禁止**。診断のみ。
+
+
+
+```bash
+
+python kabu_native/scripts/review_phase56_diagnosis.py \\
+
+  --session-dir kabu_native/results/small_paper/YYYYMMDD/live_full_session_HHMMSS \\
+
+  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml
+
+```
+
+
+
+| 出力 | 内容 |
+
+|------|------|
+
+| `take_signal_decomposition.json` | TAKE 要因分解・+30/60/120/300s 上昇継続率 |
+
+| `take_signal_breakdown.csv` | 各 TAKE 行 |
+
+| `quality_band_review.json` | 0.70–0.85+ 帯別 PF |
+
+| `quality_band_review.csv` | 取引別 band |
+
+| `verdict.phase56_verdict` | `continue_current_trial` or `need_quality_review` |
+
+
+
+## Phase 58 — structural_observer_v1（公式 PF / 構造ベース評価）
+
+
+
+ENTRY/EXIT v13/cap/quality/時間帯は**変更禁止**。レビュー専用の擬似売買 PF。
+
+
+
+- **公式:** `structural_pf`（`virtual_hold_expired` / 固定 horizon / `hold_max_*` 不使用）
+- **参考のみ:** `legacy_virtual_hold_pf`（300 秒窓・`legacy_` 接頭辞）
+- TAKE は売却扱いしない（`take_pnl_pct` は参考）
+
+
+
+```bash
+
+python kabu_native/scripts/review_structural_observer.py \\
+
+  --session-dir kabu_native/results/small_paper/YYYYMMDD/live_full_session_HHMMSS \\
+
+  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml
+
+```
+
+
+
+| 出力 | 内容 |
+
+|------|------|
+
+| `structural_observer_review.json` | `structural_pf`, `official_verdict`, `legacy_virtual_hold_pf` |
+
+| `structural_trades.csv` | 構造 EXIT / session_end で確定した取引 |
+
+| `structural_events.csv` | entry / hold / take / structural_exit |
+
+| `structural_exit_reasons.csv` | `exit_reason_distribution` 内訳 |
+
+
+
+`official_verdict`: `structural_pass` \| `structural_needs_exit_design` \| `structural_needs_more_sessions` \| `structural_fail`
+
+
+
+## Phase 60 — combined_structural_exit_v1 公式評価
+
+
+
+Phase58 baseline に加え、**combined_structural_exit_v1** を公式 EXIT policy として選択可能。
+
+
+
+```bash
+
+python kabu_native/scripts/review_structural_observer.py \\
+
+  --session-dir kabu_native/results/small_paper/20260519/live_full_session_081047 \\
+
+  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml \\
+
+  --structural-exit-policy combined_structural_exit_v1
+
+```
+
+
+
+| 追加出力 | 内容 |
+
+|----------|------|
+
+| `structural_policy_comparison.csv` | baseline vs combined PF |
+
+| `structural_exit_policy_summary.csv` | 公式 policy・legacy 参考値 |
+
+
+
+- 既定 `--structural-exit-policy structural_observer_v1`（明示は JSON の `structural_exit_policy`）
+- 公式判定は選択 policy のみ（`legacy_virtual_hold_pf` は参考）
+- combined 許可 EXIT: stop / quality_decay / momentum_fade / favorable_fade / vwap_break / mfe_giveback / overlap / session_end
+
+
+
+## Phase 61 — Live observer + combined_structural_exit_v1（通知のみ）
+
+
+
+**実発注なし。** `order_enabled=false`, `paper_only=true`, `structural_exit_policy: combined_structural_exit_v1`
+
+
+
+- Live `ObserverPositionTracker` が `structural_exit_policies` で構造 EXIT を判定
+- `virtual_hold_expired` は Discord / official summary に出さない（`virtual_hold_expired_ignored_count` のみ）
+- Discord EXIT は `[STRUCTURAL EXIT]` のみ（reason / quality / momentum / pnl / MFE/MAE / TAKE was not exit）
+- TAKE は従来どおり売却扱いしない
+
+
+
+```bash
+
+python kabu_native/scripts/check_live_observer_readiness.py \\
+
+  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml \\
+
+  --structural-session-dir kabu_native/results/small_paper/20260519/live_full_session_081047
+
+```
+
+
+
+引け後（同じ policy）:
+
+
+
+```bash
+
+python kabu_native/scripts/review_structural_observer.py \\
+
+  --session-dir <live_session_dir> \\
+
+  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml \\
+
+  --structural-exit-policy combined_structural_exit_v1
+
+```
+
+
+
+セッション summary 追加キー: `structural_exit_policy`, `structural_exit_count`, `structural_exit_reason_counts`, `virtual_hold_expired_ignored_count`, `official_exit_count`, `session_end_exit_count`
+
+
+
+**設計上の位置づけ:** combined structural exit は **observer 通知のみ**。発注・EXIT v13 本番ロジック・ENTRY/quality/cap は変更しない。
+
+
+
+## Phase 59 — Structural Exit Design Review（分析のみ）
+
+
+
+Phase58 の PF 乖離（structural vs legacy VH）を分解し、構造 EXIT 候補と overlap 方針を比較。
+
+
+
+```bash
+
+python kabu_native/scripts/review_structural_exit_design.py \\
+
+  --session-dir kabu_native/results/small_paper/YYYYMMDD/live_full_session_HHMMSS \\
+
+  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml
+
+```
+
+
+
+| 出力 | 内容 |
+
+|------|------|
+
+| `structural_exit_design_review.json` | PF 乖離説明、`recommend_next_step` |
+
+| `structural_loss_decomposition.csv` | 負けトレード分類 |
+
+| `overlap_replacement_review.csv` | overlap 方針 what-if |
+
+| `structural_exit_candidate_matrix.csv` | 構造 EXIT policy 比較（VH/horizon 禁止） |
+
+
+
+`recommend_next_step`: `add_structural_exit_v1` \| `fix_duplicate_overlap_first` \| `entry_quality_not_enough` \| `continue_observation_only`
+
+
+
+## Phase 67 — MFE-linked favorable trial config
+
+Phase66 の push-replay（gate+cap+`combined_structural_exit_v1`）で B 案が current を上回ったため、**trial 専用** config で favorable を価格連動に変更。
+
+| 項目 | `q070_cap3_trial`（現行維持） | `q070_cap3_mfe_fav_trial`（Phase67） |
+|------|------------------------------|-------------------------------------|
+| config | `configs/small_paper_pilot_q070_cap3.yaml` | `configs/small_paper_pilot_q070_cap3_mfe_fav.yaml` |
+| favorable | tick 連続ヒット率（bridge 既定） | `min(1, rolling_mfe_pct / 0.003)` |
+| bridge 時刻 | `time.monotonic()` | `CurrentPriceTime`（`use_market_time_window: true`） |
+| 本番 yaml | 変更なし | 変更なし |
+
+```bash
+python kabu_native/scripts/check_small_paper_safety.py \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_mfe_fav.yaml
+
+python kabu_native/scripts/run_small_paper_pilot.py --dry-run --source push-replay \
+  --push-dir kabu_native/data/push_jsonl/2026-05-19 \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_mfe_fav.yaml \
+  --poll-interval-sec 5 --skip-safety --no-discord
+
+python kabu_native/scripts/review_structural_observer.py \
+  --session-dir kabu_native/results/small_paper/YYYYMMDD/push_replay_HHMMSS \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_mfe_fav.yaml \
+  --structural-exit-policy combined_structural_exit_v1
+```
+
+`small_paper_summary.json` に `favorable_mode` / `structural_pf` / `favorable_fade_exit_count` / `c_group_pass_count` を記録（push-replay 終了時に structural 再評価）。
+
+
+
 ## 関連
 
 

@@ -529,6 +529,40 @@ def check_legacy_paper_trade_warning(repo_root: Path) -> SafetyCheck:
     )
 
 
+def check_mfe_favorable_trial_config(config: SmallPaperPilotConfig) -> SafetyCheck:
+    mode = (config.favorable_mode or "").strip()
+    if mode != "mfe_linked":
+        return SafetyCheck(
+            "mfe_favorable_trial_config",
+            True,
+            f"favorable_mode={mode or 'default'} (mfe_linked checks skipped)",
+            {"favorable_mode": mode},
+        )
+    scale_ok = config.favorable_mfe_scale > 0
+    market_ok = bool(config.use_market_time_window)
+    trial_ok = config.policy_trial and (config.policy_label or "").endswith("_trial")
+    ok = scale_ok and market_ok and trial_ok
+    msgs = []
+    if not trial_ok:
+        msgs.append("policy_trial=true and policy_label *_trial required")
+    if not scale_ok:
+        msgs.append("favorable_mfe_scale must be > 0")
+    if not market_ok:
+        msgs.append("use_market_time_window must be true for mfe_linked trial")
+    return SafetyCheck(
+        "mfe_favorable_trial_config",
+        ok,
+        "mfe_linked trial bridge settings OK" if ok else "; ".join(msgs),
+        {
+            "favorable_mode": mode,
+            "favorable_mfe_scale": config.favorable_mfe_scale,
+            "use_market_time_window": config.use_market_time_window,
+            "policy_label": config.policy_label,
+            "policy_trial": config.policy_trial,
+        },
+    )
+
+
 def check_no_legacy_yahoo_paper() -> SafetyCheck:
     legacy = "kabu_signal_shadow" in sys.modules or "yahoo_kabu_watch" in sys.modules
     return SafetyCheck(
@@ -565,6 +599,7 @@ def run_all_safety_checks(
         check_discord_observer_only(config),
         check_discord_notifier_no_orders(),
         check_discord_webhook_env(config),
+        check_mfe_favorable_trial_config(config),
         check_output_path_writable(config, repo_root=repo_root, day_key=day_key),
     ]
     if live_mode or full_session:

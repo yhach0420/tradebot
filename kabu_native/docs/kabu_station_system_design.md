@@ -2,19 +2,20 @@
 
 **対象リポジトリ:** tradebotfile / `kabu_native/`  
 **想定読者:** kabu_native を初めて触れる開発者・運用者  
-**位置づけ:** 本文書は **kabuステーション® API を一次データ源とする新系**（universe・朝スクリーニング・リプレイ検証・shadow・**small paper observer**）の設計仕様である。**売買ロジックの意味は、採用済みルール（Phase 13 / Logic Lab v13 frozen）を変えない**前提で、パスと起動方法を **2026-05-18（Phase 55）** 時点の実装に合わせて記述する。  
+**位置づけ:** 本文書は **kabuステーション® API を一次データ源とする新系**（universe・朝スクリーニング・リプレイ検証・shadow・**small paper observer**）の設計仕様である。**売買ロジックの意味は、採用済みルール（Phase 13 / Logic Lab v13 frozen）を変えない**前提で、パスと起動方法を **2026-05-20（Phase 61 / structural observer）** 時点の実装に合わせて記述する。  
 **別系統:** **旧 Yahoo 非公式 API 系**はリポジトリ内 **`market/yahoo/`**（互換シム `yahoo_kabu_watch.py`）に分離されている。詳細は **`docs/DESIGN.md`** を参照。**本書は旧 Yahoo 監視ループの仕様書ではない。**
 
-**現在の主検証ランタイム（2026-05-18）:** **small paper observer**（`run_small_paper_pilot.py`、`--source live` / `push-replay`）。**observer only**・**実発注なし**・目的は **runtime verification**（performance guarantee ではない）。shadow / batch replay / Logic Lab は **検証・研究系**として維持（**§16**）。
+**現在の主検証ランタイム（2026-05-20）:** **small paper observer**（`run_small_paper_pilot.py`、`--source live` / `push-replay`）。既定 trial は **`q070_cap3`** + 任意で **`structural_exit_policy: combined_structural_exit_v1`**（Phase 61）。**observer only**・**実発注なし**・**runtime verification**（performance guarantee ではない）。参照 live セッション: **`results/small_paper/20260519/live_full_session_081047/`**。
 
 **PDF 化:** 推奨は `python tools/md_to_pdf.py kabu_native/docs/kabu_station_system_design.md kabu_native/docs/kabu_station_system_design.pdf`（日本語フォントを PDF に埋め込み、表・コードの視認性を調整済み）。代替として VS Code / Cursor のプレビューから「印刷 → PDFへ保存」。
 
-### 現在のコード配置（2026-05-18）
+### 現在のコード配置（2026-05-20）
 
 | 役割 | 実体（編集・import の正） | 備考 |
 |------|---------------------------|------|
 | **small paper observer（主検証ランタイム）** | **`kabu_native/src/small_paper/`** | observer only・実発注なし（**§16**） |
 | continuation quality / ExposureGate | **`kabu_native/src/research/`** | `continuation_quality_ranking.py`, `exposure_gate.py` |
+| structural EXIT（observer 層） | **`kabu_native/src/research/structural_exit_policies.py`** | `structural_observer_v1` / `combined_structural_exit_v1`（**EXIT v13 ではない**） |
 | API（REST / PUSH） | **`kabu_native/src/api/`** | `KabuNativeRestClient` / `KabuNativePushClient` |
 | universe / 朝スクリーン | **`kabu_native/src/universe/`**, **`src/screening/`** | 成果物は `kabu_native/data/universe/`, `results/morning_screen/` |
 | リプレイ・検証バッチ | **`kabu_native/src/replay/`** | エンジン本体はルート **`src/kabu_signal_replay.py`** 等を **import 参照** |
@@ -43,7 +44,8 @@
 | **small paper observer（主検証ランタイム）** | `python kabu_native/scripts/run_small_paper_pilot.py --dry-run --source live …`（**§16**） |
 | live observer 準備 | `python kabu_native/scripts/check_live_observer_readiness.py --config …/small_paper_pilot_q070_cap3.yaml` |
 | push-replay（場外） | `run_small_paper_pilot.py --dry-run --source push-replay --push-dir …` |
-| セッション後 review | `review_runtime_exit.py` / `review_runtime_weakness.py` / `review_exposure_cap_whatif.py` 等 |
+| セッション後 review | `review_runtime_exit.py` / `review_structural_observer.py` / `review_phase56_diagnosis.py` 等 |
+| structural 公式 PF | `review_structural_observer.py --structural-exit-policy combined_structural_exit_v1` |
 | intraday 在庫監査 | `python kabu_native/scripts/audit_intraday_data.py` |
 
 **watchdog / bat:** 現時点で **kabu_native 専用の watchdog は未整備**。旧系 `scripts/watchdog.py` は **Yahoo paper_trade / Issue Bot** 用（**§8.1**）。shadow 常駐化は手動起動または将来拡張（Phase 16 以降）。
@@ -67,7 +69,7 @@
 13. [realtime / replay 統一: 共有エンジンと shadow](#13-realtime--replay-統一共用エンジンと-shadow)
 14. [未実装・将来構想（Phase 16 以降）](#14-未実装将来構想phase-16-以降)
 15. [Logic Lab と研究終了基準（Phase 17–36）](#15-logic-lab-と研究終了基準phase-17-36)
-16. [Small Paper Observer System（Phase 45–55）](#16-small-paper-observer-systemphase-45-55)
+16. [Small Paper Observer System（Phase 45–67）](#16-small-paper-observer-systemphase-45-67)
 
 ---
 
@@ -76,7 +78,7 @@
 **kabu_native**（株ステーション連携システム）は、kabuステーション® API（REST / PUSH）から東証現物の相場データを取得し、**universe 構築・朝スクリーニング・シグナル判定・リプレイ検証・shadow・small paper observer** を一つのスタックに集約するためのツール群である。
 
 - **証券会社への自動発注は現段階ではない**（shadow は仮想 ENTRY/EXIT、small paper は **observer 通知のみ**。いずれも `order_enabled=false`）。
-- **現在の主検証ランタイム**は **small paper observer**（Phase 45–55）。PUSH → feature bridge → quality ranking → ExposureGate → Discord（ENTRY / HOLD / TAKE / EXIT / SUMMARY）。**TAKE≠SELL**・**EXIT≠実売却**（**§16.6**）。**execution system ではない**（**§16.6**・**§16.11**）。
+- **現在の主検証ランタイム**は **small paper observer**（Phase 45–67）。PUSH → feature bridge → quality ranking → ExposureGate → observer tracker → Discord（ENTRY / HOLD / TAKE / **[STRUCTURAL EXIT]** / SUMMARY）。**TAKE≠SELL**・**EXIT≠実売却**（**§16.6**）。**execution system ではない**（**§16.11**）。
 - **中核の実体**は `kabu_native/scripts/` の CLI と `kabu_native/src/` の各モジュール。シグナル / EXIT の **アルゴリズム本体**は現状 **ルート `src/kabu_*_engine.py`** にあり、kabu_native は **運用・データ・検証パイプライン**を担う。
 - **旧系**（`market/yahoo/watch.py`、Yahoo 非公式 API、`signal_engine`）は **削除・統合しない**。データパス・成果物・watchlist を分離し並行運用する。
 - **設計の正（シグナル定義）**はルート **`docs/kabu_signal_design.md`**（`kabu_signal_v1`）。本書は **運用アーキテクチャ・採用ルール・CLI・成果物**を正とする。
@@ -560,7 +562,7 @@ python kabu_native/scripts/run_shadow.py --use-push --max-polls 5
 - **判明した構造（2026-05 時点・固定化対象）:** fixed-time EXIT は弱い、imbalance 単体・breakout 単体も弱い。**continuation / momentum persistence** が強い。実市場では初動逆行が普通。
 - **制約:** 27×15 規模を超える EXIT 複雑化は過学習リスク。**Phase 36 達成後は in-sample 最適化を止め**、freeze → OOS / paper trade 検証へ。
 
-### 10.9 Small Paper Observer（Phase 45–55）— 現在の主検証ランタイム
+### 10.9 Small Paper Observer（Phase 45–67）— 現在の主検証ランタイム
 
 | Phase | テーマ | 要点 |
 |-------|--------|------|
@@ -570,13 +572,20 @@ python kabu_native/scripts/run_shadow.py --use-push --max-polls 5
 | 48 | offline push-replay | 保存 JSONL で live と同一 pipeline を場外再生 |
 | 49 | push-replay performance review | accepted / rejected / quality 分布のレビュー |
 | 50 | runtime pilot policy review | policy grid・what-if（q070 等） |
-| 51 | q070_cap3 trial config | **trial のみ**（本番採用 yaml ではない） |
+| 51 | q070_cap3 trial config | **trial のみ**（`small_paper_pilot_q070_cap3.yaml`） |
 | 52 | allowed trading windows + weakness | 市場構造ウィンドウ・弱点診断 |
 | 53 | exposure cap what-if | max_concurrent 感度 |
-| 54 | TAKE/HOLD/EXIT runtime review | **TAKE は EXIT 扱いしない**（PF 悪化のため） |
-| 55 | live observer retrial readiness | `check_live_observer_readiness.py` |
+| 54 | TAKE/HOLD/EXIT runtime review | **TAKE は EXIT 扱いしない**（legacy VH PF は参考のみ） |
+| 55 | live observer retrial | 2026-05-19 **`live_full_session_081047`**（180 accepted・bridge 96% complete） |
+| 56 | TAKE / quality inflation 診断 | `review_phase56_diagnosis.py`（閾値変更禁止） |
+| 57 | realistic trade evaluation 設計 | **`phase57_realistic_trade_evaluation_design.md`** — 300s VH PF 廃止方針 |
+| 58 | `structural_observer_v1` | 公式 **`structural_pf`**（VH / 固定 horizon 不使用） |
+| 59 | structural exit design review | 損失分解・policy 候補比較（分析のみ） |
+| 60 | `combined_structural_exit_v1` | 公式 structural EXIT policy（review 選択可） |
+| 61 | live + combined structural EXIT | Discord **`[STRUCTURAL EXIT]`**、`virtual_hold_expired` は通知しない |
+| 67 | MFE-linked favorable trial | `small_paper_pilot_q070_cap3_mfe_fav.yaml`（本番 yaml 不変） |
 
-詳細手順: **`kabu_native/docs/small_paper_pilot.md`**。設計アーキ: **§16**。
+詳細手順: **`kabu_native/docs/small_paper_pilot.md`**。設計アーキ: **§16**・**§16.13**。
 
 ### 10.10 未着手（参考）
 
@@ -732,7 +741,8 @@ market data (PUSH/REST)
 | small paper runtime | **`kabu_native/src/small_paper/`** |
 | small paper configs | **`kabu_native/configs/small_paper_pilot*.yaml`** |
 | small paper 手順 | **`kabu_native/docs/small_paper_pilot.md`** |
-| Phase 45–55 review 成果物 | **`kabu_native/results/small_paper/`** |
+| Phase 45–67 review 成果物 | **`kabu_native/results/small_paper/`** |
+| structural PF 設計 | **`kabu_native/docs/phase57_realistic_trade_evaluation_design.md`** |
 
 ### 13.4 機能別ステータス
 
@@ -746,7 +756,8 @@ market data (PUSH/REST)
 | safety check | **implemented** | Phase 15 |
 | Logic Lab（multi-profile replay） | **implemented** | Phase 17–35 |
 | research exit / validation freeze | **implemented** | Phase 36 |
-| small paper observer（live / push-replay） | **implemented** | Phase 45–55、**主検証ランタイム** |
+| small paper observer（live / push-replay） | **implemented** | Phase 45–61、**主検証ランタイム** |
+| structural PF / combined EXIT | **implemented** | Phase 58–61（observer 層・**§16.13**） |
 | live feature bridge | **implemented** | Phase 47 |
 | PUSH JSONL recorder | **implemented** | `record_push_jsonl.py` |
 | push-replay（small paper） | **implemented** | Phase 48–49 |
@@ -943,7 +954,7 @@ Phase ごとに **state / persistence / weighted / transition** 成分を点数�
 
 ---
 
-## 16. Small Paper Observer System（Phase 45–55） {#16-small-paper-observer-systemphase-45-55}
+## 16. Small Paper Observer System（Phase 45–67） {#16-small-paper-observer-systemphase-45-67}
 
 > **本章が現在の主検証ランタイム（observer only）。** shadow / batch replay / Logic Lab は残すが、**runtime verification**（観測・Discord 通知・ゲート整合）は small paper observer が担う。  
 > **small paper observer は execution system ではない** — order client の import なし・`order_enabled=false`・`paper_only=true`・**`--dry-run` 必須**・**実発注なし**。
@@ -975,9 +986,9 @@ PUSH（live）または push_jsonl（push-replay）
     → continuation_quality_ranking.py
     → ExposureGate                # quality / cap / windows / risk guards
     → accepted / rejected イベント
-    → observer_position_tracker.py
-    → ENTRY / HOLD / TAKE / EXIT / SUMMARY（Discord observer のみ）
-    → review scripts（セッション後）
+    → observer_position_tracker.py   # Phase61: optional combined_structural_exit_v1
+    → ENTRY / HOLD / TAKE / [STRUCTURAL EXIT] / SUMMARY（Discord observer のみ）
+    → review scripts（セッション後・structural_pf 公式）
 ```
 
 | コンポーネント | パス | 役割 |
@@ -986,7 +997,8 @@ PUSH（live）または push_jsonl（push-replay）
 | Live 特徴 | `src/small_paper/live_feature_bridge.py` | PUSH から continuation quality 入力を生成 |
 | Quality スコア | `src/research/continuation_quality_ranking.py` | `continuation_quality_score` |
 | ゲート | `src/research/exposure_gate.py` | `ExposureGate` — **ENTRY ロジックではない**（**§16.2.1**） |
-| ポジション追跡 | `src/small_paper/observer_position_tracker.py` | 仮想 HOLD / TAKE / EXIT（**observer only**・EXIT≠実売却） |
+| ポジション追跡 | `src/small_paper/observer_position_tracker.py` | 仮想 HOLD / TAKE / structural EXIT（**observer only**・EXIT≠実売却） |
+| structural EXIT | `src/research/structural_exit_policies.py` | observer 層のみ（**EXIT v13 は frozen**） |
 | Discord | `src/small_paper/discord_notifier.py` | observer 通知のみ |
 | 設定 | `configs/small_paper_pilot*.yaml` | policy・windows・Discord フラグ |
 | 安全 | `src/small_paper/safety.py` | `check_small_paper_safety.py` 連携 |
@@ -1068,6 +1080,8 @@ python kabu_native/scripts/run_small_paper_pilot.py \
 | `discord_observer_only` | `true` |
 | `dry_run_required` | `true` |
 
+**Phase 67 trial（本番 yaml 不変）:** `configs/small_paper_pilot_q070_cap3_mfe_fav.yaml` — `policy_label: q070_cap3_mfe_fav_trial`、`favorable_mode: mfe_linked`、`structural_exit_policy: combined_structural_exit_v1`。
+
 ### 16.6 TAKE / EXIT の扱い（Phase 54 結論・誤解防止）
 
 #### TAKE（continuation weakening 観測）
@@ -1088,9 +1102,11 @@ python kabu_native/scripts/run_small_paper_pilot.py \
 |------|------|
 | 意味 | **observer runtime 上の仮想終了イベント** |
 | 禁止解釈 | **実売却・注文執行・推奨売却を意味しない** |
-| 実装 | `observer_position_tracker.py` が仮想ポジションの終了を記録し Discord へ通知 |
+| Phase 61（推奨 trial） | Discord は **`[STRUCTURAL EXIT]`** のみ（reason / quality / momentum / pnl / MFE・MAE） |
+| 廃止（公式経路） | `virtual_hold_expired` / `live_virtual_hold` は **Discord に出さない**（`virtual_hold_expired_ignored_count` のみ集計） |
+| 実装 | `observer_position_tracker.py` + `structural_exit_policies.py` |
 
-**small paper observer は execution system ではない。** EXIT 通知も売買指示ではない（**§16.11**）。
+**small paper observer は execution system ではない。** EXIT 通知も売買指示ではない（**§16.11**）。legacy 300 秒 VH マークの PF は **`legacy_virtual_hold_pf`** として参考列のみ（**§16.13**）。
 
 ### 16.7 Phase 47 — `live_feature_bridge`
 
@@ -1122,7 +1138,10 @@ python kabu_native/scripts/run_small_paper_pilot.py \
 | `review_runtime_pilot_policy.py` | policy grid / what-if |
 | `review_runtime_weakness.py` | 弱点・ウィンドウ外 reject 診断 |
 | `review_exposure_cap_whatif.py` | max_concurrent 感度 |
-| `review_runtime_exit.py` | TAKE/HOLD/EXIT 経路レビュー（**TAKE ≠ EXIT**） |
+| `review_runtime_exit.py` | TAKE/HOLD/EXIT 経路レビュー（**TAKE ≠ EXIT**・legacy baseline） |
+| `review_phase56_diagnosis.py` | TAKE 分解・quality band・inflation 診断 |
+| `review_structural_observer.py` | **公式 `structural_pf`**（`--structural-exit-policy`） |
+| `review_structural_exit_design.py` | 損失分解・EXIT policy 候補比較（Phase 59） |
 | `check_small_paper_safety.py` | `order_enabled` / `dry_run_required` 機械検証 |
 
 #### 16.8.1 `readiness=true` の意味（誤解防止）
@@ -1154,8 +1173,11 @@ python kabu_native/scripts/run_small_paper_pilot.py \
 
 ```text
 python kabu_native/scripts/check_live_observer_readiness.py \
-  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml
+  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml \
+  --structural-session-dir kabu_native/results/small_paper/20260519/live_full_session_081047
 ```
+
+Phase 60/61: 参照セッションで `combined_structural_exit_v1` の `structural_pf` 合格を確認（readiness JSON: `results/reports/live_observer_readiness_YYYYMMDD.json`）。
 
 **live observer（平日・発注なし）**
 
@@ -1182,6 +1204,11 @@ python kabu_native/scripts/review_runtime_weakness.py \
 python kabu_native/scripts/review_exposure_cap_whatif.py \
   --session-dir kabu_native/results/small_paper/YYYYMMDD/live_full_session_HHMMSS \
   --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml
+
+python kabu_native/scripts/review_structural_observer.py \
+  --session-dir kabu_native/results/small_paper/20260519/live_full_session_081047 \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml \
+  --structural-exit-policy combined_structural_exit_v1
 ```
 
 ### 16.10 成果物（`results/small_paper/`）
@@ -1192,9 +1219,17 @@ python kabu_native/scripts/review_exposure_cap_whatif.py \
 | `YYYYMMDD/push_replay_HHMMSS/` | push-replay セッション |
 | `small_paper_events.csv` / `.jsonl` | accepted / rejected / observer イベント |
 | `small_paper_summary.json` | セッション KPI |
-| `runtime_exit_review.json` | EXIT/TAKE/HOLD 経路（Phase 54） |
+| `runtime_exit_review.json` | EXIT/TAKE/HOLD 経路（Phase 54・legacy） |
 | `runtime_weakness_diagnosis.json` | 弱点診断（Phase 52） |
 | `exposure_cap_whatif.json` | cap 感度（Phase 53） |
+| `take_signal_decomposition.json` | TAKE 要因分解（Phase 56） |
+| `quality_band_review.json` | quality 帯別 PF（Phase 56） |
+| `structural_observer_review.json` | **公式 `structural_pf`**・`official_verdict`（Phase 58/60） |
+| `structural_trades.csv` / `structural_events.csv` | 構造 EXIT で確定した仮想トレード |
+| `structural_exit_design_review.json` | EXIT 設計比較（Phase 59） |
+| `structural_policy_comparison.csv` | baseline vs combined policy（Phase 60） |
+
+**参照 live セッション（2026-05-19）:** `live_full_session_081047/` — accepted 180、live_feature_complete 96%、policy `q070_cap3_trial`、observer TAKE 124（すべて **TAKE≠SELL**）。
 
 ### 16.11 発注なし（再強調）
 
@@ -1235,7 +1270,34 @@ TAKE 通知からも **売却・発注してはならない**（§16.6・**TAKE�
 
 **禁止:** frozen 項目の「PF 改善のため」の緩和・銘柄別 threshold・時刻別 quality 調整。
 
-**関連:** `kabu_native/docs/small_paper_pilot.md`（Phase 44–55 手順・禁止事項の詳細）。
+**trial で変更可（observer 層のみ）:** `structural_exit_policy`（`combined_structural_exit_v1` 等）、Discord 文言、`favorable_mode`（Phase 67 trial yaml）。いずれも **EXIT v13 / ENTRY / ExposureGate core は不変**。
+
+### 16.13 Structural PF 評価（Phase 57–61）
+
+Phase 54 までの **300 秒 `virtual_hold` マーク PF** は live 運用と乖離するため、Phase 57 設計で **構造ベース擬似売買 PF** に移行（**`docs/phase57_realistic_trade_evaluation_design.md`**）。
+
+| 指標 | 意味 |
+|------|------|
+| **`structural_pf`** | 公式（go/no-go 用）。`stop_hit` / `session_end` / 構造 EXIT（quality_decay, momentum_fade, favorable_fade, vwap_break, mfe_giveback, overlap） |
+| **`legacy_virtual_hold_pf`** | 参考のみ。`virtual_hold_expired` / 固定 horizon を含む旧集計 |
+
+| policy | 用途 |
+|--------|------|
+| `structural_observer_v1` | Phase 58 baseline（最初の公式 structural 経路） |
+| **`combined_structural_exit_v1`** | Phase 60/61 推奨。上記構造 EXIT を統合 |
+
+**2026-05-19 `live_full_session_081047` + `combined_structural_exit_v1`（review 再計算例）:**
+
+| 指標 | 値（参考） |
+|------|------------|
+| `structural_trade_count` | 180 |
+| `structural_pf` | ~1.20 |
+| `structure_exit_rate` | ~71% |
+| `session_end_exit_rate` | 0%（VH 公式経路から除外） |
+
+**Phase 67 trial:** `small_paper_pilot_q070_cap3_mfe_fav.yaml` — `favorable_mode: mfe_linked`（`min(1, rolling_mfe/0.003)`）、`use_market_time_window: true`。本番 `small_paper_pilot_q070_cap3.yaml` は **変更しない**。
+
+**関連:** `kabu_native/docs/small_paper_pilot.md`（Phase 44–67 手順・禁止事項の詳細）。
 
 ---
 
@@ -1245,7 +1307,8 @@ TODO は設計仕様書とは別ファイルで管理する。
 
 - **`kabu_native/docs/TODO.md`** — Phase 完了状況・Yahoo 依存・優先 TODO
 - **`kabu_native/docs/logic_lab.md`** — Logic Lab Phase 17–36 手順・出力一覧
-- **`kabu_native/docs/small_paper_pilot.md`** — small paper Phase 44–55 手順（**主検証ランタイム**）
+- **`kabu_native/docs/small_paper_pilot.md`** — small paper Phase 44–67 手順（**主検証ランタイム**）
+- **`kabu_native/docs/phase57_realistic_trade_evaluation_design.md`** — structural PF 設計（Phase 57）
 - **`docs/DESIGN.md`** — 旧 Yahoo 系
 - **`docs/kabu_signal_design.md`** — `kabu_signal_v1` 詳細
 
@@ -1260,3 +1323,4 @@ TODO は設計仕様書とは別ファイルで管理する。
 | 2026-05-17 | **§15 Logic Lab / Phase 36 研究終了基準** を追加（§4・§10.8・§13.4・CLI 表・freeze / OOS ゲート）。PDF 再生成。 |
 | 2026-05-18 | **§16 Small Paper Observer（Phase 45–55）** を追加。主検証ランタイム・live/push-replay・`allowed_trading_windows`・`q070_cap3_trial`・TAKE 扱い・live_feature_bridge・review CLI。§1・§4・§5.4・§10.9・§13 を更新。PDF 再生成。 |
 | 2026-05-18 | **§16 誤解防止改訂:** TAKE≠SELL・EXIT≠実売却・ExposureGate 責務・readiness/PF 注意・昼休み除外理由・§16.12 Frozen Runtime・§8.1 watchdog 警告。用語を observer only / runtime verification に統一。PDF 再生成。 |
+| 2026-05-20 | **§16 拡張（Phase 56–61, 67）:** structural PF・`combined_structural_exit_v1`・`[STRUCTURAL EXIT]` Discord・VH 公式廃止・review CLI 追加・`live_full_session_081047` 参照・`q070_cap3_mfe_fav` trial。§10.9・§13.4 更新。PDF 再生成。 |
