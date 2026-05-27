@@ -529,6 +529,203 @@ def check_legacy_paper_trade_warning(repo_root: Path) -> SafetyCheck:
     )
 
 
+def check_fade_hybrid_shadow_trial_config(config: SmallPaperPilotConfig) -> SafetyCheck:
+    from research.fade_hybrid_shadow import POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_HYBRID_SHADOW
+
+    policy = (config.structural_exit_policy or "").strip()
+    if policy != POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_HYBRID_SHADOW:
+        return SafetyCheck(
+            "fade_hybrid_shadow_trial_config",
+            True,
+            f"structural_exit_policy={policy or 'default'} (fade hybrid checks skipped)",
+            {"structural_exit_policy": policy},
+        )
+    trial_ok = config.policy_trial and (config.policy_label or "").endswith("_trial")
+    cap_ok = int(config.max_concurrent_positions) == 3
+    order_ok = not config.order_enabled
+    paper_ok = config.paper_only
+    shadow_ok = bool(getattr(config, "shadow_only", False))
+    guard_ok = bool(getattr(config, "entry_price_risk_guard_enabled", False))
+    ok = trial_ok and cap_ok and order_ok and paper_ok
+    msgs: list[str] = []
+    if not trial_ok:
+        msgs.append("policy_trial=true and policy_label *_trial required")
+    if not cap_ok:
+        msgs.append("max_concurrent_positions must be 3")
+    if not order_ok:
+        msgs.append("order_enabled must be false")
+    if not paper_ok:
+        msgs.append("paper_only must be true")
+    if not shadow_ok:
+        msgs.append("shadow_only=true recommended")
+    if not guard_ok:
+        msgs.append("entry_price_risk_guard_enabled recommended")
+    return SafetyCheck(
+        "fade_hybrid_shadow_trial_config",
+        ok,
+        "fade hybrid shadow trial config OK" if ok else "; ".join(msgs),
+        {
+            "structural_exit_policy": policy,
+            "policy_label": config.policy_label,
+            "policy_trial": config.policy_trial,
+            "shadow_only": shadow_ok,
+            "max_concurrent_positions": config.max_concurrent_positions,
+            "order_enabled": config.order_enabled,
+            "paper_only": config.paper_only,
+            "entry_price_risk_guard_enabled": guard_ok,
+        },
+    )
+
+
+def check_price_momentum_exit_trial_config(config: SmallPaperPilotConfig) -> SafetyCheck:
+    from research.structural_exit_policies import POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM
+
+    policy = (config.structural_exit_policy or "").strip()
+    if policy != POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM:
+        return SafetyCheck(
+            "price_momentum_exit_trial_config",
+            True,
+            f"structural_exit_policy={policy or 'default'} (v2 price-mom checks skipped)",
+            {"structural_exit_policy": policy},
+        )
+    ratio = float(config.price_momentum_fade_ratio)
+    ratio_ok = 0.75 <= ratio <= 0.85
+    trial_ok = config.policy_trial and (config.policy_label or "").endswith("_trial")
+    order_ok = not config.order_enabled
+    paper_ok = config.paper_only
+    ok = ratio_ok and trial_ok and order_ok and paper_ok
+    msgs = []
+    if not trial_ok:
+        msgs.append("policy_trial=true and policy_label *_trial required")
+    if not ratio_ok:
+        msgs.append("price_momentum_fade_ratio must be in [0.75, 0.85]")
+    if not order_ok:
+        msgs.append("order_enabled must be false")
+    if not paper_ok:
+        msgs.append("paper_only must be true")
+    return SafetyCheck(
+        "price_momentum_exit_trial_config",
+        ok,
+        "price momentum fade trial config OK" if ok else "; ".join(msgs),
+        {
+            "structural_exit_policy": policy,
+            "price_momentum_fade_ratio": ratio,
+            "policy_label": config.policy_label,
+            "policy_trial": config.policy_trial,
+            "order_enabled": config.order_enabled,
+            "paper_only": config.paper_only,
+        },
+    )
+
+
+def check_symbol_cooloff_trial_config(
+    config: SmallPaperPilotConfig,
+    *,
+    repo_root: Path,
+    run_session_key: Optional[str] = None,
+) -> SafetyCheck:
+    if not config.symbol_cooloff_enabled:
+        return SafetyCheck(
+            "symbol_cooloff_trial_config",
+            True,
+            "symbol_cooloff disabled (checks skipped)",
+            {"symbol_cooloff_enabled": False},
+        )
+    msgs: list[str] = []
+    if not config.policy_trial or not (config.policy_label or "").endswith("_trial"):
+        msgs.append("policy_trial=true and policy_label *_trial required")
+    if config.order_enabled:
+        msgs.append("order_enabled must be false")
+    if not config.paper_only:
+        msgs.append("paper_only must be true")
+    if config.symbol_cooloff_apply_mode != "reject_entry":
+        msgs.append("symbol_cooloff_apply_mode must be reject_entry")
+    prior_errors: list[str] = []
+    if run_session_key:
+        from small_paper.symbol_cooloff import (
+            build_symbol_cooloff_state,
+            validate_prior_only_sources,
+        )
+
+        state = build_symbol_cooloff_state(
+            config,
+            repo_root=repo_root,
+            run_session_key=run_session_key,
+        )
+        if state is not None:
+            prior_errors = validate_prior_only_sources(state, run_session_key=run_session_key)
+            if prior_errors:
+                msgs.extend(prior_errors)
+    ok = not msgs
+    return SafetyCheck(
+        "symbol_cooloff_trial_config",
+        ok,
+        "symbol cooloff trial config OK" if ok else "; ".join(msgs),
+        {
+            "symbol_cooloff_enabled": config.symbol_cooloff_enabled,
+            "symbol_cooloff_rule": config.symbol_cooloff_rule,
+            "policy_label": config.policy_label,
+            "run_session_key": run_session_key,
+            "prior_only_errors": prior_errors,
+        },
+    )
+
+
+def check_daytrade_suitability_trial_config(
+    config: SmallPaperPilotConfig,
+    *,
+    repo_root: Path,
+    run_session_key: Optional[str] = None,
+) -> SafetyCheck:
+    if not config.daytrade_suitability_enabled:
+        return SafetyCheck(
+            "daytrade_suitability_trial_config",
+            True,
+            "daytrade_suitability disabled (checks skipped)",
+            {"daytrade_suitability_enabled": False},
+        )
+    msgs: list[str] = []
+    if not config.policy_trial or not (config.policy_label or "").endswith("_trial"):
+        msgs.append("policy_trial=true and policy_label *_trial required")
+    if config.order_enabled:
+        msgs.append("order_enabled must be false")
+    if not config.paper_only:
+        msgs.append("paper_only must be true")
+    if config.daytrade_suitability_apply_mode != "reject_entry":
+        msgs.append("daytrade_suitability_apply_mode must be reject_entry")
+    if config.daytrade_suitability_rule != "volatility_liquidity_top50":
+        msgs.append("daytrade_suitability_rule must be volatility_liquidity_top50")
+    prior_errors: list[str] = []
+    if run_session_key:
+        from small_paper.daytrade_suitability_gate import (
+            build_vol_liq_threshold,
+            validate_prior_only_sources,
+        )
+
+        state = build_vol_liq_threshold(
+            config,
+            repo_root=repo_root,
+            run_session_key=run_session_key,
+        )
+        if state is not None:
+            prior_errors = validate_prior_only_sources(state, run_session_key=run_session_key)
+            if prior_errors:
+                msgs.extend(prior_errors)
+    ok = not msgs
+    return SafetyCheck(
+        "daytrade_suitability_trial_config",
+        ok,
+        "vol_liq suitability trial config OK" if ok else "; ".join(msgs),
+        {
+            "daytrade_suitability_enabled": config.daytrade_suitability_enabled,
+            "daytrade_suitability_rule": config.daytrade_suitability_rule,
+            "policy_label": config.policy_label,
+            "run_session_key": run_session_key,
+            "prior_only_errors": prior_errors,
+        },
+    )
+
+
 def check_mfe_favorable_trial_config(config: SmallPaperPilotConfig) -> SafetyCheck:
     mode = (config.favorable_mode or "").strip()
     if mode != "mfe_linked":
@@ -561,6 +758,48 @@ def check_mfe_favorable_trial_config(config: SmallPaperPilotConfig) -> SafetyChe
             "policy_trial": config.policy_trial,
         },
     )
+
+
+def check_kabu_register_capacity(
+    *,
+    universe_symbol_count: int = 50,
+    repo_root: Optional[Path] = None,
+    pre_clear: bool = False,
+) -> SafetyCheck:
+    from api.kabu_register import (
+        KABU_PUSH_REGISTER_LIMIT,
+        assess_register_capacity,
+        clear_register_before_session,
+    )
+
+    cap = assess_register_capacity(universe_symbol_count=universe_symbol_count)
+    clear_result: dict[str, Any] = {}
+    if pre_clear and repo_root is not None:
+        clear_result = clear_register_before_session(repo_root)
+
+    within = bool(cap.get("within_limit"))
+    msgs: list[str] = []
+    if not within:
+        msgs.append(
+            f"universe {universe_symbol_count} > kabu register limit {KABU_PUSH_REGISTER_LIMIT}"
+        )
+    if pre_clear and repo_root is not None and not clear_result.get("ok"):
+        msgs.append(f"unregister/all pre-clear failed: {clear_result.get('error')}")
+
+    ok = within and (not pre_clear or clear_result.get("ok", True))
+    detail = {
+        **cap,
+        "pre_clear_requested": pre_clear,
+        "pre_clear_result": clear_result or None,
+    }
+    if ok:
+        msg = (
+            f"register capacity OK ({universe_symbol_count}/{KABU_PUSH_REGISTER_LIMIT})"
+            + ("; unregister/all pre-cleared" if clear_result.get("cleared") else "")
+        )
+    else:
+        msg = "; ".join(msgs) if msgs else "register capacity check failed"
+    return SafetyCheck("kabu_register_capacity", ok, msg, detail)
 
 
 def check_no_legacy_yahoo_paper() -> SafetyCheck:
@@ -600,12 +839,33 @@ def run_all_safety_checks(
         check_discord_notifier_no_orders(),
         check_discord_webhook_env(config),
         check_mfe_favorable_trial_config(config),
+        check_price_momentum_exit_trial_config(config),
+        check_fade_hybrid_shadow_trial_config(config),
+        check_symbol_cooloff_trial_config(
+            config,
+            repo_root=repo_root,
+            run_session_key=(
+                f"{day_key}/{session_stamp}" if session_stamp else None
+            ),
+        ),
+        check_daytrade_suitability_trial_config(
+            config,
+            repo_root=repo_root,
+            run_session_key=(
+                f"{day_key}/{session_stamp}" if session_stamp else None
+            ),
+        ),
         check_output_path_writable(config, repo_root=repo_root, day_key=day_key),
     ]
     if live_mode or full_session:
         checks.extend(
             [
                 check_kabu_password_set(),
+                check_kabu_register_capacity(
+                    universe_symbol_count=50,
+                    repo_root=repo_root,
+                    pre_clear=live_mode,
+                ),
                 check_no_legacy_yahoo_paper(),
                 check_kabu_station_connection(
                     repo_root, stale_tick_sec=config.live_stale_tick_sec

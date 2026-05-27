@@ -1,0 +1,61 @@
+# Phase 166: simple fade-breakdown shadow trial (price-risk + entry guard + refresh compatible).
+# Production YAML and combined_structural_exit_v1 unchanged.
+
+profile: momentum_volume_v13_combined
+entry_profile: momentum_volume_v2
+
+min_continuation_quality: 0.70
+max_concurrent_positions: 3
+reject_below_quality: true
+
+allowed_trading_windows:
+  - start: "09:05"
+    end: "11:23"
+  - start: "12:33"
+    end: "15:20"
+
+baseline_policy: q070_cap3_mfe_fav_vol_liq_trial
+policy_label: q070_cap3_entry_price_risk_guard_fade_breakdown_shadow_trial
+policy_trial: true
+shadow_only: true
+structural_exit_policy: combined_structural_exit_v1_fade_breakdown_shadow
+
+entry_price_risk_guard_enabled: true
+entry_price_risk_guard_shadow: true
+entry_price_risk_guard_min_entry_price: 50
+entry_price_risk_guard_max_tick_ratio_pct: 5.0
+entry_price_risk_guard_apply_mode: reject_entry
+
+favorable_mode: mfe_linked
+favorable_mfe_scale: 0.003
+use_market_time_window: true
+
+daytrade_suitability_enabled: true
+daytrade_suitability_rule: volatility_liquidity_top50
+daytrade_suitability_lookback_sessions: prior_only
+daytrade_suitability_apply_mode: reject_entry
+
+comparison_note: >
+  Phase166 shadow: defer fade exits; exit only on breakdown-confirmed (new low / below fade price,
+  pnl<0, momentum<0.15, take未達). Range-hold protect continues. Price-risk + entry guard enabled.
+
+order_enabled: false
+paper_only: true
+
+discord_enabled: true
+discord_observer_only: true
+discord_send_rejects: false
+discord_fade_watch_summary: true
+
+require_phase43_pass: true
+
+daily_loss_guard_pct: -2.5
+risk_cluster_consecutive_losses: 5
+risk_cluster_block_enabled: true
+daily_loss_guard_enabled: true
+
+dry_run_required: true
+default_source: replay
+max_polls: 1
+poll_interval_sec: 30.0
+

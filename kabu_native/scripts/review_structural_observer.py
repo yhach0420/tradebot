@@ -32,8 +32,11 @@ def main() -> int:
     repo_root, native_root = _bootstrap()
     from research.structural_exit_policies import (
         POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+        POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
         POLICY_STRUCTURAL_OBSERVER_V1,
     )
+    from research.fade_watch_shadow import POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_WATCH_SHADOW
+    from research.take_exit_shadow import POLICY_COMBINED_STRUCTURAL_EXIT_V1_TAKE_EXIT_SHADOW
     from research.structural_observer_review import (
         DEFAULT_OFFICIAL_EXIT_POLICY,
         build_and_write_structural_observer_review,
@@ -50,7 +53,13 @@ def main() -> int:
     parser.add_argument("--poll-interval-sec", type=float, default=None)
     parser.add_argument(
         "--structural-exit-policy",
-        choices=[POLICY_STRUCTURAL_OBSERVER_V1, POLICY_COMBINED_STRUCTURAL_EXIT_V1],
+        choices=[
+            POLICY_STRUCTURAL_OBSERVER_V1,
+            POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+            POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
+            POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_WATCH_SHADOW,
+            POLICY_COMBINED_STRUCTURAL_EXIT_V1_TAKE_EXIT_SHADOW,
+        ],
         default=DEFAULT_OFFICIAL_EXIT_POLICY,
         help="Official EXIT policy for PF and verdict (default: structural_observer_v1)",
     )

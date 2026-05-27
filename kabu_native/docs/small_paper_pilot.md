@@ -1071,6 +1071,115 @@ python kabu_native/scripts/review_structural_observer.py \
 
 
 
+## Phase 79 — Rolling symbol cooloff trial config
+
+Phase78 の OOS 診断（rule D: `prior_avg_pnl < 0` かつ `trades >= 5`）で PF 改善が確認されたため、**trial 専用** config で ENTRY gate に rolling symbol cooloff を組み込む。
+
+| 項目 | `q070_cap3_mfe_fav_trial` | `q070_cap3_mfe_fav_symbol_cooloff_trial` |
+|------|---------------------------|----------------------------------------|
+| config | `small_paper_pilot_q070_cap3_mfe_fav.yaml` | `small_paper_pilot_q070_cap3_mfe_fav_symbol_cooloff.yaml` |
+| 追加 | — | `symbol_cooloff_enabled`, rule D, `reject_entry` |
+| prior 源 | — | 過去セッションの `structural_trades.csv` のみ（**当日成績は使わない**） |
+| 本番 yaml | 変更なし | 変更なし |
+
+**注意（5803.T など）**
+
+- 特定銘柄の当日除外対策ではない。
+- 過去セッション累積で慢性負け銘柄を cooloff する **rolling OOS** ルール。
+- 参照セッション数がまだ少ないため **trial 扱い**（`policy_label` は `*_trial` 必須）。
+
+```bash
+python kabu_native/scripts/run_phase79_symbol_cooloff_trial_review.py
+```
+
+出力（例: `.../push_replay_231314/`）: `phase79_symbol_cooloff_trial_review.json`, `phase79_symbol_cooloff_policy_comparison.csv`, `phase79_symbol_cooloff_lists.csv`, `phase79_symbol_cooloff_rejected_cases.csv`
+
+`small_paper_summary.json` 追加フィールド: `symbol_cooloff_enabled`, `symbol_cooloff_list`, `symbol_cooloff_count`, `rejected_by_symbol_cooloff`, `symbol_cooloff_source_sessions`
+
+
+
+## Phase 84 — Volatility-liquidity suitability trial config
+
+Phase83 OOS（8セッション）で `volatility_liquidity_score` top50 が aggregate PF **1.2445**（no_filter **1.1596**）に改善したため、**trial 専用** config で ENTRY gate に prior-only 適性フィルタを組み込む。
+
+| 項目 | `q070_cap3_mfe_fav_trial` | `q070_cap3_mfe_fav_vol_liq_trial` |
+|------|---------------------------|-----------------------------------|
+| config | `small_paper_pilot_q070_cap3_mfe_fav.yaml` | `small_paper_pilot_q070_cap3_mfe_fav_vol_liq.yaml` |
+| 追加 | — | `daytrade_suitability_enabled`, `volatility_liquidity_top50`, `prior_only`, `reject_entry` |
+| 閾値 | — | 過去セッションの quality≥0.70 取引のみ（**当日は使わない**） |
+| 本番 yaml | 変更なし | 変更なし |
+
+式: `volatility_liquidity_score = atr_pct × log10(TradingValue)`（push 時点の High/Low/TradingValue から算出）
+
+```bash
+python kabu_native/scripts/run_phase84_vol_liq_trial_review.py
+```
+
+出力: `kabu_native/results/reports/phase84_vol_liq_trial_review.json`, `phase84_vol_liq_policy_comparison.csv`, `phase84_vol_liq_thresholds_by_session.csv`, `phase84_vol_liq_rejected_cases.csv`
+
+`small_paper_summary.json` 追加フィールド: `daytrade_suitability_enabled`, `daytrade_suitability_rule`, `daytrade_suitability_threshold`, `rejected_by_daytrade_suitability`, `daytrade_suitability_source_sessions`
+
+reject 時 events/rejects: `daytrade_suitability_score`, `daytrade_suitability_threshold`, `atr_pct`, `intraday_range_pct`, `trading_value`, `turnover_proxy`（`gate_reject_reason=daytrade_suitability`）
+
+
+
+## Phase 85 — Live observer readiness（vol_liq suitability trial）
+
+Phase84 OOS PF ≥ 1.2 を確認後、live observer で試すための readiness。
+
+```bash
+python kabu_native/scripts/check_live_observer_readiness.py \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_mfe_fav_vol_liq.yaml \
+  --skip-kabu --skip-safety
+```
+
+| チェック | 内容 |
+|----------|------|
+| `trial_policy_supported` | `q070_cap3_mfe_fav_vol_liq_trial` を許可リストに含む |
+| `daytrade_suitability_check` | vol_liq 設定・prior-only・summary フィールド・Phase84 OOS PF |
+| `phase84_oos_pf_reference` | `phase84_vol_liq_trial_review.json` の vol_liq_trial OOS PF ≥ 1.2（参考 **1.2445**） |
+| `daytrade_suitability_threshold` | 実行セッション直前の prior から算出した top50 閾値 |
+| `daytrade_suitability_source_sessions` | 閾値算出に使った prior セッション一覧 |
+
+live 実行例（実発注なし）:
+
+```bash
+python kabu_native/scripts/run_small_paper_pilot.py --dry-run --source live --full-session \
+  --wait-until-session \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_mfe_fav_vol_liq.yaml \
+  --poll-interval-sec 5
+```
+
+
+
+## Phase 80 — Live observer readiness（symbol cooloff trial）
+
+Phase79 OOS（5セッション）で cooloff trial の aggregate PF **1.371**（no_filter 1.168）を確認後、live observer で試すための readiness。
+
+```bash
+python kabu_native/scripts/check_live_observer_readiness.py \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_mfe_fav_symbol_cooloff.yaml \
+  --structural-session-dir kabu_native/results/small_paper/20260520/push_replay_231314 \
+  --skip-kabu --skip-safety
+```
+
+| チェック | 内容 |
+|----------|------|
+| `trial_policy_supported` | `q070_cap3_mfe_fav_symbol_cooloff_trial` を許可リストに含む |
+| `symbol_cooloff_check` | cooloff 設定・prior-only・summary フィールド・Phase79 OOS PF |
+| `phase79_symbol_cooloff_oos_pf` | `phase79_symbol_cooloff_trial_review.json` の OOS PF ≥ 1.2 |
+
+live 実行例（実発注なし）:
+
+```bash
+python kabu_native/scripts/run_small_paper_pilot.py --dry-run --source live --full-session \
+  --wait-until-session \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_mfe_fav_symbol_cooloff.yaml \
+  --poll-interval-sec 5
+```
+
+
+
 ## 関連
 
 

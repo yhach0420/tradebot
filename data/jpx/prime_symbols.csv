@@ -1,0 +1,1568 @@
+symbol,exchange,market,name,sector_33_code,sector_33_name,scale_category,is_etf,is_reit,is_active
+1301.T,1,prime,極洋,50,水産・農林業,TOPIX Small 1,false,false,true
+1332.T,1,prime,ニッスイ,50,水産・農林業,TOPIX Mid400,false,false,true
+1333.T,1,prime,Ｕｍｉｏｓ,50,水産・農林業,TOPIX Mid400,false,false,true
+1375.T,1,prime,ユキグニファクトリー,50,水産・農林業,TOPIX Small 2,false,false,true
+1377.T,1,prime,サカタのタネ,50,水産・農林業,TOPIX Small 1,false,false,true
+1379.T,1,prime,ホクト,50,水産・農林業,TOPIX Small 2,false,false,true
+1414.T,1,prime,ショーボンドホールディングス,2050,建設業,TOPIX Mid400,false,false,true
+1417.T,1,prime,ミライト・ワン,2050,建設業,TOPIX Mid400,false,false,true
+1419.T,1,prime,タマホーム,2050,建設業,TOPIX Small 1,false,false,true
+1429.T,1,prime,日本アクア,2050,建設業,-,false,false,true
+1433.T,1,prime,ベステラ,2050,建設業,-,false,false,true
+1515.T,1,prime,日鉄鉱業,1050,鉱業,TOPIX Small 1,false,false,true
+1518.T,1,prime,三井松島ホールディングス,3800,その他製品,TOPIX Small 1,false,false,true
+1605.T,1,prime,ＩＮＰＥＸ,1050,鉱業,TOPIX Mid400,false,false,true
+1662.T,1,prime,石油資源開発,1050,鉱業,TOPIX Small 1,false,false,true
+1663.T,1,prime,Ｋ＆Ｏエナジーグループ,1050,鉱業,TOPIX Small 1,false,false,true
+167A.T,1,prime,リョーサン菱洋ホールディングス,6050,卸売業,TOPIX Small 1,false,false,true
+1719.T,1,prime,安藤・間,2050,建設業,TOPIX Mid400,false,false,true
+1720.T,1,prime,東急建設,2050,建設業,TOPIX Small 1,false,false,true
+1721.T,1,prime,コムシスホールディングス,2050,建設業,TOPIX Mid400,false,false,true
+1726.T,1,prime,ビーアールホールディングス,2050,建設業,TOPIX Small 2,false,false,true
+1762.T,1,prime,高松コンストラクショングループ,2050,建設業,TOPIX Small 2,false,false,true
+1766.T,1,prime,東建コーポレーション,2050,建設業,TOPIX Small 1,false,false,true
+1780.T,1,prime,ヤマウラ,2050,建設業,TOPIX Small 2,false,false,true
+1786.T,1,prime,オリエンタル白石,2050,建設業,TOPIX Small 2,false,false,true
+1801.T,1,prime,大成建設,2050,建設業,TOPIX Mid400,false,false,true
+1802.T,1,prime,大林組,2050,建設業,TOPIX Mid400,false,false,true
+1803.T,1,prime,清水建設,2050,建設業,TOPIX Mid400,false,false,true
+1808.T,1,prime,長谷工コーポレーション,2050,建設業,TOPIX Mid400,false,false,true
+1812.T,1,prime,鹿島建設,2050,建設業,TOPIX Mid400,false,false,true
+1813.T,1,prime,不動テトラ,2050,建設業,TOPIX Small 2,false,false,true
+1814.T,1,prime,大末建設,2050,建設業,-,false,false,true
+1815.T,1,prime,鉄建建設,2050,建設業,TOPIX Small 2,false,false,true
+1820.T,1,prime,西松建設,2050,建設業,TOPIX Mid400,false,false,true
+1833.T,1,prime,奥村組,2050,建設業,TOPIX Small 1,false,false,true
+1835.T,1,prime,東鉄工業,2050,建設業,TOPIX Small 1,false,false,true
+1852.T,1,prime,淺沼組,2050,建設業,TOPIX Small 1,false,false,true
+1860.T,1,prime,戸田建設,2050,建設業,TOPIX Mid400,false,false,true
+1861.T,1,prime,熊谷組,2050,建設業,TOPIX Small 1,false,false,true
+1870.T,1,prime,矢作建設工業,2050,建設業,TOPIX Small 1,false,false,true
+1871.T,1,prime,ピーエス・コンストラクション,2050,建設業,TOPIX Small 2,false,false,true
+1873.T,1,prime,日本ハウスホールディングス,2050,建設業,TOPIX Small 2,false,false,true
+1878.T,1,prime,大東建託,8050,不動産業,TOPIX Mid400,false,false,true
+1879.T,1,prime,新日本建設,2050,建設業,TOPIX Small 2,false,false,true
+1882.T,1,prime,東亜道路工業,2050,建設業,TOPIX Small 1,false,false,true
+1885.T,1,prime,東亜建設工業,2050,建設業,TOPIX Small 1,false,false,true
+1887.T,1,prime,日本国土開発,2050,建設業,TOPIX Small 2,false,false,true
+1888.T,1,prime,若築建設,2050,建設業,TOPIX Small 2,false,false,true
+1893.T,1,prime,五洋建設,2050,建設業,TOPIX Mid400,false,false,true
+1898.T,1,prime,世紀東急工業,2050,建設業,TOPIX Small 1,false,false,true
+1899.T,1,prime,福田組,2050,建設業,TOPIX Small 2,false,false,true
+1911.T,1,prime,住友林業,2050,建設業,TOPIX Mid400,false,false,true
+1925.T,1,prime,大和ハウス工業,2050,建設業,TOPIX Large70,false,false,true
+1926.T,1,prime,ライト工業,2050,建設業,TOPIX Small 1,false,false,true
+1928.T,1,prime,積水ハウス,2050,建設業,TOPIX Large70,false,false,true
+1929.T,1,prime,日特建設,2050,建設業,TOPIX Small 2,false,false,true
+1930.T,1,prime,北陸電気工事,2050,建設業,TOPIX Small 2,false,false,true
+1934.T,1,prime,ユアテック,2050,建設業,TOPIX Small 1,false,false,true
+1938.T,1,prime,日本リーテック,2050,建設業,TOPIX Small 2,false,false,true
+1939.T,1,prime,四電工,2050,建設業,TOPIX Small 2,false,false,true
+1941.T,1,prime,中電工,2050,建設業,TOPIX Small 1,false,false,true
+1942.T,1,prime,関電工,2050,建設業,TOPIX Mid400,false,false,true
+1944.T,1,prime,きんでん,2050,建設業,TOPIX Mid400,false,false,true
+1945.T,1,prime,東京エネシス,2050,建設業,TOPIX Small 2,false,false,true
+1946.T,1,prime,トーエネック,2050,建設業,TOPIX Small 2,false,false,true
+1950.T,1,prime,日本電設工業,2050,建設業,TOPIX Small 1,false,false,true
+1951.T,1,prime,エクシオグループ,2050,建設業,TOPIX Mid400,false,false,true
+1952.T,1,prime,新日本空調,2050,建設業,TOPIX Small 1,false,false,true
+1959.T,1,prime,クラフティア,2050,建設業,TOPIX Mid400,false,false,true
+1961.T,1,prime,三機工業,2050,建設業,TOPIX Small 1,false,false,true
+1963.T,1,prime,日揮ホールディングス,2050,建設業,TOPIX Mid400,false,false,true
+1964.T,1,prime,中外炉工業,2050,建設業,TOPIX Small 2,false,false,true
+1968.T,1,prime,太平電業,2050,建設業,TOPIX Small 1,false,false,true
+1969.T,1,prime,高砂熱学工業,2050,建設業,TOPIX Mid400,false,false,true
+1975.T,1,prime,朝日工業社,2050,建設業,TOPIX Small 1,false,false,true
+1976.T,1,prime,明星工業,2050,建設業,TOPIX Small 2,false,false,true
+1979.T,1,prime,大氣社,2050,建設業,TOPIX Small 1,false,false,true
+1980.T,1,prime,ダイダン,2050,建設業,TOPIX Small 1,false,false,true
+1982.T,1,prime,日比谷総合設備,2050,建設業,TOPIX Small 2,false,false,true
+2001.T,1,prime,ニップン,3050,食料品,TOPIX Small 1,false,false,true
+2002.T,1,prime,日清製粉グループ本社,3050,食料品,TOPIX Mid400,false,false,true
+2004.T,1,prime,昭和産業,3050,食料品,TOPIX Small 2,false,false,true
+2053.T,1,prime,中部飼料,3050,食料品,TOPIX Small 2,false,false,true
+2060.T,1,prime,フィード・ワン,3050,食料品,TOPIX Small 2,false,false,true
+2108.T,1,prime,日本甜菜製糖,3050,食料品,TOPIX Small 2,false,false,true
+2109.T,1,prime,ＤＭ三井製糖,3050,食料品,TOPIX Small 1,false,false,true
+2117.T,1,prime,ウェルネオシュガー,3050,食料品,TOPIX Small 2,false,false,true
+2120.T,1,prime,ＬＩＦＵＬＬ,9050,サービス業,TOPIX Small 2,false,false,true
+2121.T,1,prime,ＭＩＸＩ,5250,情報・通信業,TOPIX Small 1,false,false,true
+2124.T,1,prime,ジェイエイシーリクルートメント,9050,サービス業,TOPIX Small 1,false,false,true
+2127.T,1,prime,日本Ｍ＆Ａセンターホールディングス,9050,サービス業,TOPIX Mid400,false,false,true
+212A.T,1,prime,フィットイージー,9050,サービス業,TOPIX Small 2,false,false,true
+2130.T,1,prime,メンバーズ,9050,サービス業,TOPIX Small 2,false,false,true
+2146.T,1,prime,ＵＴグループ,9050,サービス業,TOPIX Small 1,false,false,true
+2148.T,1,prime,アイティメディア,9050,サービス業,TOPIX Small 2,false,false,true
+2153.T,1,prime,Ｅ・Ｊホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+2154.T,1,prime,オープンアップグループ,9050,サービス業,TOPIX Small 1,false,false,true
+2157.T,1,prime,コシダカホールディングス,9050,サービス業,TOPIX Small 1,false,false,true
+2163.T,1,prime,アルトナー,9050,サービス業,-,false,false,true
+2168.T,1,prime,パソナグループ,9050,サービス業,TOPIX Small 1,false,false,true
+2170.T,1,prime,リンクアンドモチベーション,9050,サービス業,TOPIX Small 2,false,false,true
+2175.T,1,prime,エス・エム・エス,9050,サービス業,TOPIX Small 1,false,false,true
+2181.T,1,prime,パーソルホールディングス,9050,サービス業,TOPIX Mid400,false,false,true
+2198.T,1,prime,アイ・ケイ・ケイホールディングス,9050,サービス業,-,false,false,true
+2201.T,1,prime,森永製菓,3050,食料品,TOPIX Mid400,false,false,true
+2206.T,1,prime,江崎グリコ,3050,食料品,TOPIX Mid400,false,false,true
+2207.T,1,prime,ｍｅｉｔｏ,3050,食料品,TOPIX Small 2,false,false,true
+2209.T,1,prime,井村屋グループ,3050,食料品,TOPIX Small 2,false,false,true
+2211.T,1,prime,不二家,3050,食料品,TOPIX Small 2,false,false,true
+2212.T,1,prime,山崎製パン,3050,食料品,TOPIX Mid400,false,false,true
+2217.T,1,prime,モロゾフ,3050,食料品,TOPIX Small 2,false,false,true
+2220.T,1,prime,亀田製菓,3050,食料品,TOPIX Small 1,false,false,true
+2222.T,1,prime,寿スピリッツ,3050,食料品,TOPIX Mid400,false,false,true
+2229.T,1,prime,カルビー,3050,食料品,TOPIX Mid400,false,false,true
+2264.T,1,prime,森永乳業,3050,食料品,TOPIX Mid400,false,false,true
+2266.T,1,prime,六甲バター,3050,食料品,TOPIX Small 2,false,false,true
+2267.T,1,prime,ヤクルト本社,3050,食料品,TOPIX Mid400,false,false,true
+2269.T,1,prime,明治ホールディングス,3050,食料品,TOPIX Mid400,false,false,true
+2270.T,1,prime,雪印メグミルク,3050,食料品,TOPIX Small 1,false,false,true
+2281.T,1,prime,プリマハム,3050,食料品,TOPIX Small 1,false,false,true
+2282.T,1,prime,日本ハム,3050,食料品,TOPIX Mid400,false,false,true
+2288.T,1,prime,丸大食品,3050,食料品,TOPIX Small 2,false,false,true
+2292.T,1,prime,Ｓ　Ｆｏｏｄｓ,3050,食料品,TOPIX Small 1,false,false,true
+2294.T,1,prime,柿安本店,3050,食料品,TOPIX Small 2,false,false,true
+2296.T,1,prime,伊藤ハム米久ホールディングス,3050,食料品,TOPIX Small 1,false,false,true
+2301.T,1,prime,学情,9050,サービス業,TOPIX Small 2,false,false,true
+2307.T,1,prime,クロスキャット,5250,情報・通信業,TOPIX Small 2,false,false,true
+2317.T,1,prime,システナ,5250,情報・通信業,TOPIX Small 1,false,false,true
+2325.T,1,prime,ＮＪＳ,9050,サービス業,TOPIX Small 2,false,false,true
+2326.T,1,prime,デジタルアーツ,5250,情報・通信業,TOPIX Small 1,false,false,true
+2327.T,1,prime,日鉄ソリューションズ,5250,情報・通信業,TOPIX Mid400,false,false,true
+2331.T,1,prime,ＡＬＳＯＫ,9050,サービス業,TOPIX Mid400,false,false,true
+2335.T,1,prime,キューブシステム,5250,情報・通信業,TOPIX Small 2,false,false,true
+2337.T,1,prime,いちご,8050,不動産業,TOPIX Small 1,false,false,true
+2353.T,1,prime,日本駐車場開発,8050,不動産業,TOPIX Small 1,false,false,true
+2359.T,1,prime,コア,5250,情報・通信業,TOPIX Small 2,false,false,true
+2371.T,1,prime,カカクコム,9050,サービス業,TOPIX Mid400,false,false,true
+2378.T,1,prime,ルネサンス,9050,サービス業,TOPIX Small 2,false,false,true
+2379.T,1,prime,ディップ,9050,サービス業,TOPIX Small 1,false,false,true
+2384.T,1,prime,ＳＢＳホールディングス,5050,陸運業,TOPIX Small 1,false,false,true
+2395.T,1,prime,新日本科学,9050,サービス業,TOPIX Small 2,false,false,true
+2410.T,1,prime,キャリアデザインセンター,9050,サービス業,-,false,false,true
+2413.T,1,prime,エムスリー,9050,サービス業,TOPIX Mid400,false,false,true
+2429.T,1,prime,ワールドホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+2432.T,1,prime,ディー・エヌ・エー,5250,情報・通信業,TOPIX Mid400,false,false,true
+2433.T,1,prime,博報堂ＤＹホールディングス,9050,サービス業,TOPIX Mid400,false,false,true
+2461.T,1,prime,ファンコミュニケーションズ,9050,サービス業,TOPIX Small 2,false,false,true
+2462.T,1,prime,ライク,9050,サービス業,TOPIX Small 2,false,false,true
+2471.T,1,prime,エスプール,9050,サービス業,TOPIX Small 2,false,false,true
+2475.T,1,prime,ＷＤＢホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+2491.T,1,prime,バリューコマース,9050,サービス業,TOPIX Small 2,false,false,true
+2492.T,1,prime,インフォマート,9050,サービス業,TOPIX Small 1,false,false,true
+2501.T,1,prime,サッポロホールディングス,3050,食料品,TOPIX Mid400,false,false,true
+2502.T,1,prime,アサヒグループホールディングス,3050,食料品,TOPIX Large70,false,false,true
+2503.T,1,prime,キリンホールディングス,3050,食料品,TOPIX Large70,false,false,true
+2531.T,1,prime,宝ホールディングス,3050,食料品,TOPIX Mid400,false,false,true
+2533.T,1,prime,オエノンホールディングス,3050,食料品,TOPIX Small 2,false,false,true
+2540.T,1,prime,養命酒製造,3050,食料品,TOPIX Small 2,false,false,true
+256A.T,1,prime,飛島ホールディングス,2050,建設業,TOPIX Small 2,false,false,true
+2579.T,1,prime,コカ・コーラ　ボトラーズジャパンホールディングス,3050,食料品,TOPIX Mid400,false,false,true
+2585.T,1,prime,ライフドリンク　カンパニー,3050,食料品,TOPIX Small 1,false,false,true
+2587.T,1,prime,サントリービバレッジ＆フード,3050,食料品,TOPIX Mid400,false,false,true
+2590.T,1,prime,ダイドーグループホールディングス,3050,食料品,TOPIX Small 1,false,false,true
+2593.T,1,prime,伊藤園,3050,食料品,TOPIX Mid400,false,false,true
+2594.T,1,prime,キーコーヒー,3050,食料品,TOPIX Small 2,false,false,true
+2602.T,1,prime,日清オイリオグループ,3050,食料品,TOPIX Small 1,false,false,true
+2607.T,1,prime,不二製油,3050,食料品,TOPIX Mid400,false,false,true
+2613.T,1,prime,Ｊ－オイルミルズ,3050,食料品,TOPIX Small 2,false,false,true
+262A.T,1,prime,インターメスティック,6100,小売業,TOPIX Small 2,false,false,true
+2659.T,1,prime,サンエー,6100,小売業,TOPIX Small 1,false,false,true
+2664.T,1,prime,カワチ薬品,6100,小売業,TOPIX Small 1,false,false,true
+2670.T,1,prime,エービーシー・マート,6100,小売業,TOPIX Mid400,false,false,true
+2674.T,1,prime,ハードオフコーポレーション,6100,小売業,TOPIX Small 2,false,false,true
+2676.T,1,prime,高千穂交易,6050,卸売業,TOPIX Small 2,false,false,true
+2678.T,1,prime,アスクル,6100,小売業,TOPIX Small 1,false,false,true
+2681.T,1,prime,ゲオホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+2685.T,1,prime,アンドエスティＨＤ,6100,小売業,TOPIX Small 1,false,false,true
+268A.T,1,prime,リガク・ホールディングス,3750,精密機器,TOPIX Small 1,false,false,true
+2692.T,1,prime,伊藤忠食品,6050,卸売業,TOPIX Small 2,false,false,true
+2695.T,1,prime,くら寿司,6100,小売業,TOPIX Small 1,false,false,true
+2726.T,1,prime,パルグループホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+2730.T,1,prime,エディオン,6100,小売業,TOPIX Small 1,false,false,true
+2733.T,1,prime,あらた,6050,卸売業,TOPIX Small 1,false,false,true
+2734.T,1,prime,サーラコーポレーション,6100,小売業,TOPIX Small 2,false,false,true
+2737.T,1,prime,トーメンデバイス,6050,卸売業,TOPIX Small 2,false,false,true
+2742.T,1,prime,ハローズ,6100,小売業,TOPIX Small 2,false,false,true
+2749.T,1,prime,ＪＰホールディングス,9050,サービス業,TOPIX Small 1,false,false,true
+2752.T,1,prime,フジオフードグループ本社,6100,小売業,TOPIX Small 1,false,false,true
+2753.T,1,prime,あみやき亭,6100,小売業,TOPIX Small 2,false,false,true
+2760.T,1,prime,東京エレクトロン　デバイス,6050,卸売業,TOPIX Small 1,false,false,true
+2767.T,1,prime,円谷フィールズホールディングス,6050,卸売業,TOPIX Small 1,false,false,true
+2768.T,1,prime,双日,6050,卸売業,TOPIX Mid400,false,false,true
+277A.T,1,prime,グロービング,9050,サービス業,-,false,false,true
+2784.T,1,prime,アルフレッサ　ホールディングス,6050,卸売業,TOPIX Mid400,false,false,true
+2791.T,1,prime,大黒天物産,6100,小売業,TOPIX Small 1,false,false,true
+2792.T,1,prime,ハニーズホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+2801.T,1,prime,キッコーマン,3050,食料品,TOPIX Mid400,false,false,true
+2802.T,1,prime,味の素,3050,食料品,TOPIX Large70,false,false,true
+2804.T,1,prime,ブルドックソース,3050,食料品,TOPIX Small 2,false,false,true
+2809.T,1,prime,キユーピー,3050,食料品,TOPIX Mid400,false,false,true
+2810.T,1,prime,ハウス食品グループ本社,3050,食料品,TOPIX Mid400,false,false,true
+2811.T,1,prime,カゴメ,3050,食料品,TOPIX Mid400,false,false,true
+2815.T,1,prime,アリアケジャパン,3050,食料品,TOPIX Small 1,false,false,true
+285A.T,1,prime,キオクシアホールディングス,3650,電気機器,TOPIX Mid400,false,false,true
+2871.T,1,prime,ニチレイ,3050,食料品,TOPIX Mid400,false,false,true
+2874.T,1,prime,横浜冷凍,6050,卸売業,TOPIX Small 1,false,false,true
+2875.T,1,prime,東洋水産,3050,食料品,TOPIX Mid400,false,false,true
+2882.T,1,prime,イートアンドホールディングス,3050,食料品,TOPIX Small 2,false,false,true
+2884.T,1,prime,ヨシムラ・フード・ホールディングス,3050,食料品,TOPIX Small 2,false,false,true
+2897.T,1,prime,日清食品ホールディングス,3050,食料品,TOPIX Mid400,false,false,true
+2908.T,1,prime,フジッコ,3050,食料品,TOPIX Small 2,false,false,true
+2910.T,1,prime,ロック・フィールド,3050,食料品,TOPIX Small 2,false,false,true
+2914.T,1,prime,日本たばこ産業,3050,食料品,TOPIX Core30,false,false,true
+2915.T,1,prime,ケンコーマヨネーズ,3050,食料品,TOPIX Small 2,false,false,true
+2918.T,1,prime,わらべや日洋ホールディングス,3050,食料品,TOPIX Small 1,false,false,true
+2922.T,1,prime,なとり,3050,食料品,TOPIX Small 2,false,false,true
+2929.T,1,prime,ファーマフーズ,3050,食料品,TOPIX Small 2,false,false,true
+2930.T,1,prime,北の達人コーポレーション,3200,化学,TOPIX Small 2,false,false,true
+2931.T,1,prime,ユーグレナ,3050,食料品,TOPIX Small 1,false,false,true
+2933.T,1,prime,紀文食品,3050,食料品,TOPIX Small 2,false,false,true
+2935.T,1,prime,ピックルスホールディングス,3050,食料品,TOPIX Small 2,false,false,true
+2975.T,1,prime,スター・マイカ・ホールディングス,8050,不動産業,TOPIX Small 2,false,false,true
+2980.T,1,prime,ＳＲＥホールディングス,8050,不動産業,TOPIX Small 2,false,false,true
+2982.T,1,prime,ＡＤワークスグループ,8050,不動産業,-,false,false,true
+3002.T,1,prime,グンゼ,3100,繊維製品,TOPIX Small 1,false,false,true
+3003.T,1,prime,ヒューリック,8050,不動産業,TOPIX Mid400,false,false,true
+3028.T,1,prime,アルペン,6100,小売業,TOPIX Small 1,false,false,true
+3031.T,1,prime,ラクーンホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+3034.T,1,prime,クオールホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+3036.T,1,prime,アルコニックス,6050,卸売業,TOPIX Small 1,false,false,true
+3038.T,1,prime,神戸物産,6050,卸売業,TOPIX Mid400,false,false,true
+3040.T,1,prime,ソリトンシステムズ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3046.T,1,prime,ジンズホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+3048.T,1,prime,ビックカメラ,6100,小売業,TOPIX Mid400,false,false,true
+3050.T,1,prime,ＤＣＭホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+3064.T,1,prime,ＭｏｎｏｔａＲＯ,6100,小売業,TOPIX Mid400,false,false,true
+3076.T,1,prime,あい　ホールディングス,6050,卸売業,TOPIX Small 1,false,false,true
+3086.T,1,prime,Ｊ．フロント　リテイリング,6100,小売業,TOPIX Mid400,false,false,true
+3087.T,1,prime,ドトール・日レスホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+3088.T,1,prime,マツキヨココカラ＆カンパニー,6100,小売業,TOPIX Mid400,false,false,true
+3091.T,1,prime,ブロンコビリー,6100,小売業,TOPIX Small 1,false,false,true
+3092.T,1,prime,ＺＯＺＯ,6100,小売業,TOPIX Mid400,false,false,true
+3093.T,1,prime,トレジャー・ファクトリー,6100,小売業,TOPIX Small 2,false,false,true
+3097.T,1,prime,物語コーポレーション,6100,小売業,TOPIX Small 1,false,false,true
+3099.T,1,prime,三越伊勢丹ホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+3101.T,1,prime,東洋紡,3200,化学,TOPIX Small 1,false,false,true
+3104.T,1,prime,富士紡ホールディングス,3100,繊維製品,TOPIX Small 2,false,false,true
+3105.T,1,prime,日清紡ホールディングス,3650,電気機器,TOPIX Mid400,false,false,true
+3106.T,1,prime,倉敷紡績,3100,繊維製品,TOPIX Small 1,false,false,true
+3107.T,1,prime,ダイワボウホールディングス,6050,卸売業,TOPIX Mid400,false,false,true
+3109.T,1,prime,シキボウ,3100,繊維製品,TOPIX Small 2,false,false,true
+3110.T,1,prime,日東紡績,3400,ガラス・土石製品,TOPIX Small 1,false,false,true
+3116.T,1,prime,トヨタ紡織,3700,輸送用機器,TOPIX Mid400,false,false,true
+3132.T,1,prime,マクニカホールディングス,6050,卸売業,TOPIX Mid400,false,false,true
+3139.T,1,prime,ラクト・ジャパン,6050,卸売業,TOPIX Small 2,false,false,true
+3148.T,1,prime,クリエイトＳＤホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+3150.T,1,prime,グリムス,4050,電気・ガス業,TOPIX Small 2,false,false,true
+3151.T,1,prime,バイタルケーエスケー・ホールディングス,6050,卸売業,TOPIX Small 2,false,false,true
+3153.T,1,prime,八洲電機,6050,卸売業,TOPIX Small 2,false,false,true
+3154.T,1,prime,メディアスホールディングス,6050,卸売業,TOPIX Small 2,false,false,true
+3156.T,1,prime,レスター,6050,卸売業,TOPIX Small 2,false,false,true
+3167.T,1,prime,ＴＯＫＡＩホールディングス,6050,卸売業,TOPIX Small 1,false,false,true
+3176.T,1,prime,三洋貿易,6050,卸売業,TOPIX Small 2,false,false,true
+3179.T,1,prime,シュッピン,6100,小売業,TOPIX Small 2,false,false,true
+3180.T,1,prime,ビューティガレージ,6050,卸売業,TOPIX Small 2,false,false,true
+3182.T,1,prime,オイシックス・ラ・大地,6100,小売業,TOPIX Small 1,false,false,true
+3183.T,1,prime,ウイン・パートナーズ,6050,卸売業,TOPIX Small 2,false,false,true
+3186.T,1,prime,ネクステージ,6100,小売業,TOPIX Small 1,false,false,true
+3191.T,1,prime,ジョイフル本田,6100,小売業,TOPIX Small 1,false,false,true
+3193.T,1,prime,エターナルホスピタリティグループ,6100,小売業,TOPIX Small 2,false,false,true
+3196.T,1,prime,ホットランドホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+3197.T,1,prime,すかいらーくホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+3198.T,1,prime,ＳＦＰホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+3199.T,1,prime,綿半ホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+3201.T,1,prime,日本毛織,3100,繊維製品,TOPIX Small 1,false,false,true
+3221.T,1,prime,ヨシックスホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+3231.T,1,prime,野村不動産ホールディングス,8050,不動産業,TOPIX Mid400,false,false,true
+3232.T,1,prime,三重交通グループホールディングス,8050,不動産業,TOPIX Small 2,false,false,true
+3245.T,1,prime,ディア・ライフ,8050,不動産業,TOPIX Small 2,false,false,true
+3252.T,1,prime,地主,8050,不動産業,TOPIX Small 2,false,false,true
+3276.T,1,prime,ＪＰＭＣ,8050,不動産業,TOPIX Small 2,false,false,true
+3284.T,1,prime,フージャースホールディングス,8050,不動産業,TOPIX Small 2,false,false,true
+3288.T,1,prime,オープンハウスグループ,8050,不動産業,TOPIX Mid400,false,false,true
+3289.T,1,prime,東急不動産ホールディングス,8050,不動産業,TOPIX Mid400,false,false,true
+3291.T,1,prime,飯田グループホールディングス,8050,不動産業,TOPIX Mid400,false,false,true
+3302.T,1,prime,帝国繊維,3100,繊維製品,TOPIX Small 2,false,false,true
+3315.T,1,prime,日本コークス工業,3300,石油・石炭製品,TOPIX Small 2,false,false,true
+3333.T,1,prime,あさひ,6100,小売業,TOPIX Small 2,false,false,true
+3349.T,1,prime,コスモス薬品,6100,小売業,TOPIX Mid400,false,false,true
+3360.T,1,prime,シップヘルスケアホールディングス,6050,卸売業,TOPIX Mid400,false,false,true
+3371.T,1,prime,ソフトクリエイトホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+3382.T,1,prime,セブン＆アイ・ホールディングス,6100,小売業,TOPIX Core30,false,false,true
+3387.T,1,prime,クリエイト・レストランツ・ホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+3388.T,1,prime,明治電機工業,6050,卸売業,TOPIX Small 2,false,false,true
+3391.T,1,prime,ツルハホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+3393.T,1,prime,スターティアホールディングス,6050,卸売業,-,false,false,true
+3395.T,1,prime,サンマルクホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+3397.T,1,prime,トリドールホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+3401.T,1,prime,帝人,3100,繊維製品,TOPIX Mid400,false,false,true
+3402.T,1,prime,東レ,3100,繊維製品,TOPIX Mid400,false,false,true
+3405.T,1,prime,クラレ,3200,化学,TOPIX Mid400,false,false,true
+3407.T,1,prime,旭化成,3200,化学,TOPIX Large70,false,false,true
+3415.T,1,prime,ＴＯＫＹＯ　ＢＡＳＥ,6100,小売業,TOPIX Small 2,false,false,true
+3431.T,1,prime,宮地エンジニアリンググループ,3550,金属製品,TOPIX Small 1,false,false,true
+3433.T,1,prime,トーカロ,3550,金属製品,TOPIX Small 1,false,false,true
+3436.T,1,prime,ＳＵＭＣＯ,3550,金属製品,TOPIX Mid400,false,false,true
+3443.T,1,prime,川田テクノロジーズ,3550,金属製品,TOPIX Small 2,false,false,true
+3445.T,1,prime,ＲＳ　Ｔｅｃｈｎｏｌｏｇｉｅｓ,3550,金属製品,TOPIX Small 1,false,false,true
+3457.T,1,prime,Ａｎｄ　Ｄｏホールディングス,8050,不動産業,TOPIX Small 2,false,false,true
+3465.T,1,prime,ケイアイスター不動産,8050,不動産業,TOPIX Small 1,false,false,true
+3475.T,1,prime,グッドコムアセット,8050,不動産業,TOPIX Small 2,false,false,true
+3480.T,1,prime,ジェイ・エス・ビー,8050,不動産業,TOPIX Small 2,false,false,true
+3482.T,1,prime,ロードスターキャピタル,8050,不動産業,TOPIX Small 2,false,false,true
+3486.T,1,prime,グローバル・リンク・マネジメント,8050,不動産業,-,false,false,true
+3496.T,1,prime,アズーム,8050,不動産業,TOPIX Small 2,false,false,true
+3498.T,1,prime,霞ヶ関キャピタル,8050,不動産業,TOPIX Small 1,false,false,true
+3501.T,1,prime,ＳＵＭＩＮＯＥ,3100,繊維製品,-,false,false,true
+3539.T,1,prime,ＪＭホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+3543.T,1,prime,コメダホールディングス,6050,卸売業,TOPIX Small 1,false,false,true
+3546.T,1,prime,アレンザホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+3548.T,1,prime,バロックジャパンリミテッド,6100,小売業,TOPIX Small 2,false,false,true
+3549.T,1,prime,クスリのアオキホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+3561.T,1,prime,力の源ホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+3563.T,1,prime,ＦＯＯＤ　＆　ＬＩＦＥ　ＣＯＭＰＡＮＩＥＳ,6100,小売業,TOPIX Mid400,false,false,true
+3569.T,1,prime,セーレン,3100,繊維製品,TOPIX Small 1,false,false,true
+3580.T,1,prime,小松マテーレ,3100,繊維製品,TOPIX Small 2,false,false,true
+3591.T,1,prime,ワコールホールディングス,3100,繊維製品,TOPIX Mid400,false,false,true
+3593.T,1,prime,ホギメディカル,3100,繊維製品,TOPIX Small 1,false,false,true
+3608.T,1,prime,ＴＳＩホールディングス,3100,繊維製品,TOPIX Small 1,false,false,true
+3612.T,1,prime,ワールド,3100,繊維製品,TOPIX Small 1,false,false,true
+3626.T,1,prime,ＴＩＳ,5250,情報・通信業,TOPIX Mid400,false,false,true
+3632.T,1,prime,グリーホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+3635.T,1,prime,コーエーテクモホールディングス,5250,情報・通信業,TOPIX Mid400,false,false,true
+3636.T,1,prime,三菱総合研究所,5250,情報・通信業,TOPIX Small 1,false,false,true
+3649.T,1,prime,ファインデックス,5250,情報・通信業,TOPIX Small 2,false,false,true
+3656.T,1,prime,ＫＬａｂ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3657.T,1,prime,ポールトゥウィンホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+3659.T,1,prime,ネクソン,5250,情報・通信業,TOPIX Mid400,false,false,true
+3660.T,1,prime,アイスタイル,5250,情報・通信業,TOPIX Small 1,false,false,true
+3661.T,1,prime,エムアップホールディングス,5250,情報・通信業,TOPIX Small 1,false,false,true
+3662.T,1,prime,エイチームホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+3663.T,1,prime,セルシス,5250,情報・通信業,TOPIX Small 2,false,false,true
+3665.T,1,prime,エニグモ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3668.T,1,prime,コロプラ,5250,情報・通信業,TOPIX Small 1,false,false,true
+3673.T,1,prime,ブロードリーフ,5250,情報・通信業,TOPIX Small 1,false,false,true
+3676.T,1,prime,デジタルハーツホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+3678.T,1,prime,メディアドゥ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3679.T,1,prime,じげん,5250,情報・通信業,TOPIX Small 2,false,false,true
+3681.T,1,prime,ブイキューブ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3687.T,1,prime,フィックスターズ,5250,情報・通信業,TOPIX Small 2,false,false,true
+368A.T,1,prime,北里コーポレーション,3750,精密機器,TOPIX Small 2,false,false,true
+3694.T,1,prime,オプティム,5250,情報・通信業,TOPIX Small 2,false,false,true
+3696.T,1,prime,セレス,5250,情報・通信業,TOPIX Small 2,false,false,true
+3697.T,1,prime,ＳＨＩＦＴ,5250,情報・通信業,TOPIX Mid400,false,false,true
+3708.T,1,prime,特種東海製紙,3150,パルプ・紙,TOPIX Small 2,false,false,true
+3741.T,1,prime,セック,5250,情報・通信業,TOPIX Small 2,false,false,true
+3762.T,1,prime,テクマトリックス,5250,情報・通信業,TOPIX Small 1,false,false,true
+3763.T,1,prime,プロシップ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3765.T,1,prime,ガンホー・オンライン・エンターテイメント,5250,情報・通信業,TOPIX Small 1,false,false,true
+3769.T,1,prime,ＧＭＯペイメントゲートウェイ,5250,情報・通信業,TOPIX Mid400,false,false,true
+3771.T,1,prime,システムリサーチ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3774.T,1,prime,インターネットイニシアティブ,5250,情報・通信業,TOPIX Mid400,false,false,true
+3778.T,1,prime,さくらインターネット,5250,情報・通信業,TOPIX Small 1,false,false,true
+3788.T,1,prime,ＧＭＯグローバルサイン・ホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+3817.T,1,prime,ＳＲＡホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+3834.T,1,prime,朝日ネット,5250,情報・通信業,TOPIX Small 2,false,false,true
+3835.T,1,prime,ｅＢＡＳＥ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3836.T,1,prime,アバントグループ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3837.T,1,prime,アドソル日進,5250,情報・通信業,TOPIX Small 2,false,false,true
+3843.T,1,prime,フリービット,5250,情報・通信業,TOPIX Small 2,false,false,true
+3844.T,1,prime,コムチュア,5250,情報・通信業,TOPIX Small 1,false,false,true
+3853.T,1,prime,アステリア,5250,情報・通信業,TOPIX Small 2,false,false,true
+3854.T,1,prime,アイル,5250,情報・通信業,TOPIX Small 2,false,false,true
+3861.T,1,prime,王子ホールディングス,3150,パルプ・紙,TOPIX Mid400,false,false,true
+3863.T,1,prime,日本製紙,3150,パルプ・紙,TOPIX Small 1,false,false,true
+3864.T,1,prime,三菱製紙,3150,パルプ・紙,-,false,false,true
+3865.T,1,prime,北越コーポレーション,3150,パルプ・紙,TOPIX Small 1,false,false,true
+3877.T,1,prime,中越パルプ工業,3150,パルプ・紙,-,false,false,true
+3880.T,1,prime,大王製紙,3150,パルプ・紙,TOPIX Small 1,false,false,true
+3901.T,1,prime,マークラインズ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3903.T,1,prime,ｇｕｍｉ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3915.T,1,prime,テラスカイ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3916.T,1,prime,デジタル・インフォメーション・テクノロジー,5250,情報・通信業,TOPIX Small 2,false,false,true
+3921.T,1,prime,ネオジャパン,5250,情報・通信業,TOPIX Small 2,false,false,true
+3922.T,1,prime,ＰＲ　ＴＩＭＥＳ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3923.T,1,prime,ラクス,5250,情報・通信業,TOPIX Mid400,false,false,true
+3925.T,1,prime,ダブルスタンダード,5250,情報・通信業,TOPIX Small 2,false,false,true
+3932.T,1,prime,アカツキ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3939.T,1,prime,カナミックネットワーク,5250,情報・通信業,TOPIX Small 2,false,false,true
+3941.T,1,prime,レンゴー,3150,パルプ・紙,TOPIX Mid400,false,false,true
+3946.T,1,prime,トーモク,3150,パルプ・紙,TOPIX Small 2,false,false,true
+3950.T,1,prime,ザ・パック,3150,パルプ・紙,TOPIX Small 2,false,false,true
+3962.T,1,prime,チェンジホールディングス,5250,情報・通信業,TOPIX Small 1,false,false,true
+3963.T,1,prime,シンクロ・フード,5250,情報・通信業,-,false,false,true
+3964.T,1,prime,オークネット,5250,情報・通信業,TOPIX Small 2,false,false,true
+3968.T,1,prime,セグエグループ,5250,情報・通信業,-,false,false,true
+3983.T,1,prime,オロ,5250,情報・通信業,TOPIX Small 2,false,false,true
+3984.T,1,prime,ユーザーローカル,5250,情報・通信業,TOPIX Small 2,false,false,true
+3992.T,1,prime,ニーズウェル,5250,情報・通信業,-,false,false,true
+3993.T,1,prime,ＰＫＳＨＡ　Ｔｅｃｈｎｏｌｏｇｙ,5250,情報・通信業,TOPIX Small 1,false,false,true
+3994.T,1,prime,マネーフォワード,5250,情報・通信業,TOPIX Mid400,false,false,true
+4004.T,1,prime,レゾナック・ホールディングス,3200,化学,TOPIX Mid400,false,false,true
+4005.T,1,prime,住友化学,3200,化学,TOPIX Mid400,false,false,true
+4008.T,1,prime,住友精化,3200,化学,TOPIX Small 1,false,false,true
+4021.T,1,prime,日産化学,3200,化学,TOPIX Mid400,false,false,true
+4022.T,1,prime,ラサ工業,3200,化学,TOPIX Small 2,false,false,true
+4023.T,1,prime,クレハ,3200,化学,TOPIX Small 1,false,false,true
+4025.T,1,prime,多木化学,3200,化学,TOPIX Small 2,false,false,true
+4027.T,1,prime,テイカ,3200,化学,TOPIX Small 2,false,false,true
+4028.T,1,prime,石原産業,3200,化学,TOPIX Small 1,false,false,true
+4041.T,1,prime,日本曹達,3200,化学,TOPIX Small 1,false,false,true
+4042.T,1,prime,東ソー,3200,化学,TOPIX Mid400,false,false,true
+4043.T,1,prime,トクヤマ,3200,化学,TOPIX Mid400,false,false,true
+4044.T,1,prime,セントラル硝子,3200,化学,TOPIX Small 1,false,false,true
+4045.T,1,prime,東亞合成,3200,化学,TOPIX Mid400,false,false,true
+4046.T,1,prime,大阪ソーダ,3200,化学,TOPIX Small 1,false,false,true
+4047.T,1,prime,関東電化工業,3200,化学,TOPIX Small 1,false,false,true
+4051.T,1,prime,ＧＭＯフィナンシャルゲート,5250,情報・通信業,TOPIX Small 2,false,false,true
+4053.T,1,prime,Ｓｕｎ　Ａｓｔｅｒｉｓｋ,5250,情報・通信業,TOPIX Small 2,false,false,true
+4061.T,1,prime,デンカ,3200,化学,TOPIX Mid400,false,false,true
+4062.T,1,prime,イビデン,3650,電気機器,TOPIX Mid400,false,false,true
+4063.T,1,prime,信越化学工業,3200,化学,TOPIX Core30,false,false,true
+4064.T,1,prime,日本カーバイド工業,3200,化学,TOPIX Small 2,false,false,true
+4071.T,1,prime,プラスアルファ・コンサルティング,5250,情報・通信業,TOPIX Small 1,false,false,true
+4072.T,1,prime,電算システムホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+4078.T,1,prime,堺化学工業,3200,化学,TOPIX Small 1,false,false,true
+4082.T,1,prime,第一稀元素化学工業,3200,化学,TOPIX Small 2,false,false,true
+4088.T,1,prime,エア・ウォーター,3200,化学,TOPIX Mid400,false,false,true
+4091.T,1,prime,日本酸素ホールディングス,3200,化学,TOPIX Mid400,false,false,true
+4092.T,1,prime,日本化学工業,3200,化学,TOPIX Small 2,false,false,true
+4095.T,1,prime,日本パーカライジング,3200,化学,TOPIX Small 1,false,false,true
+4097.T,1,prime,高圧ガス工業,3200,化学,TOPIX Small 2,false,false,true
+4099.T,1,prime,四国化成ホールディングス,3200,化学,TOPIX Small 2,false,false,true
+409A.T,1,prime,オリオンビール,3050,食料品,TOPIX Small 2,false,false,true
+4109.T,1,prime,ステラ　ケミファ,3200,化学,TOPIX Small 1,false,false,true
+4112.T,1,prime,保土谷化学工業,3200,化学,TOPIX Small 2,false,false,true
+4114.T,1,prime,日本触媒,3200,化学,TOPIX Mid400,false,false,true
+4116.T,1,prime,大日精化工業,3200,化学,TOPIX Small 2,false,false,true
+4118.T,1,prime,カネカ,3200,化学,TOPIX Mid400,false,false,true
+4151.T,1,prime,協和キリン,3250,医薬品,TOPIX Mid400,false,false,true
+417A.T,1,prime,ブルーゾーンホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+4180.T,1,prime,Ａｐｐｉｅｒ　Ｇｒｏｕｐ,5250,情報・通信業,TOPIX Small 1,false,false,true
+4182.T,1,prime,三菱瓦斯化学,3200,化学,TOPIX Mid400,false,false,true
+4183.T,1,prime,三井化学,3200,化学,TOPIX Mid400,false,false,true
+4186.T,1,prime,東京応化工業,3200,化学,TOPIX Mid400,false,false,true
+4187.T,1,prime,大阪有機化学工業,3200,化学,TOPIX Small 1,false,false,true
+4188.T,1,prime,三菱ケミカルグループ,3200,化学,TOPIX Large70,false,false,true
+4189.T,1,prime,ＫＨネオケム,3200,化学,TOPIX Small 1,false,false,true
+4194.T,1,prime,ビジョナル,5250,情報・通信業,TOPIX Mid400,false,false,true
+4202.T,1,prime,ダイセル,3200,化学,TOPIX Mid400,false,false,true
+4203.T,1,prime,住友ベークライト,3200,化学,TOPIX Mid400,false,false,true
+4204.T,1,prime,積水化学工業,3200,化学,TOPIX Mid400,false,false,true
+4205.T,1,prime,日本ゼオン,3200,化学,TOPIX Mid400,false,false,true
+4206.T,1,prime,アイカ工業,3200,化学,TOPIX Mid400,false,false,true
+4208.T,1,prime,ＵＢＥ,3200,化学,TOPIX Mid400,false,false,true
+4212.T,1,prime,積水樹脂,3200,化学,TOPIX Small 1,false,false,true
+4216.T,1,prime,旭有機材,3200,化学,TOPIX Small 1,false,false,true
+4218.T,1,prime,ニチバン,3200,化学,TOPIX Small 2,false,false,true
+4220.T,1,prime,リケンテクノス,3200,化学,TOPIX Small 2,false,false,true
+4221.T,1,prime,大倉工業,3200,化学,TOPIX Small 2,false,false,true
+4228.T,1,prime,積水化成品工業,3200,化学,TOPIX Small 2,false,false,true
+4229.T,1,prime,群栄化学工業,3200,化学,TOPIX Small 2,false,false,true
+4246.T,1,prime,ダイキョーニシカワ,3200,化学,TOPIX Small 2,false,false,true
+4249.T,1,prime,森六,3200,化学,TOPIX Small 2,false,false,true
+4251.T,1,prime,恵和,3200,化学,TOPIX Small 2,false,false,true
+4272.T,1,prime,日本化薬,3200,化学,TOPIX Mid400,false,false,true
+4275.T,1,prime,カーリット,3200,化学,TOPIX Small 2,false,false,true
+4290.T,1,prime,プレステージ・インターナショナル,9050,サービス業,TOPIX Small 1,false,false,true
+429A.T,1,prime,テクセンドフォトマスク,3800,その他製品,TOPIX Small 2,false,false,true
+4301.T,1,prime,アミューズ,9050,サービス業,TOPIX Small 2,false,false,true
+4307.T,1,prime,野村総合研究所,5250,情報・通信業,TOPIX Large70,false,false,true
+4310.T,1,prime,ドリームインキュベータ,9050,サービス業,TOPIX Small 2,false,false,true
+4318.T,1,prime,クイック,9050,サービス業,TOPIX Small 2,false,false,true
+4323.T,1,prime,日本システム技術,5250,情報・通信業,TOPIX Small 2,false,false,true
+4324.T,1,prime,電通グループ,9050,サービス業,TOPIX Mid400,false,false,true
+4326.T,1,prime,インテージホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+4331.T,1,prime,テイクアンドギヴ・ニーズ,9050,サービス業,TOPIX Small 2,false,false,true
+4337.T,1,prime,ぴあ,9050,サービス業,TOPIX Small 2,false,false,true
+4343.T,1,prime,イオンファンタジー,9050,サービス業,TOPIX Small 2,false,false,true
+4344.T,1,prime,ソースネクスト,5250,情報・通信業,TOPIX Small 2,false,false,true
+4345.T,1,prime,シーティーエス,9050,サービス業,TOPIX Small 2,false,false,true
+4362.T,1,prime,日本精化,3200,化学,TOPIX Small 2,false,false,true
+4368.T,1,prime,扶桑化学工業,3200,化学,TOPIX Small 1,false,false,true
+4369.T,1,prime,トリケミカル研究所,3200,化学,TOPIX Small 1,false,false,true
+4373.T,1,prime,シンプレクス・ホールディングス,5250,情報・通信業,TOPIX Small 1,false,false,true
+4384.T,1,prime,ラクスル,5250,情報・通信業,TOPIX Small 1,false,false,true
+4385.T,1,prime,メルカリ,5250,情報・通信業,TOPIX Mid400,false,false,true
+4390.T,1,prime,ＩＰＳ,5250,情報・通信業,TOPIX Small 2,false,false,true
+4392.T,1,prime,ＦＩＧ,5250,情報・通信業,-,false,false,true
+4396.T,1,prime,システムサポートホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+4401.T,1,prime,ＡＤＥＫＡ,3200,化学,TOPIX Mid400,false,false,true
+4403.T,1,prime,日油,3200,化学,TOPIX Mid400,false,false,true
+4410.T,1,prime,ハリマ化成グループ,3200,化学,TOPIX Small 2,false,false,true
+4413.T,1,prime,ボードルア,5250,情報・通信業,TOPIX Small 2,false,false,true
+4432.T,1,prime,ウイングアーク１ｓｔ,5250,情報・通信業,TOPIX Small 1,false,false,true
+4433.T,1,prime,ヒト・コミュニケーションズ・ホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+4443.T,1,prime,Ｓａｎｓａｎ,5250,情報・通信業,TOPIX Small 1,false,false,true
+4446.T,1,prime,Ｌｉｎｋ－Ｕグループ,5250,情報・通信業,-,false,false,true
+4449.T,1,prime,ギフティ,5250,情報・通信業,TOPIX Small 2,false,false,true
+4452.T,1,prime,花王,3200,化学,TOPIX Large70,false,false,true
+4461.T,1,prime,第一工業製薬,3200,化学,TOPIX Small 2,false,false,true
+4462.T,1,prime,石原ケミカル,3200,化学,TOPIX Small 2,false,false,true
+4471.T,1,prime,三洋化成工業,3200,化学,TOPIX Small 1,false,false,true
+4480.T,1,prime,メドレー,5250,情報・通信業,TOPIX Small 1,false,false,true
+4481.T,1,prime,ベース,5250,情報・通信業,TOPIX Small 2,false,false,true
+4483.T,1,prime,ＪＭＤＣ,5250,情報・通信業,TOPIX Small 1,false,false,true
+4502.T,1,prime,武田薬品工業,3250,医薬品,TOPIX Core30,false,false,true
+4503.T,1,prime,アステラス製薬,3250,医薬品,TOPIX Large70,false,false,true
+4506.T,1,prime,住友ファーマ,3250,医薬品,TOPIX Mid400,false,false,true
+4507.T,1,prime,塩野義製薬,3250,医薬品,TOPIX Large70,false,false,true
+4516.T,1,prime,日本新薬,3250,医薬品,TOPIX Mid400,false,false,true
+4519.T,1,prime,中外製薬,3250,医薬品,TOPIX Large70,false,false,true
+4521.T,1,prime,科研製薬,3250,医薬品,TOPIX Small 1,false,false,true
+4523.T,1,prime,エーザイ,3250,医薬品,TOPIX Mid400,false,false,true
+4526.T,1,prime,理研ビタミン,3050,食料品,TOPIX Small 2,false,false,true
+4527.T,1,prime,ロート製薬,3250,医薬品,TOPIX Mid400,false,false,true
+4528.T,1,prime,小野薬品工業,3250,医薬品,TOPIX Mid400,false,false,true
+4530.T,1,prime,久光製薬,3250,医薬品,-,false,false,true
+4534.T,1,prime,持田製薬,3250,医薬品,TOPIX Small 2,false,false,true
+4536.T,1,prime,参天製薬,3250,医薬品,TOPIX Mid400,false,false,true
+4538.T,1,prime,扶桑薬品工業,3250,医薬品,TOPIX Small 2,false,false,true
+4540.T,1,prime,ツムラ,3250,医薬品,TOPIX Mid400,false,false,true
+4543.T,1,prime,テルモ,3750,精密機器,TOPIX Large70,false,false,true
+4544.T,1,prime,Ｈ．Ｕ．グループホールディングス,9050,サービス業,TOPIX Mid400,false,false,true
+4547.T,1,prime,キッセイ薬品工業,3250,医薬品,TOPIX Small 1,false,false,true
+4548.T,1,prime,生化学工業,3250,医薬品,TOPIX Small 2,false,false,true
+4549.T,1,prime,栄研化学,3250,医薬品,TOPIX Small 1,false,false,true
+4552.T,1,prime,ＪＣＲファーマ,3250,医薬品,TOPIX Small 1,false,false,true
+4553.T,1,prime,東和薬品,3250,医薬品,TOPIX Small 1,false,false,true
+4554.T,1,prime,富士製薬工業,3250,医薬品,TOPIX Small 2,false,false,true
+4559.T,1,prime,ゼリア新薬工業,3250,医薬品,TOPIX Small 1,false,false,true
+4565.T,1,prime,ネクセラファーマ,3250,医薬品,TOPIX Small 1,false,false,true
+4568.T,1,prime,第一三共,3250,医薬品,TOPIX Core30,false,false,true
+4569.T,1,prime,杏林製薬,3250,医薬品,TOPIX Small 1,false,false,true
+4574.T,1,prime,大幸薬品,3250,医薬品,TOPIX Small 2,false,false,true
+4577.T,1,prime,ダイト,3250,医薬品,TOPIX Small 2,false,false,true
+4578.T,1,prime,大塚ホールディングス,3250,医薬品,TOPIX Large70,false,false,true
+4587.T,1,prime,ペプチドリーム,3250,医薬品,TOPIX Mid400,false,false,true
+4611.T,1,prime,大日本塗料,3200,化学,TOPIX Small 2,false,false,true
+4612.T,1,prime,日本ペイントホールディングス,3200,化学,TOPIX Mid400,false,false,true
+4613.T,1,prime,関西ペイント,3200,化学,TOPIX Mid400,false,false,true
+4617.T,1,prime,中国塗料,3200,化学,TOPIX Small 1,false,false,true
+4626.T,1,prime,太陽ホールディングス,3200,化学,TOPIX Mid400,false,false,true
+4631.T,1,prime,ＤＩＣ,3200,化学,TOPIX Mid400,false,false,true
+4633.T,1,prime,サカタインクス,3200,化学,TOPIX Small 1,false,false,true
+4634.T,1,prime,ａｒｔｉｅｎｃｅ,3200,化学,TOPIX Small 1,false,false,true
+4641.T,1,prime,アルプス技研,9050,サービス業,TOPIX Small 2,false,false,true
+4658.T,1,prime,日本空調サービス,9050,サービス業,TOPIX Small 2,false,false,true
+4661.T,1,prime,オリエンタルランド,9050,サービス業,TOPIX Large70,false,false,true
+4662.T,1,prime,フォーカスシステムズ,5250,情報・通信業,TOPIX Small 2,false,false,true
+4665.T,1,prime,ダスキン,9050,サービス業,TOPIX Mid400,false,false,true
+4666.T,1,prime,パーク２４,8050,不動産業,TOPIX Mid400,false,false,true
+4668.T,1,prime,明光ネットワークジャパン,9050,サービス業,TOPIX Small 2,false,false,true
+4674.T,1,prime,クレスコ,5250,情報・通信業,TOPIX Small 2,false,false,true
+4676.T,1,prime,フジ・メディア・ホールディングス,5250,情報・通信業,TOPIX Mid400,false,false,true
+4680.T,1,prime,ラウンドワン,9050,サービス業,TOPIX Mid400,false,false,true
+4681.T,1,prime,リゾートトラスト,9050,サービス業,TOPIX Mid400,false,false,true
+4684.T,1,prime,オービック,5250,情報・通信業,TOPIX Mid400,false,false,true
+4686.T,1,prime,ジャストシステム,5250,情報・通信業,TOPIX Small 1,false,false,true
+4687.T,1,prime,ＴＤＣソフト,5250,情報・通信業,TOPIX Small 2,false,false,true
+4689.T,1,prime,ＬＩＮＥヤフー,5250,情報・通信業,TOPIX Large70,false,false,true
+4694.T,1,prime,ビー・エム・エル,9050,サービス業,TOPIX Small 1,false,false,true
+4704.T,1,prime,トレンドマイクロ,5250,情報・通信業,TOPIX Mid400,false,false,true
+4709.T,1,prime,ＩＤホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+4714.T,1,prime,リソー教育グループ,9050,サービス業,TOPIX Small 2,false,false,true
+4718.T,1,prime,早稲田アカデミー,9050,サービス業,TOPIX Small 2,false,false,true
+4719.T,1,prime,アルファシステムズ,5250,情報・通信業,TOPIX Small 2,false,false,true
+471A.T,1,prime,ＮＳグループ,7200,その他金融業,TOPIX Small 2,false,false,true
+4722.T,1,prime,フューチャー,5250,情報・通信業,TOPIX Small 1,false,false,true
+4725.T,1,prime,ＣＡＣ　Ｈｏｌｄｉｎｇｓ,5250,情報・通信業,TOPIX Small 2,false,false,true
+4732.T,1,prime,ユー・エス・エス,9050,サービス業,TOPIX Mid400,false,false,true
+4733.T,1,prime,オービックビジネスコンサルタント,5250,情報・通信業,TOPIX Mid400,false,false,true
+4743.T,1,prime,アイティフォー,5250,情報・通信業,TOPIX Small 2,false,false,true
+4751.T,1,prime,サイバーエージェント,9050,サービス業,TOPIX Mid400,false,false,true
+4755.T,1,prime,楽天グループ,9050,サービス業,TOPIX Mid400,false,false,true
+4763.T,1,prime,クリーク・アンド・リバー社,9050,サービス業,TOPIX Small 2,false,false,true
+4765.T,1,prime,ＳＢＩグローバルアセットマネジメント,9050,サービス業,TOPIX Small 2,false,false,true
+4768.T,1,prime,大塚商会,5250,情報・通信業,TOPIX Mid400,false,false,true
+4776.T,1,prime,サイボウズ,5250,情報・通信業,TOPIX Small 1,false,false,true
+4784.T,1,prime,ＧＭＯインターネット,9050,サービス業,TOPIX Small 2,false,false,true
+4792.T,1,prime,山田コンサルティンググループ,9050,サービス業,TOPIX Small 2,false,false,true
+4801.T,1,prime,セントラルスポーツ,9050,サービス業,TOPIX Small 2,false,false,true
+4809.T,1,prime,パラカ,8050,不動産業,TOPIX Small 2,false,false,true
+4812.T,1,prime,電通総研,5250,情報・通信業,TOPIX Small 1,false,false,true
+4813.T,1,prime,ＡＣＣＥＳＳ,5250,情報・通信業,-,false,false,true
+4819.T,1,prime,デジタルガレージ,5250,情報・通信業,TOPIX Small 1,false,false,true
+4820.T,1,prime,イーエムシステムズ,5250,情報・通信業,TOPIX Small 2,false,false,true
+4825.T,1,prime,ウェザーニューズ,5250,情報・通信業,TOPIX Small 1,false,false,true
+4826.T,1,prime,ＣＩＪ,5250,情報・通信業,TOPIX Small 2,false,false,true
+4828.T,1,prime,ビジネスエンジニアリング,5250,情報・通信業,TOPIX Small 2,false,false,true
+4839.T,1,prime,ＷＯＷＯＷ,5250,情報・通信業,TOPIX Small 2,false,false,true
+4847.T,1,prime,インテリジェント　ウェイブ,5250,情報・通信業,-,false,false,true
+4848.T,1,prime,フルキャストホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+4849.T,1,prime,エン,9050,サービス業,TOPIX Small 1,false,false,true
+4886.T,1,prime,あすか製薬ホールディングス,3250,医薬品,TOPIX Small 2,false,false,true
+4887.T,1,prime,サワイグループホールディングス,3250,医薬品,TOPIX Mid400,false,false,true
+4901.T,1,prime,富士フイルムホールディングス,3200,化学,TOPIX Large70,false,false,true
+4902.T,1,prime,コニカミノルタ,3650,電気機器,TOPIX Mid400,false,false,true
+4911.T,1,prime,資生堂,3200,化学,TOPIX Mid400,false,false,true
+4912.T,1,prime,ライオン,3200,化学,TOPIX Mid400,false,false,true
+4914.T,1,prime,高砂香料工業,3200,化学,TOPIX Small 1,false,false,true
+4917.T,1,prime,マンダム,3200,化学,TOPIX Small 1,false,false,true
+4919.T,1,prime,ミルボン,3200,化学,TOPIX Small 1,false,false,true
+4922.T,1,prime,コーセーホールディングス,3200,化学,TOPIX Mid400,false,false,true
+4923.T,1,prime,コタ,3200,化学,TOPIX Small 2,false,false,true
+4927.T,1,prime,ポーラ・オルビスホールディングス,3200,化学,TOPIX Mid400,false,false,true
+4928.T,1,prime,ノエビアホールディングス,3200,化学,TOPIX Small 1,false,false,true
+4931.T,1,prime,新日本製薬,3200,化学,TOPIX Small 2,false,false,true
+4933.T,1,prime,Ｉ－ｎｅ,3200,化学,TOPIX Small 2,false,false,true
+4951.T,1,prime,エステー,3200,化学,TOPIX Small 2,false,false,true
+4956.T,1,prime,コニシ,3200,化学,TOPIX Small 2,false,false,true
+4958.T,1,prime,長谷川香料,3200,化学,TOPIX Small 1,false,false,true
+4967.T,1,prime,小林製薬,3200,化学,TOPIX Mid400,false,false,true
+4968.T,1,prime,荒川化学工業,3200,化学,TOPIX Small 2,false,false,true
+4971.T,1,prime,メック,3200,化学,TOPIX Small 1,false,false,true
+4973.T,1,prime,日本高純度化学,3200,化学,TOPIX Small 2,false,false,true
+4974.T,1,prime,タカラバイオ,3200,化学,TOPIX Small 1,false,false,true
+4975.T,1,prime,ＪＣＵ,3200,化学,TOPIX Small 1,false,false,true
+4980.T,1,prime,デクセリアルズ,3200,化学,TOPIX Mid400,false,false,true
+4985.T,1,prime,アース製薬,3200,化学,TOPIX Small 1,false,false,true
+4996.T,1,prime,クミアイ化学工業,3200,化学,TOPIX Small 1,false,false,true
+4997.T,1,prime,日本農薬,3200,化学,TOPIX Small 2,false,false,true
+5011.T,1,prime,ニチレキグループ,3300,石油・石炭製品,TOPIX Small 2,false,false,true
+5016.T,1,prime,ＪＸ金属,3500,非鉄金属,TOPIX Mid400,false,false,true
+5019.T,1,prime,出光興産,3300,石油・石炭製品,TOPIX Mid400,false,false,true
+5020.T,1,prime,ＥＮＥＯＳホールディングス,3300,石油・石炭製品,TOPIX Large70,false,false,true
+5021.T,1,prime,コスモエネルギーホールディングス,3300,石油・石炭製品,TOPIX Mid400,false,false,true
+5032.T,1,prime,ＡＮＹＣＯＬＯＲ,5250,情報・通信業,TOPIX Small 1,false,false,true
+5036.T,1,prime,日本ビジネスシステムズ,5250,情報・通信業,TOPIX Small 2,false,false,true
+5074.T,1,prime,テスホールディングス,2050,建設業,TOPIX Small 2,false,false,true
+5076.T,1,prime,インフロニア・ホールディングス,2050,建設業,TOPIX Mid400,false,false,true
+5101.T,1,prime,横浜ゴム,3350,ゴム製品,TOPIX Mid400,false,false,true
+5105.T,1,prime,ＴＯＹＯ　ＴＩＲＥ,3350,ゴム製品,TOPIX Mid400,false,false,true
+5108.T,1,prime,ブリヂストン,3350,ゴム製品,TOPIX Large70,false,false,true
+5110.T,1,prime,住友ゴム工業,3350,ゴム製品,TOPIX Mid400,false,false,true
+5121.T,1,prime,藤倉コンポジット,3350,ゴム製品,TOPIX Small 2,false,false,true
+5122.T,1,prime,オカモト,3350,ゴム製品,TOPIX Small 2,false,false,true
+5142.T,1,prime,アキレス,3200,化学,TOPIX Small 2,false,false,true
+5185.T,1,prime,フコク,3350,ゴム製品,TOPIX Small 2,false,false,true
+5186.T,1,prime,ニッタ,3350,ゴム製品,TOPIX Small 2,false,false,true
+5192.T,1,prime,三ツ星ベルト,3350,ゴム製品,TOPIX Small 1,false,false,true
+5195.T,1,prime,バンドー化学,3350,ゴム製品,TOPIX Small 2,false,false,true
+5201.T,1,prime,ＡＧＣ,3400,ガラス・土石製品,TOPIX Mid400,false,false,true
+5202.T,1,prime,日本板硝子,3400,ガラス・土石製品,TOPIX Small 1,false,false,true
+5208.T,1,prime,有沢製作所,3200,化学,TOPIX Small 1,false,false,true
+5214.T,1,prime,日本電気硝子,3400,ガラス・土石製品,TOPIX Mid400,false,false,true
+5232.T,1,prime,住友大阪セメント,3400,ガラス・土石製品,TOPIX Mid400,false,false,true
+5233.T,1,prime,太平洋セメント,3400,ガラス・土石製品,TOPIX Mid400,false,false,true
+5261.T,1,prime,リソルホールディングス,9050,サービス業,-,false,false,true
+5262.T,1,prime,日本ヒューム,3400,ガラス・土石製品,TOPIX Small 1,false,false,true
+5288.T,1,prime,アジアパイルホールディングス,3400,ガラス・土石製品,TOPIX Small 2,false,false,true
+5301.T,1,prime,東海カーボン,3400,ガラス・土石製品,TOPIX Mid400,false,false,true
+5302.T,1,prime,日本カーボン,3400,ガラス・土石製品,TOPIX Small 1,false,false,true
+5310.T,1,prime,東洋炭素,3400,ガラス・土石製品,TOPIX Small 1,false,false,true
+5331.T,1,prime,ノリタケ,3400,ガラス・土石製品,TOPIX Small 1,false,false,true
+5332.T,1,prime,ＴＯＴＯ,3400,ガラス・土石製品,TOPIX Mid400,false,false,true
+5333.T,1,prime,ＮＧＫ,3400,ガラス・土石製品,TOPIX Mid400,false,false,true
+5334.T,1,prime,日本特殊陶業,3400,ガラス・土石製品,TOPIX Mid400,false,false,true
+5344.T,1,prime,ＭＡＲＵＷＡ,3400,ガラス・土石製品,TOPIX Mid400,false,false,true
+5351.T,1,prime,品川リフラ,3400,ガラス・土石製品,TOPIX Small 1,false,false,true
+5357.T,1,prime,ヨータイ,3400,ガラス・土石製品,TOPIX Small 2,false,false,true
+5384.T,1,prime,フジミインコーポレーテッド,3400,ガラス・土石製品,TOPIX Small 1,false,false,true
+5393.T,1,prime,ニチアス,3400,ガラス・土石製品,TOPIX Mid400,false,false,true
+5401.T,1,prime,日本製鉄,3450,鉄鋼,TOPIX Large70,false,false,true
+5406.T,1,prime,神戸製鋼所,3450,鉄鋼,TOPIX Mid400,false,false,true
+5408.T,1,prime,中山製鋼所,3450,鉄鋼,TOPIX Small 2,false,false,true
+5410.T,1,prime,合同製鐵,3450,鉄鋼,TOPIX Small 1,false,false,true
+5411.T,1,prime,ＪＦＥホールディングス,3450,鉄鋼,TOPIX Mid400,false,false,true
+5423.T,1,prime,東京製鐵,3450,鉄鋼,TOPIX Small 1,false,false,true
+543A.T,1,prime,ＡＲＣＨＩＯＮ,3700,輸送用機器,TOPIX Small 1,false,false,true
+5440.T,1,prime,共英製鋼,3450,鉄鋼,TOPIX Small 1,false,false,true
+5444.T,1,prime,大和工業,3450,鉄鋼,TOPIX Mid400,false,false,true
+5445.T,1,prime,東京鐵鋼,3450,鉄鋼,TOPIX Small 1,false,false,true
+544A.T,1,prime,ＧＭＳグループ,3600,機械,TOPIX Small 2,false,false,true
+5451.T,1,prime,ヨドコウ,3450,鉄鋼,TOPIX Small 1,false,false,true
+545A.T,1,prime,トランヴィア,5250,情報・通信業,TOPIX Small 2,false,false,true
+5461.T,1,prime,中部鋼鈑,3450,鉄鋼,TOPIX Small 1,false,false,true
+5463.T,1,prime,丸一鋼管,3450,鉄鋼,TOPIX Mid400,false,false,true
+546A.T,1,prime,ＭＩＲＡＩＮＩホールディングス,6050,卸売業,TOPIX Small 2,false,false,true
+5471.T,1,prime,大同特殊鋼,3450,鉄鋼,TOPIX Mid400,false,false,true
+547A.T,1,prime,ムニノバホールディングス,7200,その他金融業,TOPIX Small 1,false,false,true
+5480.T,1,prime,日本冶金工業,3450,鉄鋼,TOPIX Small 1,false,false,true
+5482.T,1,prime,愛知製鋼,3450,鉄鋼,TOPIX Small 1,false,false,true
+5535.T,1,prime,ミガロホールディングス,8050,不動産業,-,false,false,true
+5541.T,1,prime,大平洋金属,3450,鉄鋼,TOPIX Small 2,false,false,true
+5563.T,1,prime,新日本電工,3450,鉄鋼,TOPIX Small 1,false,false,true
+5602.T,1,prime,栗本鐵工所,3450,鉄鋼,TOPIX Small 1,false,false,true
+5631.T,1,prime,日本製鋼所,3600,機械,TOPIX Mid400,false,false,true
+5632.T,1,prime,三菱製鋼,3450,鉄鋼,TOPIX Small 2,false,false,true
+5659.T,1,prime,日本精線,3450,鉄鋼,TOPIX Small 2,false,false,true
+5702.T,1,prime,大紀アルミニウム工業所,3500,非鉄金属,TOPIX Small 1,false,false,true
+5703.T,1,prime,日本軽金属ホールディングス,3500,非鉄金属,TOPIX Small 1,false,false,true
+5706.T,1,prime,三井金属,3500,非鉄金属,TOPIX Mid400,false,false,true
+5707.T,1,prime,東邦亜鉛,3500,非鉄金属,TOPIX Small 2,false,false,true
+5711.T,1,prime,三菱マテリアル,3500,非鉄金属,TOPIX Mid400,false,false,true
+5713.T,1,prime,住友金属鉱山,3500,非鉄金属,TOPIX Mid400,false,false,true
+5714.T,1,prime,ＤＯＷＡホールディングス,3500,非鉄金属,TOPIX Mid400,false,false,true
+5715.T,1,prime,古河機械金属,3500,非鉄金属,TOPIX Small 1,false,false,true
+5726.T,1,prime,大阪チタニウムテクノロジーズ,3500,非鉄金属,TOPIX Small 1,false,false,true
+5727.T,1,prime,東邦チタニウム,3500,非鉄金属,TOPIX Small 1,false,false,true
+5741.T,1,prime,ＵＡＣＪ,3500,非鉄金属,TOPIX Small 1,false,false,true
+5757.T,1,prime,ＣＫサンエツ,3500,非鉄金属,TOPIX Small 2,false,false,true
+5801.T,1,prime,古河電気工業,3500,非鉄金属,TOPIX Mid400,false,false,true
+5802.T,1,prime,住友電気工業,3500,非鉄金属,TOPIX Large70,false,false,true
+5803.T,1,prime,フジクラ,3500,非鉄金属,TOPIX Large70,false,false,true
+5805.T,1,prime,ＳＷＣＣ,3500,非鉄金属,TOPIX Small 1,false,false,true
+5821.T,1,prime,平河ヒューテック,3500,非鉄金属,TOPIX Small 2,false,false,true
+5830.T,1,prime,いよぎんホールディングス,7050,銀行業,TOPIX Mid400,false,false,true
+5831.T,1,prime,しずおかフィナンシャルグループ,7050,銀行業,TOPIX Mid400,false,false,true
+5832.T,1,prime,ちゅうぎんフィナンシャルグループ,7050,銀行業,TOPIX Mid400,false,false,true
+5838.T,1,prime,楽天銀行,7050,銀行業,TOPIX Mid400,false,false,true
+5844.T,1,prime,京都フィナンシャルグループ,7050,銀行業,TOPIX Mid400,false,false,true
+5851.T,1,prime,リョービ,3500,非鉄金属,TOPIX Small 1,false,false,true
+5852.T,1,prime,アーレスティ,3500,非鉄金属,-,false,false,true
+5857.T,1,prime,ＡＲＥホールディングス,3500,非鉄金属,TOPIX Small 1,false,false,true
+5889.T,1,prime,Ｊａｐａｎ　Ｅｙｅｗｅａｒ　Ｈｏｌｄｉｎｇｓ,6100,小売業,TOPIX Small 2,false,false,true
+5901.T,1,prime,東洋製罐グループホールディングス,3550,金属製品,TOPIX Mid400,false,false,true
+5902.T,1,prime,ホッカンホールディングス,3550,金属製品,TOPIX Small 2,false,false,true
+5911.T,1,prime,横河ブリッジホールディングス,3550,金属製品,TOPIX Small 1,false,false,true
+5929.T,1,prime,三和ホールディングス,3550,金属製品,TOPIX Mid400,false,false,true
+5930.T,1,prime,文化シヤッター,3550,金属製品,TOPIX Small 1,false,false,true
+5932.T,1,prime,三協立山,3550,金属製品,TOPIX Small 2,false,false,true
+5933.T,1,prime,アルインコ,3550,金属製品,TOPIX Small 2,false,false,true
+5938.T,1,prime,ＬＩＸＩＬ,3550,金属製品,TOPIX Mid400,false,false,true
+5943.T,1,prime,ノーリツ,3550,金属製品,TOPIX Small 1,false,false,true
+5946.T,1,prime,長府製作所,3550,金属製品,TOPIX Small 2,false,false,true
+5947.T,1,prime,リンナイ,3550,金属製品,TOPIX Mid400,false,false,true
+5949.T,1,prime,ユニプレス,3700,輸送用機器,TOPIX Small 1,false,false,true
+5957.T,1,prime,日東精工,3550,金属製品,TOPIX Small 2,false,false,true
+5959.T,1,prime,岡部,3550,金属製品,TOPIX Small 2,false,false,true
+5970.T,1,prime,ジーテクト,3550,金属製品,TOPIX Small 1,false,false,true
+5975.T,1,prime,東プレ,3550,金属製品,TOPIX Small 1,false,false,true
+5976.T,1,prime,高周波熱錬,3550,金属製品,TOPIX Small 2,false,false,true
+5981.T,1,prime,東京製綱,3550,金属製品,TOPIX Small 2,false,false,true
+5988.T,1,prime,パイオラックス,3550,金属製品,TOPIX Small 1,false,false,true
+5989.T,1,prime,エイチワン,3550,金属製品,TOPIX Small 2,false,false,true
+5991.T,1,prime,日本発條,3550,金属製品,TOPIX Mid400,false,false,true
+6005.T,1,prime,三浦工業,3600,機械,TOPIX Mid400,false,false,true
+6013.T,1,prime,タクマ,3600,機械,TOPIX Small 1,false,false,true
+6027.T,1,prime,弁護士ドットコム,9050,サービス業,TOPIX Small 2,false,false,true
+6036.T,1,prime,ＫｅｅＰｅｒ技研,9050,サービス業,TOPIX Small 1,false,false,true
+6047.T,1,prime,Ｇｕｎｏｓｙ,9050,サービス業,TOPIX Small 2,false,false,true
+6050.T,1,prime,イー・ガーディアン,9050,サービス業,TOPIX Small 2,false,false,true
+6055.T,1,prime,ジャパンマテリアル,9050,サービス業,TOPIX Small 1,false,false,true
+6058.T,1,prime,ベクトル,9050,サービス業,TOPIX Small 2,false,false,true
+6062.T,1,prime,チャーム・ケア・コーポレーション,9050,サービス業,TOPIX Small 2,false,false,true
+6070.T,1,prime,キャリアリンク,9050,サービス業,TOPIX Small 2,false,false,true
+6071.T,1,prime,ＩＢＪ,9050,サービス業,TOPIX Small 2,false,false,true
+6073.T,1,prime,アサンテ,9050,サービス業,TOPIX Small 2,false,false,true
+6078.T,1,prime,バリューＨＲ,9050,サービス業,TOPIX Small 2,false,false,true
+6080.T,1,prime,Ｍ＆Ａキャピタルパートナーズ,9050,サービス業,TOPIX Small 1,false,false,true
+6088.T,1,prime,シグマクシス・ホールディングス,9050,サービス業,TOPIX Small 1,false,false,true
+6089.T,1,prime,ウィルグループ,9050,サービス業,TOPIX Small 2,false,false,true
+6098.T,1,prime,リクルートホールディングス,9050,サービス業,TOPIX Core30,false,false,true
+6099.T,1,prime,エラン,9050,サービス業,TOPIX Small 2,false,false,true
+6101.T,1,prime,ツガミ,3600,機械,TOPIX Small 1,false,false,true
+6103.T,1,prime,オークマ,3600,機械,TOPIX Small 1,false,false,true
+6104.T,1,prime,芝浦機械,3600,機械,TOPIX Small 1,false,false,true
+6113.T,1,prime,アマダ,3600,機械,TOPIX Mid400,false,false,true
+6118.T,1,prime,アイダエンジニアリング,3600,機械,TOPIX Small 1,false,false,true
+6134.T,1,prime,ＦＵＪＩ,3600,機械,TOPIX Mid400,false,false,true
+6135.T,1,prime,牧野フライス製作所,3600,機械,TOPIX Small 1,false,false,true
+6136.T,1,prime,オーエスジー,3600,機械,TOPIX Mid400,false,false,true
+6140.T,1,prime,旭ダイヤモンド工業,3600,機械,TOPIX Small 1,false,false,true
+6141.T,1,prime,ＤＭＧ森精機,3600,機械,TOPIX Mid400,false,false,true
+6143.T,1,prime,ソディック,3600,機械,TOPIX Small 1,false,false,true
+6146.T,1,prime,ディスコ,3600,機械,TOPIX Large70,false,false,true
+6151.T,1,prime,日東工器,3600,機械,TOPIX Small 2,false,false,true
+6167.T,1,prime,冨士ダイス,3600,機械,TOPIX Small 2,false,false,true
+6178.T,1,prime,日本郵政,9050,サービス業,TOPIX Large70,false,false,true
+6183.T,1,prime,ベルシステム２４ホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+6184.T,1,prime,鎌倉新書,9050,サービス業,TOPIX Small 2,false,false,true
+6191.T,1,prime,エアトリ,9050,サービス業,TOPIX Small 2,false,false,true
+6194.T,1,prime,アトラエ,9050,サービス業,TOPIX Small 2,false,false,true
+6196.T,1,prime,ストライクグループ,9050,サービス業,TOPIX Small 1,false,false,true
+6197.T,1,prime,ソラスト,9050,サービス業,TOPIX Small 2,false,false,true
+6200.T,1,prime,インソース,9050,サービス業,TOPIX Small 1,false,false,true
+6201.T,1,prime,豊田自動織機,3700,輸送用機器,TOPIX Large70,false,false,true
+6209.T,1,prime,リケンＮＰＲ,3600,機械,TOPIX Small 1,false,false,true
+6222.T,1,prime,島精機製作所,3600,機械,TOPIX Small 1,false,false,true
+6235.T,1,prime,オプトラン,3600,機械,TOPIX Small 1,false,false,true
+6237.T,1,prime,イワキポンプ,3600,機械,TOPIX Small 2,false,false,true
+6238.T,1,prime,フリュー,3600,機械,TOPIX Small 2,false,false,true
+6240.T,1,prime,ヤマシンフィルタ,3600,機械,TOPIX Small 2,false,false,true
+6247.T,1,prime,日阪製作所,3600,機械,TOPIX Small 2,false,false,true
+6250.T,1,prime,やまびこ,3600,機械,TOPIX Small 1,false,false,true
+6254.T,1,prime,野村マイクロ・サイエンス,3600,機械,TOPIX Small 1,false,false,true
+6258.T,1,prime,平田機工,3600,機械,TOPIX Small 1,false,false,true
+6264.T,1,prime,マルマエ,3600,機械,TOPIX Small 2,false,false,true
+6266.T,1,prime,タツモ,3600,機械,TOPIX Small 2,false,false,true
+6268.T,1,prime,ナブテスコ,3600,機械,TOPIX Mid400,false,false,true
+6269.T,1,prime,三井海洋開発,3600,機械,TOPIX Mid400,false,false,true
+6272.T,1,prime,レオン自動機,3600,機械,TOPIX Small 2,false,false,true
+6273.T,1,prime,ＳＭＣ,3600,機械,TOPIX Large70,false,false,true
+6277.T,1,prime,ホソカワミクロン,3600,機械,TOPIX Small 1,false,false,true
+6278.T,1,prime,ユニオンツール,3600,機械,TOPIX Small 1,false,false,true
+6279.T,1,prime,瑞光,3600,機械,TOPIX Small 2,false,false,true
+6282.T,1,prime,オイレス工業,3600,機械,TOPIX Small 1,false,false,true
+6284.T,1,prime,日精エー・エス・ビー機械,3600,機械,TOPIX Small 1,false,false,true
+6287.T,1,prime,サトー,3600,機械,TOPIX Small 1,false,false,true
+6289.T,1,prime,技研製作所,3600,機械,TOPIX Small 2,false,false,true
+6294.T,1,prime,オカダアイヨン,3600,機械,-,false,false,true
+6298.T,1,prime,ワイエイシイホールディングス,3600,機械,TOPIX Small 2,false,false,true
+6301.T,1,prime,小松製作所,3600,機械,TOPIX Large70,false,false,true
+6302.T,1,prime,住友重機械工業,3600,機械,TOPIX Mid400,false,false,true
+6305.T,1,prime,日立建機,3600,機械,TOPIX Mid400,false,false,true
+6306.T,1,prime,日工,3600,機械,TOPIX Small 2,false,false,true
+6309.T,1,prime,巴工業,3600,機械,TOPIX Small 2,false,false,true
+6310.T,1,prime,井関農機,3600,機械,TOPIX Small 2,false,false,true
+6315.T,1,prime,ＴＯＷＡ,3600,機械,TOPIX Small 1,false,false,true
+6323.T,1,prime,ローツェ,3600,機械,TOPIX Mid400,false,false,true
+6324.T,1,prime,ハーモニック・ドライブ・システムズ,3600,機械,TOPIX Small 2,false,false,true
+6326.T,1,prime,クボタ,3600,機械,TOPIX Large70,false,false,true
+6328.T,1,prime,荏原実業,3600,機械,TOPIX Small 2,false,false,true
+6330.T,1,prime,東洋エンジニアリング,2050,建設業,TOPIX Small 2,false,false,true
+6331.T,1,prime,三菱化工機,3600,機械,TOPIX Small 1,false,false,true
+6332.T,1,prime,月島ホールディングス,3600,機械,TOPIX Small 1,false,false,true
+6333.T,1,prime,ＴＥＩＫＯＫＵ,3600,機械,TOPIX Small 2,false,false,true
+6339.T,1,prime,新東工業,3600,機械,TOPIX Small 2,false,false,true
+6340.T,1,prime,澁谷工業,3600,機械,TOPIX Small 2,false,false,true
+6345.T,1,prime,アイチ　コーポレーション,3600,機械,TOPIX Small 2,false,false,true
+6349.T,1,prime,小森コーポレーション,3600,機械,TOPIX Small 1,false,false,true
+6351.T,1,prime,鶴見製作所,3600,機械,TOPIX Small 2,false,false,true
+6358.T,1,prime,酒井重工業,3600,機械,TOPIX Small 2,false,false,true
+6361.T,1,prime,荏原製作所,3600,機械,TOPIX Mid400,false,false,true
+6363.T,1,prime,酉島製作所,3600,機械,TOPIX Small 1,false,false,true
+6364.T,1,prime,ＡＩＲＭＡＮ,3600,機械,TOPIX Small 2,false,false,true
+6367.T,1,prime,ダイキン工業,3600,機械,TOPIX Core30,false,false,true
+6368.T,1,prime,オルガノ,3600,機械,TOPIX Mid400,false,false,true
+6369.T,1,prime,トーヨーカネツ,3600,機械,TOPIX Small 2,false,false,true
+6370.T,1,prime,栗田工業,3600,機械,TOPIX Mid400,false,false,true
+6371.T,1,prime,椿本チエイン,3600,機械,TOPIX Small 1,false,false,true
+6376.T,1,prime,日機装,3750,精密機器,TOPIX Small 1,false,false,true
+6379.T,1,prime,レイズネクスト,2050,建設業,TOPIX Small 2,false,false,true
+6381.T,1,prime,アネスト岩田,3600,機械,TOPIX Small 2,false,false,true
+6383.T,1,prime,ダイフク,3600,機械,TOPIX Mid400,false,false,true
+6387.T,1,prime,サムコ,3600,機械,TOPIX Small 2,false,false,true
+6390.T,1,prime,加藤製作所,3600,機械,-,false,false,true
+6395.T,1,prime,タダノ,3600,機械,TOPIX Small 1,false,false,true
+6407.T,1,prime,ＣＫＤ,3600,機械,TOPIX Small 1,false,false,true
+6412.T,1,prime,平和,3600,機械,TOPIX Small 1,false,false,true
+6413.T,1,prime,理想科学工業,3600,機械,TOPIX Small 2,false,false,true
+6417.T,1,prime,ＳＡＮＫＹＯ,3600,機械,TOPIX Mid400,false,false,true
+6418.T,1,prime,日本金銭機械,3600,機械,TOPIX Small 2,false,false,true
+6419.T,1,prime,マースグループホールディングス,3600,機械,TOPIX Small 1,false,false,true
+6420.T,1,prime,ガリレイ,3600,機械,TOPIX Small 1,false,false,true
+6430.T,1,prime,ダイコク電機,3600,機械,TOPIX Small 2,false,false,true
+6432.T,1,prime,竹内製作所,3600,機械,TOPIX Small 1,false,false,true
+6436.T,1,prime,アマノ,3600,機械,TOPIX Mid400,false,false,true
+6440.T,1,prime,ＪＵＫＩ,3600,機械,TOPIX Small 2,false,false,true
+6445.T,1,prime,ジャノメ,3600,機械,TOPIX Small 2,false,false,true
+6448.T,1,prime,ブラザー工業,3650,電気機器,TOPIX Mid400,false,false,true
+6454.T,1,prime,マックス,3600,機械,TOPIX Small 1,false,false,true
+6455.T,1,prime,モリタホールディングス,3700,輸送用機器,TOPIX Small 2,false,false,true
+6457.T,1,prime,グローリー,3600,機械,TOPIX Mid400,false,false,true
+6458.T,1,prime,新晃工業,3600,機械,TOPIX Small 1,false,false,true
+6459.T,1,prime,大和冷機工業,3600,機械,TOPIX Small 2,false,false,true
+6460.T,1,prime,セガサミーホールディングス,3600,機械,TOPIX Mid400,false,false,true
+6463.T,1,prime,ＴＰＲ,3600,機械,TOPIX Small 1,false,false,true
+6464.T,1,prime,ツバキ・ナカシマ,3600,機械,TOPIX Small 2,false,false,true
+6465.T,1,prime,ホシザキ,3600,機械,TOPIX Mid400,false,false,true
+6471.T,1,prime,日本精工,3600,機械,TOPIX Mid400,false,false,true
+6472.T,1,prime,ＮＴＮ,3600,機械,TOPIX Mid400,false,false,true
+6473.T,1,prime,ジェイテクト,3600,機械,TOPIX Mid400,false,false,true
+6474.T,1,prime,不二越,3600,機械,TOPIX Small 1,false,false,true
+6479.T,1,prime,ミネベアミツミ,3650,電気機器,TOPIX Mid400,false,false,true
+6480.T,1,prime,日本トムソン,3600,機械,TOPIX Small 2,false,false,true
+6481.T,1,prime,ＴＨＫ,3600,機械,TOPIX Mid400,false,false,true
+6486.T,1,prime,イーグル工業,3600,機械,TOPIX Small 1,false,false,true
+6490.T,1,prime,ＰＩＬＬＡＲ,3600,機械,TOPIX Small 1,false,false,true
+6498.T,1,prime,キッツ,3600,機械,TOPIX Small 1,false,false,true
+6501.T,1,prime,日立製作所,3650,電気機器,TOPIX Core30,false,false,true
+6503.T,1,prime,三菱電機,3650,電気機器,TOPIX Core30,false,false,true
+6504.T,1,prime,富士電機,3650,電気機器,TOPIX Mid400,false,false,true
+6506.T,1,prime,安川電機,3650,電気機器,TOPIX Mid400,false,false,true
+6507.T,1,prime,シンフォニアテクノロジー,3650,電気機器,TOPIX Small 1,false,false,true
+6508.T,1,prime,明電舎,3650,電気機器,TOPIX Small 1,false,false,true
+6516.T,1,prime,山洋電気,3650,電気機器,TOPIX Small 1,false,false,true
+6517.T,1,prime,デンヨー,3650,電気機器,TOPIX Small 2,false,false,true
+6523.T,1,prime,ＰＨＣホールディングス,3650,電気機器,TOPIX Small 1,false,false,true
+6525.T,1,prime,ＫＯＫＵＳＡＩ　ＥＬＥＣＴＲＩＣ,3650,電気機器,TOPIX Mid400,false,false,true
+6526.T,1,prime,ソシオネクスト,3650,電気機器,TOPIX Mid400,false,false,true
+6532.T,1,prime,ベイカレント,9050,サービス業,TOPIX Mid400,false,false,true
+6533.T,1,prime,Ｏｒｃｈｅｓｔｒａ　Ｈｏｌｄｉｎｇｓ,9050,サービス業,TOPIX Small 2,false,false,true
+6535.T,1,prime,アイモバイル,9050,サービス業,TOPIX Small 2,false,false,true
+6539.T,1,prime,ＭＳ－Ｊａｐａｎ,9050,サービス業,TOPIX Small 2,false,false,true
+6544.T,1,prime,ジャパンエレベーターサービスホールディングス,9050,サービス業,TOPIX Mid400,false,false,true
+6560.T,1,prime,エル・ティー・エス,9050,サービス業,TOPIX Small 2,false,false,true
+6564.T,1,prime,ミダックホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+6571.T,1,prime,キュービーネットホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+6572.T,1,prime,オープングループ,9050,サービス業,TOPIX Small 2,false,false,true
+6584.T,1,prime,三櫻工業,3700,輸送用機器,TOPIX Small 2,false,false,true
+6586.T,1,prime,マキタ,3600,機械,TOPIX Mid400,false,false,true
+6588.T,1,prime,東芝テック,3650,電気機器,TOPIX Small 1,false,false,true
+6590.T,1,prime,芝浦メカトロニクス,3650,電気機器,TOPIX Small 1,false,false,true
+6592.T,1,prime,マブチモーター,3650,電気機器,TOPIX Mid400,false,false,true
+6594.T,1,prime,ニデック,3650,電気機器,-,false,false,true
+6615.T,1,prime,ユー・エム・シー・エレクトロニクス,3650,電気機器,TOPIX Small 2,false,false,true
+6616.T,1,prime,トレックス・セミコンダクター,3650,電気機器,TOPIX Small 2,false,false,true
+6617.T,1,prime,東光高岳,3650,電気機器,TOPIX Small 2,false,false,true
+6619.T,1,prime,ダブル・スコープ,3650,電気機器,TOPIX Small 2,false,false,true
+6620.T,1,prime,宮越ホールディングス,8050,不動産業,TOPIX Small 2,false,false,true
+6622.T,1,prime,ダイヘン,3650,電気機器,TOPIX Small 1,false,false,true
+6630.T,1,prime,ヤーマン,3650,電気機器,TOPIX Small 1,false,false,true
+6632.T,1,prime,ＪＶＣケンウッド,3650,電気機器,TOPIX Mid400,false,false,true
+6638.T,1,prime,ミマキエンジニアリング,3650,電気機器,TOPIX Small 2,false,false,true
+6644.T,1,prime,大崎電気工業,3650,電気機器,TOPIX Small 2,false,false,true
+6645.T,1,prime,オムロン,3650,電気機器,TOPIX Mid400,false,false,true
+6651.T,1,prime,日東工業,3650,電気機器,TOPIX Small 1,false,false,true
+6652.T,1,prime,ＩＤＥＣ,3650,電気機器,TOPIX Small 1,false,false,true
+6653.T,1,prime,正興電機製作所,3650,電気機器,-,false,false,true
+6674.T,1,prime,ジーエス・ユアサ　コーポレーション,3650,電気機器,TOPIX Mid400,false,false,true
+6701.T,1,prime,日本電気,3650,電気機器,TOPIX Large70,false,false,true
+6702.T,1,prime,富士通,3650,電気機器,TOPIX Large70,false,false,true
+6703.T,1,prime,沖電気工業,3650,電気機器,TOPIX Small 1,false,false,true
+6706.T,1,prime,電気興業,3650,電気機器,TOPIX Small 2,false,false,true
+6707.T,1,prime,サンケン電気,3650,電気機器,TOPIX Mid400,false,false,true
+6718.T,1,prime,アイホン,3650,電気機器,TOPIX Small 2,false,false,true
+6723.T,1,prime,ルネサスエレクトロニクス,3650,電気機器,TOPIX Large70,false,false,true
+6724.T,1,prime,セイコーエプソン,3650,電気機器,TOPIX Mid400,false,false,true
+6727.T,1,prime,ワコム,3650,電気機器,TOPIX Small 1,false,false,true
+6728.T,1,prime,アルバック,3650,電気機器,TOPIX Mid400,false,false,true
+6737.T,1,prime,ＥＩＺＯ,3650,電気機器,TOPIX Small 1,false,false,true
+6740.T,1,prime,ジャパンディスプレイ,3650,電気機器,TOPIX Small 2,false,false,true
+6741.T,1,prime,日本信号,3650,電気機器,TOPIX Small 2,false,false,true
+6742.T,1,prime,京三製作所,3650,電気機器,TOPIX Small 2,false,false,true
+6744.T,1,prime,能美防災,3650,電気機器,TOPIX Small 1,false,false,true
+6745.T,1,prime,ホーチキ,3650,電気機器,TOPIX Small 2,false,false,true
+6750.T,1,prime,エレコム,3650,電気機器,TOPIX Small 1,false,false,true
+6752.T,1,prime,パナソニック　ホールディングス,3650,電気機器,TOPIX Large70,false,false,true
+6753.T,1,prime,シャープ,3650,電気機器,TOPIX Mid400,false,false,true
+6754.T,1,prime,アンリツ,3650,電気機器,TOPIX Mid400,false,false,true
+6758.T,1,prime,ソニーグループ,3650,電気機器,TOPIX Core30,false,false,true
+6762.T,1,prime,ＴＤＫ,3650,電気機器,TOPIX Large70,false,false,true
+6763.T,1,prime,帝国通信工業,3650,電気機器,TOPIX Small 2,false,false,true
+6768.T,1,prime,タムラ製作所,3650,電気機器,TOPIX Small 1,false,false,true
+6770.T,1,prime,アルプスアルパイン,3650,電気機器,TOPIX Mid400,false,false,true
+6779.T,1,prime,日本電波工業,3650,電気機器,TOPIX Small 2,false,false,true
+6785.T,1,prime,鈴木,3650,電気機器,TOPIX Small 2,false,false,true
+6787.T,1,prime,メイコー,3650,電気機器,TOPIX Small 1,false,false,true
+6788.T,1,prime,日本トリム,3650,電気機器,TOPIX Small 2,false,false,true
+6794.T,1,prime,フォスター電機,3650,電気機器,TOPIX Small 2,false,false,true
+6798.T,1,prime,ＳＭＫ,3650,電気機器,TOPIX Small 2,false,false,true
+6800.T,1,prime,ヨコオ,3650,電気機器,TOPIX Small 2,false,false,true
+6804.T,1,prime,ホシデン,3650,電気機器,TOPIX Small 1,false,false,true
+6806.T,1,prime,ヒロセ電機,3650,電気機器,TOPIX Mid400,false,false,true
+6807.T,1,prime,日本航空電子工業,3650,電気機器,TOPIX Small 1,false,false,true
+6809.T,1,prime,ＴＯＡ,3650,電気機器,TOPIX Small 2,false,false,true
+6810.T,1,prime,マクセル,3650,電気機器,TOPIX Small 1,false,false,true
+6814.T,1,prime,古野電気,3650,電気機器,TOPIX Small 1,false,false,true
+6817.T,1,prime,スミダコーポレーション,3650,電気機器,TOPIX Small 2,false,false,true
+6820.T,1,prime,アイコム,3650,電気機器,TOPIX Small 2,false,false,true
+6823.T,1,prime,リオン,3650,電気機器,TOPIX Small 2,false,false,true
+6841.T,1,prime,横河電機,3650,電気機器,TOPIX Mid400,false,false,true
+6844.T,1,prime,新電元工業,3650,電気機器,TOPIX Small 2,false,false,true
+6845.T,1,prime,アズビル,3650,電気機器,TOPIX Mid400,false,false,true
+6849.T,1,prime,日本光電工業,3650,電気機器,TOPIX Mid400,false,false,true
+6850.T,1,prime,チノー,3650,電気機器,TOPIX Small 2,false,false,true
+6856.T,1,prime,堀場製作所,3650,電気機器,TOPIX Mid400,false,false,true
+6857.T,1,prime,アドバンテスト,3650,電気機器,TOPIX Core30,false,false,true
+6859.T,1,prime,エスペック,3650,電気機器,TOPIX Small 1,false,false,true
+6861.T,1,prime,キーエンス,3650,電気機器,TOPIX Core30,false,false,true
+6866.T,1,prime,日置電機,3650,電気機器,TOPIX Small 1,false,false,true
+6869.T,1,prime,シスメックス,3650,電気機器,TOPIX Mid400,false,false,true
+6871.T,1,prime,日本マイクロニクス,3650,電気機器,TOPIX Small 1,false,false,true
+6875.T,1,prime,メガチップス,3650,電気機器,TOPIX Small 1,false,false,true
+6902.T,1,prime,デンソー,3700,輸送用機器,TOPIX Large70,false,false,true
+6905.T,1,prime,コーセル,3650,電気機器,TOPIX Small 2,false,false,true
+6908.T,1,prime,イリソ電子工業,3650,電気機器,TOPIX Small 1,false,false,true
+6914.T,1,prime,オプテックスグループ,3650,電気機器,TOPIX Small 1,false,false,true
+6920.T,1,prime,レーザーテック,3650,電気機器,TOPIX Large70,false,false,true
+6923.T,1,prime,スタンレー電気,3650,電気機器,TOPIX Mid400,false,false,true
+6925.T,1,prime,ウシオ電機,3650,電気機器,TOPIX Mid400,false,false,true
+6929.T,1,prime,日本セラミック,3650,電気機器,TOPIX Small 1,false,false,true
+6941.T,1,prime,山一電機,3650,電気機器,TOPIX Small 1,false,false,true
+6947.T,1,prime,図研,3650,電気機器,TOPIX Small 1,false,false,true
+6951.T,1,prime,日本電子,3650,電気機器,TOPIX Mid400,false,false,true
+6952.T,1,prime,カシオ計算機,3650,電気機器,TOPIX Mid400,false,false,true
+6954.T,1,prime,ファナック,3650,電気機器,TOPIX Large70,false,false,true
+6958.T,1,prime,日本シイエムケイ,3650,電気機器,TOPIX Small 2,false,false,true
+6961.T,1,prime,エンプラス,3650,電気機器,TOPIX Small 2,false,false,true
+6962.T,1,prime,大真空,3650,電気機器,TOPIX Small 2,false,false,true
+6963.T,1,prime,ローム,3650,電気機器,TOPIX Mid400,false,false,true
+6965.T,1,prime,浜松ホトニクス,3650,電気機器,TOPIX Mid400,false,false,true
+6966.T,1,prime,三井ハイテック,3650,電気機器,TOPIX Small 1,false,false,true
+6971.T,1,prime,京セラ,3650,電気機器,TOPIX Large70,false,false,true
+6976.T,1,prime,太陽誘電,3650,電気機器,TOPIX Mid400,false,false,true
+6981.T,1,prime,村田製作所,3650,電気機器,TOPIX Large70,false,false,true
+6986.T,1,prime,双葉電子工業,3650,電気機器,TOPIX Small 2,false,false,true
+6988.T,1,prime,日東電工,3200,化学,TOPIX Mid400,false,false,true
+6995.T,1,prime,東海理化電機製作所,3700,輸送用機器,TOPIX Small 1,false,false,true
+6996.T,1,prime,ニチコン,3650,電気機器,TOPIX Small 1,false,false,true
+6997.T,1,prime,日本ケミコン,3650,電気機器,TOPIX Small 2,false,false,true
+6999.T,1,prime,ＫＯＡ,3650,電気機器,TOPIX Small 1,false,false,true
+7003.T,1,prime,三井Ｅ＆Ｓ,3600,機械,TOPIX Mid400,false,false,true
+7004.T,1,prime,カナデビア,3600,機械,TOPIX Small 1,false,false,true
+7011.T,1,prime,三菱重工業,3600,機械,TOPIX Core30,false,false,true
+7012.T,1,prime,川崎重工業,3700,輸送用機器,TOPIX Mid400,false,false,true
+7013.T,1,prime,ＩＨＩ,3600,機械,TOPIX Mid400,false,false,true
+7033.T,1,prime,マネジメントソリューションズ,9050,サービス業,TOPIX Small 2,false,false,true
+7034.T,1,prime,プロレド・パートナーズ,9050,サービス業,TOPIX Small 2,false,false,true
+7038.T,1,prime,フロンティア・マネジメント,9050,サービス業,TOPIX Small 2,false,false,true
+7059.T,1,prime,コプロ・ホールディングス,9050,サービス業,-,false,false,true
+7071.T,1,prime,アンビスホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+7085.T,1,prime,カーブスホールディングス,9050,サービス業,TOPIX Small 1,false,false,true
+7088.T,1,prime,フォーラムエンジニアリング,9050,サービス業,-,false,false,true
+7095.T,1,prime,Ｍａｃｂｅｅ　Ｐｌａｎｅｔ,9050,サービス業,TOPIX Small 2,false,false,true
+7102.T,1,prime,日本車輌製造,3700,輸送用機器,TOPIX Small 2,false,false,true
+7128.T,1,prime,ユニソルホールディングス,6050,卸売業,TOPIX Small 1,false,false,true
+7130.T,1,prime,ヤマエグループホールディングス,6050,卸売業,TOPIX Small 1,false,false,true
+7148.T,1,prime,ＦＰＧ,7100,証券、商品先物取引業,TOPIX Small 1,false,false,true
+7157.T,1,prime,ライフネット生命保険,7150,保険業,TOPIX Small 1,false,false,true
+7164.T,1,prime,全国保証,7200,その他金融業,TOPIX Mid400,false,false,true
+7167.T,1,prime,めぶきフィナンシャルグループ,7050,銀行業,TOPIX Mid400,false,false,true
+7172.T,1,prime,ジャパンインベストメントアドバイザー,7100,証券、商品先物取引業,TOPIX Small 1,false,false,true
+7173.T,1,prime,東京きらぼしフィナンシャルグループ,7050,銀行業,TOPIX Small 1,false,false,true
+7180.T,1,prime,九州フィナンシャルグループ,7050,銀行業,TOPIX Mid400,false,false,true
+7181.T,1,prime,かんぽ生命保険,7150,保険業,TOPIX Mid400,false,false,true
+7182.T,1,prime,ゆうちょ銀行,7050,銀行業,TOPIX Large70,false,false,true
+7184.T,1,prime,富山第一銀行,7050,銀行業,TOPIX Small 1,false,false,true
+7186.T,1,prime,横浜フィナンシャルグループ,7050,銀行業,TOPIX Mid400,false,false,true
+7187.T,1,prime,ジェイリース,7200,その他金融業,TOPIX Small 2,false,false,true
+7189.T,1,prime,西日本フィナンシャルホールディングス,7050,銀行業,TOPIX Mid400,false,false,true
+7198.T,1,prime,ＳＢＩアルヒ,7200,その他金融業,TOPIX Small 2,false,false,true
+7199.T,1,prime,プレミアグループ,7200,その他金融業,TOPIX Small 1,false,false,true
+7201.T,1,prime,日産自動車,3700,輸送用機器,TOPIX Mid400,false,false,true
+7202.T,1,prime,いすゞ自動車,3700,輸送用機器,TOPIX Mid400,false,false,true
+7203.T,1,prime,トヨタ自動車,3700,輸送用機器,TOPIX Core30,false,false,true
+7211.T,1,prime,三菱自動車工業,3700,輸送用機器,TOPIX Mid400,false,false,true
+7220.T,1,prime,武蔵精密工業,3700,輸送用機器,TOPIX Small 1,false,false,true
+7224.T,1,prime,新明和工業,3700,輸送用機器,TOPIX Small 1,false,false,true
+7226.T,1,prime,極東開発工業,3700,輸送用機器,TOPIX Small 1,false,false,true
+7231.T,1,prime,トピー工業,3700,輸送用機器,TOPIX Small 2,false,false,true
+7236.T,1,prime,ティラド,3700,輸送用機器,TOPIX Small 2,false,false,true
+7238.T,1,prime,曙ブレーキ工業,3700,輸送用機器,TOPIX Small 2,false,false,true
+7239.T,1,prime,タチエス,3700,輸送用機器,TOPIX Small 1,false,false,true
+7240.T,1,prime,ＮＯＫ,3700,輸送用機器,TOPIX Mid400,false,false,true
+7241.T,1,prime,フタバ産業,3700,輸送用機器,TOPIX Small 1,false,false,true
+7242.T,1,prime,カヤバ,3700,輸送用機器,TOPIX Small 1,false,false,true
+7244.T,1,prime,市光工業,3650,電気機器,TOPIX Small 2,false,false,true
+7245.T,1,prime,大同メタル工業,3700,輸送用機器,TOPIX Small 2,false,false,true
+7246.T,1,prime,プレス工業,3700,輸送用機器,TOPIX Small 1,false,false,true
+7259.T,1,prime,アイシン,3700,輸送用機器,TOPIX Mid400,false,false,true
+7261.T,1,prime,マツダ,3700,輸送用機器,TOPIX Mid400,false,false,true
+7267.T,1,prime,本田技研工業,3700,輸送用機器,TOPIX Core30,false,false,true
+7269.T,1,prime,スズキ,3700,輸送用機器,TOPIX Large70,false,false,true
+7270.T,1,prime,ＳＵＢＡＲＵ,3700,輸送用機器,TOPIX Large70,false,false,true
+7272.T,1,prime,ヤマハ発動機,3700,輸送用機器,TOPIX Mid400,false,false,true
+7276.T,1,prime,小糸製作所,3650,電気機器,TOPIX Mid400,false,false,true
+7278.T,1,prime,エクセディ,3700,輸送用機器,TOPIX Small 1,false,false,true
+7280.T,1,prime,ミツバ,3650,電気機器,TOPIX Small 1,false,false,true
+7282.T,1,prime,豊田合成,3700,輸送用機器,TOPIX Mid400,false,false,true
+7283.T,1,prime,愛三工業,3700,輸送用機器,TOPIX Small 1,false,false,true
+7294.T,1,prime,ヨロズ,3700,輸送用機器,TOPIX Small 2,false,false,true
+7296.T,1,prime,エフ・シー・シー,3700,輸送用機器,TOPIX Small 1,false,false,true
+7309.T,1,prime,シマノ,3700,輸送用機器,TOPIX Large70,false,false,true
+7313.T,1,prime,テイ・エス　テック,3700,輸送用機器,TOPIX Mid400,false,false,true
+7322.T,1,prime,三十三フィナンシャルグループ,7050,銀行業,TOPIX Small 2,false,false,true
+7327.T,1,prime,第四北越フィナンシャルグループ,7050,銀行業,TOPIX Small 1,false,false,true
+7337.T,1,prime,ひろぎんホールディングス,7050,銀行業,TOPIX Mid400,false,false,true
+7347.T,1,prime,マーキュリアホールディングス,7100,証券、商品先物取引業,-,false,false,true
+7350.T,1,prime,おきなわフィナンシャルグループ,7050,銀行業,TOPIX Small 1,false,false,true
+7366.T,1,prime,ＬＩＴＡＬＩＣＯ,9050,サービス業,TOPIX Small 2,false,false,true
+7380.T,1,prime,十六フィナンシャルグループ,7050,銀行業,TOPIX Small 1,false,false,true
+7381.T,1,prime,ＣＣＩグループ,7050,銀行業,TOPIX Small 1,false,false,true
+7383.T,1,prime,ネットプロテクションズホールディングス,7200,その他金融業,TOPIX Small 1,false,false,true
+7384.T,1,prime,プロクレアホールディングス,7050,銀行業,TOPIX Small 2,false,false,true
+7388.T,1,prime,ＦＰパートナー,7150,保険業,TOPIX Small 2,false,false,true
+7389.T,1,prime,あいちフィナンシャルグループ,7050,銀行業,TOPIX Small 1,false,false,true
+7414.T,1,prime,小野建,6050,卸売業,TOPIX Small 2,false,false,true
+7419.T,1,prime,ノジマ,6100,小売業,TOPIX Small 1,false,false,true
+7421.T,1,prime,カッパ・クリエイト,6100,小売業,TOPIX Small 1,false,false,true
+7433.T,1,prime,伯東,6050,卸売業,TOPIX Small 1,false,false,true
+7438.T,1,prime,コンドーテック,6050,卸売業,TOPIX Small 2,false,false,true
+7447.T,1,prime,ナガイレーベン,6050,卸売業,TOPIX Small 2,false,false,true
+7453.T,1,prime,良品計画,6100,小売業,TOPIX Mid400,false,false,true
+7456.T,1,prime,松田産業,6050,卸売業,TOPIX Small 1,false,false,true
+7458.T,1,prime,第一興商,6050,卸売業,TOPIX Mid400,false,false,true
+7459.T,1,prime,メディパルホールディングス,6050,卸売業,TOPIX Mid400,false,false,true
+7466.T,1,prime,ＳＰＫ,6050,卸売業,TOPIX Small 2,false,false,true
+7475.T,1,prime,アルビス,6100,小売業,TOPIX Small 2,false,false,true
+7476.T,1,prime,アズワン,6050,卸売業,TOPIX Mid400,false,false,true
+7482.T,1,prime,シモジマ,6050,卸売業,TOPIX Small 2,false,false,true
+7483.T,1,prime,ドウシシャ,6050,卸売業,TOPIX Small 2,false,false,true
+7504.T,1,prime,高速,6050,卸売業,TOPIX Small 2,false,false,true
+7508.T,1,prime,Ｇ‐７ホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+7510.T,1,prime,たけびし,6050,卸売業,TOPIX Small 2,false,false,true
+7513.T,1,prime,コジマ,6100,小売業,TOPIX Small 1,false,false,true
+7516.T,1,prime,コーナン商事,6100,小売業,TOPIX Small 1,false,false,true
+7520.T,1,prime,エコス,6100,小売業,TOPIX Small 2,false,false,true
+7522.T,1,prime,ワタミ,6100,小売業,TOPIX Small 2,false,false,true
+7525.T,1,prime,リックス,6050,卸売業,TOPIX Small 2,false,false,true
+7532.T,1,prime,パン・パシフィック・インターナショナルホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+7537.T,1,prime,丸文,6050,卸売業,TOPIX Small 2,false,false,true
+7545.T,1,prime,西松屋チェーン,6100,小売業,TOPIX Small 1,false,false,true
+7550.T,1,prime,ゼンショーホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+7552.T,1,prime,ハピネット,6050,卸売業,TOPIX Small 1,false,false,true
+7554.T,1,prime,幸楽苑,6100,小売業,TOPIX Small 2,false,false,true
+7575.T,1,prime,日本ライフライン,6050,卸売業,TOPIX Small 1,false,false,true
+7581.T,1,prime,サイゼリヤ,6100,小売業,TOPIX Small 1,false,false,true
+7593.T,1,prime,ＶＴホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+7595.T,1,prime,アルゴグラフィックス,5250,情報・通信業,TOPIX Small 1,false,false,true
+7596.T,1,prime,魚力,6100,小売業,TOPIX Small 2,false,false,true
+7599.T,1,prime,ＩＤＯＭ,6050,卸売業,TOPIX Small 1,false,false,true
+7600.T,1,prime,日本エム・ディ・エム,3750,精密機器,TOPIX Small 2,false,false,true
+7606.T,1,prime,ユナイテッドアローズ,6100,小売業,TOPIX Small 1,false,false,true
+7607.T,1,prime,進和,6050,卸売業,TOPIX Small 2,false,false,true
+7609.T,1,prime,ダイトロン,6050,卸売業,TOPIX Small 2,false,false,true
+7611.T,1,prime,ハイデイ日高,6100,小売業,TOPIX Small 1,false,false,true
+7613.T,1,prime,シークス,6050,卸売業,TOPIX Small 1,false,false,true
+7616.T,1,prime,コロワイド,6100,小売業,TOPIX Mid400,false,false,true
+7628.T,1,prime,オーハシテクニカ,6050,卸売業,TOPIX Small 2,false,false,true
+7630.T,1,prime,壱番屋,6100,小売業,TOPIX Small 1,false,false,true
+7637.T,1,prime,白銅,6050,卸売業,TOPIX Small 2,false,false,true
+7649.T,1,prime,スギホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+7679.T,1,prime,薬王堂ホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+7683.T,1,prime,ダブルエー,6100,小売業,TOPIX Small 2,false,false,true
+7701.T,1,prime,島津製作所,3750,精密機器,TOPIX Mid400,false,false,true
+7715.T,1,prime,長野計器,3750,精密機器,TOPIX Small 2,false,false,true
+7717.T,1,prime,ブイ・テクノロジー,3750,精密機器,TOPIX Small 2,false,false,true
+7721.T,1,prime,東京計器,3750,精密機器,TOPIX Small 1,false,false,true
+7723.T,1,prime,愛知時計電機,3750,精密機器,TOPIX Small 2,false,false,true
+7725.T,1,prime,インターアクション,3750,精密機器,TOPIX Small 2,false,false,true
+7729.T,1,prime,東京精密,3750,精密機器,TOPIX Mid400,false,false,true
+7730.T,1,prime,マニー,3750,精密機器,TOPIX Small 1,false,false,true
+7731.T,1,prime,ニコン,3750,精密機器,TOPIX Mid400,false,false,true
+7733.T,1,prime,オリンパス,3750,精密機器,TOPIX Large70,false,false,true
+7734.T,1,prime,理研計器,3750,精密機器,TOPIX Small 1,false,false,true
+7735.T,1,prime,ＳＣＲＥＥＮホールディングス,3650,電気機器,TOPIX Mid400,false,false,true
+7740.T,1,prime,タムロン,3750,精密機器,TOPIX Small 1,false,false,true
+7741.T,1,prime,ＨＯＹＡ,3750,精密機器,TOPIX Core30,false,false,true
+7744.T,1,prime,ノーリツ鋼機,3750,精密機器,TOPIX Small 1,false,false,true
+7745.T,1,prime,Ａ＆Ｄホロンホールディングス,3750,精密機器,TOPIX Small 1,false,false,true
+7747.T,1,prime,朝日インテック,3750,精密機器,TOPIX Mid400,false,false,true
+7751.T,1,prime,キヤノン,3650,電気機器,TOPIX Large70,false,false,true
+7752.T,1,prime,リコー,3650,電気機器,TOPIX Mid400,false,false,true
+7762.T,1,prime,シチズン時計,3750,精密機器,TOPIX Small 1,false,false,true
+7769.T,1,prime,リズム,3750,精密機器,-,false,false,true
+7780.T,1,prime,メニコン,3750,精密機器,TOPIX Small 1,false,false,true
+7818.T,1,prime,トランザクション,3800,その他製品,TOPIX Small 2,false,false,true
+7820.T,1,prime,ニホンフラッシュ,3800,その他製品,TOPIX Small 2,false,false,true
+7821.T,1,prime,前田工繊,3800,その他製品,TOPIX Small 1,false,false,true
+7826.T,1,prime,フルヤ金属,3800,その他製品,TOPIX Small 1,false,false,true
+7832.T,1,prime,バンダイナムコホールディングス,3800,その他製品,TOPIX Large70,false,false,true
+7839.T,1,prime,ＳＨＯＥＩ,3800,その他製品,TOPIX Small 1,false,false,true
+7840.T,1,prime,フランスベッドホールディングス,3800,その他製品,TOPIX Small 2,false,false,true
+7844.T,1,prime,マーベラス,5250,情報・通信業,TOPIX Small 2,false,false,true
+7846.T,1,prime,パイロットコーポレーション,3800,その他製品,TOPIX Mid400,false,false,true
+7856.T,1,prime,萩原工業,3800,その他製品,TOPIX Small 2,false,false,true
+7860.T,1,prime,エイベックス,5250,情報・通信業,TOPIX Small 1,false,false,true
+7864.T,1,prime,フジシールインターナショナル,3800,その他製品,TOPIX Small 1,false,false,true
+7867.T,1,prime,タカラトミー,3800,その他製品,TOPIX Mid400,false,false,true
+7868.T,1,prime,広済堂ホールディングス,3800,その他製品,TOPIX Small 2,false,false,true
+7874.T,1,prime,レック,3200,化学,TOPIX Small 2,false,false,true
+7888.T,1,prime,三光合成,3200,化学,TOPIX Small 2,false,false,true
+7893.T,1,prime,プロネクサス,3800,その他製品,TOPIX Small 2,false,false,true
+7911.T,1,prime,ＴＯＰＰＡＮホールディングス,3800,その他製品,TOPIX Mid400,false,false,true
+7912.T,1,prime,大日本印刷,3800,その他製品,TOPIX Mid400,false,false,true
+7914.T,1,prime,共同印刷,3800,その他製品,TOPIX Small 2,false,false,true
+7915.T,1,prime,ＮＩＳＳＨＡ,3800,その他製品,TOPIX Small 1,false,false,true
+7917.T,1,prime,ＺＡＣＲＯＳ,3200,化学,TOPIX Small 2,false,false,true
+7921.T,1,prime,ＴＡＫＡＲＡ　＆　ＣＯＭＰＡＮＹ,3800,その他製品,TOPIX Small 2,false,false,true
+7925.T,1,prime,前澤化成工業,3200,化学,TOPIX Small 2,false,false,true
+7931.T,1,prime,未来工業,3200,化学,TOPIX Small 2,false,false,true
+7936.T,1,prime,アシックス,3800,その他製品,TOPIX Large70,false,false,true
+7942.T,1,prime,ＪＳＰ,3200,化学,TOPIX Small 2,false,false,true
+7943.T,1,prime,ニチハ,3400,ガラス・土石製品,TOPIX Small 1,false,false,true
+7944.T,1,prime,ローランド,3800,その他製品,TOPIX Small 1,false,false,true
+7947.T,1,prime,エフピコ,3200,化学,TOPIX Small 1,false,false,true
+7949.T,1,prime,小松ウオール工業,3800,その他製品,TOPIX Small 2,false,false,true
+7951.T,1,prime,ヤマハ,3800,その他製品,TOPIX Mid400,false,false,true
+7952.T,1,prime,河合楽器製作所,3800,その他製品,TOPIX Small 2,false,false,true
+7955.T,1,prime,クリナップ,3800,その他製品,TOPIX Small 2,false,false,true
+7956.T,1,prime,ピジョン,3800,その他製品,TOPIX Mid400,false,false,true
+7962.T,1,prime,キングジム,3800,その他製品,TOPIX Small 2,false,false,true
+7965.T,1,prime,象印マホービン,3650,電気機器,TOPIX Small 1,false,false,true
+7966.T,1,prime,リンテック,3800,その他製品,TOPIX Small 1,false,false,true
+7970.T,1,prime,信越ポリマー,3200,化学,TOPIX Small 1,false,false,true
+7972.T,1,prime,イトーキ,3800,その他製品,TOPIX Small 1,false,false,true
+7974.T,1,prime,任天堂,3800,その他製品,TOPIX Core30,false,false,true
+7976.T,1,prime,三菱鉛筆,3800,その他製品,TOPIX Small 1,false,false,true
+7979.T,1,prime,松風,3750,精密機器,TOPIX Small 2,false,false,true
+7981.T,1,prime,タカラスタンダード,3800,その他製品,TOPIX Small 1,false,false,true
+7984.T,1,prime,コクヨ,3800,その他製品,TOPIX Mid400,false,false,true
+7988.T,1,prime,ニフコ,3200,化学,TOPIX Mid400,false,false,true
+7989.T,1,prime,立川ブラインド工業,3550,金属製品,TOPIX Small 2,false,false,true
+7990.T,1,prime,グローブライド,3800,その他製品,TOPIX Small 1,false,false,true
+7994.T,1,prime,オカムラ,3800,その他製品,TOPIX Small 1,false,false,true
+7995.T,1,prime,バルカー,3200,化学,TOPIX Small 1,false,false,true
+8001.T,1,prime,伊藤忠商事,6050,卸売業,TOPIX Core30,false,false,true
+8002.T,1,prime,丸紅,6050,卸売業,TOPIX Large70,false,false,true
+8005.T,1,prime,スクロール,6100,小売業,TOPIX Small 2,false,false,true
+8007.T,1,prime,高島,6050,卸売業,-,false,false,true
+8008.T,1,prime,ヨンドシーホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+8011.T,1,prime,三陽商会,3100,繊維製品,TOPIX Small 2,false,false,true
+8012.T,1,prime,長瀬産業,6050,卸売業,TOPIX Mid400,false,false,true
+8014.T,1,prime,蝶理,6050,卸売業,TOPIX Small 2,false,false,true
+8015.T,1,prime,豊田通商,6050,卸売業,TOPIX Large70,false,false,true
+8016.T,1,prime,オンワードホールディングス,3100,繊維製品,TOPIX Small 1,false,false,true
+8020.T,1,prime,兼松,6050,卸売業,TOPIX Mid400,false,false,true
+8022.T,1,prime,美津濃,3800,その他製品,TOPIX Small 1,false,false,true
+8031.T,1,prime,三井物産,6050,卸売業,TOPIX Core30,false,false,true
+8032.T,1,prime,日本紙パルプ商事,6050,卸売業,TOPIX Small 2,false,false,true
+8035.T,1,prime,東京エレクトロン,3650,電気機器,TOPIX Core30,false,false,true
+8037.T,1,prime,カメイ,6050,卸売業,TOPIX Small 2,false,false,true
+8043.T,1,prime,スターゼン,6050,卸売業,TOPIX Small 2,false,false,true
+8050.T,1,prime,セイコーグループ,3750,精密機器,TOPIX Small 1,false,false,true
+8051.T,1,prime,山善,6050,卸売業,TOPIX Small 1,false,false,true
+8052.T,1,prime,椿本興業,6050,卸売業,TOPIX Small 2,false,false,true
+8053.T,1,prime,住友商事,6050,卸売業,TOPIX Large70,false,false,true
+8056.T,1,prime,ＢＩＰＲＯＧＹ,5250,情報・通信業,TOPIX Mid400,false,false,true
+8057.T,1,prime,内田洋行,6050,卸売業,TOPIX Small 1,false,false,true
+8058.T,1,prime,三菱商事,6050,卸売業,TOPIX Core30,false,false,true
+8059.T,1,prime,第一実業,6050,卸売業,TOPIX Small 2,false,false,true
+8060.T,1,prime,キヤノンマーケティングジャパン,6050,卸売業,TOPIX Mid400,false,false,true
+8061.T,1,prime,西華産業,6050,卸売業,TOPIX Small 1,false,false,true
+8065.T,1,prime,佐藤商事,6050,卸売業,TOPIX Small 2,false,false,true
+8070.T,1,prime,東京産業,6050,卸売業,TOPIX Small 2,false,false,true
+8074.T,1,prime,ＹＵＡＳＡ,6050,卸売業,TOPIX Small 1,false,false,true
+8075.T,1,prime,神鋼商事,6050,卸売業,TOPIX Small 2,false,false,true
+8078.T,1,prime,阪和興業,6050,卸売業,TOPIX Small 1,false,false,true
+8079.T,1,prime,正栄食品工業,6050,卸売業,TOPIX Small 1,false,false,true
+8081.T,1,prime,カナデン,6050,卸売業,TOPIX Small 2,false,false,true
+8084.T,1,prime,ＲＹＯＤＥＮ,6050,卸売業,TOPIX Small 2,false,false,true
+8086.T,1,prime,ニプロ,3750,精密機器,TOPIX Mid400,false,false,true
+8088.T,1,prime,岩谷産業,6050,卸売業,TOPIX Mid400,false,false,true
+8091.T,1,prime,ニチモウ,6050,卸売業,-,false,false,true
+8093.T,1,prime,極東貿易,6050,卸売業,TOPIX Small 2,false,false,true
+8095.T,1,prime,アステナホールディングス,6050,卸売業,TOPIX Small 2,false,false,true
+8097.T,1,prime,三愛オブリ,6050,卸売業,TOPIX Small 1,false,false,true
+8098.T,1,prime,稲畑産業,6050,卸売業,TOPIX Small 1,false,false,true
+8101.T,1,prime,ＧＳＩクレオス,6050,卸売業,TOPIX Small 2,false,false,true
+8103.T,1,prime,明和産業,6050,卸売業,TOPIX Small 2,false,false,true
+8111.T,1,prime,ゴールドウイン,3100,繊維製品,TOPIX Mid400,false,false,true
+8113.T,1,prime,ユニ・チャーム,3200,化学,TOPIX Large70,false,false,true
+8125.T,1,prime,ワキタ,6050,卸売業,TOPIX Small 1,false,false,true
+8129.T,1,prime,東邦ホールディングス,6050,卸売業,TOPIX Mid400,false,false,true
+8130.T,1,prime,サンゲツ,6050,卸売業,TOPIX Small 1,false,false,true
+8132.T,1,prime,シナネンホールディングス,6050,卸売業,TOPIX Small 2,false,false,true
+8133.T,1,prime,伊藤忠エネクス,6050,卸売業,TOPIX Small 1,false,false,true
+8136.T,1,prime,サンリオ,6050,卸売業,TOPIX Mid400,false,false,true
+8137.T,1,prime,サンワテクノス,6050,卸売業,TOPIX Small 2,false,false,true
+8141.T,1,prime,新光商事,6050,卸売業,TOPIX Small 2,false,false,true
+8142.T,1,prime,トーホー,6050,卸売業,TOPIX Small 2,false,false,true
+8150.T,1,prime,三信電気,6050,卸売業,TOPIX Small 2,false,false,true
+8151.T,1,prime,東陽テクニカ,6050,卸売業,TOPIX Small 2,false,false,true
+8153.T,1,prime,モスフードサービス,6050,卸売業,TOPIX Small 1,false,false,true
+8154.T,1,prime,加賀電子,6050,卸売業,TOPIX Small 1,false,false,true
+8157.T,1,prime,都築電気,5250,情報・通信業,TOPIX Small 2,false,false,true
+8158.T,1,prime,ソーダニッカ,6050,卸売業,TOPIX Small 2,false,false,true
+8159.T,1,prime,立花エレテック,6050,卸売業,TOPIX Small 2,false,false,true
+8160.T,1,prime,木曽路,6100,小売業,TOPIX Small 1,false,false,true
+8163.T,1,prime,ＳＲＳホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+8167.T,1,prime,リテールパートナーズ,6100,小売業,TOPIX Small 2,false,false,true
+8173.T,1,prime,Ｊｏｓｈｉｎ,6100,小売業,TOPIX Small 1,false,false,true
+8174.T,1,prime,日本瓦斯,6100,小売業,TOPIX Mid400,false,false,true
+8179.T,1,prime,ロイヤルホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+8185.T,1,prime,チヨダ,6100,小売業,TOPIX Small 2,false,false,true
+8194.T,1,prime,ライフコーポレーション,6100,小売業,TOPIX Small 1,false,false,true
+8200.T,1,prime,リンガーハット,6100,小売業,TOPIX Small 1,false,false,true
+8203.T,1,prime,ＭｒＭａｘＨＤ,6100,小売業,TOPIX Small 2,false,false,true
+8214.T,1,prime,ＡＯＫＩホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+8217.T,1,prime,オークワ,6100,小売業,TOPIX Small 2,false,false,true
+8218.T,1,prime,コメリ,6100,小売業,TOPIX Small 1,false,false,true
+8219.T,1,prime,青山商事,6100,小売業,TOPIX Small 1,false,false,true
+8227.T,1,prime,しまむら,6100,小売業,TOPIX Mid400,false,false,true
+8233.T,1,prime,高島屋,6100,小売業,TOPIX Mid400,false,false,true
+8237.T,1,prime,松屋,6100,小売業,TOPIX Small 1,false,false,true
+8242.T,1,prime,エイチ・ツー・オー　リテイリング,6100,小売業,TOPIX Mid400,false,false,true
+8252.T,1,prime,丸井グループ,6100,小売業,TOPIX Mid400,false,false,true
+8253.T,1,prime,クレディセゾン,7200,その他金融業,TOPIX Mid400,false,false,true
+8255.T,1,prime,アクシアル　リテイリング,6100,小売業,TOPIX Small 2,false,false,true
+8267.T,1,prime,イオン,6100,小売業,TOPIX Large70,false,false,true
+8273.T,1,prime,イズミ,6100,小売業,TOPIX Small 1,false,false,true
+8276.T,1,prime,平和堂,6100,小売業,TOPIX Small 1,false,false,true
+8278.T,1,prime,フジ,6100,小売業,TOPIX Small 1,false,false,true
+8281.T,1,prime,ゼビオホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+8282.T,1,prime,ケーズホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+8283.T,1,prime,ＰＡＬＴＡＣ,6050,卸売業,TOPIX Mid400,false,false,true
+8303.T,1,prime,ＳＢＩ新生銀行,7050,銀行業,TOPIX Mid400,false,false,true
+8304.T,1,prime,あおぞら銀行,7050,銀行業,TOPIX Mid400,false,false,true
+8306.T,1,prime,三菱ＵＦＪフィナンシャル・グループ,7050,銀行業,TOPIX Core30,false,false,true
+8308.T,1,prime,りそなホールディングス,7050,銀行業,TOPIX Large70,false,false,true
+8309.T,1,prime,三井住友トラストグループ,7050,銀行業,TOPIX Large70,false,false,true
+8316.T,1,prime,三井住友フィナンシャルグループ,7050,銀行業,TOPIX Core30,false,false,true
+8331.T,1,prime,千葉銀行,7050,銀行業,TOPIX Mid400,false,false,true
+8334.T,1,prime,群馬銀行,7050,銀行業,TOPIX Mid400,false,false,true
+8336.T,1,prime,武蔵野銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8337.T,1,prime,千葉興業銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8338.T,1,prime,筑波銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8341.T,1,prime,七十七銀行,7050,銀行業,TOPIX Mid400,false,false,true
+8343.T,1,prime,秋田銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8344.T,1,prime,山形銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8345.T,1,prime,岩手銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8346.T,1,prime,東邦銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8354.T,1,prime,ふくおかフィナンシャルグループ,7050,銀行業,TOPIX Mid400,false,false,true
+8358.T,1,prime,スルガ銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8359.T,1,prime,八十二長野銀行,7050,銀行業,TOPIX Mid400,false,false,true
+8360.T,1,prime,山梨中央銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8361.T,1,prime,大垣共立銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8362.T,1,prime,福井銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8364.T,1,prime,清水銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8366.T,1,prime,滋賀銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8367.T,1,prime,南都銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8368.T,1,prime,百五銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8370.T,1,prime,紀陽銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8377.T,1,prime,ほくほくフィナンシャルグループ,7050,銀行業,TOPIX Mid400,false,false,true
+8381.T,1,prime,山陰合同銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8386.T,1,prime,百十四銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8387.T,1,prime,四国銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8388.T,1,prime,阿波銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8392.T,1,prime,大分銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8393.T,1,prime,宮崎銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8395.T,1,prime,佐賀銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8399.T,1,prime,琉球銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8410.T,1,prime,セブン銀行,7050,銀行業,TOPIX Mid400,false,false,true
+8411.T,1,prime,みずほフィナンシャルグループ,7050,銀行業,TOPIX Core30,false,false,true
+8418.T,1,prime,山口フィナンシャルグループ,7050,銀行業,TOPIX Mid400,false,false,true
+8424.T,1,prime,芙蓉総合リース,7200,その他金融業,TOPIX Mid400,false,false,true
+8425.T,1,prime,みずほリース,7200,その他金融業,TOPIX Small 1,false,false,true
+8439.T,1,prime,東京センチュリー,7200,その他金融業,TOPIX Mid400,false,false,true
+8473.T,1,prime,ＳＢＩホールディングス,7100,証券、商品先物取引業,TOPIX Mid400,false,false,true
+8511.T,1,prime,日本証券金融,7200,その他金融業,TOPIX Small 1,false,false,true
+8522.T,1,prime,名古屋銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8524.T,1,prime,北洋銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8541.T,1,prime,愛媛銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8544.T,1,prime,京葉銀行,7050,銀行業,TOPIX Small 1,false,false,true
+8550.T,1,prime,栃木銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8551.T,1,prime,北日本銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8558.T,1,prime,東和銀行,7050,銀行業,TOPIX Small 2,false,false,true
+8566.T,1,prime,リコーリース,7200,その他金融業,TOPIX Small 1,false,false,true
+8570.T,1,prime,イオンフィナンシャルサービス,7200,その他金融業,TOPIX Mid400,false,false,true
+8584.T,1,prime,ジャックス,7200,その他金融業,TOPIX Small 1,false,false,true
+8585.T,1,prime,オリエントコーポレーション,7200,その他金融業,TOPIX Small 1,false,false,true
+8591.T,1,prime,オリックス,7200,その他金融業,TOPIX Large70,false,false,true
+8593.T,1,prime,三菱ＨＣキャピタル,7200,その他金融業,TOPIX Mid400,false,false,true
+8595.T,1,prime,ジャフコ　グループ,7100,証券、商品先物取引業,TOPIX Mid400,false,false,true
+8600.T,1,prime,トモニホールディングス,7050,銀行業,TOPIX Small 1,false,false,true
+8601.T,1,prime,大和証券グループ本社,7100,証券、商品先物取引業,TOPIX Mid400,false,false,true
+8604.T,1,prime,野村ホールディングス,7100,証券、商品先物取引業,TOPIX Large70,false,false,true
+8609.T,1,prime,岡三証券グループ,7100,証券、商品先物取引業,TOPIX Small 1,false,false,true
+8613.T,1,prime,丸三証券,7100,証券、商品先物取引業,TOPIX Small 1,false,false,true
+8614.T,1,prime,東洋証券,7100,証券、商品先物取引業,TOPIX Small 2,false,false,true
+8616.T,1,prime,東海東京フィナンシャル・ホールディングス,7100,証券、商品先物取引業,TOPIX Small 1,false,false,true
+8622.T,1,prime,水戸証券,7100,証券、商品先物取引業,TOPIX Small 2,false,false,true
+8624.T,1,prime,いちよし証券,7100,証券、商品先物取引業,TOPIX Small 2,false,false,true
+8628.T,1,prime,松井証券,7100,証券、商品先物取引業,TOPIX Small 1,false,false,true
+8630.T,1,prime,ＳＯＭＰＯホールディングス,7150,保険業,TOPIX Large70,false,false,true
+8697.T,1,prime,日本取引所グループ,7200,その他金融業,TOPIX Large70,false,false,true
+8698.T,1,prime,マネックスグループ,7100,証券、商品先物取引業,TOPIX Small 1,false,false,true
+8706.T,1,prime,極東証券,7100,証券、商品先物取引業,TOPIX Small 1,false,false,true
+8707.T,1,prime,岩井コスモホールディングス,7100,証券、商品先物取引業,TOPIX Small 1,false,false,true
+8708.T,1,prime,アイザワ証券グループ,7100,証券、商品先物取引業,TOPIX Small 2,false,false,true
+8713.T,1,prime,フィデアホールディングス,7050,銀行業,TOPIX Small 2,false,false,true
+8714.T,1,prime,池田泉州ホールディングス,7050,銀行業,TOPIX Small 1,false,false,true
+8715.T,1,prime,アニコム　ホールディングス,7150,保険業,TOPIX Small 1,false,false,true
+8725.T,1,prime,ＭＳ＆ＡＤインシュアランスグループホールディングス,7150,保険業,TOPIX Large70,false,false,true
+8729.T,1,prime,ソニーフィナンシャルグループ,7150,保険業,TOPIX Core30,false,false,true
+8739.T,1,prime,スパークス・グループ,7100,証券、商品先物取引業,TOPIX Small 2,false,false,true
+8750.T,1,prime,第一ライフグループ,7150,保険業,TOPIX Large70,false,false,true
+8766.T,1,prime,東京海上ホールディングス,7150,保険業,TOPIX Core30,false,false,true
+8771.T,1,prime,イー・ギャランティ,7200,その他金融業,TOPIX Small 1,false,false,true
+8793.T,1,prime,ＮＥＣキャピタルソリューション,7200,その他金融業,TOPIX Small 2,false,false,true
+8795.T,1,prime,Ｔ＆Ｄホールディングス,7150,保険業,TOPIX Mid400,false,false,true
+8798.T,1,prime,アドバンスクリエイト,7150,保険業,TOPIX Small 2,false,false,true
+8801.T,1,prime,三井不動産,8050,不動産業,TOPIX Large70,false,false,true
+8802.T,1,prime,三菱地所,8050,不動産業,TOPIX Large70,false,false,true
+8803.T,1,prime,平和不動産,8050,不動産業,TOPIX Small 1,false,false,true
+8804.T,1,prime,東京建物,8050,不動産業,TOPIX Mid400,false,false,true
+8818.T,1,prime,京阪神ビルディング,8050,不動産業,TOPIX Small 2,false,false,true
+8830.T,1,prime,住友不動産,8050,不動産業,TOPIX Large70,false,false,true
+8848.T,1,prime,レオパレス２１,8050,不動産業,TOPIX Small 1,false,false,true
+8850.T,1,prime,スターツコーポレーション,8050,不動産業,TOPIX Small 1,false,false,true
+8860.T,1,prime,フジ住宅,8050,不動産業,TOPIX Small 2,false,false,true
+8876.T,1,prime,リログループ,9050,サービス業,TOPIX Mid400,false,false,true
+8877.T,1,prime,エスリード,8050,不動産業,TOPIX Small 2,false,false,true
+8881.T,1,prime,日神グループホールディングス,8050,不動産業,TOPIX Small 2,false,false,true
+8892.T,1,prime,エスコン,8050,不動産業,TOPIX Small 1,false,false,true
+8897.T,1,prime,ＭＩＲＡＲＴＨホールディングス,8050,不動産業,TOPIX Small 1,false,false,true
+8919.T,1,prime,カチタス,8050,不動産業,TOPIX Small 1,false,false,true
+8923.T,1,prime,トーセイ,8050,不動産業,TOPIX Small 1,false,false,true
+8934.T,1,prime,サンフロンティア不動産,8050,不動産業,TOPIX Small 1,false,false,true
+8935.T,1,prime,ＦＪネクストホールディングス,8050,不動産業,TOPIX Small 2,false,false,true
+8999.T,1,prime,グランディハウス,8050,不動産業,TOPIX Small 2,false,false,true
+9001.T,1,prime,東武鉄道,5050,陸運業,TOPIX Mid400,false,false,true
+9003.T,1,prime,相鉄ホールディングス,5050,陸運業,TOPIX Mid400,false,false,true
+9005.T,1,prime,東急,5050,陸運業,TOPIX Mid400,false,false,true
+9006.T,1,prime,京浜急行電鉄,5050,陸運業,TOPIX Mid400,false,false,true
+9007.T,1,prime,小田急電鉄,5050,陸運業,TOPIX Mid400,false,false,true
+9008.T,1,prime,京王電鉄,5050,陸運業,TOPIX Mid400,false,false,true
+9009.T,1,prime,京成電鉄,5050,陸運業,TOPIX Mid400,false,false,true
+9010.T,1,prime,富士急行,5050,陸運業,TOPIX Small 1,false,false,true
+9020.T,1,prime,東日本旅客鉄道,5050,陸運業,TOPIX Large70,false,false,true
+9021.T,1,prime,西日本旅客鉄道,5050,陸運業,TOPIX Large70,false,false,true
+9022.T,1,prime,東海旅客鉄道,5050,陸運業,TOPIX Large70,false,false,true
+9023.T,1,prime,東京地下鉄,5050,陸運業,TOPIX Mid400,false,false,true
+9024.T,1,prime,西武ホールディングス,5050,陸運業,TOPIX Mid400,false,false,true
+9025.T,1,prime,鴻池運輸,5050,陸運業,TOPIX Small 1,false,false,true
+9031.T,1,prime,西日本鉄道,5050,陸運業,TOPIX Mid400,false,false,true
+9037.T,1,prime,ハマキョウレックス,5050,陸運業,TOPIX Small 1,false,false,true
+9039.T,1,prime,サカイ引越センター,5050,陸運業,TOPIX Small 1,false,false,true
+9041.T,1,prime,近鉄グループホールディングス,5050,陸運業,TOPIX Mid400,false,false,true
+9042.T,1,prime,阪急阪神ホールディングス,5050,陸運業,TOPIX Mid400,false,false,true
+9044.T,1,prime,ＮＡＮＫＡＩ,5050,陸運業,TOPIX Mid400,false,false,true
+9045.T,1,prime,京阪ホールディングス,5050,陸運業,TOPIX Mid400,false,false,true
+9046.T,1,prime,神戸電鉄,5050,陸運業,TOPIX Small 2,false,false,true
+9048.T,1,prime,名古屋鉄道,5050,陸運業,TOPIX Mid400,false,false,true
+9052.T,1,prime,山陽電気鉄道,5050,陸運業,TOPIX Small 2,false,false,true
+9064.T,1,prime,ヤマトホールディングス,5050,陸運業,TOPIX Mid400,false,false,true
+9065.T,1,prime,山九,5050,陸運業,TOPIX Mid400,false,false,true
+9068.T,1,prime,丸全昭和運輸,5050,陸運業,TOPIX Small 1,false,false,true
+9069.T,1,prime,センコーグループホールディングス,5050,陸運業,TOPIX Mid400,false,false,true
+9072.T,1,prime,ニッコンホールディングス,5050,陸運業,TOPIX Mid400,false,false,true
+9075.T,1,prime,福山通運,5050,陸運業,TOPIX Small 1,false,false,true
+9076.T,1,prime,セイノーホールディングス,5050,陸運業,TOPIX Mid400,false,false,true
+9081.T,1,prime,神奈川中央交通,5050,陸運業,TOPIX Small 2,false,false,true
+9090.T,1,prime,ＡＺ－ＣＯＭ丸和ホールディングス,5050,陸運業,TOPIX Small 1,false,false,true
+9101.T,1,prime,日本郵船,5100,海運業,TOPIX Large70,false,false,true
+9104.T,1,prime,商船三井,5100,海運業,TOPIX Large70,false,false,true
+9107.T,1,prime,川崎汽船,5100,海運業,TOPIX Mid400,false,false,true
+9110.T,1,prime,ＮＳユナイテッド海運,5100,海運業,TOPIX Small 1,false,false,true
+9119.T,1,prime,飯野海運,5100,海運業,TOPIX Small 1,false,false,true
+9142.T,1,prime,九州旅客鉄道,5050,陸運業,TOPIX Mid400,false,false,true
+9143.T,1,prime,ＳＧホールディングス,5050,陸運業,TOPIX Mid400,false,false,true
+9147.T,1,prime,ＮＩＰＰＯＮ　ＥＸＰＲＥＳＳホールディングス,5050,陸運業,TOPIX Mid400,false,false,true
+9201.T,1,prime,日本航空,5150,空運業,TOPIX Mid400,false,false,true
+9202.T,1,prime,ＡＮＡホールディングス,5150,空運業,TOPIX Large70,false,false,true
+9216.T,1,prime,ビーウィズ,9050,サービス業,TOPIX Small 2,false,false,true
+9229.T,1,prime,サンウェルズ,9050,サービス業,TOPIX Small 2,false,false,true
+9247.T,1,prime,ＴＲＥホールディングス,9050,サービス業,TOPIX Small 1,false,false,true
+9267.T,1,prime,Ｇｅｎｋｙ　ＤｒｕｇＳｔｏｒｅｓ,6100,小売業,TOPIX Small 1,false,false,true
+9273.T,1,prime,コーア商事ホールディングス,6050,卸売業,TOPIX Small 2,false,false,true
+9274.T,1,prime,ＫＰＰグループホールディングス,6050,卸売業,TOPIX Small 1,false,false,true
+9278.T,1,prime,ブックオフグループホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+9279.T,1,prime,ギフトホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+9301.T,1,prime,三菱倉庫,5200,倉庫・運輸関連業,TOPIX Mid400,false,false,true
+9302.T,1,prime,三井倉庫ホールディングス,5200,倉庫・運輸関連業,TOPIX Mid400,false,false,true
+9303.T,1,prime,住友倉庫,5200,倉庫・運輸関連業,TOPIX Small 1,false,false,true
+9304.T,1,prime,澁澤倉庫,5200,倉庫・運輸関連業,TOPIX Small 2,false,false,true
+9305.T,1,prime,ヤマタネ,6050,卸売業,TOPIX Small 2,false,false,true
+9310.T,1,prime,日本トランスシティ,5200,倉庫・運輸関連業,TOPIX Small 2,false,false,true
+9319.T,1,prime,中央倉庫,5200,倉庫・運輸関連業,TOPIX Small 2,false,false,true
+9324.T,1,prime,安田倉庫,5200,倉庫・運輸関連業,TOPIX Small 2,false,false,true
+9332.T,1,prime,ＮＩＳＳＯホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+9336.T,1,prime,大栄環境,9050,サービス業,TOPIX Small 1,false,false,true
+9341.T,1,prime,ＧＥＮＯＶＡ,9050,サービス業,TOPIX Small 2,false,false,true
+9347.T,1,prime,日本管財ホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+9364.T,1,prime,上組,5200,倉庫・運輸関連業,TOPIX Mid400,false,false,true
+9381.T,1,prime,エーアイテイー,5200,倉庫・運輸関連業,TOPIX Small 2,false,false,true
+9401.T,1,prime,ＴＢＳホールディングス,5250,情報・通信業,TOPIX Mid400,false,false,true
+9404.T,1,prime,日本テレビホールディングス,5250,情報・通信業,TOPIX Mid400,false,false,true
+9405.T,1,prime,朝日放送グループホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+9409.T,1,prime,テレビ朝日ホールディングス,5250,情報・通信業,TOPIX Small 1,false,false,true
+9412.T,1,prime,スカパーＪＳＡＴ,5250,情報・通信業,TOPIX Small 1,false,false,true
+9413.T,1,prime,テレビ東京ホールディングス,5250,情報・通信業,TOPIX Small 1,false,false,true
+9416.T,1,prime,ビジョン,5250,情報・通信業,TOPIX Small 1,false,false,true
+9418.T,1,prime,Ｕ－ＮＥＸＴ　ＨＯＬＤＩＮＧＳ,5250,情報・通信業,TOPIX Small 1,false,false,true
+9424.T,1,prime,日本通信,5250,情報・通信業,TOPIX Small 2,false,false,true
+9432.T,1,prime,ＮＴＴ,5250,情報・通信業,TOPIX Core30,false,false,true
+9433.T,1,prime,ＫＤＤＩ,5250,情報・通信業,TOPIX Core30,false,false,true
+9434.T,1,prime,ソフトバンク,5250,情報・通信業,TOPIX Core30,false,false,true
+9435.T,1,prime,光通信,5250,情報・通信業,TOPIX Mid400,false,false,true
+9438.T,1,prime,エムティーアイ,5250,情報・通信業,TOPIX Small 2,false,false,true
+9449.T,1,prime,ＧＭＯインターネットグループ,5250,情報・通信業,TOPIX Mid400,false,false,true
+9468.T,1,prime,ＫＡＤＯＫＡＷＡ,5250,情報・通信業,TOPIX Mid400,false,false,true
+9470.T,1,prime,学研ホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+9474.T,1,prime,ゼンリン,5250,情報・通信業,TOPIX Small 2,false,false,true
+9501.T,1,prime,東京電力ホールディングス,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9502.T,1,prime,中部電力,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9503.T,1,prime,関西電力,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9504.T,1,prime,中国電力,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9505.T,1,prime,北陸電力,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9506.T,1,prime,東北電力,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9507.T,1,prime,四国電力,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9508.T,1,prime,九州電力,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9509.T,1,prime,北海道電力,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9511.T,1,prime,沖縄電力,4050,電気・ガス業,TOPIX Small 1,false,false,true
+9513.T,1,prime,電源開発,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9517.T,1,prime,イーレックス,4050,電気・ガス業,TOPIX Small 2,false,false,true
+9519.T,1,prime,レノバ,4050,電気・ガス業,TOPIX Small 1,false,false,true
+9531.T,1,prime,東京瓦斯,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9532.T,1,prime,大阪瓦斯,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9533.T,1,prime,東邦瓦斯,4050,電気・ガス業,TOPIX Mid400,false,false,true
+9534.T,1,prime,北海道瓦斯,4050,電気・ガス業,TOPIX Small 2,false,false,true
+9535.T,1,prime,広島ガス,4050,電気・ガス業,TOPIX Small 2,false,false,true
+9536.T,1,prime,西部ガスホールディングス,4050,電気・ガス業,TOPIX Small 2,false,false,true
+9543.T,1,prime,静岡ガス,4050,電気・ガス業,TOPIX Small 1,false,false,true
+9551.T,1,prime,メタウォーター,4050,電気・ガス業,TOPIX Small 1,false,false,true
+9552.T,1,prime,クオンツ総研ホールディングス,9050,サービス業,TOPIX Small 1,false,false,true
+9601.T,1,prime,松竹,5250,情報・通信業,TOPIX Small 1,false,false,true
+9602.T,1,prime,東宝,5250,情報・通信業,TOPIX Mid400,false,false,true
+9603.T,1,prime,エイチ・アイ・エス,9050,サービス業,TOPIX Small 1,false,false,true
+9605.T,1,prime,東映,5250,情報・通信業,TOPIX Small 1,false,false,true
+9612.T,1,prime,ラックランド,9050,サービス業,TOPIX Small 2,false,false,true
+9616.T,1,prime,共立メンテナンス,9050,サービス業,TOPIX Mid400,false,false,true
+9619.T,1,prime,イチネンホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+9621.T,1,prime,建設技術研究所,9050,サービス業,TOPIX Small 1,false,false,true
+9622.T,1,prime,スペース,9050,サービス業,TOPIX Small 2,false,false,true
+9627.T,1,prime,アインホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+9628.T,1,prime,燦ホールディングス,9050,サービス業,TOPIX Small 2,false,false,true
+9629.T,1,prime,ピー・シー・エー,5250,情報・通信業,TOPIX Small 2,false,false,true
+9644.T,1,prime,タナベコンサルティンググループ,9050,サービス業,TOPIX Small 2,false,false,true
+9658.T,1,prime,ビジネスブレイン太田昭和,5250,情報・通信業,TOPIX Small 2,false,false,true
+9663.T,1,prime,ナガワ,9050,サービス業,TOPIX Small 2,false,false,true
+9672.T,1,prime,東京都競馬,9050,サービス業,TOPIX Small 1,false,false,true
+9678.T,1,prime,カナモト,9050,サービス業,TOPIX Small 1,false,false,true
+9682.T,1,prime,ＤＴＳ,5250,情報・通信業,TOPIX Small 1,false,false,true
+9684.T,1,prime,スクウェア・エニックス・ホールディングス,5250,情報・通信業,TOPIX Mid400,false,false,true
+9692.T,1,prime,シーイーシー,5250,情報・通信業,TOPIX Small 1,false,false,true
+9697.T,1,prime,カプコン,5250,情報・通信業,TOPIX Mid400,false,false,true
+9699.T,1,prime,ニシオホールディングス,9050,サービス業,TOPIX Small 1,false,false,true
+9702.T,1,prime,アイ・エス・ビー,5250,情報・通信業,TOPIX Small 2,false,false,true
+9706.T,1,prime,日本空港ビルデング,8050,不動産業,TOPIX Mid400,false,false,true
+9715.T,1,prime,トランス・コスモス,9050,サービス業,TOPIX Small 1,false,false,true
+9716.T,1,prime,乃村工藝社,9050,サービス業,TOPIX Small 1,false,false,true
+9722.T,1,prime,藤田観光,9050,サービス業,TOPIX Small 1,false,false,true
+9729.T,1,prime,トーカイ,9050,サービス業,TOPIX Small 2,false,false,true
+9735.T,1,prime,セコム,9050,サービス業,TOPIX Large70,false,false,true
+9739.T,1,prime,ＮＳＷ,5250,情報・通信業,TOPIX Small 2,false,false,true
+9740.T,1,prime,セントラル警備保障,9050,サービス業,TOPIX Small 2,false,false,true
+9742.T,1,prime,アイネス,5250,情報・通信業,TOPIX Small 2,false,false,true
+9743.T,1,prime,丹青社,9050,サービス業,TOPIX Small 1,false,false,true
+9744.T,1,prime,メイテックグループホールディングス,9050,サービス業,TOPIX Mid400,false,false,true
+9746.T,1,prime,ＴＫＣ,5250,情報・通信業,TOPIX Small 1,false,false,true
+9755.T,1,prime,応用地質,9050,サービス業,TOPIX Small 2,false,false,true
+9757.T,1,prime,船井総研ホールディングス,9050,サービス業,TOPIX Small 1,false,false,true
+9759.T,1,prime,ＮＳＤ,5250,情報・通信業,TOPIX Mid400,false,false,true
+9765.T,1,prime,オオバ,9050,サービス業,-,false,false,true
+9766.T,1,prime,コナミグループ,5250,情報・通信業,TOPIX Mid400,false,false,true
+9769.T,1,prime,学究社,9050,サービス業,TOPIX Small 2,false,false,true
+9788.T,1,prime,ナック,9050,サービス業,TOPIX Small 2,false,false,true
+9790.T,1,prime,福井コンピュータホールディングス,5250,情報・通信業,TOPIX Small 2,false,false,true
+9793.T,1,prime,ダイセキ,9050,サービス業,TOPIX Small 1,false,false,true
+9795.T,1,prime,ステップ,9050,サービス業,TOPIX Small 2,false,false,true
+9824.T,1,prime,泉州電業,6050,卸売業,TOPIX Small 1,false,false,true
+9830.T,1,prime,トラスコ中山,6050,卸売業,TOPIX Small 1,false,false,true
+9831.T,1,prime,ヤマダホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+9832.T,1,prime,オートバックスセブン,6050,卸売業,TOPIX Small 1,false,false,true
+9837.T,1,prime,モリト,6050,卸売業,TOPIX Small 2,false,false,true
+9842.T,1,prime,アークランズ,6100,小売業,TOPIX Small 1,false,false,true
+9843.T,1,prime,ニトリホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+9850.T,1,prime,グルメ杵屋,6100,小売業,TOPIX Small 2,false,false,true
+9861.T,1,prime,吉野家ホールディングス,6100,小売業,TOPIX Mid400,false,false,true
+9869.T,1,prime,加藤産業,6050,卸売業,TOPIX Small 1,false,false,true
+9880.T,1,prime,イノテック,3650,電気機器,TOPIX Small 2,false,false,true
+9882.T,1,prime,イエローハット,6050,卸売業,TOPIX Small 1,false,false,true
+9887.T,1,prime,松屋フーズホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+9889.T,1,prime,ＪＢＣＣホールディングス,5250,情報・通信業,TOPIX Small 1,false,false,true
+9900.T,1,prime,サガミホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+9902.T,1,prime,日伝,6050,卸売業,TOPIX Small 2,false,false,true
+9928.T,1,prime,ミロク情報サービス,5250,情報・通信業,TOPIX Small 2,false,false,true
+9932.T,1,prime,杉本商事,6050,卸売業,TOPIX Small 2,false,false,true
+9934.T,1,prime,因幡電機産業,6050,卸売業,TOPIX Mid400,false,false,true
+9936.T,1,prime,王将フードサービス,6100,小売業,TOPIX Small 1,false,false,true
+9946.T,1,prime,ミニストップ,6100,小売業,TOPIX Small 2,false,false,true
+9948.T,1,prime,アークス,6100,小売業,TOPIX Small 1,false,false,true
+9956.T,1,prime,バローホールディングス,6100,小売業,TOPIX Small 1,false,false,true
+9960.T,1,prime,東テク,6050,卸売業,TOPIX Small 1,false,false,true
+9962.T,1,prime,ミスミグループ本社,6050,卸売業,TOPIX Mid400,false,false,true
+9974.T,1,prime,ベルク,6100,小売業,TOPIX Small 1,false,false,true
+9983.T,1,prime,ファーストリテイリング,6100,小売業,TOPIX Core30,false,false,true
+9984.T,1,prime,ソフトバンクグループ,5250,情報・通信業,TOPIX Core30,false,false,true
+9987.T,1,prime,スズケン,6050,卸売業,TOPIX Mid400,false,false,true
+9989.T,1,prime,サンドラッグ,6100,小売業,TOPIX Mid400,false,false,true
+9990.T,1,prime,サックスバー　ホールディングス,6100,小売業,TOPIX Small 2,false,false,true
+9991.T,1,prime,ジェコス,6050,卸売業,TOPIX Small 2,false,false,true
+9997.T,1,prime,ベルーナ,6100,小売業,TOPIX Small 1,false,false,true

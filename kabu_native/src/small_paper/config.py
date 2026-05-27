@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 import yaml
 
@@ -67,9 +67,27 @@ class SmallPaperPilotConfig:
     comparison_note: str = ""
     allowed_trading_windows: list[TradingWindow] = field(default_factory=list)
     structural_exit_policy: str = ""
+    price_momentum_fade_ratio: float = 0.85
     favorable_mode: str = ""
     favorable_mfe_scale: float = 0.003
     use_market_time_window: bool = False
+    symbol_cooloff_enabled: bool = False
+    symbol_cooloff_rule: str = "prior_avg_pnl_negative_trades_ge_5"
+    symbol_cooloff_min_trades: int = 5
+    symbol_cooloff_metric: str = "avg_pnl"
+    symbol_cooloff_threshold: float = 0.0
+    symbol_cooloff_lookback_sessions: str = "all_available"
+    symbol_cooloff_apply_mode: str = "reject_entry"
+    daytrade_suitability_enabled: bool = False
+    daytrade_suitability_rule: str = "volatility_liquidity_top50"
+    daytrade_suitability_lookback_sessions: str = "prior_only"
+    daytrade_suitability_apply_mode: str = "reject_entry"
+    entry_price_risk_guard_enabled: bool = False
+    entry_price_risk_guard_shadow: bool = False
+    entry_price_risk_guard_min_entry_price: float = 50.0
+    entry_price_risk_guard_max_tick_ratio_pct: float = 5.0
+    entry_price_risk_guard_apply_mode: str = "reject_entry"
+    shadow_only: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
 
     def feature_bridge_config(self) -> Any:
@@ -93,10 +111,29 @@ class SmallPaperPilotConfig:
         if self.structural_exit_policy:
             out["structural_exit_policy"] = self.structural_exit_policy
             out["observer_exit_mode"] = "combined_structural_exit_notification_only"
+        if self.structural_exit_policy == "combined_structural_exit_v2_price_mom":
+            out["price_momentum_fade_ratio"] = self.price_momentum_fade_ratio
         if self.favorable_mode:
             out["favorable_mode"] = self.favorable_mode
             out["favorable_mfe_scale"] = self.favorable_mfe_scale
             out["use_market_time_window"] = self.use_market_time_window
+        if self.symbol_cooloff_enabled:
+            out["symbol_cooloff_enabled"] = True
+            out["symbol_cooloff_rule"] = self.symbol_cooloff_rule
+            out["symbol_cooloff_apply_mode"] = self.symbol_cooloff_apply_mode
+        if self.daytrade_suitability_enabled:
+            out["daytrade_suitability_enabled"] = True
+            out["daytrade_suitability_rule"] = self.daytrade_suitability_rule
+            out["daytrade_suitability_apply_mode"] = self.daytrade_suitability_apply_mode
+        if self.entry_price_risk_guard_enabled:
+            out["entry_price_risk_guard_enabled"] = True
+            out["entry_price_risk_guard_shadow"] = self.entry_price_risk_guard_shadow
+            out["entry_price_risk_guard_min_entry_price"] = self.entry_price_risk_guard_min_entry_price
+            out["entry_price_risk_guard_max_tick_ratio_pct"] = (
+                self.entry_price_risk_guard_max_tick_ratio_pct
+            )
+        if self.shadow_only:
+            out["shadow_only"] = True
         return out
 
     def exposure_gate_config(self) -> ExposureGateConfig:
@@ -114,12 +151,44 @@ class SmallPaperPilotConfig:
     def allowed_windows(self) -> list[TradingWindow]:
         return list(self.allowed_trading_windows)
 
-    def make_exposure_gate(self) -> ExposureGate:
+    def make_exposure_gate(
+        self,
+        *,
+        repo_root: Optional[Path] = None,
+        run_session_key: Optional[str] = None,
+    ) -> ExposureGate:
         from research.exposure_gate import ExposureGate
 
+        cooloff = None
+        suitability = None
+        price_guard = None
+        if self.entry_price_risk_guard_enabled:
+            from small_paper.entry_price_risk_guard import build_entry_price_risk_guard_state
+
+            price_guard = build_entry_price_risk_guard_state(self)
+        if repo_root is not None and run_session_key:
+            if self.symbol_cooloff_enabled:
+                from small_paper.symbol_cooloff import build_symbol_cooloff_state
+
+                cooloff = build_symbol_cooloff_state(
+                    self,
+                    repo_root=repo_root,
+                    run_session_key=run_session_key,
+                )
+            if self.daytrade_suitability_enabled:
+                from small_paper.daytrade_suitability_gate import build_vol_liq_threshold
+
+                suitability = build_vol_liq_threshold(
+                    self,
+                    repo_root=repo_root,
+                    run_session_key=run_session_key,
+                )
         return ExposureGate(
             self.exposure_gate_config(),
             allowed_windows=self.allowed_windows(),
+            symbol_cooloff=cooloff,
+            daytrade_suitability=suitability,
+            entry_price_risk_guard=price_guard,
         )
 
 
@@ -177,9 +246,43 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
             raw.get("allowed_trading_windows")
         ),
         structural_exit_policy=str(raw.get("structural_exit_policy", "")),
+        price_momentum_fade_ratio=float(raw.get("price_momentum_fade_ratio", 0.85)),
         favorable_mode=str(raw.get("favorable_mode", "") or ""),
         favorable_mfe_scale=float(raw.get("favorable_mfe_scale", 0.003)),
         use_market_time_window=bool(raw.get("use_market_time_window", False)),
+        symbol_cooloff_enabled=bool(raw.get("symbol_cooloff_enabled", False)),
+        symbol_cooloff_rule=str(
+            raw.get("symbol_cooloff_rule", "prior_avg_pnl_negative_trades_ge_5")
+        ),
+        symbol_cooloff_min_trades=int(raw.get("symbol_cooloff_min_trades", 5)),
+        symbol_cooloff_metric=str(raw.get("symbol_cooloff_metric", "avg_pnl")),
+        symbol_cooloff_threshold=float(raw.get("symbol_cooloff_threshold", 0.0)),
+        symbol_cooloff_lookback_sessions=str(
+            raw.get("symbol_cooloff_lookback_sessions", "all_available")
+        ),
+        symbol_cooloff_apply_mode=str(raw.get("symbol_cooloff_apply_mode", "reject_entry")),
+        daytrade_suitability_enabled=bool(raw.get("daytrade_suitability_enabled", False)),
+        daytrade_suitability_rule=str(
+            raw.get("daytrade_suitability_rule", "volatility_liquidity_top50")
+        ),
+        daytrade_suitability_lookback_sessions=str(
+            raw.get("daytrade_suitability_lookback_sessions", "prior_only")
+        ),
+        daytrade_suitability_apply_mode=str(
+            raw.get("daytrade_suitability_apply_mode", "reject_entry")
+        ),
+        entry_price_risk_guard_enabled=bool(raw.get("entry_price_risk_guard_enabled", False)),
+        entry_price_risk_guard_shadow=bool(raw.get("entry_price_risk_guard_shadow", False)),
+        entry_price_risk_guard_min_entry_price=float(
+            raw.get("entry_price_risk_guard_min_entry_price", raw.get("min_entry_price", 50.0))
+        ),
+        entry_price_risk_guard_max_tick_ratio_pct=float(
+            raw.get("entry_price_risk_guard_max_tick_ratio_pct", raw.get("max_tick_ratio_pct", 5.0))
+        ),
+        entry_price_risk_guard_apply_mode=str(
+            raw.get("entry_price_risk_guard_apply_mode", "reject_entry")
+        ),
+        shadow_only=bool(raw.get("shadow_only", False)),
         raw=raw,
     )
 

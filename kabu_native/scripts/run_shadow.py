@@ -51,6 +51,12 @@ def main() -> int:
     )
     parser.add_argument("--watchlist-source", choices=("morning_screen", "universe"), default=None)
     parser.add_argument("--watchlist-path", type=Path, default=None)
+    parser.add_argument(
+        "--universe-csv",
+        type=Path,
+        default=None,
+        help="Phase105/106 trial CSV (sets watchlist-source=universe)",
+    )
     parser.add_argument("--top-n", type=int, default=None)
     parser.add_argument("--max-polls", type=int, default=None, help="終了までのポール回数（未指定=無限）")
     parser.add_argument("--poll-interval-sec", type=float, default=None)
@@ -61,6 +67,10 @@ def main() -> int:
     cfg_path = args.config if args.config.is_absolute() else (repo_root / args.config)
     config = load_shadow_config(cfg_path)
 
+    if args.universe_csv is not None:
+        config.watchlist.source = "universe"
+        up = args.universe_csv if args.universe_csv.is_absolute() else (repo_root / args.universe_csv)
+        config.watchlist.universe_path = str(up.relative_to(repo_root)) if up.is_relative_to(repo_root) else str(up)
     if args.watchlist_source:
         config.watchlist.source = args.watchlist_source
     if args.top_n is not None:

@@ -69,7 +69,13 @@ def main() -> int:
         default=None,
     )
     parser.add_argument("--trades-csv", type=Path, default=None)
-    parser.add_argument("--universe", type=Path, default=None)
+    parser.add_argument("--universe", type=Path, default=None, help="Universe CSV (passed rows)")
+    parser.add_argument(
+        "--universe-csv",
+        type=Path,
+        default=None,
+        help="Shadow dynamic universe CSV (overrides --universe when set)",
+    )
     parser.add_argument("--max-polls", type=int, default=None)
     parser.add_argument("--duration-sec", type=float, default=None)
     parser.add_argument("--poll-interval-sec", type=float, default=None)
@@ -87,6 +93,12 @@ def main() -> int:
         "--wait-until-session",
         action="store_true",
         help="If before session start, wait until 09:00 instead of exiting",
+    )
+    parser.add_argument(
+        "--am-pm-session",
+        choices=("am", "pm"),
+        default=None,
+        help="Phase116: AM/PM shadow session times + entry stop + session-close exit (runtime overlay)",
     )
     parser.add_argument("--skip-safety", action="store_true")
     parser.add_argument(
@@ -122,6 +134,17 @@ def main() -> int:
         "--no-discord",
         action="store_true",
         help="Disable Discord for push-replay even if config has discord_enabled",
+    )
+    parser.add_argument(
+        "--enable-intraday-refresh",
+        action="store_true",
+        help="Phase157: reload universe/register at 10:00 (AM) or 14:30 (PM)",
+    )
+    parser.add_argument(
+        "--intraday-refresh-csv",
+        type=Path,
+        default=None,
+        help="Refresh universe CSV path (required when --enable-intraday-refresh)",
     )
     args = parser.parse_args()
 
@@ -225,21 +248,41 @@ def main() -> int:
             config,
             push_dir=push_dir,
             output_dir=out_dir,
+            repo_root=repo_root,
             poll_interval_sec=interval,
             replay_speed_sec=replay_speed,
             max_push_rows=args.max_push_rows,
             enable_discord=use_discord,
         )
     elif source == "live":
-        universe = args.universe or (
-            native_root / "data" / "universe" / "universe_intraday_full.csv"
+        universe = (
+            args.universe_csv
+            or args.universe
+            or (native_root / "data" / "universe" / "universe_intraday_full.csv")
         )
         if not universe.is_absolute():
             universe = repo_root / universe
+        if not universe.is_file():
+            print(f"universe csv not found: {universe}", file=sys.stderr)
+            return 2
         syms = load_symbols(universe=universe, native_root=native_root)
         tuples = [(s.symbol, s.symbol_key, s.exchange) for s in syms]
 
-        if args.full_session:
+        am_pm_policy = None
+        if args.am_pm_session:
+            from small_paper.am_pm_session_policy import apply_am_pm_policy
+
+            config, am_pm_policy = apply_am_pm_policy(config, args.am_pm_session)
+
+        session_start = args.session_start or (
+            am_pm_policy.session_start if am_pm_policy else config.live_session_start
+        )
+        session_end = args.session_end or (
+            am_pm_policy.session_end if am_pm_policy else config.live_session_end
+        )
+        use_full_session = args.full_session or bool(am_pm_policy)
+
+        if use_full_session:
             duration = 0.0
         else:
             duration = (
@@ -261,21 +304,34 @@ def main() -> int:
             poll_interval_sec=interval,
             max_polls=args.max_polls,
             safety_report=safety_report,
-            full_session=args.full_session,
-            session_start=args.session_start or config.live_session_start,
-            session_end=args.session_end or config.live_session_end,
+            full_session=use_full_session,
+            session_start=session_start,
+            session_end=session_end,
             auto_stop=args.auto_stop,
             heartbeat_sec=args.heartbeat_sec or config.live_heartbeat_sec,
             wait_until_session=args.wait_until_session,
             stale_tick_sec=config.live_stale_tick_sec,
             max_consecutive_api_errors=config.live_max_consecutive_api_errors,
+            universe_csv_path=str(universe.resolve()),
+            am_pm_policy=am_pm_policy,
+            enable_intraday_refresh=bool(args.enable_intraday_refresh),
+            intraday_refresh_csv_path=(
+                str(args.intraday_refresh_csv.resolve())
+                if args.intraday_refresh_csv
+                else None
+            ),
         )
     else:
-        universe = args.universe or (
-            native_root / "data" / "universe" / "universe_intraday_full.csv"
+        universe = (
+            args.universe_csv
+            or args.universe
+            or (native_root / "data" / "universe" / "universe_intraday_full.csv")
         )
         if not universe.is_absolute():
             universe = repo_root / universe
+        if not universe.is_file():
+            print(f"universe csv not found: {universe}", file=sys.stderr)
+            return 2
         syms = load_symbols(universe=universe, native_root=native_root)
         tuples = [(s.symbol, s.symbol_key, s.exchange) for s in syms]
         result = run_poll_dry_run(

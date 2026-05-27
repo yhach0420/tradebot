@@ -61,10 +61,22 @@ EVENT_FIELDS = (
     "rolling_mfe_pct",
     "rolling_mae_pct",
     "momentum_continuation_score",
+    "pure_price_momentum",
+    "peak_pure_price_momentum",
+    "price_momentum_fade_ratio",
     "favorable_continuation",
     "max_continuation_duration",
     "adverse_shrinking",
     "quality_components_json",
+    "symbol_cooloff_reason",
+    "prior_avg_pnl",
+    "prior_trades",
+    "daytrade_suitability_score",
+    "daytrade_suitability_threshold",
+    "atr_pct",
+    "intraday_range_pct",
+    "trading_value",
+    "turnover_proxy",
 )
 
 
@@ -233,6 +245,9 @@ def _candidate_trade_from_push(
         "max_adverse_excursion_pct": mae,
         "max_continuation_duration": payload.get("max_continuation_duration"),
     }
+    from small_paper.daytrade_suitability_gate import attach_entry_metrics_to_trade
+
+    attach_entry_metrics_to_trade(trade, payload)
     q = continuation_quality_score(trade)
     trade["continuation_quality_score"] = round(q, 4)
     if feature_snapshot is not None:
@@ -279,6 +294,23 @@ def _event_from_gate(
             continue
         if key in trade:
             base[key] = trade.get(key)
+    if not decision.accept:
+        base["symbol_cooloff_reason"] = getattr(decision, "symbol_cooloff_reason", "") or ""
+        base["prior_avg_pnl"] = getattr(decision, "prior_avg_pnl", None)
+        base["prior_trades"] = getattr(decision, "prior_trades", 0) or 0
+        base["daytrade_suitability_score"] = getattr(decision, "daytrade_suitability_score", None)
+        base["daytrade_suitability_threshold"] = getattr(
+            decision, "daytrade_suitability_threshold", None
+        )
+        base["atr_pct"] = getattr(decision, "atr_pct", None)
+        base["intraday_range_pct"] = getattr(decision, "intraday_range_pct", None)
+        base["trading_value"] = getattr(decision, "trading_value", None)
+        base["turnover_proxy"] = getattr(decision, "turnover_proxy", None)
+        base["tick_size"] = getattr(decision, "entry_price_risk_guard_tick_size", None)
+        base["tick_ratio_pct"] = getattr(decision, "entry_price_risk_guard_tick_ratio_pct", None)
+        trigger = getattr(decision, "entry_price_risk_guard_trigger", "") or ""
+        if trigger:
+            base["entry_price_risk_guard_trigger"] = trigger
     return base
 
 
@@ -305,6 +337,7 @@ def verify_kabu_connection(repo_root: Path, *, symbol_key: str = "9984@1") -> di
 @dataclass
 class _LiveRunState:
     started_mono: float
+    session_force_close_done: bool = False
     events: list[dict[str, Any]] = field(default_factory=list)
     accepted_rows: list[dict[str, Any]] = field(default_factory=list)
     reject_rows: list[dict[str, Any]] = field(default_factory=list)
@@ -323,6 +356,20 @@ class _LiveRunState:
     bucket_summary: dict[str, dict[str, int]] = field(default_factory=empty_bucket_summary)
     stop_reason: str = ""
     stop_requested: bool = False
+    symbol_cooloff_reject_count: int = 0
+    daytrade_suitability_reject_count: int = 0
+    entry_price_risk_guard_reject_count: int = 0
+    intraday_refresh_done: bool = False
+    intraday_refresh_count: int = 0
+    intraday_refresh_triggered_count: int = 0
+    intraday_refresh_completed_count: int = 0
+    intraday_refresh_failed_count: int = 0
+    intraday_refresh_last_time: str = ""
+    intraday_refresh_last_register_count: int = 0
+    intraday_refresh_enabled: bool = False
+    intraday_refresh_csv: str = ""
+    intraday_refresh_scheduled_time: str = ""
+    outside_refresh_universe_reject_count: int = 0
 
 
 def _quality_distribution(scores: Sequence[float]) -> dict[str, int]:
@@ -391,6 +438,11 @@ class _PushPipelineContext:
     stale_tick_sec: float = 120.0
     gap_threshold_sec: float = 15.0
     last_symbol_tick: dict[str, float] = field(default_factory=dict)
+    am_pm_policy: Optional[Any] = None
+    entry_eligible_symbols: Optional[set[str]] = None
+
+
+REJECT_OUTSIDE_REFRESH_UNIVERSE = "outside_refresh_universe"
 
 
 def _process_push_payload(
@@ -423,6 +475,18 @@ def _process_push_payload(
         profile=ctx.config.profile,
         feature_snapshot=snapshot,
     )
+    # Phase168: ensure gate sees live price fields.
+    # Guard expects one of ("current_price", "CurrentPrice", "entry_price", "close_price").
+    # In live, price is carried in the push payload and used by event logging; but the gate
+    # evaluates the `trade` mapping, so we must inject it here.
+    try:
+        live_px = payload.get("CurrentPrice")
+    except Exception:
+        live_px = None
+    if live_px is not None:
+        # keep both keys for compatibility with downstream guard readers
+        trade.setdefault("CurrentPrice", live_px)
+        trade.setdefault("current_price", live_px)
     if snapshot.quality_fallback_path:
         ctx.state.quality_fallback_count += 1
     if snapshot.live_feature_complete:
@@ -441,7 +505,34 @@ def _process_push_payload(
             session_bucket=bucket,
         )
         _dispatch_observer_events(obs_events, discord=ctx.discord)
-    decision = ctx.gate.evaluate_entry(trade)
+    from small_paper.am_pm_session_policy import AmPmSessionPolicy
+
+    policy: Optional[AmPmSessionPolicy] = ctx.am_pm_policy
+    if policy is not None and not policy.entry_allowed_now():
+        from research.exposure_gate import GateDecision
+
+        decision = GateDecision(
+            accept=False,
+            reason="am_pm_entry_stop",
+            continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
+            quality_tier="",
+        )
+    elif (
+        ctx.entry_eligible_symbols is not None
+        and sym not in ctx.entry_eligible_symbols
+        and not (ctx.observer and ctx.observer.has_open(sym))
+    ):
+        from research.exposure_gate import GateDecision
+
+        ctx.state.outside_refresh_universe_reject_count += 1
+        decision = GateDecision(
+            accept=False,
+            reason=REJECT_OUTSIDE_REFRESH_UNIVERSE,
+            continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
+            quality_tier="",
+        )
+    else:
+        decision = ctx.gate.evaluate_entry(trade)
     ctx.state.gate_evaluations += 1
 
     cand = _event_from_gate(
@@ -511,6 +602,67 @@ def _process_push_payload(
     else:
         rej_row = dict(trade)
         rej_row["gate_reject_reason"] = decision.reason
+        if decision.reason == "symbol_cooloff":
+            ctx.state.symbol_cooloff_reject_count += 1
+            rej_row["symbol_cooloff_reason"] = getattr(decision, "symbol_cooloff_reason", "") or ""
+            rej_row["prior_avg_pnl"] = getattr(decision, "prior_avg_pnl", None)
+            rej_row["prior_trades"] = getattr(decision, "prior_trades", 0)
+        if decision.reason == "daytrade_suitability":
+            ctx.state.daytrade_suitability_reject_count += 1
+            rej_row["daytrade_suitability_score"] = getattr(
+                decision, "daytrade_suitability_score", None
+            )
+            rej_row["daytrade_suitability_threshold"] = getattr(
+                decision, "daytrade_suitability_threshold", None
+            )
+            rej_row["atr_pct"] = getattr(decision, "atr_pct", None)
+            rej_row["intraday_range_pct"] = getattr(decision, "intraday_range_pct", None)
+            rej_row["trading_value"] = getattr(decision, "trading_value", None)
+            rej_row["turnover_proxy"] = getattr(decision, "turnover_proxy", None)
+        if decision.reason == "entry_price_risk_guard":
+            from small_paper.entry_price_risk_guard import LOG_EVENT_KIND, REJECT_ENTRY_PRICE_RISK_GUARD
+
+            ctx.state.entry_price_risk_guard_reject_count += 1
+            guard_st = getattr(ctx.gate, "entry_price_risk_guard", None)
+            min_px = float(getattr(guard_st.config, "min_entry_price", 50.0)) if guard_st else 50.0
+            max_tr = float(getattr(guard_st.config, "max_tick_ratio_pct", 5.0)) if guard_st else 5.0
+            tick_sz = getattr(decision, "entry_price_risk_guard_tick_size", None)
+            tick_tr = getattr(decision, "entry_price_risk_guard_tick_ratio_pct", None)
+            trigger = getattr(decision, "entry_price_risk_guard_trigger", "") or ""
+            price_source = getattr(decision, "entry_price_risk_guard_price_source", "") or ""
+            guard_price = getattr(decision, "entry_price_risk_guard_price", None)
+            bypassed = bool(
+                getattr(decision, "entry_price_risk_guard_shadow_missing_price_bypassed", False)
+            )
+            close_used = bool(
+                getattr(decision, "entry_price_risk_guard_universe_close_price_used", False)
+            )
+            rej_row["reject_reason"] = REJECT_ENTRY_PRICE_RISK_GUARD
+            rej_row["tick_size"] = tick_sz
+            rej_row["tick_ratio_pct"] = tick_tr
+            rej_row["min_entry_price"] = min_px
+            rej_row["max_tick_ratio_pct"] = max_tr
+            rej_row["entry_price_risk_guard_trigger"] = trigger
+            rej_row["entry_price_risk_guard_price_source"] = price_source
+            rej_row["entry_price_risk_guard_price"] = guard_price
+            rej_row["entry_price_risk_guard_shadow_missing_price_bypassed"] = bypassed
+            rej_row["entry_price_risk_guard_universe_close_price_used"] = close_used
+            log_rec = {
+                "event_kind": LOG_EVENT_KIND,
+                "symbol": sym,
+                "current_price": payload.get("CurrentPrice"),
+                "tick_size": tick_sz,
+                "tick_ratio_pct": tick_tr,
+                "min_entry_price": min_px,
+                "max_tick_ratio_pct": max_tr,
+                "reject_reason": REJECT_ENTRY_PRICE_RISK_GUARD,
+                "trigger": trigger,
+                "price_source": price_source,
+                "guard_price": guard_price,
+                "shadow_missing_price_bypassed": bypassed,
+                "universe_close_price_used": close_used,
+            }
+            ctx.writer.append_error(log_rec)
         ctx.state.reject_rows.append(rej_row)
         rej = _event_from_gate(
             event_type="rejected",
@@ -541,6 +693,8 @@ def _policy_summary_extras(config: SmallPaperPilotConfig) -> dict[str, Any]:
     if config.policy_trial and config.policy_label in (
         "q070_cap3_trial",
         "q070_cap3_mfe_fav_trial",
+        "q070_cap3_mfe_fav_symbol_cooloff_trial",
+        "q070_cap3_mfe_fav_vol_liq_trial",
     ):
         from small_paper.live_observer_readiness import (
             DEFAULT_PHASE60_STRUCTURAL_SESSION_REL,
@@ -722,7 +876,54 @@ def _build_push_replay_summary(
         "note": "Offline push_jsonl replay; same bridge+gate as live; no orders placed.",
     }
     base.update(_policy_summary_extras(config))
+    base.update(_symbol_cooloff_summary_fields(gate, state))
+    base.update(_daytrade_suitability_summary_fields(gate, state))
+    base.update(_entry_price_risk_guard_summary_fields(gate, state))
     return base
+
+
+def _symbol_cooloff_summary_fields(gate: ExposureGate, state: _LiveRunState) -> dict[str, Any]:
+    cooloff = getattr(gate, "symbol_cooloff", None)
+    if cooloff is None:
+        return {}
+    out = cooloff.summary_fields()
+    out["rejected_by_symbol_cooloff"] = state.symbol_cooloff_reject_count
+    return out
+
+
+def _daytrade_suitability_summary_fields(gate: ExposureGate, state: _LiveRunState) -> dict[str, Any]:
+    suit = getattr(gate, "daytrade_suitability", None)
+    if suit is None:
+        return {}
+    out = suit.summary_fields()
+    out["rejected_by_daytrade_suitability"] = state.daytrade_suitability_reject_count
+    return out
+
+
+def _entry_price_risk_guard_summary_fields(gate: ExposureGate, state: _LiveRunState) -> dict[str, Any]:
+    guard = getattr(gate, "entry_price_risk_guard", None)
+    if guard is None:
+        return {}
+    out = guard.summary_fields()
+    out["rejected_by_entry_price_risk_guard"] = state.entry_price_risk_guard_reject_count
+    return out
+
+
+def _intraday_refresh_summary_fields(
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    if not state.intraday_refresh_enabled:
+        return {"intraday_refresh_enabled": False}
+    return {
+        "intraday_refresh_enabled": True,
+        "intraday_refresh_csv": state.intraday_refresh_csv,
+        "intraday_refresh_time": state.intraday_refresh_scheduled_time,
+        "intraday_refresh_triggered_count": state.intraday_refresh_triggered_count,
+        "intraday_refresh_completed_count": state.intraday_refresh_completed_count,
+        "intraday_refresh_failed_count": state.intraday_refresh_failed_count,
+        "intraday_refresh_last_time": state.intraday_refresh_last_time or "",
+        "intraday_refresh_last_register_count": state.intraday_refresh_last_register_count,
+    }
 
 
 def run_push_replay_dry_run(
@@ -730,6 +931,7 @@ def run_push_replay_dry_run(
     *,
     push_dir: Path,
     output_dir: Path,
+    repo_root: Optional[Path] = None,
     poll_interval_sec: float = 0.0,
     replay_speed_sec: float = 0.0,
     max_push_rows: Optional[int] = None,
@@ -758,7 +960,11 @@ def run_push_replay_dry_run(
         code = sym.replace(".T", "")
         code_to_symbol[code] = sym
 
-    gate = replay_config.make_exposure_gate()
+    root = repo_root or Path(__file__).resolve().parents[3]
+    from small_paper.symbol_cooloff import session_key_from_output_dir
+
+    run_key = session_key_from_output_dir(output_dir, root)
+    gate = replay_config.make_exposure_gate(repo_root=root, run_session_key=run_key)
     gate_cfg = replay_config.exposure_gate_config()
     feature_bridge = LiveFeatureBridge(replay_config.feature_bridge_config())
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -937,6 +1143,10 @@ def _build_live_summary(
         **{k: session_cfg[k] for k in ("duration_sec", "poll_interval_sec", "session_start", "session_end") if k in session_cfg},
     }
     summary.update(_policy_summary_extras(config))
+    summary.update(_symbol_cooloff_summary_fields(gate, state))
+    summary.update(_daytrade_suitability_summary_fields(gate, state))
+    summary.update(_entry_price_risk_guard_summary_fields(gate, state))
+    summary.update(_intraday_refresh_summary_fields(state))
     return summary
 
 
@@ -994,6 +1204,10 @@ def run_live_dry_run(
     wait_until_session: bool = False,
     stale_tick_sec: float = 120.0,
     max_consecutive_api_errors: int = 10,
+    universe_csv_path: Optional[str] = None,
+    am_pm_policy: Optional[Any] = None,
+    enable_intraday_refresh: bool = False,
+    intraday_refresh_csv_path: Optional[str] = None,
 ) -> PilotRunResult:
     """Live PUSH observation with exposure gate (no orders)."""
     import asyncio
@@ -1025,6 +1239,8 @@ def run_live_dry_run(
             session_end=session_end,
             auto_stop=auto_stop,
             heartbeat_sec=heartbeat_sec,
+            universe_csv_path=universe_csv_path,
+            am_pm_policy=am_pm_policy,
         )
         output_dir.mkdir(parents=True, exist_ok=True)
         _write_live_session_meta(output_dir, session_cfg=session_cfg, safety_report=safety_report)
@@ -1051,6 +1267,8 @@ def run_live_dry_run(
             session_end=session_end,
             auto_stop=auto_stop,
             heartbeat_sec=heartbeat_sec,
+            universe_csv_path=universe_csv_path,
+            am_pm_policy=am_pm_policy,
         )
         output_dir.mkdir(parents=True, exist_ok=True)
         _write_live_session_meta(output_dir, session_cfg=session_cfg, safety_report=safety_report)
@@ -1073,7 +1291,10 @@ def run_live_dry_run(
     token = rest.issue_token_from_env()
     push = KabuNativePushClient(rest, token)
 
-    gate = config.make_exposure_gate()
+    from small_paper.symbol_cooloff import session_key_from_output_dir
+
+    run_key = session_key_from_output_dir(output_dir, repo_root)
+    gate = config.make_exposure_gate(repo_root=repo_root, run_session_key=run_key)
     gate_cfg = config.exposure_gate_config()
     feature_bridge = LiveFeatureBridge(config.feature_bridge_config())
     code_to_symbol: dict[str, str] = {}
@@ -1096,6 +1317,8 @@ def run_live_dry_run(
         session_end=session_end,
         auto_stop=auto_stop,
         heartbeat_sec=heartbeat_sec,
+        universe_csv_path=universe_csv_path,
+        am_pm_policy=am_pm_policy,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_live_session_meta(output_dir, session_cfg=session_cfg, safety_report=safety_report)
@@ -1124,8 +1347,12 @@ def run_live_dry_run(
             )
 
         discord = discord_notifier_from_pilot(config, error_logger=_discord_error_logger)
-        observer = ObserverPositionTracker(observer_tracker_config_from_pilot(config))
+        if am_pm_policy is not None:
+            observer = ObserverPositionTracker(am_pm_policy.observer_tracker_config(config))
+        else:
+            observer = ObserverPositionTracker(observer_tracker_config_from_pilot(config))
 
+    entry_eligible: Optional[set[str]] = {t[0] for t in symbols} if enable_intraday_refresh else None
     pipeline_ctx = _PushPipelineContext(
         config=config,
         gate=gate,
@@ -1139,7 +1366,158 @@ def run_live_dry_run(
         discord=discord,
         stale_tick_sec=stale_tick_sec,
         gap_threshold_sec=gap_threshold_sec,
+        am_pm_policy=am_pm_policy,
+        entry_eligible_symbols=entry_eligible,
     )
+    refresh_hhmm = "10:00"
+    if am_pm_policy is not None and getattr(am_pm_policy, "kind", "") == "pm":
+        refresh_hhmm = "14:30"
+    state.intraday_refresh_enabled = bool(enable_intraday_refresh and intraday_refresh_csv_path)
+    state.intraday_refresh_csv = str(intraday_refresh_csv_path or "")
+    state.intraday_refresh_scheduled_time = refresh_hhmm
+
+    def _emit_intraday_refresh_event(event: str, *, extra: Mapping[str, Any]) -> None:
+        # Use errors.jsonl as the structured event channel (historical behavior).
+        writer.append_error(
+            {
+                "event_time": _now_iso(),
+                "error_type": "intraday_refresh",
+                "event": event,  # started/completed/failed
+                "session_kind": getattr(am_pm_policy, "kind", "am") if am_pm_policy else "am",
+                "refresh_time": refresh_hhmm,
+                "refresh_csv": str(intraday_refresh_csv_path or ""),
+                **dict(extra),
+            }
+        )
+
+    def _maybe_intraday_refresh() -> None:
+        nonlocal sym_specs, code_to_symbol, push, token
+        if not enable_intraday_refresh or not intraday_refresh_csv_path:
+            return
+        if state.intraday_refresh_done:
+            return
+        from small_paper.session_schedule import parse_hhmm
+
+        if datetime.now(JST).time() < parse_hhmm(refresh_hhmm):
+            return
+        # Mark as triggered early to avoid repeated attempts.
+        state.intraday_refresh_triggered_count += 1
+        state.intraday_refresh_last_time = refresh_hhmm
+        before_syms = (
+            sorted(list(pipeline_ctx.entry_eligible_symbols))
+            if pipeline_ctx.entry_eligible_symbols is not None
+            else []
+        )
+        _emit_intraday_refresh_event(
+            "started",
+            extra={
+                "before_symbol_count": len(before_syms) or len(sym_specs),
+                "open_symbols_count": len(observer.open_symbols()) if observer else 0,
+            },
+        )
+        refresh_path = Path(intraday_refresh_csv_path)
+        if not refresh_path.is_file():
+            _log_api_error("intraday_refresh", FileNotFoundError(str(refresh_path)))
+            state.intraday_refresh_failed_count += 1
+            _emit_intraday_refresh_event(
+                "failed",
+                extra={"reason": "refresh_csv_missing", "path": str(refresh_path)},
+            )
+            return
+        import csv
+
+        from universe.intraday_refresh import (
+            merge_register_specs,
+            merge_universe_with_open_symbols,
+        )
+        from universe.am_pm_universe import _norm
+
+        base_rows = [dict(r) for r in csv.DictReader(refresh_path.open(encoding="utf-8"))]
+        open_syms = observer.open_symbols() if observer else []
+        session_kind = getattr(am_pm_policy, "kind", "am") if am_pm_policy else "am"
+        merged, merge_meta = merge_universe_with_open_symbols(
+            base_rows,
+            open_symbols=open_syms,
+            feature_rows=[],
+            symbol_meta={},
+            session=session_kind,
+            refresh_time=refresh_hhmm,
+        )
+        if merge_meta.get("error") == "open_symbols_exceed_cap":
+            _request_stop("open_symbols_exceed_cap")
+            state.intraday_refresh_failed_count += 1
+            _emit_intraday_refresh_event(
+                "failed",
+                extra={"reason": "open_symbols_exceed_cap", "open_symbols": open_syms, "merge": merge_meta},
+            )
+            return
+        specs, reg_meta = merge_register_specs(merged, symbol_meta={})
+        if reg_meta.get("error"):
+            _request_stop(str(reg_meta.get("error")))
+            state.intraday_refresh_failed_count += 1
+            _emit_intraday_refresh_event(
+                "failed",
+                extra={"reason": str(reg_meta.get("error")), "register": reg_meta, "merge": merge_meta},
+            )
+            return
+        try:
+            from api.kabu_register import register_symbols_cleared
+
+            register_symbols_cleared(push, specs)
+            code_to_symbol.clear()
+            for row in merged:
+                sym = _norm(str(row.get("symbol") or ""))
+                sk = str(row.get("symbol_key") or "")
+                code = sk.split("@")[0] if sk else sym.replace(".T", "")
+                if code:
+                    code_to_symbol[code] = sym
+            if pipeline_ctx.entry_eligible_symbols is not None:
+                pipeline_ctx.entry_eligible_symbols = {
+                    _norm(str(r.get("symbol") or "")) for r in merged if r.get("symbol")
+                }
+            after_syms = (
+                sorted(list(pipeline_ctx.entry_eligible_symbols))
+                if pipeline_ctx.entry_eligible_symbols is not None
+                else []
+            )
+            removed = sorted(set(before_syms) - set(after_syms)) if before_syms and after_syms else []
+            added = sorted(set(after_syms) - set(before_syms)) if before_syms and after_syms else []
+            state.intraday_refresh_done = True
+            state.intraday_refresh_count += 1
+            state.intraday_refresh_completed_count += 1
+            try:
+                state.intraday_refresh_last_register_count = int(reg_meta.get("register_count") or 0)
+            except (TypeError, ValueError):
+                state.intraday_refresh_last_register_count = 0
+            _emit_intraday_refresh_event(
+                "completed",
+                extra={
+                    "before_symbol_count": len(before_syms) or len(sym_specs),
+                    "after_symbol_count": len(after_syms) or int(reg_meta.get("register_count") or 0),
+                    "register_count": reg_meta.get("register_count"),
+                    "open_symbols": open_syms,
+                    "open_symbols_count": len(open_syms),
+                    "merge": merge_meta,
+                    "added_symbols": added[:200],
+                    "removed_symbols": removed[:200],
+                },
+            )
+        except Exception as e:
+            _log_api_error("intraday_refresh_register", e)
+            state.intraday_refresh_failed_count += 1
+            _emit_intraday_refresh_event("failed", extra={"reason": "register_exception", "message": str(e)})
+
+    def _maybe_am_pm_force_close() -> None:
+        if am_pm_policy is None or state.session_force_close_done:
+            return
+        if not am_pm_policy.force_close_due():
+            return
+        state.session_force_close_done = True
+        if observer and observer.open_count() > 0:
+            exit_events = observer.close_all(reason=am_pm_policy.force_close_reason)
+            _dispatch_observer_events(exit_events, discord=discord)
+        gate.state.open_slots = []
+        _request_stop(am_pm_policy.force_close_reason)
 
     def _request_stop(reason: str) -> None:
         state.stop_requested = True
@@ -1214,9 +1592,45 @@ def run_live_dry_run(
             PushRecorder(native_root, trade_date) if config.live_record_push_jsonl else None
         )
         try:
-            push.register(sym_specs)
+            from api.kabu_register import format_register_failure_message, register_symbols_cleared
+
+            reg_meta = register_symbols_cleared(push, sym_specs)
+            if reg_meta.get("recovered_from_register_limit"):
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "error_type": "register_limit_recovered",
+                        "message": "register 4002006 recovered after unregister/all retry",
+                        "symbol_count": len(sym_specs),
+                        "steps": reg_meta.get("steps"),
+                    }
+                )
+                if discord and discord.active:
+                    discord.notify_error(
+                        operation="register",
+                        message=(
+                            "register limit 4002006 — cleared via unregister/all and succeeded on retry"
+                        ),
+                        extra={"symbol_count": len(sym_specs)},
+                    )
         except Exception as e:
             _log_api_error("register", e)
+            fail_msg = format_register_failure_message(e, symbol_count=len(sym_specs))
+            writer.append_error(
+                {
+                    "event_time": _now_iso(),
+                    "error_type": "register_fatal",
+                    "message": fail_msg,
+                    "symbol_count": len(sym_specs),
+                }
+            )
+            if discord and discord.active:
+                discord.notify_error(
+                    operation="register",
+                    message=fail_msg,
+                    extra={"symbol_count": len(sym_specs), "stop_reason": "register_failed"},
+                )
+            _request_stop("register_failed")
             return
 
         start = time.monotonic()
@@ -1256,9 +1670,11 @@ def run_live_dry_run(
             if state.stop_requested:
                 return False
             try:
+                from api.kabu_register import register_symbols_cleared
+
                 token = rest.issue_token_from_env()
                 push = KabuNativePushClient(rest, token)
-                push.register(sym_specs)
+                register_symbols_cleared(push, sym_specs)
                 state.consecutive_api_errors = 0
                 return True
             except Exception as e:
@@ -1267,6 +1683,10 @@ def run_live_dry_run(
 
         try:
             while not _should_stop():
+                _maybe_intraday_refresh()
+                _maybe_am_pm_force_close()
+                if _should_stop():
+                    break
                 if (time.monotonic() - last_hb) >= heartbeat_sec:
                     _emit_heartbeat()
                     last_hb = time.monotonic()
@@ -1274,6 +1694,9 @@ def run_live_dry_run(
                     async for payload in push.iter_messages(recv_poll_sec=poll_interval_sec):
                         if _should_stop():
                             break
+                        # Phase170: refresh check must run during streaming,
+                        # not only between reconnect cycles.
+                        _maybe_intraday_refresh()
                         if (time.monotonic() - last_hb) >= heartbeat_sec:
                             _emit_heartbeat()
                             last_hb = time.monotonic()
@@ -1328,8 +1751,12 @@ def run_live_dry_run(
         runtime_sec=runtime_sec,
     )
     if observer:
-        exit_events = observer.close_all(reason=state.stop_reason or "session_end")
+        final_reason = state.stop_reason or "session_end"
+        if am_pm_policy and not state.session_force_close_done and am_pm_policy.force_close_due():
+            final_reason = am_pm_policy.force_close_reason
+        exit_events = observer.close_all(reason=final_reason)
         _dispatch_observer_events(exit_events, discord=discord)
+        gate.state.open_slots = []
     summary.update(
         build_session_summary_extras(
             accepted_rows=state.accepted_rows,
@@ -1370,9 +1797,16 @@ def _observer_stats_dict(observer: Optional[ObserverPositionTracker]) -> Optiona
         "structural_exit_policy": cfg.structural_exit_policy,
         "structural_exit_count": s.structural_exit_count,
         "structural_exit_reason_counts": dict(s.structural_exit_reason_counts),
+        "price_momentum_fade_exit_count": s.structural_exit_reason_counts.get(
+            "price_momentum_fade_exit", 0
+        ),
+        "momentum_fade_exit_count": s.structural_exit_reason_counts.get("momentum_fade_exit", 0),
+        "price_momentum_fade_ratio": cfg.price_momentum_fade_ratio,
         "virtual_hold_expired_ignored_count": s.virtual_hold_expired_ignored_count,
         "official_exit_count": s.official_exit_count,
         "session_end_exit_count": s.session_end_exit_count,
+        "morning_session_close_count": s.morning_session_close_count,
+        "afternoon_session_close_count": s.afternoon_session_close_count,
     }
 
 
@@ -1390,10 +1824,12 @@ def _live_session_cfg(
     session_end: str,
     auto_stop: bool,
     heartbeat_sec: float,
+    universe_csv_path: Optional[str] = None,
+    am_pm_policy: Optional[Any] = None,
 ) -> dict[str, Any]:
     from small_paper.config import config_file_sha256
 
-    return {
+    out = {
         "phase": 45,
         "generated_at": _now_iso(),
         "config_path": str(config_path),
@@ -1407,12 +1843,16 @@ def _live_session_cfg(
         "poll_interval_sec": poll_interval_sec,
         "max_polls": max_polls,
         "symbol_count": symbol_count,
+        "universe_csv_path": universe_csv_path,
         "session_start": session_start,
         "session_end": session_end,
         "auto_stop": auto_stop,
         "heartbeat_sec": heartbeat_sec,
         "kabu_connection": dict(conn),
     }
+    if am_pm_policy is not None:
+        out["am_pm_session"] = am_pm_policy.to_dict()
+    return out
 
 
 def _write_live_session_meta(

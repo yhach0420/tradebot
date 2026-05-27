@@ -19,6 +19,9 @@ REJECT_RISK_CLUSTER = "risk_cluster_block"
 REJECT_DAILY_LOSS = "daily_loss_guard"
 REJECT_WRONG_PROFILE = "wrong_profile"
 REJECT_OUTSIDE_ALLOWED_TRADING_WINDOW = "outside_allowed_trading_window"
+REJECT_SYMBOL_COOLDOWN = "symbol_cooloff"
+REJECT_DAYTRADE_SUITABILITY = "daytrade_suitability"
+REJECT_ENTRY_PRICE_RISK_GUARD = "entry_price_risk_guard"
 
 QUALITY_TIER_TOP = "top_quartile"
 QUALITY_TIER_ABOVE = "above_median"
@@ -87,6 +90,22 @@ class GateDecision:
     reason: str = ""
     continuation_quality_score: float = 0.0
     quality_tier: str = ""
+    symbol_cooloff_reason: str = ""
+    prior_avg_pnl: Optional[float] = None
+    prior_trades: int = 0
+    daytrade_suitability_score: Optional[float] = None
+    daytrade_suitability_threshold: Optional[float] = None
+    atr_pct: Optional[float] = None
+    intraday_range_pct: Optional[float] = None
+    trading_value: Optional[float] = None
+    turnover_proxy: Optional[float] = None
+    entry_price_risk_guard_tick_size: Optional[float] = None
+    entry_price_risk_guard_tick_ratio_pct: Optional[float] = None
+    entry_price_risk_guard_trigger: str = ""
+    entry_price_risk_guard_price_source: str = ""
+    entry_price_risk_guard_price: Optional[float] = None
+    entry_price_risk_guard_shadow_missing_price_bypassed: bool = False
+    entry_price_risk_guard_universe_close_price_used: bool = False
 
 
 class ExposureGate:
@@ -97,10 +116,16 @@ class ExposureGate:
         config: ExposureGateConfig,
         *,
         allowed_windows: Optional[Sequence[Any]] = None,
+        symbol_cooloff: Optional[Any] = None,
+        daytrade_suitability: Optional[Any] = None,
+        entry_price_risk_guard: Optional[Any] = None,
     ) -> None:
         self.config = config
         self.state = ExposureGateState()
         self._allowed_windows = allowed_windows
+        self.symbol_cooloff = symbol_cooloff
+        self.daytrade_suitability = daytrade_suitability
+        self.entry_price_risk_guard = entry_price_risk_guard
 
     def evaluate_entry(self, trade: Mapping[str, Any]) -> GateDecision:
         profile = str(trade.get("profile", ""))
@@ -131,6 +156,73 @@ class ExposureGate:
                         min_top=self.config.min_continuation_quality,
                         min_above=self.config.min_above_median_quality,
                     ),
+                )
+
+        if self.symbol_cooloff is not None:
+            sym = str(trade.get("symbol") or "")
+            chk = self.symbol_cooloff.check(sym)
+            if chk.blocked:
+                q_pre = continuation_quality_score(trade)
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_SYMBOL_COOLDOWN,
+                    continuation_quality_score=q_pre,
+                    quality_tier=quality_tier(
+                        q_pre,
+                        min_top=self.config.min_continuation_quality,
+                        min_above=self.config.min_above_median_quality,
+                    ),
+                    symbol_cooloff_reason=chk.reason or REJECT_SYMBOL_COOLDOWN,
+                    prior_avg_pnl=chk.prior_avg_pnl,
+                    prior_trades=chk.prior_trades,
+                )
+
+        if self.entry_price_risk_guard is not None:
+            gr = self.entry_price_risk_guard.check(trade)
+            if gr.blocked:
+                self.entry_price_risk_guard.reject_count += 1
+                q_pre = continuation_quality_score(trade)
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_ENTRY_PRICE_RISK_GUARD,
+                    continuation_quality_score=q_pre,
+                    quality_tier=quality_tier(
+                        q_pre,
+                        min_top=self.config.min_continuation_quality,
+                        min_above=self.config.min_above_median_quality,
+                    ),
+                    entry_price_risk_guard_tick_size=gr.tick_size_yen,
+                    entry_price_risk_guard_tick_ratio_pct=gr.tick_ratio_pct,
+                    entry_price_risk_guard_trigger=gr.trigger,
+                    entry_price_risk_guard_price_source=getattr(gr, "price_source", "") or "",
+                    entry_price_risk_guard_price=getattr(gr, "current_price", None),
+                    entry_price_risk_guard_shadow_missing_price_bypassed=bool(
+                        getattr(gr, "shadow_missing_price_bypassed", False)
+                    ),
+                    entry_price_risk_guard_universe_close_price_used=bool(
+                        getattr(gr, "universe_close_price_used", False)
+                    ),
+                )
+
+        if self.daytrade_suitability is not None:
+            ds = self.daytrade_suitability.check(trade)
+            if ds.blocked:
+                q_pre = continuation_quality_score(trade)
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_DAYTRADE_SUITABILITY,
+                    continuation_quality_score=q_pre,
+                    quality_tier=quality_tier(
+                        q_pre,
+                        min_top=self.config.min_continuation_quality,
+                        min_above=self.config.min_above_median_quality,
+                    ),
+                    daytrade_suitability_score=ds.score,
+                    daytrade_suitability_threshold=ds.threshold,
+                    atr_pct=ds.atr_pct,
+                    intraday_range_pct=ds.intraday_range_pct,
+                    trading_value=ds.trading_value,
+                    turnover_proxy=ds.turnover_proxy,
                 )
 
         q = continuation_quality_score(trade)

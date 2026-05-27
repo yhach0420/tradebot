@@ -31,7 +31,7 @@ comparison_note: >
 order_enabled: false
 paper_only: true
 
-discord_enabled: false
+discord_enabled: true
 discord_observer_only: true
 discord_send_rejects: false
 

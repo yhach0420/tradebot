@@ -1,0 +1,67 @@
+# Phase 72: Price-momentum fade EXIT trial (does not modify production or mfe_fav baseline).
+# Replaces legacy momentum_fade_exit with pure_price_momentum fade in combined structural EXIT v2.
+
+profile: momentum_volume_v13_combined
+entry_profile: momentum_volume_v2
+
+min_continuation_quality: 0.70
+max_concurrent_positions: 3
+reject_below_quality: true
+
+allowed_trading_windows:
+  - start: "09:05"
+    end: "11:23"
+  - start: "12:33"
+    end: "15:20"
+
+policy_label: q070_cap3_mfe_fav_price_mom_exit_trial
+policy_trial: true
+baseline_policy: q070_cap3_mfe_fav_trial
+structural_exit_policy: combined_structural_exit_v2_price_mom
+price_momentum_fade_ratio: 0.80
+
+favorable_mode: mfe_linked
+favorable_mfe_scale: 0.003
+use_market_time_window: true
+
+comparison_note: >
+  Phase72 trial: combined_structural_exit_v2_price_mom uses pure_price_momentum fade
+  at ratio 0.80 instead of legacy momentum_fade_exit. ENTRY/quality/cap/windows unchanged
+  vs q070_cap3_mfe_fav_trial.
+
+order_enabled: false
+paper_only: true
+
+discord_enabled: true
+discord_observer_only: true
+discord_send_rejects: false
+
+require_phase43_pass: true
+
+daily_loss_guard_pct: -2.5
+risk_cluster_consecutive_losses: 5
+risk_cluster_block_enabled: true
+daily_loss_guard_enabled: true
+
+dry_run_required: true
+default_source: replay
+max_polls: 1
+poll_interval_sec: 30.0
+
+live:
+  session_start: "09:00"
+  session_end: "15:30"
+  poll_interval_sec: 5.0
+  heartbeat_sec: 300
+  stale_tick_sec: 120
+  max_consecutive_api_errors: 10
+  record_push_jsonl: true
+  duration_sec: 600
+
+output:
+  base_dir: kabu_native/results/small_paper
+
+phase43_diagnosis_glob: kabu_native/results/reports/small_paper_gate_diagnosis_*.json
+
+reference:
+  trades_csv: kabu_native/results/research/logic_lab/20260517/run_225513/trades_by_profile.csv

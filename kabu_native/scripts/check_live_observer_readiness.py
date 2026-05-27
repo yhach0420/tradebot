@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
 """
-Phase 61: Live observer re-trial readiness (q070_cap3 + combined_structural_exit_v1).
+Phase 61 / 80: Live observer re-trial readiness (q070_cap3 + structural exit trials).
 
 Example::
     python kabu_native/scripts/check_live_observer_readiness.py \\
         --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml
+
+Phase 80 symbol cooloff trial::
+    python kabu_native/scripts/check_live_observer_readiness.py \\
+        --config kabu_native/configs/small_paper_pilot_q070_cap3_mfe_fav_symbol_cooloff.yaml \\
+        --structural-session-dir kabu_native/results/small_paper/20260520/push_replay_231314 \\
+        --skip-kabu --skip-safety
+
+Phase 85 vol_liq suitability trial::
+    python kabu_native/scripts/check_live_observer_readiness.py \\
+        --config kabu_native/configs/small_paper_pilot_q070_cap3_mfe_fav_vol_liq.yaml \\
+        --skip-kabu --skip-safety
 """
 
 from __future__ import annotations
@@ -97,8 +108,11 @@ def main() -> int:
         skip_safety_bundle=args.skip_safety,
     )
     out = write_readiness_report(report, repo_root=repo_root, day_key=day_key)
+    phase73_out = struct_dir / "phase73_readiness_trial_support.json"
+    phase73_out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
     print(f"\nWrote {out}", file=sys.stderr)
+    print(f"Wrote {phase73_out}", file=sys.stderr)
     print(f"readiness={report.get('readiness')}", file=sys.stderr)
     return 0 if report.get("readiness") else 1
 

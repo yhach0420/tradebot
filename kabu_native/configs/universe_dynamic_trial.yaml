@@ -1,0 +1,94 @@
+# Shadow-only dynamic universe build (Phase 97–105). Not used by production pilot YAML.
+
+
+
+# python kabu_native/scripts/build_dynamic_universe.py --config kabu_native/configs/universe_dynamic_trial.yaml
+
+# Default: board-free dynamic23 (--board-mode none)
+
+
+
+static_universe_path: kabu_native/data/universe/universe_intraday_full.csv
+
+
+
+# Default: Prime + Standard + Growth ordinary shares (see build_jpx_symbol_master.py)
+
+symbol_master_path: data/jpx/tradable_symbols.csv
+
+
+
+static_max: 27
+
+dynamic_max: 23
+
+push_limit: 50
+
+default_exchange: 1
+
+
+
+# Board filters only (score mode only; no market-segment score bias)
+
+market_filter: tradable
+
+min_current_price: 100
+
+max_spread_bps: 80
+
+min_board_liquidity_qty: 1
+
+exclude_etf: true
+
+
+
+score_log_trading_value_weight: 1.0
+
+score_change_pct_weight: 0.5
+
+score_liquidity_bonus_weight: 0.3
+
+score_spread_penalty_weight: 0.05
+
+
+
+# Phase105: hybrid static27 + board-free dynamic23 (no 400-symbol /board batch)
+
+board_mode: none
+
+candidate_sampling_mode: hybrid_static_plus_dynamic
+
+dynamic_prime_quota: 8
+
+dynamic_standard_quota: 8
+
+dynamic_growth_quota: 7
+
+
+
+# Legacy Phase102/103 bulk candidate budget (diagnostic scripts only)
+
+candidate_prime_quota: 145
+
+candidate_standard_quota: 145
+
+candidate_growth_quota: 110
+
+candidate_total_max: 400
+
+
+
+# kabu board auto-register cap
+
+kabu_board_register_limit: 50
+
+max_board_fetch_per_run: 50
+
+
+
+board_fetch_delay_sec: 0.25
+
+rate_limit_backoff_sec: 2.0
+
+max_consecutive_rate_limits: 15
+

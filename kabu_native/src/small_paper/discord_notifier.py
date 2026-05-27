@@ -678,5 +678,6 @@ def observer_tracker_config_from_pilot(config: Any) -> Any:
         take_quality_drop=float(config.discord_take_quality_drop),
         hard_stop_pct=float(config.discord_hard_stop_pct),
         structural_exit_policy=policy,
+        price_momentum_fade_ratio=float(getattr(config, "price_momentum_fade_ratio", 0.85) or 0.85),
         live_session_end=str(getattr(config, "live_session_end", "15:30")),
     )

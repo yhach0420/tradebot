@@ -1,0 +1,73 @@
+# Phase 79: Rolling symbol cooloff trial (not production).
+# Baseline: q070_cap3_mfe_fav_trial. Does not modify production or mfe_fav trial yaml.
+
+profile: momentum_volume_v13_combined
+entry_profile: momentum_volume_v2
+
+min_continuation_quality: 0.70
+max_concurrent_positions: 3
+reject_below_quality: true
+
+allowed_trading_windows:
+  - start: "09:05"
+    end: "11:23"
+  - start: "12:33"
+    end: "15:20"
+
+baseline_policy: q070_cap3_mfe_fav_trial
+policy_label: q070_cap3_mfe_fav_symbol_cooloff_trial
+policy_trial: true
+structural_exit_policy: combined_structural_exit_v1
+
+favorable_mode: mfe_linked
+favorable_mfe_scale: 0.003
+use_market_time_window: true
+
+symbol_cooloff_enabled: true
+symbol_cooloff_rule: prior_avg_pnl_negative_trades_ge_5
+symbol_cooloff_min_trades: 5
+symbol_cooloff_metric: avg_pnl
+symbol_cooloff_threshold: 0.0
+symbol_cooloff_lookback_sessions: all_available
+symbol_cooloff_apply_mode: reject_entry
+
+comparison_note: >
+  Phase79 rolling OOS symbol cooloff trial. Rejects entries when prior sessions
+  show avg_pnl < 0 with trades >= 5 (Phase78 rule D). Never uses current session.
+
+order_enabled: false
+paper_only: true
+
+discord_enabled: true
+discord_observer_only: true
+discord_send_rejects: false
+
+require_phase43_pass: true
+
+daily_loss_guard_pct: -2.5
+risk_cluster_consecutive_losses: 5
+risk_cluster_block_enabled: true
+daily_loss_guard_enabled: true
+
+dry_run_required: true
+default_source: replay
+max_polls: 1
+poll_interval_sec: 30.0
+
+live:
+  session_start: "09:00"
+  session_end: "15:30"
+  poll_interval_sec: 5.0
+  heartbeat_sec: 300
+  stale_tick_sec: 120
+  max_consecutive_api_errors: 10
+  record_push_jsonl: true
+  duration_sec: 600
+
+output:
+  base_dir: kabu_native/results/small_paper
+
+phase43_diagnosis_glob: kabu_native/results/reports/small_paper_gate_diagnosis_*.json
+
+reference:
+  trades_csv: kabu_native/results/research/logic_lab/20260517/run_225513/trades_by_profile.csv

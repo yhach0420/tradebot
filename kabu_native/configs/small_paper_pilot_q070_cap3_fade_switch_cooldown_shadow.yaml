@@ -1,0 +1,41 @@
+# Phase 135: Shadow-only fade switch cooldown (does not modify production pilot yaml).
+# Exits remain combined_structural_exit_v1; post-fade cross-symbol entry is gated in replay.
+
+profile: momentum_volume_v13_combined
+entry_profile: momentum_volume_v2
+
+min_continuation_quality: 0.70
+max_concurrent_positions: 3
+reject_below_quality: true
+
+allowed_trading_windows:
+  - start: "09:05"
+    end: "11:23"
+  - start: "12:33"
+    end: "15:20"
+
+baseline_policy: q070_cap3_mfe_fav_vol_liq_trial
+policy_label: q070_cap3_fade_switch_cooldown_shadow
+policy_trial: true
+shadow_only: true
+structural_exit_policy: fade_switch_cooldown_shadow
+
+favorable_mode: mfe_linked
+favorable_mfe_scale: 0.003
+use_market_time_window: true
+
+daytrade_suitability_enabled: true
+daytrade_suitability_rule: volatility_liquidity_top50
+daytrade_suitability_lookback_sessions: prior_only
+daytrade_suitability_apply_mode: reject_entry
+
+order_enabled: false
+paper_only: true
+
+discord_enabled: true
+discord_observer_only: true
+discord_send_rejects: false
+
+comparison_note: >
+  Phase135 shadow: block cross-symbol switch after momentum/price fade exit until
+  event-based release (breakdown, new_high, new_mfe, momentum_recovery, giveback).

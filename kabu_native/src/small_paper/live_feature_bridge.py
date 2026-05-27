@@ -67,6 +67,7 @@ class LiveFeatureSnapshot:
     rolling_mae_pct: float = 0.0
     favorable_continuation: float = 0.0
     momentum_continuation_score: float = 0.0
+    pure_price_momentum: float = 0.0
     max_continuation_duration: int = 0
     adverse_shrinking: float = 0.0
     live_feature_complete: bool = False
@@ -82,6 +83,7 @@ class LiveFeatureSnapshot:
             "max_adverse_excursion_pct": self.rolling_mae_pct,
             "favorable_continuation": self.favorable_continuation,
             "momentum_continuation_score": self.momentum_continuation_score,
+            "pure_price_momentum": round(self.pure_price_momentum, 6),
             "max_continuation_duration": self.max_continuation_duration,
             "bullish_continuation_score": min(1.0, max(0.0, self.rolling_mfe_pct / 0.25))
             if self.rolling_mfe_pct > 0
@@ -182,6 +184,7 @@ class LiveFeatureBridge:
             st.favorable_streak = 0
         st.max_favorable_streak = max(st.max_favorable_streak, st.favorable_streak)
 
+        pure_ppm = self._pure_price_momentum(st, price=price)
         mom = self._momentum_score(st, price=price, vwap=vwap, mfe=rolling_mfe, mae=abs(rolling_mae))
         adverse = self._adverse_shrinking(st, price=price, mae_abs=abs(rolling_mae))
 
@@ -192,6 +195,7 @@ class LiveFeatureBridge:
 
         trade_probe = {
             "momentum_continuation_score": mom,
+            "pure_price_momentum": pure_ppm,
             "favorable_continuation": favorable,
             "max_favorable_excursion_pct": rolling_mfe,
             "max_adverse_excursion_pct": rolling_mae,
@@ -221,6 +225,7 @@ class LiveFeatureBridge:
             rolling_mae_pct=round(rolling_mae, 6),
             favorable_continuation=round(favorable, 4),
             momentum_continuation_score=round(mom, 4),
+            pure_price_momentum=round(pure_ppm, 6),
             max_continuation_duration=st.max_favorable_streak,
             adverse_shrinking=round(adverse, 4),
             live_feature_complete=complete,
@@ -253,6 +258,16 @@ class LiveFeatureBridge:
             "adverse_shrinking": snapshot.adverse_shrinking,
             "quality_components_json": json.dumps(comps, ensure_ascii=False),
         }
+
+    def _pure_price_momentum(self, st: SymbolTickState, *, price: float) -> float:
+        lb = self.config.momentum_lookback
+        ticks = list(st.ticks)
+        if len(ticks) < 2:
+            return 0.0
+        _, p0, _ = ticks[-min(lb, len(ticks))]
+        if p0 <= 0:
+            return 0.0
+        return (price - p0) / p0
 
     def _momentum_score(
         self,

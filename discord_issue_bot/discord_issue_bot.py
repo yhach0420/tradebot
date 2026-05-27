@@ -40,6 +40,7 @@ except ModuleNotFoundError:
 
 # .env は「このサブプロジェクト直下」だけ読む（親ディレクトリ探索はしない）
 BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
 
 if load_dotenv is not None:
     load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
@@ -170,30 +171,53 @@ async def _send_alert_message(content: str) -> None:
 
 
 # =========================
-# watchlist.json
+# watchlist.json (Core10 — Phase 117)
 # =========================
 WATCHLIST_JSON_PATH = BASE_DIR / "watchlist.json"
 
+_CORE_SRC = REPO_ROOT / "kabu_native" / "src"
+if str(_CORE_SRC) not in sys.path:
+    sys.path.insert(0, str(_CORE_SRC))
+
+from universe.core_watchlist import (  # noqa: E402
+    CORE_LIMIT,
+    CORE_LIMIT_MESSAGE,
+    REJECT_CORE_LIMIT_EXCEEDED,
+    REJECT_DUPLICATE,
+    REJECT_INVALID_SYMBOL,
+    can_add_to_core,
+    can_replace_core,
+    format_core_list_reply,
+    load_core_state,
+    load_core_watchlist,
+    normalize_watch_symbol,
+    resolve_core_symbol_source_path,
+    save_core_state,
+    save_core_watchlist,
+)
+
 
 def _load_watchlist() -> list[str]:
-    if not WATCHLIST_JSON_PATH.exists():
-        return []
-    try:
-        raw = json.loads(WATCHLIST_JSON_PATH.read_text(encoding="utf-8"))
-        if isinstance(raw, list):
-            return [str(s).strip() for s in raw if str(s).strip()]
-        if isinstance(raw, dict):
-            maybe = raw.get("symbols") or raw.get("watchlist") or []
-            if isinstance(maybe, list):
-                return [str(s).strip() for s in maybe if str(s).strip()]
-    except Exception:
-        pass
-    return []
+    symbols, _ = load_core_watchlist(REPO_ROOT)
+    return symbols
 
 
 def _save_watchlist(symbols: list[str]) -> None:
-    uniq = sorted({s.strip() for s in symbols if s and s.strip()})
-    WATCHLIST_JSON_PATH.write_text(json.dumps(uniq, ensure_ascii=False, indent=2), encoding="utf-8")
+    save_core_watchlist(REPO_ROOT, symbols)
+
+
+def _dynamic_slots_hint(core_count: int) -> int:
+    return max(0, 50 - min(core_count, CORE_LIMIT))
+
+
+async def _core_list_reply(ctx: commands.Context) -> None:
+    state = load_core_state(REPO_ROOT)
+    await ctx.reply(
+        format_core_list_reply(
+            state.symbols,
+            core_last_updated_date=state.core_last_updated_date,
+        )
+    )
 
 
 # =========================
@@ -250,6 +274,118 @@ async def on_ready() -> None:
         print(f"Logged in as: {bot.user} (id={bot.user.id})")
     else:
         print("Logged in (bot.user is None)")
+
+
+@bot.group(name="core", invoke_without_command=True)
+async def core_group(ctx: commands.Context) -> None:
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
+    await ctx.reply(
+        "Core10 daily rotation:\n"
+        "`!core list` | `!core add <symbol>` | `!core remove <symbol>`\n"
+        "`!core clear` | `!core replace 7203.T,9984.T,...`"
+    )
+
+
+@core_group.command(name="list")
+async def core_list_command(ctx: commands.Context) -> None:
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
+    await _core_list_reply(ctx)
+
+
+@core_group.command(name="add")
+async def core_add_command(ctx: commands.Context, symbol: str) -> None:
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
+    raw = (symbol or "").strip()
+    if not raw:
+        await ctx.reply("symbol が空です。例: `!core add 7203.T`")
+        return
+    symbols = _load_watchlist()
+    ok, reject, msg = can_add_to_core(symbols, raw)
+    if not ok:
+        await ctx.reply(msg)
+        return
+    sym = normalize_watch_symbol(raw)
+    symbols.append(sym)
+    _save_watchlist(symbols)
+    await ctx.reply(f"Core10 add: {sym} ({len(symbols)}/{CORE_LIMIT})")
+
+
+@core_group.command(name="remove")
+async def core_remove_command(ctx: commands.Context, symbol: str) -> None:
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
+    raw = (symbol or "").strip()
+    if not raw:
+        await ctx.reply("symbol が空です。例: `!core remove 7203.T`")
+        return
+    sym = normalize_watch_symbol(raw)
+    symbols = _load_watchlist()
+    if sym not in symbols:
+        await ctx.reply(f"Core10 にありません: {sym}")
+        return
+    symbols = [s for s in symbols if s != sym]
+    _save_watchlist(symbols)
+    await ctx.reply(f"Core10 remove: {sym} ({len(symbols)}/{CORE_LIMIT})")
+
+
+@core_group.command(name="clear")
+async def core_clear_command(ctx: commands.Context) -> None:
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
+    save_core_state(REPO_ROOT, [])
+    await ctx.reply(f"Core10 cleared (0/{CORE_LIMIT}). Dynamic slots: 50.")
+
+
+@core_group.command(name="replace")
+async def core_replace_command(ctx: commands.Context, *, symbols: str) -> None:
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
+    raw = (symbols or "").strip()
+    if not raw:
+        await ctx.reply("例: `!core replace 7203.T,9984.T,3905.T`")
+        return
+    ok, ordered, reject, msg = can_replace_core(raw)
+    if not ok:
+        await ctx.reply(msg)
+        return
+    save_core_state(REPO_ROOT, ordered)
+    dyn = _dynamic_slots_hint(len(ordered))
+    await ctx.reply(f"Core10 updated ({len(ordered)}/{CORE_LIMIT}).\nDynamic slots: {dyn}.")
+
+
+@bot.group(name="watch", invoke_without_command=True)
+async def watch_group(ctx: commands.Context) -> None:
+    if not _is_control_channel(ctx):
+        await _reply_control_only(ctx)
+        return
+    await ctx.reply(
+        "`!watch` is an alias of `!core` (Phase119 daily rotation).\n"
+        "Prefer: `!core list` / `!core replace` / `!core add`"
+    )
+
+
+@watch_group.command(name="add")
+async def watch_add_command(ctx: commands.Context, symbol: str) -> None:
+    await core_add_command(ctx, symbol=symbol)
+
+
+@watch_group.command(name="remove")
+async def watch_remove_command(ctx: commands.Context, symbol: str) -> None:
+    await core_remove_command(ctx, symbol=symbol)
+
+
+@watch_group.command(name="list")
+async def watch_list_command(ctx: commands.Context) -> None:
+    await _core_list_reply(ctx)
 
 
 def _compact_title(text: str, max_len: int = 80) -> str:
@@ -342,62 +478,6 @@ async def issue_command(ctx: commands.Context, *, content: str = "") -> None:
             await webhook_post(webhook_url, webhook_message)
     except Exception as e:
         await ctx.reply(f"Webhook 通知に失敗しました: {e}")
-
-
-@bot.group(name="watch", invoke_without_command=True)
-async def watch_group(ctx: commands.Context) -> None:
-    if not _is_control_channel(ctx):
-        await _reply_control_only(ctx)
-        return
-    await ctx.reply("使い方: `!watch add <symbol>` / `!watch remove <symbol>` / `!watch list`")
-
-
-@watch_group.command(name="add")
-async def watch_add_command(ctx: commands.Context, symbol: str) -> None:
-    if not _is_control_channel(ctx):
-        await _reply_control_only(ctx)
-        return
-    symbol = (symbol or "").strip()
-    if not symbol:
-        await ctx.reply("symbol が空です。例: `!watch add 7203.T`")
-        return
-    symbols = _load_watchlist()
-    if symbol in symbols:
-        await ctx.reply(f"すでに監視中です: {symbol}")
-        return
-    symbols.append(symbol)
-    _save_watchlist(symbols)
-    await ctx.reply(f"監視に追加しました: {symbol}")
-
-
-@watch_group.command(name="remove")
-async def watch_remove_command(ctx: commands.Context, symbol: str) -> None:
-    if not _is_control_channel(ctx):
-        await _reply_control_only(ctx)
-        return
-    symbol = (symbol or "").strip()
-    if not symbol:
-        await ctx.reply("symbol が空です。例: `!watch remove 7203.T`")
-        return
-    symbols = _load_watchlist()
-    if symbol not in symbols:
-        await ctx.reply(f"監視中ではありません: {symbol}")
-        return
-    symbols = [s for s in symbols if s != symbol]
-    _save_watchlist(symbols)
-    await ctx.reply(f"監視から削除しました: {symbol}")
-
-
-@watch_group.command(name="list")
-async def watch_list_command(ctx: commands.Context) -> None:
-    if not _is_control_channel(ctx):
-        await _reply_control_only(ctx)
-        return
-    symbols = _load_watchlist()
-    if not symbols:
-        await ctx.reply("watchlist.json は空です。`!watch add <symbol>` で追加してください。")
-        return
-    await ctx.reply("監視中銘柄:\n" + "\n".join(f"- {s}" for s in symbols))
 
 
 def main() -> int:

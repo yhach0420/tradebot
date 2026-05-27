@@ -22,11 +22,87 @@ from research.continuation_quality_ranking import continuation_components
 from research.research_exit_criteria import _as_float
 from research.structural_exit_policies import (
     POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+    POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
     POLICY_STRUCTURAL_OBSERVER_V1,
     STRUCTURE_EXIT_REASONS,
     combined_exit_signal_on_latest_tick,
+    pure_price_momentum_from_prices,
     simulate_structural_policy,
     tick_from_candidate,
+)
+from research.fade_watch_shadow import (
+    FadeWatchState,
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_WATCH_SHADOW,
+    combined_exit_or_fade_watch_trigger,
+    fade_watch_log_fields,
+    map_session_close_reason,
+    process_fade_watch_tick,
+    uses_fade_watch_shadow,
+)
+from research.fade_hybrid_shadow import (
+    FadeHybridState,
+    combined_exit_or_fade_shadow_trigger,
+    enter_fade_shadow_state,
+    fade_hybrid_log_fields,
+    process_fade_shadow_watch_tick,
+    uses_fade_shadow_trigger,
+)
+from research.reacceleration_shadow import (
+    POLICY_REACCELERATION_SHADOW,
+    combined_exit_or_reacceleration_trigger,
+    map_reaccel_session_close,
+    process_reacceleration_tick,
+    uses_reacceleration_shadow,
+)
+from research.fade_switch_cooldown_shadow import (
+    FADE_SWITCH_TRIGGER_REASONS,
+    POLICY_FADE_SWITCH_COOLDOWN_SHADOW,
+    FadeSwitchCooldownState,
+    cooldown_log_fields,
+    cross_symbol_switch_blocked,
+    process_fade_switch_cooldown_tick,
+    uses_fade_switch_cooldown_shadow,
+    cfg_for_v1_exits as cooldown_shadow_cfg_for_v1,
+)
+from research.fade_switch_block_shadow import (
+    FADE_SWITCH_BLOCK_TRIGGER_REASONS,
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_SWITCH_BLOCK_SHADOW,
+    FadeSwitchBlockState,
+    block_log_fields,
+    cross_symbol_fade_switch_blocked,
+    uses_fade_switch_block_shadow,
+    cfg_for_v1_exits as block_shadow_cfg_for_v1,
+)
+from research.take_exit_shadow import (
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_TAKE_EXIT_SHADOW,
+    TAKE_EXIT_REASON,
+    _cfg_for_v1_signal as _take_exit_cfg_for_v1,
+    observer_event_is_take_exit,
+    uses_take_exit_shadow,
+)
+from research.fade_first_switch_block_shadow import (
+    FADE_FIRST_SWITCH_TRIGGER_REASONS,
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_FIRST_SWITCH_BLOCK_SHADOW,
+    FadeFirstSwitchBlockState,
+    block_log_fields as first_block_log_fields,
+    enter_log_fields as first_enter_log_fields,
+    fade_state_key,
+    try_block_first_cross_symbol,
+    uses_fade_first_switch_block_shadow,
+    cfg_for_v1_exits as first_switch_shadow_cfg_for_v1,
+)
+
+COMBINED_STRUCTURAL_EXIT_POLICIES = frozenset(
+    {
+        POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+        POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
+        POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_WATCH_SHADOW,
+        POLICY_COMBINED_STRUCTURAL_EXIT_V1_TAKE_EXIT_SHADOW,
+        POLICY_REACCELERATION_SHADOW,
+        POLICY_FADE_SWITCH_COOLDOWN_SHADOW,
+        POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_SWITCH_BLOCK_SHADOW,
+        POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_FIRST_SWITCH_BLOCK_SHADOW,
+    }
 )
 from research.small_paper_performance_review import (
     _build_trade_lifecycles,
@@ -137,6 +213,25 @@ class StructuralTrade:
     take_reason: str = ""
     hold_notify_count: int = 0
     session_bucket: str = ""
+    fade_watch_entered: bool = False
+    fade_watch_entry_time: str = ""
+    fade_watch_initial_reason: str = ""
+    fade_watch_exit_reason: str = ""
+    reacceleration_detected: bool = False
+    new_high_after_fade: bool = False
+    new_mfe_created: bool = False
+    momentum_recovery: bool = False
+    giveback_exceeded: bool = False
+    breakdown_detected: bool = False
+    fade_watch_hold_sec: float = 0.0
+    fade_hybrid_state: str = ""
+    fade_watch_duration_sec: float = 0.0
+    fade_watch_pnl_delta: float = 0.0
+    fade_watch_mfe_at_entry: float = 0.0
+    fade_watch_take_reached: bool = False
+    fade_watch_breakdown_confirmed: bool = False
+    fade_watch_second_fade: bool = False
+    fade_watch_range_hold_protected: bool = False
 
 
 @dataclass
@@ -145,6 +240,7 @@ class _ActiveStructural:
     entry_ts: float
     ticks: list[tuple[float, float]] = field(default_factory=list)
     rich_ticks: list[dict[str, Any]] = field(default_factory=list)
+    fade_watch: Optional[FadeWatchState] = None
 
 
 def _trade_key(symbol: str, entry_time: str) -> tuple[str, str]:
@@ -164,6 +260,34 @@ def _mfe_mae(ticks: Sequence[tuple[float, float]], entry_px: float) -> tuple[flo
     return round(max(pnls), 4), round(min(pnls), 4)
 
 
+def _apply_fade_watch_meta(trade: StructuralTrade, state: Optional[FadeWatchState]) -> None:
+    if state is None:
+        return
+    if isinstance(state, FadeHybridState):
+        log = fade_hybrid_log_fields(state)
+    else:
+        log = fade_watch_log_fields(state)
+    trade.fade_watch_entered = bool(log.get("fade_watch_entered"))
+    trade.fade_watch_entry_time = str(log.get("fade_watch_entry_time") or "")
+    trade.fade_watch_initial_reason = str(log.get("fade_watch_initial_reason") or "")
+    trade.fade_watch_exit_reason = str(log.get("fade_watch_exit_reason") or "")
+    trade.reacceleration_detected = bool(log.get("reacceleration_detected"))
+    trade.new_high_after_fade = bool(log.get("new_high_after_fade"))
+    trade.new_mfe_created = bool(log.get("new_mfe_created"))
+    trade.momentum_recovery = bool(log.get("momentum_recovery"))
+    trade.giveback_exceeded = bool(log.get("giveback_exceeded"))
+    trade.breakdown_detected = bool(log.get("breakdown_detected"))
+    trade.fade_watch_hold_sec = float(log.get("fade_watch_hold_sec") or 0.0)
+    trade.fade_hybrid_state = str(log.get("fade_hybrid_state") or "")
+    trade.fade_watch_duration_sec = float(log.get("fade_watch_duration_sec") or trade.fade_watch_hold_sec)
+    trade.fade_watch_pnl_delta = float(log.get("fade_watch_pnl_delta") or 0.0)
+    trade.fade_watch_mfe_at_entry = float(log.get("fade_watch_mfe_at_entry") or 0.0)
+    trade.fade_watch_take_reached = bool(log.get("fade_watch_take_reached"))
+    trade.fade_watch_breakdown_confirmed = bool(log.get("fade_watch_breakdown_confirmed"))
+    trade.fade_watch_second_fade = bool(log.get("fade_watch_second_fade"))
+    trade.fade_watch_range_hold_protected = bool(log.get("fade_watch_range_hold_protected"))
+
+
 def _close_structural_trade(
     active: _ActiveStructural,
     *,
@@ -180,6 +304,7 @@ def _close_structural_trade(
     t.hold_duration_sec = round(max(0.0, close_ts - active.entry_ts), 1)
     t.mfe_pct, t.mae_pct = _mfe_mae(active.ticks, t.entry_price)
     t.tick_count = len(active.ticks)
+    _apply_fade_watch_meta(t, active.fade_watch)
     return t
 
 
@@ -418,19 +543,37 @@ def replay_structural_observer_v1(
     return completed, event_log
 
 
-def replay_combined_structural_exit_v1(
+def replay_combined_structural_exit(
     events: Sequence[Mapping[str, Any]],
     *,
     pilot_config: Any,
     poll_interval_sec: float,
     session_end: Optional[str] = None,
+    structural_exit_policy: Optional[str] = None,
 ) -> tuple[list[StructuralTrade], list[dict[str, Any]]]:
     """Structure-only EXIT replay: combined rules + overlap + session_end (no observer EXIT/VH)."""
     import small_paper.observer_position_tracker as ot
 
     session_end = session_end or _session_end_time(events)
     cfg = observer_tracker_config_from_pilot(pilot_config)
+    if structural_exit_policy:
+        cfg.structural_exit_policy = structural_exit_policy
+    exit_policy = str(cfg.structural_exit_policy or POLICY_COMBINED_STRUCTURAL_EXIT_V1)
+    exit_cfg = first_switch_shadow_cfg_for_v1(
+        block_shadow_cfg_for_v1(cooldown_shadow_cfg_for_v1(cfg))
+    )
     tracker = ObserverPositionTracker(cfg)
+    fade_switch_cooldowns: dict[str, FadeSwitchCooldownState] = {}
+    fade_switch_blocks: dict[str, FadeSwitchBlockState] = {}
+    fade_first_states: dict[str, FadeFirstSwitchBlockState] = {}
+    from small_paper.live_feature_bridge import LiveFeatureBridge
+
+    feature_bridge = LiveFeatureBridge(
+        pilot_config.feature_bridge_config()
+        if hasattr(pilot_config, "feature_bridge_config")
+        else None
+    )
+    replay_prices: dict[str, list[float]] = {}
     ordered = sorted(events, key=lambda e: int(e.get("message_index") or 0))
     mono = [0.0]
     active: dict[tuple[str, str], _ActiveStructural] = {}
@@ -459,7 +602,7 @@ def replay_combined_structural_exit_v1(
             close_reason=reason,
             close_price=close_px,
             pnl_pct=closed.realized_pnl_pct,
-            exit_policy=POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+            exit_policy=exit_policy,
         )
         return closed
 
@@ -473,6 +616,18 @@ def replay_combined_structural_exit_v1(
         trade = _trade_for_structural_eval(dict(ev), session_end)
         price = _as_float(ev.get("current_price"))
         bucket = session_bucket_at(as_of)
+        if price and price > 0:
+            snap = feature_bridge.update(sym, trade)
+            prices = replay_prices.setdefault(sym, [])
+            prices.append(float(price))
+            if len(prices) > 120:
+                prices.pop(0)
+            ppm = pure_price_momentum_from_prices(prices)
+            trade = {
+                **trade,
+                "pure_price_momentum": ppm,
+                "current_price": price,
+            }
 
         with patch.object(ot.time, "monotonic", _mono):
             with patch.object(ot, "datetime") as mdt:
@@ -481,6 +636,79 @@ def replay_combined_structural_exit_v1(
                 mdt.fromisoformat = datetime.fromisoformat
 
                 if ev.get("event_type") == "accepted" and price and price > 0:
+                    if uses_fade_first_switch_block_shadow(exit_policy):
+                        for st in fade_first_states.values():
+                            if st.old_symbol == sym and not st.block_consumed:
+                                _log(
+                                    "fade_first_switch_same_symbol_allowed",
+                                    symbol=sym,
+                                    entry_time=ent_raw,
+                                    same_symbol_allowed=True,
+                                    overlap_exempted=False,
+                                    **first_enter_log_fields(st),
+                                )
+                                break
+                        blocked, fst = try_block_first_cross_symbol(
+                            fade_first_states,
+                            new_symbol=sym,
+                            new_entry_time=ent_raw,
+                            new_entry_ts=_parse_ts(ent_raw),
+                        )
+                        if blocked and fst:
+                            _log(
+                                "fade_first_switch_blocked",
+                                symbol=sym,
+                                entry_time=ent_raw,
+                                same_symbol_allowed=False,
+                                overlap_exempted=False,
+                                **first_block_log_fields(
+                                    fst,
+                                    blocked_new_symbol=sym,
+                                    blocked_new_entry_time=ent_raw,
+                                ),
+                            )
+                            continue
+                    elif uses_fade_switch_block_shadow(exit_policy):
+                        if sym in fade_switch_blocks:
+                            _log(
+                                "fade_switch_same_symbol_allowed",
+                                symbol=sym,
+                                entry_time=ent_raw,
+                                same_symbol_allowed=True,
+                                overlap_switch_exempted=False,
+                                **block_log_fields(fade_switch_blocks[sym]),
+                            )
+                        else:
+                            blocked, old_sym, old_reason = cross_symbol_fade_switch_blocked(
+                                fade_switch_blocks, new_symbol=sym
+                            )
+                            if blocked and old_sym:
+                                st = fade_switch_blocks[old_sym]
+                                st.blocked_count += 1
+                                _log(
+                                    "fade_switch_blocked",
+                                    symbol=sym,
+                                    entry_time=ent_raw,
+                                    blocked_new_symbol=sym,
+                                    same_symbol_allowed=False,
+                                    overlap_switch_exempted=False,
+                                    **block_log_fields(st),
+                                )
+                                continue
+                    elif uses_fade_switch_cooldown_shadow(exit_policy):
+                        blocked, cooled_sym = cross_symbol_switch_blocked(
+                            fade_switch_cooldowns, new_symbol=sym
+                        )
+                        if blocked:
+                            _log(
+                                "fade_switch_blocked",
+                                symbol=sym,
+                                entry_time=ent_raw,
+                                cooldown_symbol=cooled_sym,
+                                **cooldown_log_fields(fade_switch_cooldowns[cooled_sym or ""]),
+                            )
+                            continue
+
                     if any(a.trade.symbol == sym for a in active.values()) or tracker.has_open(sym):
                         for key in [k for k, a in active.items() if a.trade.symbol == sym]:
                             act = active.pop(key)
@@ -509,10 +737,32 @@ def replay_combined_structural_exit_v1(
                         symbol=sym,
                         entry_time=ent_raw,
                         entry_price=float(price),
-                        exit_policy=POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+                        exit_policy=exit_policy,
                     )
 
                 elif ev.get("event_type") == "candidate":
+                    if uses_fade_switch_cooldown_shadow(exit_policy) and sym in fade_switch_cooldowns:
+                        cd = fade_switch_cooldowns[sym]
+                        px_hist = replay_prices.get(sym) or []
+                        tick_px = (
+                            float(price)
+                            if price and price > 0
+                            else (px_hist[-1] if px_hist else cd.fade_price)
+                        )
+                        rel = process_fade_switch_cooldown_tick(
+                            cd,
+                            price=tick_px,
+                            momentum=_as_float(trade.get("momentum")),
+                            ts=_parse_ts(ent_raw),
+                        )
+                        if rel:
+                            _log(
+                                "fade_switch_cooldown_released",
+                                symbol=sym,
+                                release_reason=rel,
+                                **cooldown_log_fields(cd),
+                            )
+
                     act = next((a for a in active.values() if a.trade.symbol == sym), None)
                     if not act or not price or price <= 0:
                         if tracker.has_open(sym):
@@ -538,16 +788,243 @@ def replay_combined_structural_exit_v1(
                     act.ticks.append((tick["ts_epoch"], float(tick["price"])))
                     act.rich_ticks.append(tick)
 
-                    sig = combined_exit_signal_on_latest_tick(act.rich_ticks, act.trade.entry_price, cfg)
-                    if sig:
-                        pnl, reason, close_px = sig
+                    stop_px = act.trade.entry_price * (1.0 - cfg.hard_stop_pct / 100.0)
+                    if float(tick["price"]) <= stop_px:
                         key = _trade_key(sym, act.trade.entry_time)
                         closed_act = active.pop(key, None)
                         if closed_act:
-                            _close_active(closed_act, close_time=ent_raw, close_px=close_px, reason=reason)
+                            _close_active(closed_act, close_time=ent_raw, close_px=float(tick["price"]), reason="stop_hit")
                         if sym in tracker._positions:
                             tracker._positions.pop(sym, None)
                         continue
+
+                    if uses_take_exit_shadow(exit_policy) and tracker.has_open(sym):
+                        take_closed = False
+                        for oe in tracker.on_tick(
+                            symbol=sym,
+                            trade=trade,
+                            payload=trade,
+                            current_price=price,
+                            session_bucket=bucket,
+                        ):
+                            if not observer_event_is_take_exit(oe, exit_policy=exit_policy):
+                                continue
+                            ctx = oe.context
+                            act.trade.take_time = ent_raw
+                            act.trade.take_pnl_pct = _as_float(ctx.get("unrealized_pnl_pct"))
+                            act.trade.take_reason = str(ctx.get("take_reason") or "")
+                            key = _trade_key(sym, act.trade.entry_time)
+                            closed_act = active.pop(key, None)
+                            if closed_act:
+                                _close_active(
+                                    closed_act,
+                                    close_time=ent_raw,
+                                    close_px=float(price),
+                                    reason=TAKE_EXIT_REASON,
+                                )
+                            if sym in tracker._positions:
+                                tracker._positions.pop(sym, None)
+                            take_closed = True
+                            _log(
+                                "take_exit",
+                                symbol=sym,
+                                entry_time=act.trade.entry_time,
+                                take_time=ent_raw,
+                                take_reason=act.trade.take_reason,
+                                take_pnl_pct=act.trade.take_pnl_pct,
+                                exit_policy=exit_policy,
+                            )
+                            break
+                        if take_closed:
+                            continue
+
+                    if act.fade_watch is not None:
+                        if uses_reacceleration_shadow(exit_policy):
+                            fw = process_reacceleration_tick(
+                                act.fade_watch,
+                                entry_price=act.trade.entry_price,
+                                price=float(tick["price"]),
+                                momentum=float(tick.get("momentum") or 0),
+                                ts=float(tick["ts_epoch"]),
+                            )
+                        elif uses_fade_shadow_trigger(exit_policy):
+                            fw = process_fade_shadow_watch_tick(
+                                act.fade_watch,
+                                entry_price=act.trade.entry_price,
+                                price=float(tick["price"]),
+                                momentum=float(tick.get("momentum") or 0),
+                                ts=float(tick["ts_epoch"]),
+                                rich_ticks=act.rich_ticks,
+                                cfg=exit_cfg,
+                                policy=exit_policy,
+                            )
+                        else:
+                            fw = process_fade_watch_tick(
+                                act.fade_watch,
+                                entry_price=act.trade.entry_price,
+                                price=float(tick["price"]),
+                                momentum=float(tick.get("momentum") or 0),
+                                ts=float(tick["ts_epoch"]),
+                            )
+                        if fw:
+                            reason, fw_log = fw
+                            key = _trade_key(sym, act.trade.entry_time)
+                            closed_act = active.pop(key, None)
+                            if closed_act:
+                                _close_active(
+                                    closed_act,
+                                    close_time=ent_raw,
+                                    close_px=float(tick["price"]),
+                                    reason=reason,
+                                )
+                                _log("fade_watch_exit", symbol=sym, **fw_log)
+                            if sym in tracker._positions:
+                                tracker._positions.pop(sym, None)
+                            continue
+                        _log(
+                            "fade_watch_continue",
+                            symbol=sym,
+                            entry_time=act.trade.entry_time,
+                            **fade_watch_log_fields(act.fade_watch),
+                        )
+                    else:
+                        if uses_reacceleration_shadow(exit_policy):
+                            trigger = combined_exit_or_reacceleration_trigger(
+                                act.rich_ticks, act.trade.entry_price, exit_cfg
+                            )
+                        elif uses_fade_shadow_trigger(exit_policy):
+                            trigger = combined_exit_or_fade_shadow_trigger(
+                                act.rich_ticks,
+                                act.trade.entry_price,
+                                exit_cfg,
+                                take_reached=bool(act.trade.take_time),
+                            )
+                        elif uses_fade_watch_shadow(exit_policy):
+                            trigger = combined_exit_or_fade_watch_trigger(
+                                act.rich_ticks, act.trade.entry_price, exit_cfg
+                            )
+                        else:
+                            sig_cfg = (
+                                _take_exit_cfg_for_v1(exit_cfg)
+                                if uses_take_exit_shadow(exit_policy)
+                                else exit_cfg
+                            )
+                            sig = combined_exit_signal_on_latest_tick(
+                                act.rich_ticks, act.trade.entry_price, sig_cfg
+                            )
+                            trigger = (
+                                ("exit", sig[0], sig[2], sig[1])
+                                if sig
+                                else None
+                            )
+                        if trigger:
+                            kind, pnl, close_px, reason = trigger
+                            if kind in ("fade_watch", "reaccel_extend"):
+                                if kind == "reaccel_extend":
+                                    act.fade_watch = FadeWatchState.enter(
+                                        entry_time=ent_raw,
+                                        entry_ts=float(tick["ts_epoch"]),
+                                        initial_reason=reason,
+                                        fade_price=float(close_px),
+                                        fade_momentum=float(tick.get("momentum") or 0),
+                                        mfe_at_fade=pnl,
+                                        entry_price=act.trade.entry_price,
+                                    )
+                                    log_kind = "reaccel_extension_entered"
+                                    log_fields = fade_watch_log_fields(act.fade_watch)
+                                else:
+                                    act.fade_watch = enter_fade_shadow_state(
+                                        policy=exit_policy,
+                                        entry_time=ent_raw,
+                                        entry_ts=float(tick["ts_epoch"]),
+                                        initial_reason=reason,
+                                        fade_price=float(close_px),
+                                        fade_momentum=float(tick.get("momentum") or 0),
+                                        mfe_at_fade=pnl,
+                                        entry_price=act.trade.entry_price,
+                                        take_reached=bool(act.trade.take_time),
+                                    )
+                                    log_kind = "fade_watch_entered"
+                                    log_fields = (
+                                        fade_hybrid_log_fields(act.fade_watch)
+                                        if isinstance(act.fade_watch, FadeHybridState)
+                                        else fade_watch_log_fields(act.fade_watch)
+                                    )
+                                _log(
+                                    log_kind,
+                                    symbol=sym,
+                                    entry_time=act.trade.entry_time,
+                                    fade_price=float(close_px),
+                                    **log_fields,
+                                )
+                            else:
+                                key = _trade_key(sym, act.trade.entry_time)
+                                closed_act = active.pop(key, None)
+                                if closed_act:
+                                    closed = _close_active(
+                                        closed_act,
+                                        close_time=ent_raw,
+                                        close_px=float(close_px),
+                                        reason=reason,
+                                    )
+                                    if (
+                                        uses_fade_switch_cooldown_shadow(exit_policy)
+                                        and reason in FADE_SWITCH_TRIGGER_REASONS
+                                    ):
+                                        fade_switch_cooldowns[sym] = FadeSwitchCooldownState.enter(
+                                            symbol=sym,
+                                            fade_exit_time=ent_raw,
+                                            fade_exit_ts=float(tick["ts_epoch"]),
+                                            fade_exit_reason=reason,
+                                            entry_price=closed_act.trade.entry_price,
+                                            fade_price=float(close_px),
+                                            fade_momentum=float(tick.get("momentum") or 0),
+                                            fade_pnl=float(pnl),
+                                        )
+                                        _log(
+                                            "fade_switch_cooldown_entered",
+                                            symbol=sym,
+                                            entry_time=closed.entry_time,
+                                            fade_exit_reason=reason,
+                                            **cooldown_log_fields(fade_switch_cooldowns[sym]),
+                                        )
+                                    elif (
+                                        uses_fade_switch_block_shadow(exit_policy)
+                                        and reason in FADE_SWITCH_BLOCK_TRIGGER_REASONS
+                                    ):
+                                        fade_switch_blocks[sym] = FadeSwitchBlockState.enter(
+                                            old_symbol=sym,
+                                            fade_exit_time=ent_raw,
+                                            fade_exit_reason=reason,
+                                        )
+                                        _log(
+                                            "fade_switch_block_entered",
+                                            symbol=sym,
+                                            entry_time=closed.entry_time,
+                                            fade_exit_reason=reason,
+                                            **block_log_fields(fade_switch_blocks[sym]),
+                                        )
+                                    elif (
+                                        uses_fade_first_switch_block_shadow(exit_policy)
+                                        and reason in FADE_FIRST_SWITCH_TRIGGER_REASONS
+                                    ):
+                                        fkey = fade_state_key(sym, ent_raw)
+                                        fade_first_states[fkey] = FadeFirstSwitchBlockState.enter(
+                                            old_symbol=sym,
+                                            fade_exit_time=ent_raw,
+                                            fade_exit_ts=float(tick["ts_epoch"]),
+                                            fade_exit_reason=reason,
+                                        )
+                                        _log(
+                                            "fade_first_switch_block_entered",
+                                            symbol=sym,
+                                            entry_time=closed.entry_time,
+                                            fade_exit_reason=reason,
+                                            **first_enter_log_fields(fade_first_states[fkey]),
+                                        )
+                                if sym in tracker._positions:
+                                    tracker._positions.pop(sym, None)
+                                continue
 
                     if tracker.has_open(sym):
                         for oe in tracker.on_tick(
@@ -585,12 +1062,16 @@ def replay_combined_structural_exit_v1(
         active.pop(key, None)
         close_px = _last_tick_price(act.ticks, act.trade.entry_price)
         end_reason = "session_end"
-        if act.rich_ticks:
+        if uses_reacceleration_shadow(exit_policy):
+            end_reason = map_reaccel_session_close(end_reason)
+        elif uses_fade_watch_shadow(exit_policy) or uses_fade_shadow_trigger(exit_policy):
+            end_reason = map_session_close_reason(end_reason)
+        elif act.rich_ticks:
             result = simulate_structural_policy(
                 act.rich_ticks,
                 act.trade.entry_price,
-                POLICY_COMBINED_STRUCTURAL_EXIT_V1,
-                cfg,
+                exit_policy,
+                exit_cfg,
                 allow_session_end=True,
             )
             if result:
@@ -598,6 +1079,22 @@ def replay_combined_structural_exit_v1(
         _close_active(act, close_time=session_end, close_px=close_px, reason=end_reason)
 
     return completed, event_log
+
+
+def replay_combined_structural_exit_v1(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    pilot_config: Any,
+    poll_interval_sec: float,
+    session_end: Optional[str] = None,
+) -> tuple[list[StructuralTrade], list[dict[str, Any]]]:
+    return replay_combined_structural_exit(
+        events,
+        pilot_config=pilot_config,
+        poll_interval_sec=poll_interval_sec,
+        session_end=session_end,
+        structural_exit_policy=POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+    )
 
 
 def _legacy_virtual_hold_summary(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -811,6 +1308,17 @@ def _trade_to_row(t: StructuralTrade) -> dict[str, Any]:
         "take_reason": t.take_reason,
         "take_to_exit_pnl_delta": delta,
         "had_take_before_exit": bool(t.take_time),
+        "fade_watch_entered": t.fade_watch_entered,
+        "fade_watch_entry_time": t.fade_watch_entry_time,
+        "fade_watch_initial_reason": t.fade_watch_initial_reason,
+        "fade_watch_exit_reason": t.fade_watch_exit_reason,
+        "reacceleration_detected": t.reacceleration_detected,
+        "new_high_after_fade": t.new_high_after_fade,
+        "new_mfe_created": t.new_mfe_created,
+        "momentum_recovery": t.momentum_recovery,
+        "giveback_exceeded": t.giveback_exceeded,
+        "breakdown_detected": t.breakdown_detected,
+        "fade_watch_hold_sec": t.fade_watch_hold_sec,
     }
 
 
@@ -842,7 +1350,14 @@ def run_structural_observer_review(
     structural_exit_policy: str = DEFAULT_OFFICIAL_EXIT_POLICY,
 ) -> dict[str, Any]:
     session_dir = session_dir.resolve()
-    if structural_exit_policy not in (POLICY_STRUCTURAL_OBSERVER_V1, POLICY_COMBINED_STRUCTURAL_EXIT_V1):
+    allowed = (
+        POLICY_STRUCTURAL_OBSERVER_V1,
+        POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+        POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
+        POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_WATCH_SHADOW,
+        POLICY_COMBINED_STRUCTURAL_EXIT_V1_TAKE_EXIT_SHADOW,
+    )
+    if structural_exit_policy not in allowed:
         raise ValueError(f"unsupported structural_exit_policy: {structural_exit_policy}")
 
     summary = _load_json(session_dir / "small_paper_summary.json")
@@ -858,21 +1373,60 @@ def run_structural_observer_review(
         poll_interval_sec=interval,
         session_end=session_end,
     )
-    combined_trades, combined_log = replay_combined_structural_exit_v1(
+    combined_trades, combined_log = replay_combined_structural_exit(
         events,
         pilot_config=pilot_config,
         poll_interval_sec=interval,
         session_end=session_end,
+        structural_exit_policy=POLICY_COMBINED_STRUCTURAL_EXIT_V1,
     )
+    v2_trades: list[StructuralTrade] = []
+    v2_log: list[dict[str, Any]] = []
+    v2_metrics: dict[str, Any] = {}
+    if structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM:
+        v2_trades, v2_log = replay_combined_structural_exit(
+            events,
+            pilot_config=pilot_config,
+            poll_interval_sec=interval,
+            session_end=session_end,
+            structural_exit_policy=POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
+        )
+        v2_metrics = _summarize_structural_trades(v2_trades)
 
     baseline_metrics = _summarize_structural_trades(baseline_trades)
     combined_metrics = _summarize_structural_trades(combined_trades)
     legacy = _legacy_virtual_hold_summary(events)
 
-    if structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1:
+    if structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM:
+        official_trades = v2_trades
+        official_log = v2_log
+        official_metrics = v2_metrics
+    elif structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1:
         official_trades = combined_trades
         official_log = combined_log
         official_metrics = combined_metrics
+    elif structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_WATCH_SHADOW:
+        fade_trades, fade_log = replay_combined_structural_exit(
+            events,
+            pilot_config=pilot_config,
+            poll_interval_sec=interval,
+            session_end=session_end,
+            structural_exit_policy=POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_WATCH_SHADOW,
+        )
+        official_trades = fade_trades
+        official_log = fade_log
+        official_metrics = _summarize_structural_trades(fade_trades)
+    elif structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1_TAKE_EXIT_SHADOW:
+        take_trades, take_log = replay_combined_structural_exit(
+            events,
+            pilot_config=pilot_config,
+            poll_interval_sec=interval,
+            session_end=session_end,
+            structural_exit_policy=POLICY_COMBINED_STRUCTURAL_EXIT_V1_TAKE_EXIT_SHADOW,
+        )
+        official_trades = take_trades
+        official_log = take_log
+        official_metrics = _summarize_structural_trades(take_trades)
     else:
         official_trades = baseline_trades
         official_log = baseline_log
@@ -902,6 +1456,16 @@ def run_structural_observer_review(
             role=official_role if structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1 else "candidate",
         ),
     ]
+    if v2_metrics:
+        policy_comparison.append(
+            _policy_comparison_row(
+                POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
+                v2_metrics,
+                role=official_role
+                if structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM
+                else "candidate",
+            )
+        )
 
     return {
         "phase": 60,
@@ -922,6 +1486,7 @@ def run_structural_observer_review(
         "structural_metrics": official_metrics,
         "baseline_structural_observer_v1_metrics": baseline_metrics,
         "combined_structural_exit_v1_metrics": combined_metrics,
+        "combined_structural_exit_v2_price_mom_metrics": v2_metrics or None,
         "legacy_comparison": legacy,
         **legacy,
         **verdict_block,

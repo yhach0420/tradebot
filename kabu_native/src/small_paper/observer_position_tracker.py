@@ -14,8 +14,37 @@ from zoneinfo import ZoneInfo
 
 from research.continuation_quality_ranking import continuation_components
 from research.research_exit_criteria import _as_float
+from research.take_exit_shadow import (
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_TAKE_EXIT_SHADOW,
+    TAKE_EXIT_REASON,
+    _cfg_for_v1_signal as _take_exit_cfg_for_v1,
+    uses_take_exit_shadow,
+)
+from research.fade_watch_shadow import (
+    FadeWatchState,
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_WATCH_SHADOW,
+    map_session_close_reason,
+    uses_fade_watch_shadow,
+)
+from research.fade_hybrid_shadow import (
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_BREAKDOWN_CONFIRMED_SHADOW,
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_BREAKDOWN_SHADOW,
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_DISABLE_SHADOW,
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_HYBRID_SHADOW,
+    combined_exit_or_fade_shadow_trigger,
+    enter_fade_shadow_state,
+    process_fade_shadow_watch_tick,
+    shadow_watch_log_fields,
+    uses_breakdown_confirmed_shadow,
+    uses_fade_disable_shadow,
+    uses_fade_hybrid_shadow,
+    uses_fade_breakdown_shadow,
+    uses_fade_shadow_trigger,
+    uses_fade_shadow_watch,
+ )
 from research.structural_exit_policies import (
     POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+    POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
     POLICY_STRUCTURAL_OBSERVER_V1,
     combined_exit_signal_on_latest_tick,
     is_official_structural_exit_reason,
@@ -41,10 +70,20 @@ class ObserverTrackerConfig:
     favorable_fade_ratio: float = 0.85
     momentum_weaken_ratio: float = 0.85
     structural_exit_policy: str = POLICY_STRUCTURAL_OBSERVER_V1
+    price_momentum_fade_ratio: float = 0.85
     live_session_end: str = "15:30"
 
     def uses_combined_structural_exit(self) -> bool:
-        return self.structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1
+        return self.structural_exit_policy in (
+            POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+            POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
+            POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_WATCH_SHADOW,
+            "combined_structural_exit_v1_take_exit_shadow",
+            POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_HYBRID_SHADOW,
+            POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_BREAKDOWN_SHADOW,
+            POLICY_COMBINED_STRUCTURAL_EXIT_V1_BREAKDOWN_CONFIRMED_SHADOW,
+            POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_DISABLE_SHADOW,
+        )
 
 
 @dataclass
@@ -60,6 +99,7 @@ class _VirtualPosition:
     peak_quality: float
     peak_pnl_pct: float
     peak_momentum: float
+    peak_pure_price_momentum: float
     peak_favorable: float
     last_quality: float
     last_hold_notify_mono: float
@@ -70,6 +110,7 @@ class _VirtualPosition:
     closed: bool = False
     trade_virtual_exit_time: Optional[datetime] = None
     virtual_hold_ignore_logged: bool = False
+    fade_watch: Optional[FadeWatchState] = None
 
 
 @dataclass
@@ -90,6 +131,11 @@ class ObserverSessionStats:
     official_exit_count: int = 0
     virtual_hold_expired_ignored_count: int = 0
     session_end_exit_count: int = 0
+    morning_session_close_count: int = 0
+    afternoon_session_close_count: int = 0
+    fade_watch_enter_count: int = 0
+    fade_watch_exit_count: int = 0
+    fade_watch_continue_count: int = 0
     structural_exit_reason_counts: Counter[str] = field(default_factory=Counter)
 
     @property
@@ -111,6 +157,9 @@ class ObserverPositionTracker:
     def has_open(self, symbol: str) -> bool:
         p = self._positions.get(symbol)
         return p is not None and not p.closed
+
+    def open_symbols(self) -> list[str]:
+        return sorted(sym for sym, p in self._positions.items() if not p.closed)
 
     def _session_end_datetime(self, entry: datetime) -> datetime:
         from small_paper.session_schedule import parse_hhmm
@@ -205,6 +254,7 @@ class ObserverPositionTracker:
             peak_quality=q,
             peak_pnl_pct=0.0,
             peak_momentum=float(comps["momentum_continuation"]),
+            peak_pure_price_momentum=float(_as_float(trade.get("pure_price_momentum")) or 0.0),
             peak_favorable=float(comps["favorable_continuation"]),
             last_quality=q,
             last_hold_notify_mono=time.monotonic(),
@@ -235,9 +285,11 @@ class ObserverPositionTracker:
         comps = continuation_components(trade)
         q = float(comps["continuation_quality"])
         mom = float(comps["momentum_continuation"])
+        ppm = float(_as_float(trade.get("pure_price_momentum")) or _as_float(payload.get("pure_price_momentum")) or 0.0)
         pos.peak_quality = max(pos.peak_quality, q)
         pos.peak_pnl_pct = max(pos.peak_pnl_pct, pnl_pct)
         pos.peak_momentum = max(pos.peak_momentum, mom)
+        pos.peak_pure_price_momentum = max(pos.peak_pure_price_momentum, ppm)
         pos.peak_favorable = max(pos.peak_favorable, float(comps["favorable_continuation"]))
         hold_sec = max(0.0, (now - pos.entry_time).total_seconds())
 
@@ -260,6 +312,9 @@ class ObserverPositionTracker:
             "mfe_pct": round(pos.peak_pnl_pct, 4),
             "mae_pct": round(pos.mae_pnl_pct, 4),
             "momentum_continuation": mom,
+            "pure_price_momentum": round(ppm, 6),
+            "peak_pure_price_momentum": round(pos.peak_pure_price_momentum, 6),
+            "price_momentum_fade_ratio": self.cfg.price_momentum_fade_ratio,
             "timestamp": now.isoformat(timespec="seconds"),
             "structural_exit_policy": self.cfg.structural_exit_policy,
         }
@@ -274,20 +329,129 @@ class ObserverPositionTracker:
             ):
                 self.stats.virtual_hold_expired_ignored_count += 1
                 pos.virtual_hold_ignore_logged = True
-            sig = combined_exit_signal_on_latest_tick(pos.rich_ticks, pos.entry_price, self.cfg)
-            if sig:
-                exit_pnl, reason, close_px = sig
-                ctx = {**base_ctx, "unrealized_pnl_pct": round(exit_pnl, 4), "current_price": close_px}
+
+            if price <= pos.stop_price:
                 events.append(
-                    self._close(
-                        pos,
-                        reason=reason,
-                        exit_kind=reason,
-                        ctx=ctx,
-                        structural=True,
-                    )
+                    self._close(pos, reason="stop_hit", exit_kind="stop_hit", ctx=base_ctx, structural=True)
                 )
                 return events
+
+            if uses_take_exit_shadow(self.cfg.structural_exit_policy) and not pos.take_notified:
+                take_reason = self._take_reason(pos, comps, q, price, pnl_pct)
+                if take_reason:
+                    pos.take_notified = True
+                    self.stats.take_count += 1
+                    ctx = {
+                        **base_ctx,
+                        "take_reason": take_reason,
+                        "continuation_weakening": mom < pos.peak_momentum * self.cfg.momentum_weaken_ratio,
+                        "favorable_fade": comps["favorable_continuation"]
+                        < pos.peak_favorable * self.cfg.favorable_fade_ratio,
+                        "quality_deterioration": q <= pos.peak_quality - self.cfg.take_quality_drop,
+                        "take_as_exit": True,
+                    }
+                    events.append(
+                        self._close(
+                            pos,
+                            reason=TAKE_EXIT_REASON,
+                            exit_kind=TAKE_EXIT_REASON,
+                            ctx=ctx,
+                            structural=True,
+                            take_was_not_exit=False,
+                        )
+                    )
+                    return events
+
+            if pos.fade_watch is not None:
+                fw = process_fade_shadow_watch_tick(
+                    pos.fade_watch,
+                    entry_price=pos.entry_price,
+                    price=float(price),
+                    momentum=mom,
+                    ts=now.timestamp(),
+                    rich_ticks=pos.rich_ticks,
+                    cfg=self.cfg,
+                    policy=self.cfg.structural_exit_policy,
+                )
+                if fw:
+                    reason, fw_log = fw
+                    ctx = {**base_ctx, **fw_log, "fade_watch_exit_reason": reason}
+                    self.stats.fade_watch_exit_count += 1
+                    events.append(
+                        self._close(
+                            pos,
+                            reason=reason,
+                            exit_kind=reason,
+                            ctx=ctx,
+                            structural=True,
+                        )
+                    )
+                    return events
+                self.stats.fade_watch_continue_count += 1
+                ctx = {
+                    **base_ctx,
+                    **shadow_watch_log_fields(pos.fade_watch, self.cfg.structural_exit_policy),
+                }
+                events.append(
+                    ObserverJudgmentEvent(kind=OBSERVER_HOLD, symbol=symbol, context=ctx)
+                )
+            else:
+                if uses_fade_shadow_trigger(self.cfg.structural_exit_policy):
+                    trigger = combined_exit_or_fade_shadow_trigger(
+                        pos.rich_ticks,
+                        pos.entry_price,
+                        self.cfg,
+                        take_reached=bool(pos.take_notified),
+                    )
+                elif uses_fade_watch_shadow(self.cfg.structural_exit_policy):
+                    trigger = combined_exit_or_fade_watch_trigger(
+                        pos.rich_ticks, pos.entry_price, self.cfg
+                    )
+                else:
+                    sig_cfg = (
+                        _take_exit_cfg_for_v1(self.cfg)
+                        if uses_take_exit_shadow(self.cfg.structural_exit_policy)
+                        else self.cfg
+                    )
+                    sig = combined_exit_signal_on_latest_tick(
+                        pos.rich_ticks, pos.entry_price, sig_cfg
+                    )
+                    trigger = ("exit", sig[0], sig[2], sig[1]) if sig else None
+                if trigger:
+                    kind, exit_pnl, close_px, reason = trigger
+                    if kind == "fade_watch":
+                        pos.fade_watch = enter_fade_shadow_state(
+                            policy=self.cfg.structural_exit_policy,
+                            entry_time=now.isoformat(timespec="seconds"),
+                            entry_ts=now.timestamp(),
+                            initial_reason=reason,
+                            fade_price=float(close_px),
+                            fade_momentum=mom,
+                            mfe_at_fade=exit_pnl,
+                            entry_price=pos.entry_price,
+                            take_reached=bool(pos.take_notified),
+                        )
+                        self.stats.fade_watch_enter_count += 1
+                        ctx = {
+                            **base_ctx,
+                            **shadow_watch_log_fields(pos.fade_watch, self.cfg.structural_exit_policy),
+                            "fade_watch_initial_reason": reason,
+                        }
+                        events.append(
+                            ObserverJudgmentEvent(kind=OBSERVER_HOLD, symbol=symbol, context=ctx)
+                        )
+                        return events
+                    ctx = {**base_ctx, "unrealized_pnl_pct": round(exit_pnl, 4), "current_price": close_px}
+                    events.append(
+                        self._close(
+                            pos,
+                            reason=reason,
+                            exit_kind=reason,
+                            ctx=ctx,
+                            structural=True,
+                        )
+                    )
+                    return events
         else:
             if now >= pos.exit_time:
                 events.append(
@@ -364,11 +528,15 @@ class ObserverPositionTracker:
                 "timestamp": now.isoformat(timespec="seconds"),
                 "structural_exit_policy": self.cfg.structural_exit_policy,
             }
+            exit_kind = reason if reason in ("morning_session_close", "afternoon_session_close") else "session_end"
+            if uses_fade_watch_shadow(self.cfg.structural_exit_policy):
+                reason = map_session_close_reason(reason)
+                exit_kind = reason
             out.append(
                 self._close(
                     pos,
                     reason=reason,
-                    exit_kind="session_end",
+                    exit_kind=exit_kind,
                     ctx=ctx,
                     structural=True,
                 )
@@ -411,6 +579,7 @@ class ObserverPositionTracker:
         exit_kind: str,
         ctx: Mapping[str, Any],
         structural: bool,
+        take_was_not_exit: bool = True,
     ) -> ObserverJudgmentEvent:
         if not pos.closed:
             pos.closed = True
@@ -421,7 +590,11 @@ class ObserverPositionTracker:
                 self.stats.structural_exit_count += 1
                 self.stats.official_exit_count += 1
                 self.stats.structural_exit_reason_counts[reason] += 1
-                if reason == "session_end":
+                if reason == "morning_session_close":
+                    self.stats.morning_session_close_count += 1
+                elif reason == "afternoon_session_close":
+                    self.stats.afternoon_session_close_count += 1
+                elif reason == "session_end":
                     self.stats.session_end_exit_count += 1
         comps = ctx.get("components") or {}
         full = {
@@ -434,6 +607,6 @@ class ObserverPositionTracker:
             "bearish_accumulation": comps.get("bearish_accumulation"),
             "is_structural_exit": structural and is_official_structural_exit_reason(reason),
             "structural_exit_policy": self.cfg.structural_exit_policy,
-            "take_was_not_exit": True,
+            "take_was_not_exit": take_was_not_exit,
         }
         return ObserverJudgmentEvent(kind=OBSERVER_EXIT, symbol=pos.symbol, context=full)

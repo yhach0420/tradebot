@@ -1,0 +1,78 @@
+# Phase 156: Shadow cap=5 pilot (NOT production). Same guards as cap3 shadow.
+# Requires shadow-only safety relaxation for max_concurrent before live preflight.
+
+profile: momentum_volume_v13_combined
+entry_profile: momentum_volume_v2
+
+min_continuation_quality: 0.70
+max_concurrent_positions: 5
+reject_below_quality: true
+
+allowed_trading_windows:
+  - start: "09:05"
+    end: "11:23"
+  - start: "12:33"
+    end: "15:20"
+
+baseline_policy: q070_cap3_mfe_fav_vol_liq_trial
+policy_label: q070_cap5_entry_price_risk_guard_shadow_trial
+policy_trial: true
+shadow_only: true
+structural_exit_policy: combined_structural_exit_v1
+
+entry_price_risk_guard_enabled: true
+entry_price_risk_guard_shadow: true
+entry_price_risk_guard_min_entry_price: 50
+entry_price_risk_guard_max_tick_ratio_pct: 5.0
+entry_price_risk_guard_apply_mode: reject_entry
+
+favorable_mode: mfe_linked
+favorable_mfe_scale: 0.003
+use_market_time_window: true
+
+daytrade_suitability_enabled: true
+daytrade_suitability_rule: volatility_liquidity_top50
+daytrade_suitability_lookback_sessions: prior_only
+daytrade_suitability_apply_mode: reject_entry
+
+comparison_note: >
+  Phase156 shadow: cap5 counterfactual with price-risk entry guard.
+  Intraday refresh NOT enabled in this config (design review only).
+
+order_enabled: false
+paper_only: true
+
+discord_enabled: true
+discord_observer_only: true
+discord_send_rejects: false
+
+require_phase43_pass: true
+
+daily_loss_guard_pct: -2.5
+risk_cluster_consecutive_losses: 5
+risk_cluster_block_enabled: true
+daily_loss_guard_enabled: true
+
+dry_run_required: true
+default_source: replay
+max_polls: 1
+poll_interval_sec: 30.0
+
+live:
+  session_start: "09:00"
+  session_end: "15:30"
+  poll_interval_sec: 5.0
+  heartbeat_sec: 300
+  stale_tick_sec: 120
+  max_consecutive_api_errors: 10
+  record_push_jsonl: true
+  duration_sec: 600
+
+output:
+  base_dir: kabu_native/results/small_paper
+
+phase43_diagnosis_glob: kabu_native/results/reports/small_paper_gate_diagnosis_*.json
+
+reference:
+  design: kabu_native/docs/phase156_register_refresh_design.md
+  cap3_shadow: kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_shadow.yaml

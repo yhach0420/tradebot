@@ -94,7 +94,9 @@ def main() -> int:
     token = rest.issue_token_from_env()
     push_client = KabuNativePushClient(rest, token)
     specs = [(s.code, s.exchange) for s in sym_list]
-    push_client.register(specs)
+    from api.kabu_register import register_symbols_cleared
+
+    register_symbols_cleared(push_client, specs)
     log.info("Registered %s symbols for PUSH", len(specs))
 
     recorder = PushRecorder(native_root, trade_date)
