@@ -108,6 +108,15 @@ EVENT_FIELDS = (
     "vwap_shadow_reject_candidate",
     "vwap_shadow_reject_reason",
     "trailing_mfe_exit",
+    "shadow_quality_score",
+    "shadow_quality_rank",
+    "current_quality_rank",
+    "trading_value_band",
+    "tv_sweet_band_flag",
+    "entry_order_book_imbalance",
+    "entry_imbalance_percentile",
+    "imbalance_shadow_candidate",
+    "imbalance_shadow_tier",
 )
 
 
@@ -394,6 +403,12 @@ def _default_vwap_shadow_counters() -> Any:
     return VwapShadowRejectCounters()
 
 
+def _default_board_imbalance_shadow_counters() -> Any:
+    from small_paper.board_imbalance_shadow import BoardImbalanceShadowCounters
+
+    return BoardImbalanceShadowCounters()
+
+
 @dataclass
 class _LiveRunState:
     started_mono: float
@@ -432,8 +447,10 @@ class _LiveRunState:
     intraday_refresh_scheduled_time: str = ""
     outside_refresh_universe_reject_count: int = 0
     session_momentum_samples: list[float] = field(default_factory=list)
+    session_order_book_imbalance_samples: list[float] = field(default_factory=list)
     extended_entry_shadow: Any = field(default_factory=_default_extended_shadow_counters)
     vwap_shadow_reject: Any = field(default_factory=_default_vwap_shadow_counters)
+    board_imbalance_shadow: Any = field(default_factory=_default_board_imbalance_shadow_counters)
 
 
 def _quality_distribution(scores: Sequence[float]) -> dict[str, int]:
@@ -612,6 +629,9 @@ def _log_and_dispatch_observer_events(
                 vwap_counters = getattr(state, "vwap_shadow_reject", None)
                 if vwap_counters is not None:
                     vwap_counters.record_exit(row)
+                imb_counters = getattr(state, "board_imbalance_shadow", None)
+                if imb_counters is not None:
+                    imb_counters.record_exit(row)
             if writer is not None:
                 writer.append_event(row)
     _dispatch_observer_events(events, discord=discord)
@@ -650,6 +670,40 @@ def _vwap_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
     if counters is None:
         return {}
     return counters.summary_fields()
+
+
+def _board_imbalance_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "board_imbalance_shadow", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
+def _apply_quality_formula_shadow_finalize(
+    state: _LiveRunState,
+    summary: dict[str, Any],
+) -> None:
+    from small_paper.quality_formula_shadow import finalize_session_quality_shadow
+
+    summary.update(finalize_session_quality_shadow(state.accepted_rows, state.events))
+
+
+def _apply_trading_value_shadow_finalize(
+    state: _LiveRunState,
+    summary: dict[str, Any],
+) -> None:
+    from small_paper.trading_value_shadow_gate import finalize_session_trading_value_shadow
+
+    summary.update(finalize_session_trading_value_shadow(state.accepted_rows, state.events))
+
+
+def _apply_board_imbalance_shadow_finalize(
+    state: _LiveRunState,
+    summary: dict[str, Any],
+) -> None:
+    from small_paper.board_imbalance_shadow import finalize_session_board_imbalance_shadow
+
+    summary.update(finalize_session_board_imbalance_shadow(state.accepted_rows, state.events))
 
 
 def _record_bucket(state: _LiveRunState, event_type: str) -> None:
@@ -865,6 +919,20 @@ def _process_push_payload(
         )
         trade.update(vwap_shadow)
         ctx.state.vwap_shadow_reject.record_accept(vwap_shadow)
+        from small_paper.board_imbalance_shadow import compute_board_imbalance_shadow_fields
+
+        imb_shadow = compute_board_imbalance_shadow_fields(
+            trade=trade,
+            payload=payload,
+            session_imbalance_samples=ctx.state.session_order_book_imbalance_samples,
+        )
+        trade.update(imb_shadow)
+        ctx.state.board_imbalance_shadow.record_accept(imb_shadow)
+        from small_paper.quality_formula_shadow import compute_shadow_quality_fields
+        from small_paper.trading_value_shadow_gate import compute_trading_value_shadow_fields
+
+        trade.update(compute_shadow_quality_fields(trade))
+        trade.update(compute_trading_value_shadow_fields(trade))
 
         ctx.gate.record_accepted(trade)
         ctx.state.peak_open_slots = max(ctx.state.peak_open_slots, len(ctx.gate.state.open_slots))
@@ -1210,6 +1278,7 @@ def _build_push_replay_summary(
         base["low_liquidity_shadow_reject_count"] = state.low_liquidity_shadow_reject_count
     base.update(_extended_shadow_summary_fields(state))
     base.update(_vwap_shadow_summary_fields(state))
+    base.update(_board_imbalance_shadow_summary_fields(state))
     return base
 
 
@@ -1395,6 +1464,9 @@ def run_push_replay_dry_run(
         )
         discord.notify_session_summary(summary=summary)
 
+    _apply_quality_formula_shadow_finalize(state, summary)
+    _apply_trading_value_shadow_finalize(state, summary)
+    _apply_board_imbalance_shadow_finalize(state, summary)
     writer.finalize_batch(
         events=state.events,
         positions=positions,
@@ -1491,6 +1563,7 @@ def _build_live_summary(
     summary.update(_intraday_refresh_summary_fields(state))
     summary.update(_extended_shadow_summary_fields(state))
     summary.update(_vwap_shadow_summary_fields(state))
+    summary.update(_board_imbalance_shadow_summary_fields(state))
     return summary
 
 
@@ -2170,6 +2243,9 @@ def run_live_dry_run(
     )
     if discord and discord.active:
         discord.notify_session_summary(summary=summary)
+    _apply_quality_formula_shadow_finalize(state, summary)
+    _apply_trading_value_shadow_finalize(state, summary)
+    _apply_board_imbalance_shadow_finalize(state, summary)
     writer.finalize_batch(
         events=state.events,
         positions=positions,

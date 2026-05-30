@@ -279,6 +279,10 @@ class ObserverPositionTracker:
                     "high_quality_low_momentum_shadow_flag",
                     "vwap_shadow_reject_candidate",
                     "vwap_shadow_reject_reason",
+                    "entry_order_book_imbalance",
+                    "entry_imbalance_percentile",
+                    "imbalance_shadow_candidate",
+                    "imbalance_shadow_tier",
                 )
                 if k in trade
             },
@@ -694,4 +698,12 @@ class ObserverPositionTracker:
                 exit_reason=reason,
             )
             full.update(vwap_exit)
+            from small_paper.board_imbalance_shadow import enrich_exit_imbalance_shadow_fields
+
+            imb_exit = enrich_exit_imbalance_shadow_fields(
+                pos.entry_shadow,
+                pnl_pct=pnl_pct,
+                exit_reason=reason,
+            )
+            full.update(imb_exit)
         return ObserverJudgmentEvent(kind=OBSERVER_EXIT, symbol=pos.symbol, context=full)
