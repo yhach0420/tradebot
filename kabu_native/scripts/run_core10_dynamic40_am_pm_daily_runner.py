@@ -93,8 +93,13 @@ def main() -> int:
     parser.add_argument(
         "--exit-policy-shadow",
         default="",
-        choices=["", "fade-hybrid", "fade-breakdown"],
+        choices=["", "fade-hybrid", "fade-breakdown", "trailing-mfe"],
         help="Shadow-only exit policy overlay (e.g. fade-hybrid).",
+    )
+    parser.add_argument(
+        "--low-liquidity-shadow",
+        action="store_true",
+        help="Phase179d: use trailing_mfe low-liquidity SHADOW logging YAML (non-prod).",
     )
     args = parser.parse_args()
 
@@ -116,6 +121,17 @@ def main() -> int:
         from runner.am_pm_daily_runner import FADE_BREAKDOWN_SHADOW_YAML
 
         config_rel = FADE_BREAKDOWN_SHADOW_YAML
+    if args.exit_policy_shadow == "trailing-mfe":
+        from runner.am_pm_daily_runner import (
+            TRAILING_MFE_LOW_LIQ_SHADOW_YAML,
+            TRAILING_MFE_SHADOW_YAML,
+        )
+
+        config_rel = (
+            TRAILING_MFE_LOW_LIQ_SHADOW_YAML
+            if args.low_liquidity_shadow
+            else TRAILING_MFE_SHADOW_YAML
+        )
     if args.config:
         cfg = args.config if args.config.is_absolute() else repo_root / args.config
         try:
@@ -136,6 +152,7 @@ def main() -> int:
         universe_mode=args.universe_mode,
         enable_intraday_refresh=args.enable_intraday_refresh,
         exit_policy_shadow=args.exit_policy_shadow,
+        low_liquidity_shadow=bool(args.low_liquidity_shadow),
     )
     state = make_state(repo_root, native_root, options)
     rc = run_daily_runner(state)

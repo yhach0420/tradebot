@@ -12,6 +12,9 @@ from research.research_exit_criteria import _as_float
 
 POLICY_STRUCTURAL_OBSERVER_V1 = "structural_observer_v1"
 POLICY_COMBINED_STRUCTURAL_EXIT_V1 = "combined_structural_exit_v1"
+POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW = (
+    "combined_structural_exit_v1_trailing_mfe_shadow"
+)
 POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM = "combined_structural_exit_v2_price_mom"
 
 try:
@@ -72,6 +75,7 @@ STRUCTURE_EXIT_REASONS = frozenset(
         "favorable_fade_exit",
         "vwap_break_exit",
         "mfe_giveback_exit",
+        "trailing_mfe_exit",
         *_FADE_WATCH_EXIT_REASONS,
         *_FADE_HYBRID_EXIT_REASONS,
     }
@@ -112,6 +116,10 @@ VWAP_BREAK_PEAK_PNL = 0.10
 TRAILING_GIVEBACK_PCT = 0.18
 LOWER_HIGH_TICKS = 3
 PRICE_MOM_NORM_SCALE = 0.008
+
+# Phase174 fixed trailing-MFE policy params (do not tune per-day).
+TRAILING_MFE_ACTIVATE_PCT = 0.80
+TRAILING_MFE_GIVEBACK_FRAC = 0.50
 
 
 def _normalized_price_momentum(ppm: float) -> float:
@@ -228,6 +236,11 @@ def simulate_structural_policy(
                 return pnl, "vwap_break_exit"
             if peak_pnl > 0 and pnl <= peak_pnl - TRAILING_GIVEBACK_PCT:
                 return pnl, "mfe_giveback_exit"
+        if policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW:
+            # Phase174: stop_hit is already handled above. No momentum/quality/fade exits.
+            # Activate when MFE >= 0.8%, then exit on 50% giveback from peak.
+            if peak_pnl >= TRAILING_MFE_ACTIVATE_PCT and pnl <= peak_pnl * TRAILING_MFE_GIVEBACK_FRAC:
+                return pnl, "trailing_mfe_exit"
         if policy == POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM:
             if q <= peak_q - cfg.take_quality_drop:
                 return pnl, "quality_decay_exit"

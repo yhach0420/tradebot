@@ -77,6 +77,37 @@ EVENT_FIELDS = (
     "intraday_range_pct",
     "trading_value",
     "turnover_proxy",
+    "low_liquidity_shadow_rejected",
+    "low_liquidity_shadow_reason",
+    "low_liquidity_shadow_trading_value",
+    "low_liquidity_shadow_turnover_proxy",
+    "tick_size",
+    "hold_sec",
+    "entry_price",
+    "exit_price",
+    "structural_exit_reason",
+    "peak_mfe_pct",
+    "trailing_mfe_activated",
+    "stop_hit",
+    "session_close",
+    "overlap_replaced_review",
+    "extended_entry_shadow_flag",
+    "extended_entry_shadow_reasons",
+    "entry_rise_5min_pct",
+    "entry_rise_10min_pct",
+    "entry_vwap_dev_pct",
+    "entry_near_day_high_pct",
+    "entry_high_break_recent",
+    "entry_rolling_mfe_pct",
+    "entry_momentum_continuation_score",
+    "high_quality_low_momentum_shadow_flag",
+    "r30_sec",
+    "r60_sec",
+    "r120_sec",
+    "extended_plus_early_adverse_shadow_flag",
+    "vwap_shadow_reject_candidate",
+    "vwap_shadow_reject_reason",
+    "trailing_mfe_exit",
 )
 
 
@@ -294,7 +325,24 @@ def _event_from_gate(
             continue
         if key in trade:
             base[key] = trade.get(key)
-    if not decision.accept:
+    if decision.accept:
+        for key in (
+            "daytrade_suitability_score",
+            "daytrade_suitability_threshold",
+            "atr_pct",
+            "intraday_range_pct",
+            "trading_value",
+            "turnover_proxy",
+            "tick_size",
+            "tick_ratio_pct",
+            "low_liquidity_shadow_rejected",
+            "low_liquidity_shadow_reason",
+            "low_liquidity_shadow_trading_value",
+            "low_liquidity_shadow_turnover_proxy",
+        ):
+            if trade.get(key) not in (None, ""):
+                base[key] = trade.get(key)
+    else:
         base["symbol_cooloff_reason"] = getattr(decision, "symbol_cooloff_reason", "") or ""
         base["prior_avg_pnl"] = getattr(decision, "prior_avg_pnl", None)
         base["prior_trades"] = getattr(decision, "prior_trades", 0) or 0
@@ -334,6 +382,18 @@ def verify_kabu_connection(repo_root: Path, *, symbol_key: str = "9984@1") -> di
     }
 
 
+def _default_extended_shadow_counters() -> Any:
+    from small_paper.extended_entry_shadow import ExtendedEntryShadowCounters
+
+    return ExtendedEntryShadowCounters()
+
+
+def _default_vwap_shadow_counters() -> Any:
+    from small_paper.vwap_shadow_reject import VwapShadowRejectCounters
+
+    return VwapShadowRejectCounters()
+
+
 @dataclass
 class _LiveRunState:
     started_mono: float
@@ -359,6 +419,7 @@ class _LiveRunState:
     symbol_cooloff_reject_count: int = 0
     daytrade_suitability_reject_count: int = 0
     entry_price_risk_guard_reject_count: int = 0
+    low_liquidity_shadow_reject_count: int = 0
     intraday_refresh_done: bool = False
     intraday_refresh_count: int = 0
     intraday_refresh_triggered_count: int = 0
@@ -370,6 +431,9 @@ class _LiveRunState:
     intraday_refresh_csv: str = ""
     intraday_refresh_scheduled_time: str = ""
     outside_refresh_universe_reject_count: int = 0
+    session_momentum_samples: list[float] = field(default_factory=list)
+    extended_entry_shadow: Any = field(default_factory=_default_extended_shadow_counters)
+    vwap_shadow_reject: Any = field(default_factory=_default_vwap_shadow_counters)
 
 
 def _quality_distribution(scores: Sequence[float]) -> dict[str, int]:
@@ -384,6 +448,173 @@ def _quality_distribution(scores: Sequence[float]) -> dict[str, int]:
         else:
             dist["ge_0.75"] += 1
     return dist
+
+
+_SESSION_CLOSE_EXIT_REASONS = frozenset(
+    {"morning_session_close", "afternoon_session_close", "session_end"}
+)
+
+
+def _as_float(val: Any) -> Optional[float]:
+    try:
+        if val is None or val == "":
+            return None
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _infer_exit_policy_shadow(config: SmallPaperPilotConfig) -> str:
+    pol = str(getattr(config, "structural_exit_policy", "") or "")
+    if "trailing_mfe" in pol:
+        return "trailing-mfe"
+    if "fade_hybrid" in pol or "fade-hybrid" in pol:
+        return "fade-hybrid"
+    if "fade_breakdown" in pol or "fade-breakdown" in pol:
+        return "fade-breakdown"
+    return ""
+
+
+def _execution_audit_fields(
+    config: SmallPaperPilotConfig,
+    session_cfg: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "order_enabled": False,
+        "paper_only": True,
+        "shadow_only": bool(getattr(config, "shadow_only", False)),
+        "structural_exit_policy": getattr(config, "structural_exit_policy", "") or "",
+        "low_liquidity_shadow": bool(getattr(config, "low_liquidity_shadow_enabled", False)),
+        "exit_policy_shadow": _infer_exit_policy_shadow(config),
+        "intraday_refresh_enabled": False,
+    }
+    if session_cfg:
+        out["config_path"] = session_cfg.get("config_path", "")
+        out["config_sha256"] = session_cfg.get("config_sha256", "")
+        out["intraday_refresh_enabled"] = bool(session_cfg.get("intraday_refresh_enabled"))
+        if session_cfg.get("universe_mode"):
+            out["universe_mode"] = session_cfg.get("universe_mode")
+        if session_cfg.get("exit_policy_shadow"):
+            out["exit_policy_shadow"] = session_cfg.get("exit_policy_shadow")
+    return out
+
+
+def _enrich_accept_audit_fields(
+    trade: dict[str, Any],
+    *,
+    gate: ExposureGate,
+    current_price: Any = None,
+) -> None:
+    """Phase180: suitability + tick fields on every accepted event."""
+    suit = getattr(gate, "daytrade_suitability", None)
+    if suit is not None:
+        chk = suit.check(trade)
+        if chk.score is not None:
+            trade["daytrade_suitability_score"] = chk.score
+        if chk.threshold is not None:
+            trade["daytrade_suitability_threshold"] = chk.threshold
+        for key in ("atr_pct", "intraday_range_pct", "trading_value", "turnover_proxy"):
+            val = getattr(chk, key, None)
+            if val is not None and trade.get(key) in (None, ""):
+                trade[key] = val
+    if trade.get("daytrade_suitability_score") is None:
+        vls = trade.get("volatility_liquidity_score")
+        if vls is not None:
+            trade["daytrade_suitability_score"] = vls
+    if current_price is not None and trade.get("current_price") in (None, ""):
+        trade["current_price"] = current_price
+    guard = getattr(gate, "entry_price_risk_guard", None)
+    if guard is not None:
+        gr = guard.check(trade)
+        if gr.tick_size_yen:
+            trade["tick_size"] = gr.tick_size_yen
+        if gr.tick_ratio_pct is not None:
+            trade["tick_ratio_pct"] = gr.tick_ratio_pct
+        if gr.current_price and trade.get("current_price") in (None, ""):
+            trade["current_price"] = gr.current_price
+
+
+def _observer_exit_event_row(
+    ev: ObserverJudgmentEvent,
+    *,
+    source: str,
+    message_index: int,
+    profile: str,
+) -> dict[str, Any]:
+    ctx = ev.context
+    reason = str(ctx.get("exit_reason") or "")
+    pnl = ctx.get("realized_pnl_pct", ctx.get("unrealized_pnl_pct"))
+    peak_mfe = ctx.get("peak_mfe_pct", ctx.get("peak_pnl_pct", ctx.get("mfe_pct")))
+    row: dict[str, Any] = {
+        "event_time": _now_iso(),
+        "event_type": "observer_exit",
+        "symbol": ev.symbol,
+        "profile": ctx.get("profile") or profile,
+        "entry_time": ctx.get("entry_time", ""),
+        "exit_time": ctx.get("exit_time", ctx.get("timestamp", "")),
+        "hold_sec": ctx.get("hold_sec", ctx.get("hold_duration_sec")),
+        "entry_price": ctx.get("entry_price"),
+        "exit_price": ctx.get("current_price"),
+        "pnl_pct": pnl,
+        "exit_reason": reason,
+        "structural_exit_reason": ctx.get("structural_exit_reason") or (
+            reason if ctx.get("is_structural_exit") else ""
+        ),
+        "rolling_mfe_pct": ctx.get("rolling_mfe_pct", peak_mfe),
+        "rolling_mae_pct": ctx.get("rolling_mae_pct", ctx.get("mae_pct")),
+        "peak_mfe_pct": peak_mfe,
+        "trailing_mfe_activated": bool(ctx.get("trailing_mfe_activated"))
+        or bool(
+            ctx.get("trailing_mfe_active")
+            or ctx.get("trailing_mfe_threshold_reached")
+            or ctx.get("trailing_mfe_exit_triggered")
+        ),
+        "stop_hit": bool(ctx.get("stop_hit")) or reason == "stop_hit",
+        "session_close": bool(ctx.get("session_close")) or reason in _SESSION_CLOSE_EXIT_REASONS,
+        "overlap_replaced_review": bool(ctx.get("overlap_replaced_review"))
+        or reason == "overlap_replaced_review",
+        "dry_run": True,
+        "source": source,
+        "message_index": message_index,
+        "structural_exit_policy": ctx.get("structural_exit_policy", ""),
+    }
+    for key in EVENT_FIELDS:
+        if key in row:
+            continue
+        if key in ctx and ctx.get(key) not in (None, ""):
+            row[key] = ctx.get(key)
+    return row
+
+
+def _log_and_dispatch_observer_events(
+    events: Sequence[ObserverJudgmentEvent],
+    *,
+    discord: Optional[SmallPaperDiscordNotifier],
+    writer: Optional[LiveSessionWriter] = None,
+    state: Optional["_LiveRunState"] = None,
+    source: str = "",
+    message_index: int = 0,
+    profile: str = "",
+) -> None:
+    for ev in events:
+        if ev.kind == OBSERVER_EXIT:
+            row = _observer_exit_event_row(
+                ev,
+                source=source,
+                message_index=message_index,
+                profile=profile,
+            )
+            if state is not None:
+                state.events.append(row)
+                counters = getattr(state, "extended_entry_shadow", None)
+                if counters is not None:
+                    counters.record_exit(row)
+                vwap_counters = getattr(state, "vwap_shadow_reject", None)
+                if vwap_counters is not None:
+                    vwap_counters.record_exit(row)
+            if writer is not None:
+                writer.append_event(row)
+    _dispatch_observer_events(events, discord=discord)
 
 
 def _dispatch_observer_events(
@@ -405,6 +636,20 @@ def _dispatch_observer_events(
                 discord.notify_exit(context=ev.context)
         except Exception:
             pass
+
+
+def _extended_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "extended_entry_shadow", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
+def _vwap_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "vwap_shadow_reject", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
 
 
 def _record_bucket(state: _LiveRunState, event_type: str) -> None:
@@ -440,6 +685,7 @@ class _PushPipelineContext:
     last_symbol_tick: dict[str, float] = field(default_factory=dict)
     am_pm_policy: Optional[Any] = None
     entry_eligible_symbols: Optional[set[str]] = None
+    symbol_price_ring: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
 
 
 REJECT_OUTSIDE_REFRESH_UNIVERSE = "outside_refresh_universe"
@@ -466,6 +712,16 @@ def _process_push_payload(
     if prev is not None and (now_m - prev) > ctx.gap_threshold_sec:
         ctx.state.data_gap_count += 1
     ctx.last_symbol_tick[sym] = now_m
+
+    from small_paper.extended_entry_shadow import append_price_tick, tick_ts_from_payload
+
+    try:
+        px_tick = float(payload.get("CurrentPrice") or 0)
+    except (TypeError, ValueError):
+        px_tick = 0.0
+    if px_tick > 0:
+        ring = ctx.symbol_price_ring.setdefault(sym, [])
+        append_price_tick(ring, ts=tick_ts_from_payload(payload), px=px_tick)
 
     snapshot = ctx.feature_bridge.update(sym, payload)
     enriched = ctx.feature_bridge.enrich_payload(payload, snapshot)
@@ -504,7 +760,15 @@ def _process_push_payload(
             current_price=float(price) if price is not None else None,
             session_bucket=bucket,
         )
-        _dispatch_observer_events(obs_events, discord=ctx.discord)
+        _log_and_dispatch_observer_events(
+            obs_events,
+            discord=ctx.discord,
+            writer=ctx.writer,
+            state=ctx.state,
+            source=ctx.source,
+            message_index=msg_i,
+            profile=ctx.config.profile,
+        )
     from small_paper.am_pm_session_policy import AmPmSessionPolicy
 
     policy: Optional[AmPmSessionPolicy] = ctx.am_pm_policy
@@ -548,6 +812,60 @@ def _process_push_payload(
     _record_bucket(ctx.state, "candidate")
 
     if decision.accept:
+        # Phase179: low-liquidity shadow-only reject (logging only; do not block accept).
+        ll_shadow = bool(getattr(ctx.config, "low_liquidity_shadow_enabled", False))
+        tv_min = float(getattr(ctx.config, "low_liquidity_shadow_trading_value_min", 1e8) or 1e8)
+        to_min = float(getattr(ctx.config, "low_liquidity_shadow_turnover_proxy_min", 0.002) or 0.002)
+        tv = _as_float(trade.get("trading_value"))
+        to = _as_float(trade.get("turnover_proxy"))
+        ll_rejected = False
+        ll_reason = ""
+        if ll_shadow:
+            if tv is not None and float(tv) < tv_min:
+                ll_rejected = True
+                ll_reason = "trading_value_below_min"
+            if not ll_rejected and to is not None and float(to) < to_min:
+                ll_rejected = True
+                ll_reason = "turnover_proxy_below_min"
+            if ll_rejected:
+                ctx.state.low_liquidity_shadow_reject_count += 1
+        trade["low_liquidity_shadow_rejected"] = bool(ll_rejected)
+        trade["low_liquidity_shadow_reason"] = ll_reason
+        trade["low_liquidity_shadow_trading_value"] = tv
+        trade["low_liquidity_shadow_turnover_proxy"] = to
+        _enrich_accept_audit_fields(
+            trade,
+            gate=ctx.gate,
+            current_price=payload.get("CurrentPrice"),
+        )
+        from small_paper.extended_entry_shadow import compute_entry_shadow_fields
+
+        mom_sample = _as_float(trade.get("momentum_continuation_score"))
+        if mom_sample is not None:
+            ctx.state.session_momentum_samples.append(float(mom_sample))
+        shadow = compute_entry_shadow_fields(
+            trade=trade,
+            payload=payload,
+            price_ring=ctx.symbol_price_ring.get(sym, []),
+            entry_ts=tick_ts_from_payload(payload),
+            session_momentum_samples=ctx.state.session_momentum_samples,
+        )
+        trade.update(shadow)
+        ctx.state.extended_entry_shadow.record_accept(shadow)
+        from small_paper.vwap_shadow_reject import compute_vwap_shadow_reject_fields
+
+        try:
+            entry_px_vwap = float(payload.get("CurrentPrice") or 0)
+        except (TypeError, ValueError):
+            entry_px_vwap = 0.0
+        vwap_shadow = compute_vwap_shadow_reject_fields(
+            payload=payload,
+            entry_px=entry_px_vwap,
+            entry_vwap_dev_pct=shadow.get("entry_vwap_dev_pct"),
+        )
+        trade.update(vwap_shadow)
+        ctx.state.vwap_shadow_reject.record_accept(vwap_shadow)
+
         ctx.gate.record_accepted(trade)
         ctx.state.peak_open_slots = max(ctx.state.peak_open_slots, len(ctx.gate.state.open_slots))
         acc = _event_from_gate(
@@ -584,7 +902,15 @@ def _process_push_payload(
                     current_price=entry_px,
                     session_bucket=bucket,
                 )
-                _dispatch_observer_events(overlap_events, discord=ctx.discord)
+                _log_and_dispatch_observer_events(
+                    overlap_events,
+                    discord=ctx.discord,
+                    writer=ctx.writer,
+                    state=ctx.state,
+                    source=ctx.source,
+                    message_index=msg_i,
+                    profile=ctx.config.profile,
+                )
             if entry_px > 0 and not ctx.observer.has_open(sym):
                 ctx.observer.register_entry(
                     trade=trade,
@@ -879,6 +1205,11 @@ def _build_push_replay_summary(
     base.update(_symbol_cooloff_summary_fields(gate, state))
     base.update(_daytrade_suitability_summary_fields(gate, state))
     base.update(_entry_price_risk_guard_summary_fields(gate, state))
+    base.update(_execution_audit_fields(config))
+    if getattr(config, "low_liquidity_shadow_enabled", False):
+        base["low_liquidity_shadow_reject_count"] = state.low_liquidity_shadow_reject_count
+    base.update(_extended_shadow_summary_fields(state))
+    base.update(_vwap_shadow_summary_fields(state))
     return base
 
 
@@ -1025,7 +1356,15 @@ def run_push_replay_dry_run(
 
     if observer:
         exit_events = observer.close_all(reason="push_replay_end")
-        _dispatch_observer_events(exit_events, discord=discord)
+        _log_and_dispatch_observer_events(
+            exit_events,
+            discord=discord,
+            writer=writer,
+            state=state,
+            source="push-replay",
+            message_index=msg_i,
+            profile=replay_config.profile,
+        )
 
     runtime_sec = time.monotonic() - state.started_mono
     positions = _build_positions_snapshot(state.accepted_rows, gate)
@@ -1146,7 +1485,12 @@ def _build_live_summary(
     summary.update(_symbol_cooloff_summary_fields(gate, state))
     summary.update(_daytrade_suitability_summary_fields(gate, state))
     summary.update(_entry_price_risk_guard_summary_fields(gate, state))
+    summary.update(_execution_audit_fields(config, session_cfg))
+    if getattr(config, "low_liquidity_shadow_enabled", False):
+        summary["low_liquidity_shadow_reject_count"] = state.low_liquidity_shadow_reject_count
     summary.update(_intraday_refresh_summary_fields(state))
+    summary.update(_extended_shadow_summary_fields(state))
+    summary.update(_vwap_shadow_summary_fields(state))
     return summary
 
 
@@ -1180,7 +1524,9 @@ def _early_session_summary(
         "data_gap_count": 0,
         "stale_tick_count": 0,
         "config_sha256": session_cfg.get("config_sha256"),
+        "config_path": session_cfg.get("config_path", ""),
         "note": reason,
+        **_execution_audit_fields(config, session_cfg),
     }
 
 
@@ -1208,6 +1554,8 @@ def run_live_dry_run(
     am_pm_policy: Optional[Any] = None,
     enable_intraday_refresh: bool = False,
     intraday_refresh_csv_path: Optional[str] = None,
+    universe_mode: str = "",
+    exit_policy_shadow: str = "",
 ) -> PilotRunResult:
     """Live PUSH observation with exposure gate (no orders)."""
     import asyncio
@@ -1241,6 +1589,9 @@ def run_live_dry_run(
             heartbeat_sec=heartbeat_sec,
             universe_csv_path=universe_csv_path,
             am_pm_policy=am_pm_policy,
+            universe_mode=universe_mode,
+            exit_policy_shadow=exit_policy_shadow,
+            intraday_refresh_enabled=enable_intraday_refresh,
         )
         output_dir.mkdir(parents=True, exist_ok=True)
         _write_live_session_meta(output_dir, session_cfg=session_cfg, safety_report=safety_report)
@@ -1269,6 +1620,9 @@ def run_live_dry_run(
             heartbeat_sec=heartbeat_sec,
             universe_csv_path=universe_csv_path,
             am_pm_policy=am_pm_policy,
+            universe_mode=universe_mode,
+            exit_policy_shadow=exit_policy_shadow,
+            intraday_refresh_enabled=enable_intraday_refresh,
         )
         output_dir.mkdir(parents=True, exist_ok=True)
         _write_live_session_meta(output_dir, session_cfg=session_cfg, safety_report=safety_report)
@@ -1319,6 +1673,9 @@ def run_live_dry_run(
         heartbeat_sec=heartbeat_sec,
         universe_csv_path=universe_csv_path,
         am_pm_policy=am_pm_policy,
+        universe_mode=universe_mode,
+        exit_policy_shadow=exit_policy_shadow,
+        intraday_refresh_enabled=enable_intraday_refresh,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_live_session_meta(output_dir, session_cfg=session_cfg, safety_report=safety_report)
@@ -1444,20 +1801,50 @@ def run_live_dry_run(
             refresh_time=refresh_hhmm,
         )
         if merge_meta.get("error") == "open_symbols_exceed_cap":
-            _request_stop("open_symbols_exceed_cap")
             state.intraday_refresh_failed_count += 1
+            # Degraded mode: keep existing subscription and continue session.
+            # Do not unregister/all or change symbols when open positions exceed cap.
+            state.intraday_refresh_done = True
             _emit_intraday_refresh_event(
                 "failed",
-                extra={"reason": "open_symbols_exceed_cap", "open_symbols": open_syms, "merge": merge_meta},
+                extra={
+                    "reason": "open_symbols_exceed_cap",
+                    "open_symbols": open_syms,
+                    "merge": merge_meta,
+                    "action": "continue_keep_previous_subscription",
+                    "will_stop": False,
+                },
             )
             return
         specs, reg_meta = merge_register_specs(merged, symbol_meta={})
         if reg_meta.get("error"):
-            _request_stop(str(reg_meta.get("error")))
             state.intraday_refresh_failed_count += 1
+            state.intraday_refresh_done = True
             _emit_intraday_refresh_event(
                 "failed",
-                extra={"reason": str(reg_meta.get("error")), "register": reg_meta, "merge": merge_meta},
+                extra={
+                    "reason": str(reg_meta.get("error")),
+                    "register": reg_meta,
+                    "merge": merge_meta,
+                    "action": "continue_keep_previous_subscription",
+                    "will_stop": False,
+                },
+            )
+            return
+        if not specs:
+            # Safety: never unregister/all or register an empty symbol set.
+            state.intraday_refresh_failed_count += 1
+            state.intraday_refresh_done = True
+            state.intraday_refresh_last_register_count = 0
+            _emit_intraday_refresh_event(
+                "failed",
+                extra={
+                    "reason": "register_count_zero",
+                    "register": reg_meta,
+                    "merge": merge_meta,
+                    "action": "continue_keep_previous_subscription",
+                    "will_stop": False,
+                },
             )
             return
         try:
@@ -1505,7 +1892,16 @@ def run_live_dry_run(
         except Exception as e:
             _log_api_error("intraday_refresh_register", e)
             state.intraday_refresh_failed_count += 1
-            _emit_intraday_refresh_event("failed", extra={"reason": "register_exception", "message": str(e)})
+            state.intraday_refresh_done = True
+            _emit_intraday_refresh_event(
+                "failed",
+                extra={
+                    "reason": "register_exception",
+                    "message": str(e),
+                    "action": "continue_keep_previous_subscription",
+                    "will_stop": False,
+                },
+            )
 
     def _maybe_am_pm_force_close() -> None:
         if am_pm_policy is None or state.session_force_close_done:
@@ -1755,7 +2151,15 @@ def run_live_dry_run(
         if am_pm_policy and not state.session_force_close_done and am_pm_policy.force_close_due():
             final_reason = am_pm_policy.force_close_reason
         exit_events = observer.close_all(reason=final_reason)
-        _dispatch_observer_events(exit_events, discord=discord)
+        _log_and_dispatch_observer_events(
+            exit_events,
+            discord=discord,
+            writer=writer,
+            state=state,
+            source="live",
+            message_index=state.push_messages,
+            profile=config.profile,
+        )
         gate.state.open_slots = []
     summary.update(
         build_session_summary_extras(
@@ -1826,6 +2230,9 @@ def _live_session_cfg(
     heartbeat_sec: float,
     universe_csv_path: Optional[str] = None,
     am_pm_policy: Optional[Any] = None,
+    universe_mode: str = "",
+    exit_policy_shadow: str = "",
+    intraday_refresh_enabled: bool = False,
 ) -> dict[str, Any]:
     from small_paper.config import config_file_sha256
 
@@ -1852,6 +2259,13 @@ def _live_session_cfg(
     }
     if am_pm_policy is not None:
         out["am_pm_session"] = am_pm_policy.to_dict()
+    if universe_mode:
+        out["universe_mode"] = universe_mode
+    if exit_policy_shadow:
+        out["exit_policy_shadow"] = exit_policy_shadow
+    if intraday_refresh_enabled:
+        out["intraday_refresh_enabled"] = True
+    out.update(_execution_audit_fields(config, out))
     return out
 
 

@@ -20,6 +20,12 @@ SHADOW_PILOT_YAML = "kabu_native/configs/small_paper_pilot_q070_cap3_mfe_fav_vol
 ENTRY_GUARD_SHADOW_YAML = (
     "kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_shadow.yaml"
 )
+TRAILING_MFE_SHADOW_YAML = (
+    "kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml"
+)
+TRAILING_MFE_LOW_LIQ_SHADOW_YAML = (
+    "kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_low_liquidity_shadow.yaml"
+)
 FADE_HYBRID_SHADOW_YAML = (
     "kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_fade_hybrid_shadow.yaml"
 )
@@ -28,6 +34,10 @@ FADE_BREAKDOWN_SHADOW_YAML = (
 )
 EXPECTED_POLICY_LABEL = "q070_cap3_mfe_fav_vol_liq_trial"
 ENTRY_GUARD_POLICY_LABEL = "q070_cap3_entry_price_risk_guard_shadow_trial"
+TRAILING_MFE_POLICY_LABEL = "q070_cap3_entry_price_risk_guard_trailing_mfe_shadow_trial"
+TRAILING_MFE_LOW_LIQ_POLICY_LABEL = (
+    "q070_cap3_entry_price_risk_guard_trailing_mfe_low_liquidity_shadow_trial"
+)
 FADE_HYBRID_POLICY_LABEL = "q070_cap3_entry_price_risk_guard_fade_hybrid_shadow_trial"
 FADE_BREAKDOWN_POLICY_LABEL = "q070_cap3_entry_price_risk_guard_fade_breakdown_shadow_trial"
 UNIVERSE_MODE_DEFAULT = "core10-dynamic40"
@@ -66,6 +76,7 @@ class DailyRunnerOptions:
     universe_mode: str = UNIVERSE_MODE_DEFAULT
     enable_intraday_refresh: bool = False
     exit_policy_shadow: str = ""
+    low_liquidity_shadow: bool = False
 
 
 @dataclass
@@ -674,10 +685,23 @@ def verify_config_safety(state: DailyRunnerState) -> dict[str, Any]:
             issues.append(refresh_issue)
 
     if price_risk_mode:
+        trailing_cfg = (
+            TRAILING_MFE_LOW_LIQ_SHADOW_YAML
+            if (exit_shadow == "trailing-mfe" and state.options.low_liquidity_shadow)
+            else TRAILING_MFE_SHADOW_YAML
+        )
         expected_cfg = (
             FADE_HYBRID_SHADOW_YAML
             if exit_shadow == "fade-hybrid"
-            else (FADE_BREAKDOWN_SHADOW_YAML if exit_shadow == "fade-breakdown" else ENTRY_GUARD_SHADOW_YAML)
+            else (
+                trailing_cfg
+                if exit_shadow == "trailing-mfe"
+                else (
+                    FADE_BREAKDOWN_SHADOW_YAML
+                    if exit_shadow == "fade-breakdown"
+                    else ENTRY_GUARD_SHADOW_YAML
+                )
+            )
         )
         if config_rel_norm != expected_cfg:
             msg = (
@@ -694,10 +718,23 @@ def verify_config_safety(state: DailyRunnerState) -> dict[str, Any]:
             else:
                 issues.append("entry_price_risk_guard_not_enabled")
         else:
+            trailing_label = (
+                TRAILING_MFE_LOW_LIQ_POLICY_LABEL
+                if (exit_shadow == "trailing-mfe" and state.options.low_liquidity_shadow)
+                else TRAILING_MFE_POLICY_LABEL
+            )
             expected_label = (
                 FADE_HYBRID_POLICY_LABEL
                 if exit_shadow == "fade-hybrid"
-                else (FADE_BREAKDOWN_POLICY_LABEL if exit_shadow == "fade-breakdown" else ENTRY_GUARD_POLICY_LABEL)
+                else (
+                    trailing_label
+                    if exit_shadow == "trailing-mfe"
+                    else (
+                        FADE_BREAKDOWN_POLICY_LABEL
+                        if exit_shadow == "fade-breakdown"
+                        else ENTRY_GUARD_POLICY_LABEL
+                    )
+                )
             )
             if cfg.policy_label != expected_label:
                 cautions.append(f"expected policy_label={expected_label!r}")
@@ -1205,8 +1242,12 @@ def discover_session_dir(
 
 
 def build_summary_payload(state: DailyRunnerState) -> dict[str, Any]:
+    from small_paper.config import config_file_sha256, load_pilot_config
+
     cfg = (state.preflight or {}).get("config_safety") or {}
     price_risk = is_price_risk_universe_mode(state.options.universe_mode)
+    cfg_path = state.repo_root / state.options.config_rel
+    pilot_cfg = load_pilot_config(cfg_path) if cfg_path.is_file() else None
     payload: dict[str, Any] = {
         "phase": 148,
         "day_stamp": state.options.day_stamp,
@@ -1229,6 +1270,17 @@ def build_summary_payload(state: DailyRunnerState) -> dict[str, Any]:
         "pm_session_warning": state.sessions.get("pm_warning"),
         "universe_mode": state.options.universe_mode,
         "config_rel": state.options.config_rel,
+        "low_liquidity_shadow": state.options.low_liquidity_shadow,
+        "config_path": str(cfg_path) if cfg_path.is_file() else "",
+        "config_sha256": config_file_sha256(cfg_path) if cfg_path.is_file() else "",
+        "exit_policy_shadow": state.options.exit_policy_shadow or "",
+        "intraday_refresh_enabled": bool(state.options.enable_intraday_refresh),
+        "structural_exit_policy": (
+            getattr(pilot_cfg, "structural_exit_policy", "") if pilot_cfg else ""
+        ),
+        "order_enabled": False,
+        "paper_only": True,
+        "shadow_only": bool(getattr(pilot_cfg, "shadow_only", False)) if pilot_cfg else True,
         "price_risk_filter_enabled": price_risk or bool(state.am_prep.get("price_risk_filter_enabled")),
         "entry_price_risk_guard_enabled": bool(cfg.get("entry_price_risk_guard_enabled")),
         "core_price_risk_warnings": state.am_prep.get("core_price_risk_warnings") or [],
@@ -1282,6 +1334,7 @@ def write_outputs(state: DailyRunnerState) -> dict[str, str]:
             "config_rel": state.options.config_rel,
             "universe_mode": state.options.universe_mode,
             "enable_intraday_refresh": state.options.enable_intraday_refresh,
+            "low_liquidity_shadow": state.options.low_liquidity_shadow,
         },
         "verdict": state.verdict,
         "verdict_options": {

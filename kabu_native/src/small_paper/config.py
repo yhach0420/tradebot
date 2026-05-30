@@ -87,6 +87,9 @@ class SmallPaperPilotConfig:
     entry_price_risk_guard_min_entry_price: float = 50.0
     entry_price_risk_guard_max_tick_ratio_pct: float = 5.0
     entry_price_risk_guard_apply_mode: str = "reject_entry"
+    low_liquidity_shadow_enabled: bool = False
+    low_liquidity_shadow_trading_value_min: float = 1e8
+    low_liquidity_shadow_turnover_proxy_min: float = 0.002
     shadow_only: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -131,6 +134,12 @@ class SmallPaperPilotConfig:
             out["entry_price_risk_guard_min_entry_price"] = self.entry_price_risk_guard_min_entry_price
             out["entry_price_risk_guard_max_tick_ratio_pct"] = (
                 self.entry_price_risk_guard_max_tick_ratio_pct
+            )
+        if self.low_liquidity_shadow_enabled:
+            out["low_liquidity_shadow_enabled"] = True
+            out["low_liquidity_shadow_trading_value_min"] = self.low_liquidity_shadow_trading_value_min
+            out["low_liquidity_shadow_turnover_proxy_min"] = (
+                self.low_liquidity_shadow_turnover_proxy_min
             )
         if self.shadow_only:
             out["shadow_only"] = True
@@ -281,6 +290,13 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         ),
         entry_price_risk_guard_apply_mode=str(
             raw.get("entry_price_risk_guard_apply_mode", "reject_entry")
+        ),
+        low_liquidity_shadow_enabled=bool(raw.get("low_liquidity_shadow_enabled", False)),
+        low_liquidity_shadow_trading_value_min=float(
+            raw.get("low_liquidity_shadow_trading_value_min", 1e8)
+        ),
+        low_liquidity_shadow_turnover_proxy_min=float(
+            raw.get("low_liquidity_shadow_turnover_proxy_min", 0.002)
         ),
         shadow_only=bool(raw.get("shadow_only", False)),
         raw=raw,

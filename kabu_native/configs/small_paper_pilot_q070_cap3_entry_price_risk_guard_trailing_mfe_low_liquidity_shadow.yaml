@@ -1,0 +1,84 @@
+# Phase179c: Trailing-MFE shadow + low-liquidity SHADOW logging (not production).
+# Differences from Phase174 trailing_mfe shadow YAML:
+# - enable low_liquidity_shadow_* (logging only; MUST NOT hard-reject)
+
+profile: momentum_volume_v13_combined
+entry_profile: momentum_volume_v2
+
+min_continuation_quality: 0.70
+max_concurrent_positions: 3
+reject_below_quality: true
+
+allowed_trading_windows:
+  - start: "09:05"
+    end: "11:23"
+  - start: "12:33"
+    end: "15:20"
+
+baseline_policy: q070_cap3_entry_price_risk_guard_trailing_mfe_shadow_trial
+policy_label: q070_cap3_entry_price_risk_guard_trailing_mfe_low_liquidity_shadow_trial
+policy_trial: true
+shadow_only: true
+
+# structural EXIT policy unchanged (Phase174)
+structural_exit_policy: combined_structural_exit_v1_trailing_mfe_shadow
+
+entry_price_risk_guard_enabled: true
+entry_price_risk_guard_shadow: true
+entry_price_risk_guard_min_entry_price: 50
+entry_price_risk_guard_max_tick_ratio_pct: 5.0
+entry_price_risk_guard_apply_mode: reject_entry
+
+daytrade_suitability_enabled: true
+daytrade_suitability_rule: volatility_liquidity_top50
+daytrade_suitability_lookback_sessions: prior_only
+daytrade_suitability_apply_mode: reject_entry
+
+# Phase179c: low-liquidity shadow logging only (do NOT block accept)
+low_liquidity_shadow_enabled: true
+low_liquidity_shadow_trading_value_min: 100000000
+low_liquidity_shadow_turnover_proxy_min: 0.002
+
+favorable_mode: mfe_linked
+favorable_mfe_scale: 0.003
+use_market_time_window: true
+
+comparison_note: >
+  Phase179c shadow: low_liquidity_shadow logging only (no hard reject).
+  structural_exit_policy=combined_structural_exit_v1_trailing_mfe_shadow (unchanged).
+  low_liquidity_shadow rule: trading_value>=1e8 and turnover_proxy>=0.002 (log-only).
+
+order_enabled: false
+paper_only: true
+
+discord_enabled: true
+discord_observer_only: true
+discord_send_rejects: false
+
+require_phase43_pass: true
+
+daily_loss_guard_pct: -2.5
+risk_cluster_consecutive_losses: 5
+risk_cluster_block_enabled: true
+daily_loss_guard_enabled: true
+
+dry_run_required: true
+default_source: replay
+max_polls: 1
+poll_interval_sec: 30.0
+
+live:
+  session_start: "09:00"
+  session_end: "15:30"
+  poll_interval_sec: 5.0
+  heartbeat_sec: 300
+  stale_tick_sec: 120
+  max_consecutive_api_errors: 10
+  record_push_jsonl: true
+  duration_sec: 600
+
+output:
+  base_dir: kabu_native/results/small_paper
+
+phase43_diagnosis_glob: kabu_native/results/reports/small_paper_gate_diagnosis_*.json
+

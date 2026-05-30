@@ -22,6 +22,7 @@ from research.continuation_quality_ranking import continuation_components
 from research.research_exit_criteria import _as_float
 from research.structural_exit_policies import (
     POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW,
     POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
     POLICY_STRUCTURAL_OBSERVER_V1,
     STRUCTURE_EXIT_REASONS,
@@ -1353,6 +1354,7 @@ def run_structural_observer_review(
     allowed = (
         POLICY_STRUCTURAL_OBSERVER_V1,
         POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+        POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW,
         POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
         POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_WATCH_SHADOW,
         POLICY_COMBINED_STRUCTURAL_EXIT_V1_TAKE_EXIT_SHADOW,
@@ -1393,6 +1395,19 @@ def run_structural_observer_review(
         )
         v2_metrics = _summarize_structural_trades(v2_trades)
 
+    trailing_mfe_trades: list[StructuralTrade] = []
+    trailing_mfe_log: list[dict[str, Any]] = []
+    trailing_mfe_metrics: dict[str, Any] = {}
+    if structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW:
+        trailing_mfe_trades, trailing_mfe_log = replay_combined_structural_exit(
+            events,
+            pilot_config=pilot_config,
+            poll_interval_sec=interval,
+            session_end=session_end,
+            structural_exit_policy=POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW,
+        )
+        trailing_mfe_metrics = _summarize_structural_trades(trailing_mfe_trades)
+
     baseline_metrics = _summarize_structural_trades(baseline_trades)
     combined_metrics = _summarize_structural_trades(combined_trades)
     legacy = _legacy_virtual_hold_summary(events)
@@ -1401,6 +1416,10 @@ def run_structural_observer_review(
         official_trades = v2_trades
         official_log = v2_log
         official_metrics = v2_metrics
+    elif structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW:
+        official_trades = trailing_mfe_trades
+        official_log = trailing_mfe_log
+        official_metrics = trailing_mfe_metrics
     elif structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1:
         official_trades = combined_trades
         official_log = combined_log

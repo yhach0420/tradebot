@@ -44,6 +44,7 @@ from research.fade_hybrid_shadow import (
  )
 from research.structural_exit_policies import (
     POLICY_COMBINED_STRUCTURAL_EXIT_V1,
+    POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW,
     POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM,
     POLICY_STRUCTURAL_OBSERVER_V1,
     combined_exit_signal_on_latest_tick,
@@ -83,6 +84,7 @@ class ObserverTrackerConfig:
             POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_BREAKDOWN_SHADOW,
             POLICY_COMBINED_STRUCTURAL_EXIT_V1_BREAKDOWN_CONFIRMED_SHADOW,
             POLICY_COMBINED_STRUCTURAL_EXIT_V1_FADE_DISABLE_SHADOW,
+            POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW,
         )
 
 
@@ -111,6 +113,7 @@ class _VirtualPosition:
     trade_virtual_exit_time: Optional[datetime] = None
     virtual_hold_ignore_logged: bool = False
     fade_watch: Optional[FadeWatchState] = None
+    entry_shadow: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -261,6 +264,24 @@ class ObserverPositionTracker:
             last_price=entry_price,
             mae_pnl_pct=0.0,
             trade_virtual_exit_time=trade_vh_ex,
+            entry_shadow={
+                k: trade.get(k)
+                for k in (
+                    "extended_entry_shadow_flag",
+                    "extended_entry_shadow_reasons",
+                    "entry_rise_5min_pct",
+                    "entry_rise_10min_pct",
+                    "entry_vwap_dev_pct",
+                    "entry_near_day_high_pct",
+                    "entry_high_break_recent",
+                    "entry_rolling_mfe_pct",
+                    "entry_momentum_continuation_score",
+                    "high_quality_low_momentum_shadow_flag",
+                    "vwap_shadow_reject_candidate",
+                    "vwap_shadow_reject_reason",
+                )
+                if k in trade
+            },
         )
         self.stats.entry_count += 1
 
@@ -318,6 +339,22 @@ class ObserverPositionTracker:
             "timestamp": now.isoformat(timespec="seconds"),
             "structural_exit_policy": self.cfg.structural_exit_policy,
         }
+        if self.cfg.structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW:
+            peak = float(pos.peak_pnl_pct or 0.0)
+            cur = float(pnl_pct or 0.0)
+            active = peak >= 0.8
+            capture = (cur / peak) if peak > 0 else 0.0
+            base_ctx = {
+                **base_ctx,
+                "trailing_mfe_active": active,
+                "trailing_mfe_threshold_reached": active,
+                "trailing_mfe_peak_pnl": round(peak, 4),
+                "trailing_mfe_current_pnl": round(cur, 4),
+                "trailing_mfe_capture_ratio": round(capture, 4),
+                "trailing_mfe_exit_triggered": False,
+                "trailing_mfe_exit_reason": "",
+                "trailing_mfe_hold_sec": round(hold_sec, 1),
+            }
 
         events: list[ObserverJudgmentEvent] = []
 
@@ -442,6 +479,16 @@ class ObserverPositionTracker:
                         )
                         return events
                     ctx = {**base_ctx, "unrealized_pnl_pct": round(exit_pnl, 4), "current_price": close_px}
+                    if (
+                        self.cfg.structural_exit_policy
+                        == POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW
+                        and reason == "trailing_mfe_exit"
+                    ):
+                        ctx = {
+                            **ctx,
+                            "trailing_mfe_exit_triggered": True,
+                            "trailing_mfe_exit_reason": "giveback_50pct_after_mfe_0p8pct",
+                        }
                     events.append(
                         self._close(
                             pos,
@@ -597,16 +644,54 @@ class ObserverPositionTracker:
                 elif reason == "session_end":
                     self.stats.session_end_exit_count += 1
         comps = ctx.get("components") or {}
+        now = datetime.now(JST)
         full = {
             **dict(ctx),
+            "entry_time": pos.entry_time.isoformat(timespec="seconds"),
+            "exit_time": now.isoformat(timespec="seconds"),
+            "hold_sec": round(hold_sec, 1),
             "exit_reason": reason,
+            "structural_exit_reason": reason if structural else "",
+            "exit_kind": exit_kind,
             "realized_pnl_pct": ctx.get("unrealized_pnl_pct", ctx.get("realized_pnl_pct", 0)),
             "max_favorable": ctx.get("peak_pnl_pct", pos.peak_pnl_pct),
             "max_adverse": ctx.get("mae_pct", pos.mae_pnl_pct),
+            "peak_mfe_pct": round(pos.peak_pnl_pct, 4),
+            "rolling_mfe_pct": round(pos.peak_pnl_pct, 4),
+            "rolling_mae_pct": round(pos.mae_pnl_pct, 4),
             "continuation_breakdown": exit_kind in ("continuation_breakdown", "session_end"),
             "bearish_accumulation": comps.get("bearish_accumulation"),
             "is_structural_exit": structural and is_official_structural_exit_reason(reason),
             "structural_exit_policy": self.cfg.structural_exit_policy,
             "take_was_not_exit": take_was_not_exit,
+            "stop_hit": reason == "stop_hit",
+            "session_close": reason
+            in ("morning_session_close", "afternoon_session_close", "session_end"),
+            "overlap_replaced_review": reason == "overlap_replaced_review",
+            "trailing_mfe_activated": bool(
+                ctx.get("trailing_mfe_active")
+                or ctx.get("trailing_mfe_threshold_reached")
+                or ctx.get("trailing_mfe_exit_triggered")
+            ),
+            "trailing_mfe_exit": reason == "trailing_mfe_exit",
         }
+        pnl_pct = float(full.get("realized_pnl_pct") or ctx.get("unrealized_pnl_pct") or 0.0)
+        full["pnl_pct"] = round(pnl_pct, 4)
+        if pos.entry_shadow:
+            from small_paper.extended_entry_shadow import enrich_exit_shadow_fields
+            from small_paper.vwap_shadow_reject import enrich_exit_vwap_shadow_fields
+
+            exit_shadow = enrich_exit_shadow_fields(
+                pos.entry_shadow,
+                rich_ticks=pos.rich_ticks,
+                entry_price=pos.entry_price,
+                entry_ts=pos.entry_time.timestamp(),
+            )
+            full.update(exit_shadow)
+            vwap_exit = enrich_exit_vwap_shadow_fields(
+                pos.entry_shadow,
+                pnl_pct=pnl_pct,
+                exit_reason=reason,
+            )
+            full.update(vwap_exit)
         return ObserverJudgmentEvent(kind=OBSERVER_EXIT, symbol=pos.symbol, context=full)
