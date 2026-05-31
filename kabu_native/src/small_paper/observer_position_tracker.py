@@ -283,6 +283,9 @@ class ObserverPositionTracker:
                     "entry_imbalance_percentile",
                     "imbalance_shadow_candidate",
                     "imbalance_shadow_tier",
+                    "entry_expectancy_score",
+                    "entry_expectancy_score_ge5_flag",
+                    "entry_expectancy_score_ge6_flag",
                 )
                 if k in trade
             },
@@ -706,4 +709,12 @@ class ObserverPositionTracker:
                 exit_reason=reason,
             )
             full.update(imb_exit)
+            from small_paper.entry_expectancy_score_shadow import enrich_exit_entry_expectancy_fields
+
+            score_exit = enrich_exit_entry_expectancy_fields(
+                pos.entry_shadow,
+                pnl_pct=pnl_pct,
+                exit_reason=reason,
+            )
+            full.update(score_exit)
         return ObserverJudgmentEvent(kind=OBSERVER_EXIT, symbol=pos.symbol, context=full)

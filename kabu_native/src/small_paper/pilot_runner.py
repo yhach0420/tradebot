@@ -117,6 +117,9 @@ EVENT_FIELDS = (
     "entry_imbalance_percentile",
     "imbalance_shadow_candidate",
     "imbalance_shadow_tier",
+    "entry_expectancy_score",
+    "entry_expectancy_score_ge5_flag",
+    "entry_expectancy_score_ge6_flag",
 )
 
 
@@ -409,6 +412,12 @@ def _default_board_imbalance_shadow_counters() -> Any:
     return BoardImbalanceShadowCounters()
 
 
+def _default_entry_expectancy_score_counters() -> Any:
+    from small_paper.entry_expectancy_score_shadow import EntryExpectancyScoreCounters
+
+    return EntryExpectancyScoreCounters()
+
+
 @dataclass
 class _LiveRunState:
     started_mono: float
@@ -451,6 +460,7 @@ class _LiveRunState:
     extended_entry_shadow: Any = field(default_factory=_default_extended_shadow_counters)
     vwap_shadow_reject: Any = field(default_factory=_default_vwap_shadow_counters)
     board_imbalance_shadow: Any = field(default_factory=_default_board_imbalance_shadow_counters)
+    entry_expectancy_score_shadow: Any = field(default_factory=_default_entry_expectancy_score_counters)
 
 
 def _quality_distribution(scores: Sequence[float]) -> dict[str, int]:
@@ -632,6 +642,9 @@ def _log_and_dispatch_observer_events(
                 imb_counters = getattr(state, "board_imbalance_shadow", None)
                 if imb_counters is not None:
                     imb_counters.record_exit(row)
+                score_counters = getattr(state, "entry_expectancy_score_shadow", None)
+                if score_counters is not None:
+                    score_counters.record_exit(row)
             if writer is not None:
                 writer.append_event(row)
     _dispatch_observer_events(events, discord=discord)
@@ -677,6 +690,22 @@ def _board_imbalance_shadow_summary_fields(state: _LiveRunState) -> dict[str, An
     if counters is None:
         return {}
     return counters.summary_fields()
+
+
+def _entry_expectancy_score_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "entry_expectancy_score_shadow", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
+def _apply_entry_expectancy_score_shadow_finalize(
+    state: _LiveRunState,
+    summary: dict[str, Any],
+) -> None:
+    from small_paper.entry_expectancy_score_shadow import finalize_session_entry_expectancy_score
+
+    summary.update(finalize_session_entry_expectancy_score(state.accepted_rows, state.events))
 
 
 def _apply_quality_formula_shadow_finalize(
@@ -933,6 +962,11 @@ def _process_push_payload(
 
         trade.update(compute_shadow_quality_fields(trade))
         trade.update(compute_trading_value_shadow_fields(trade))
+        from small_paper.entry_expectancy_score_shadow import compute_entry_expectancy_score_fields
+
+        score_fields = compute_entry_expectancy_score_fields(trade=trade)
+        trade.update(score_fields)
+        ctx.state.entry_expectancy_score_shadow.record_accept(score_fields)
 
         ctx.gate.record_accepted(trade)
         ctx.state.peak_open_slots = max(ctx.state.peak_open_slots, len(ctx.gate.state.open_slots))
@@ -1279,6 +1313,7 @@ def _build_push_replay_summary(
     base.update(_extended_shadow_summary_fields(state))
     base.update(_vwap_shadow_summary_fields(state))
     base.update(_board_imbalance_shadow_summary_fields(state))
+    base.update(_entry_expectancy_score_summary_fields(state))
     return base
 
 
@@ -1467,6 +1502,7 @@ def run_push_replay_dry_run(
     _apply_quality_formula_shadow_finalize(state, summary)
     _apply_trading_value_shadow_finalize(state, summary)
     _apply_board_imbalance_shadow_finalize(state, summary)
+    _apply_entry_expectancy_score_shadow_finalize(state, summary)
     writer.finalize_batch(
         events=state.events,
         positions=positions,
@@ -1564,6 +1600,7 @@ def _build_live_summary(
     summary.update(_extended_shadow_summary_fields(state))
     summary.update(_vwap_shadow_summary_fields(state))
     summary.update(_board_imbalance_shadow_summary_fields(state))
+    summary.update(_entry_expectancy_score_summary_fields(state))
     return summary
 
 
@@ -2246,6 +2283,7 @@ def run_live_dry_run(
     _apply_quality_formula_shadow_finalize(state, summary)
     _apply_trading_value_shadow_finalize(state, summary)
     _apply_board_imbalance_shadow_finalize(state, summary)
+    _apply_entry_expectancy_score_shadow_finalize(state, summary)
     writer.finalize_batch(
         events=state.events,
         positions=positions,
