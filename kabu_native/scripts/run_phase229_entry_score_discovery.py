@@ -202,7 +202,7 @@ def _fmt_num(val: float, label: str) -> str:
         oku = val / 1e8
         return f"{oku:.1f}億"
     if label in ("RollingMAE", "RollingMFE", "VWAP", "Rise5m", "Rise10m", "TickRatio"):
-        return f"{val:.4f}%"
+        return f"{val * 100:.4f}%"
     if label in ("Board", "Momentum", "Quality"):
         return f"{val:.4f}"
     if label == "Duration":
@@ -223,7 +223,10 @@ def _range_for_bin(label: str, level: str, cuts: dict[str, dict[str, Any]]) -> d
     p33, p66 = info["p33"], info["p66"]
     field = info["field"]
     if level == "low":
-        lo_s, hi_s = "min", _fmt_num(p33, label)
+        if label == "HBCount":
+            lo_s, hi_s = "0", _fmt_num(p33, label)
+        else:
+            lo_s, hi_s = "min", _fmt_num(p33, label)
         lo_v, hi_v = None, p33
     elif level == "mid":
         lo_s, hi_s = _fmt_num(p33, label), _fmt_num(p66, label)

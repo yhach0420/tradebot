@@ -4,9 +4,11 @@
 profile: momentum_volume_v13_combined
 entry_profile: momentum_volume_v2
 
+# Phase267: quality entry reject off; entry_score_v2>=4 gate.
 min_continuation_quality: 0.70
 max_concurrent_positions: 3
-reject_below_quality: true
+reject_below_quality: false
+entry_score_v2_min: 5
 
 allowed_trading_windows:
   - start: "09:05"
@@ -37,7 +39,7 @@ daytrade_suitability_apply_mode: reject_entry
 
 comparison_note: >
   Phase166 shadow: defer fade exits; exit only on breakdown-confirmed (new low / below fade price,
-  pnl<0, momentum<0.15, take未達). Range-hold protect continues. Price-risk + entry guard enabled.
+  pnl<0, momentum<0.15, take未遁E. Range-hold protect continues. Price-risk + entry guard enabled.
 
 order_enabled: false
 paper_only: true

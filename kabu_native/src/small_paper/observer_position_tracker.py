@@ -164,6 +164,31 @@ class ObserverPositionTracker:
     def open_symbols(self) -> list[str]:
         return sorted(sym for sym, p in self._positions.items() if not p.closed)
 
+    def snapshot_open_holdings(self) -> list[dict[str, Any]]:
+        """Read-only unrealized PnL for open virtual positions (Discord UX)."""
+        now = datetime.now(JST)
+        out: list[dict[str, Any]] = []
+        for sym, pos in self._positions.items():
+            if pos.closed or pos.entry_price <= 0:
+                continue
+            px = pos.last_price if pos.last_price > 0 else pos.entry_price
+            pnl = (px - pos.entry_price) / pos.entry_price * 100.0
+            hold_min = max(0.0, (now - pos.entry_time).total_seconds()) / 60.0
+            shadow = pos.entry_shadow or {}
+            v2 = shadow.get("entry_expectancy_score_v2")
+            out.append(
+                {
+                    "symbol": sym,
+                    "symbol_short": sym.replace(".T", ""),
+                    "unrealized_pnl_pct": round(pnl, 2),
+                    "entry_score_v2": v2,
+                    "hold_minutes": round(hold_min, 0),
+                    "entry_price": pos.entry_price,
+                    "current_price": px,
+                }
+            )
+        return sorted(out, key=lambda r: str(r.get("symbol", "")))
+
     def _session_end_datetime(self, entry: datetime) -> datetime:
         from small_paper.session_schedule import parse_hhmm
 
@@ -286,6 +311,9 @@ class ObserverPositionTracker:
                     "entry_expectancy_score",
                     "entry_expectancy_score_ge5_flag",
                     "entry_expectancy_score_ge6_flag",
+                    "entry_expectancy_score_v2",
+                    "entry_expectancy_score_v2_ge5_flag",
+                    "entry_expectancy_score_v2_ge6_flag",
                 )
                 if k in trade
             },

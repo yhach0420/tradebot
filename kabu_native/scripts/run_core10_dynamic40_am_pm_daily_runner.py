@@ -10,9 +10,14 @@ Example (off-market validation)::
     python kabu_native/scripts/run_core10_dynamic40_am_pm_daily_runner.py \\
         --skip-kabu --skip-safety --dry-run-only --day-stamp 20260521
 
-Production day (leave running through PM close)::
+Production day (leave running through PM close; default = price-risk universe)::
 
     python kabu_native/scripts/run_core10_dynamic40_am_pm_daily_runner.py
+
+Legacy universe (vol_liq only, no close>=300 filter)::
+
+    python kabu_native/scripts/run_core10_dynamic40_am_pm_daily_runner.py \\
+        --universe-mode core10-dynamic40
 """
 
 from __future__ import annotations
@@ -45,6 +50,7 @@ def main() -> int:
         ENTRY_GUARD_SHADOW_YAML,
         SHADOW_PILOT_YAML,
         UNIVERSE_MODE_DEFAULT,
+        UNIVERSE_MODE_LEGACY,
         UNIVERSE_MODE_PRICE_RISK,
         DailyRunnerOptions,
         make_state,
@@ -79,10 +85,10 @@ def main() -> int:
     parser.add_argument(
         "--universe-mode",
         default=UNIVERSE_MODE_DEFAULT,
-        choices=[UNIVERSE_MODE_DEFAULT, UNIVERSE_MODE_PRICE_RISK],
+        choices=[UNIVERSE_MODE_LEGACY, UNIVERSE_MODE_PRICE_RISK],
         help=(
-            "core10-dynamic40 (default) or "
-            "core10-dynamic40-price-risk-filter-shadow (Phase154)"
+            f"{UNIVERSE_MODE_PRICE_RISK} (default, Phase269) or "
+            f"{UNIVERSE_MODE_LEGACY} (legacy vol_liq only)"
         ),
     )
     parser.add_argument(
@@ -109,9 +115,9 @@ def main() -> int:
         else datetime.now(JST).strftime("%Y%m%d")
     )
     config_rel = (
-        ENTRY_GUARD_SHADOW_YAML
-        if args.universe_mode == UNIVERSE_MODE_PRICE_RISK
-        else SHADOW_PILOT_YAML
+        SHADOW_PILOT_YAML
+        if args.universe_mode == UNIVERSE_MODE_LEGACY
+        else ENTRY_GUARD_SHADOW_YAML
     )
     if args.exit_policy_shadow == "fade-hybrid":
         from runner.am_pm_daily_runner import FADE_HYBRID_SHADOW_YAML

@@ -13,15 +13,22 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
-from research.exposure_gate import ExposureGate, ExposureGateConfig, run_exposure_gate_simulation
+from research.exposure_gate import (
+    REJECT_MAX_CONCURRENT,
+    ExposureGate,
+    ExposureGateConfig,
+    run_exposure_gate_simulation,
+)
 from research.research_exit_criteria import _load_csv
 from small_paper.config import SmallPaperPilotConfig
 from small_paper.discord_notifier import (
     SmallPaperDiscordNotifier,
     build_session_summary_extras,
     discord_notifier_from_pilot,
+    notify_discord_session_end,
     observer_tracker_config_from_pilot,
 )
+from small_paper.discord_ux_session import DiscordUxSessionStats
 from small_paper.observer_position_tracker import (
     OBSERVER_EXIT,
     OBSERVER_HOLD,
@@ -120,6 +127,11 @@ EVENT_FIELDS = (
     "entry_expectancy_score",
     "entry_expectancy_score_ge5_flag",
     "entry_expectancy_score_ge6_flag",
+    "entry_expectancy_score_v2",
+    "entry_expectancy_score_v2_ge5_flag",
+    "entry_expectancy_score_v2_ge6_flag",
+    "entry_score_v2_threshold",
+    "entry_score_v2_gate_pass",
 )
 
 
@@ -371,6 +383,15 @@ def _event_from_gate(
         trigger = getattr(decision, "entry_price_risk_guard_trigger", "") or ""
         if trigger:
             base["entry_price_risk_guard_trigger"] = trigger
+    v2 = getattr(decision, "entry_expectancy_score_v2", None)
+    if v2 is not None:
+        base["entry_expectancy_score_v2"] = v2
+    thr = getattr(decision, "entry_score_v2_threshold", None)
+    if thr is not None:
+        base["entry_score_v2_threshold"] = thr
+    gp = getattr(decision, "entry_score_v2_gate_pass", None)
+    if gp is not None:
+        base["entry_score_v2_gate_pass"] = gp
     return base
 
 
@@ -461,6 +482,7 @@ class _LiveRunState:
     vwap_shadow_reject: Any = field(default_factory=_default_vwap_shadow_counters)
     board_imbalance_shadow: Any = field(default_factory=_default_board_imbalance_shadow_counters)
     entry_expectancy_score_shadow: Any = field(default_factory=_default_entry_expectancy_score_counters)
+    discord_ux: DiscordUxSessionStats = field(default_factory=DiscordUxSessionStats)
 
 
 def _quality_distribution(scores: Sequence[float]) -> dict[str, int]:
@@ -774,6 +796,16 @@ class _PushPipelineContext:
 REJECT_OUTSIDE_REFRESH_UNIVERSE = "outside_refresh_universe"
 
 
+def _record_score5_ordinal(ctx: _PushPipelineContext, trade: Mapping[str, Any]) -> Optional[int]:
+    raw = trade.get("entry_expectancy_score_v2")
+    try:
+        if raw is not None and int(raw) >= 5:
+            return ctx.state.discord_ux.record_score5_candidate()
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
 def _process_push_payload(
     ctx: _PushPipelineContext,
     payload: Mapping[str, Any],
@@ -879,6 +911,9 @@ def _process_push_payload(
             quality_tier="",
         )
     else:
+        from small_paper.entry_expectancy_score_shadow import compute_entry_expectancy_score_fields
+
+        trade.update(compute_entry_expectancy_score_fields(trade=trade))
         decision = ctx.gate.evaluate_entry(trade)
     ctx.state.gate_evaluations += 1
 
@@ -893,6 +928,7 @@ def _process_push_payload(
     ctx.state.events.append(cand)
     ctx.writer.append_event(cand)
     _record_bucket(ctx.state, "candidate")
+    score5_ord = _record_score5_ordinal(ctx, trade)
 
     if decision.accept:
         # Phase179: low-liquidity shadow-only reject (logging only; do not block accept).
@@ -1026,6 +1062,8 @@ def _process_push_payload(
                 payload=enriched,
                 open_slots=len(ctx.gate.state.open_slots),
                 session_bucket=bucket,
+                score5_candidate_ordinal=score5_ord,
+                ux_stats=ctx.state.discord_ux,
             )
     else:
         rej_row = dict(trade)
@@ -1104,12 +1142,47 @@ def _process_push_payload(
         ctx.writer.append_event(rej)
         _record_bucket(ctx.state, "rejected")
         if ctx.discord and ctx.discord.active:
-            ctx.discord.notify_rejected(
-                event=rej,
-                payload=enriched,
-                open_slots=len(ctx.gate.state.open_slots),
-                session_bucket=session_bucket(),
-            )
+            if decision.reason == REJECT_MAX_CONCURRENT:
+                try:
+                    v2 = int(trade.get("entry_expectancy_score_v2") or 0)
+                    if v2 >= 5:
+                        ctx.state.discord_ux.record_score5_deferred_reject(
+                            symbol=sym,
+                            entry_score_v2=v2,
+                        )
+                except (TypeError, ValueError):
+                    pass
+                from small_paper.extended_entry_shadow import (
+                    compute_entry_shadow_fields,
+                    tick_ts_from_payload,
+                )
+
+                shadow = compute_entry_shadow_fields(
+                    trade=trade,
+                    payload=payload,
+                    price_ring=ctx.symbol_price_ring.get(sym, []),
+                    entry_ts=tick_ts_from_payload(payload),
+                    session_momentum_samples=ctx.state.session_momentum_samples,
+                )
+                holdings: list[dict[str, Any]] = []
+                if ctx.observer is not None:
+                    holdings = ctx.observer.snapshot_open_holdings()
+                ctx.discord.notify_entry_deferred_max_concurrent(
+                    event=rej,
+                    payload=enriched,
+                    trade_data={**trade, **shadow},
+                    open_slots=len(ctx.gate.state.open_slots),
+                    open_positions=holdings,
+                    score5_candidate_ordinal=score5_ord,
+                    ux_stats=ctx.state.discord_ux,
+                )
+            else:
+                ctx.discord.notify_rejected(
+                    event=rej,
+                    payload=enriched,
+                    open_slots=len(ctx.gate.state.open_slots),
+                    session_bucket=session_bucket(),
+                )
 
 
 def _quality_ge_0_55_count(scores: Sequence[float]) -> int:
@@ -1497,7 +1570,13 @@ def run_push_replay_dry_run(
                 observer_stats=_observer_stats_dict(observer),
             )
         )
-        discord.notify_session_summary(summary=summary)
+        notify_discord_session_end(
+            discord,
+            events=state.events,
+            summary=summary,
+            reject_rows=state.reject_rows,
+            ux_stats=state.discord_ux,
+        )
 
     _apply_quality_formula_shadow_finalize(state, summary)
     _apply_trading_value_shadow_finalize(state, summary)
@@ -1856,6 +1935,22 @@ def run_live_dry_run(
                 **dict(extra),
             }
         )
+        if discord and discord.active and event == "completed":
+            kind = getattr(am_pm_policy, "kind", "am") if am_pm_policy else "am"
+            session_label = "PM" if str(kind).lower() == "pm" else "AM"
+            added = extra.get("added_symbols") or []
+            removed = extra.get("removed_symbols") or []
+            watch_syms = [str(s) for s in (extra.get("after_symbols") or [])]
+            if not watch_syms and pipeline_ctx and pipeline_ctx.entry_eligible_symbols:
+                watch_syms = sorted(pipeline_ctx.entry_eligible_symbols)
+            discord.notify_universe_refresh(
+                session_label=session_label,
+                refresh_time=refresh_hhmm,
+                added_symbols=added,
+                removed_symbols=removed,
+                watch_symbols=watch_syms,
+                status="completed",
+            )
 
     def _maybe_intraday_refresh() -> None:
         nonlocal sym_specs, code_to_symbol, push, token
@@ -1875,11 +1970,13 @@ def run_live_dry_run(
             if pipeline_ctx.entry_eligible_symbols is not None
             else []
         )
+        open_syms = observer.open_symbols() if observer else []
         _emit_intraday_refresh_event(
             "started",
             extra={
                 "before_symbol_count": len(before_syms) or len(sym_specs),
-                "open_symbols_count": len(observer.open_symbols()) if observer else 0,
+                "open_symbols_count": len(open_syms),
+                "open_symbols_count_log": len(open_syms),
             },
         )
         refresh_path = Path(intraday_refresh_csv_path)
@@ -1888,7 +1985,18 @@ def run_live_dry_run(
             state.intraday_refresh_failed_count += 1
             _emit_intraday_refresh_event(
                 "failed",
-                extra={"reason": "refresh_csv_missing", "path": str(refresh_path)},
+                extra={
+                    "reason": "refresh_csv_missing",
+                    "path": str(refresh_path),
+                    "open_symbols_count": len(open_syms),
+                    "refresh_csv_rows": 0,
+                    "carried_open_symbols_count": 0,
+                    "refresh_symbols_added_count": 0,
+                    "final_register_count": 0,
+                    "register_called": False,
+                    "register_success": False,
+                    "fallback_reason": "refresh_csv_missing",
+                },
             )
             return
         import csv
@@ -1900,7 +2008,7 @@ def run_live_dry_run(
         from universe.am_pm_universe import _norm
 
         base_rows = [dict(r) for r in csv.DictReader(refresh_path.open(encoding="utf-8"))]
-        open_syms = observer.open_symbols() if observer else []
+        refresh_csv_rows = len(base_rows)
         session_kind = getattr(am_pm_policy, "kind", "am") if am_pm_policy else "am"
         merged, merge_meta = merge_universe_with_open_symbols(
             base_rows,
@@ -1921,6 +2029,14 @@ def run_live_dry_run(
                     "reason": "open_symbols_exceed_cap",
                     "open_symbols": open_syms,
                     "merge": merge_meta,
+                    "open_symbols_count": int(merge_meta.get("open_symbols_count") or len(open_syms)),
+                    "refresh_csv_rows": refresh_csv_rows,
+                    "carried_open_symbols_count": int(merge_meta.get("carried_open_symbols_count") or 0),
+                    "refresh_symbols_added_count": int(merge_meta.get("refresh_symbols_added_count") or 0),
+                    "final_register_count": int(merge_meta.get("final_register_count") or 0),
+                    "register_called": False,
+                    "register_success": False,
+                    "fallback_reason": "open_symbols_exceed_cap",
                     "action": "continue_keep_previous_subscription",
                     "will_stop": False,
                 },
@@ -1936,6 +2052,14 @@ def run_live_dry_run(
                     "reason": str(reg_meta.get("error")),
                     "register": reg_meta,
                     "merge": merge_meta,
+                    "open_symbols_count": int(merge_meta.get("open_symbols_count") or len(open_syms)),
+                    "refresh_csv_rows": refresh_csv_rows,
+                    "carried_open_symbols_count": int(merge_meta.get("carried_open_symbols_count") or 0),
+                    "refresh_symbols_added_count": int(merge_meta.get("refresh_symbols_added_count") or 0),
+                    "final_register_count": int(merge_meta.get("final_register_count") or 0),
+                    "register_called": False,
+                    "register_success": False,
+                    "fallback_reason": str(reg_meta.get("error")),
                     "action": "continue_keep_previous_subscription",
                     "will_stop": False,
                 },
@@ -1952,6 +2076,14 @@ def run_live_dry_run(
                     "reason": "register_count_zero",
                     "register": reg_meta,
                     "merge": merge_meta,
+                    "open_symbols_count": int(merge_meta.get("open_symbols_count") or len(open_syms)),
+                    "refresh_csv_rows": refresh_csv_rows,
+                    "carried_open_symbols_count": int(merge_meta.get("carried_open_symbols_count") or 0),
+                    "refresh_symbols_added_count": int(merge_meta.get("refresh_symbols_added_count") or 0),
+                    "final_register_count": int(merge_meta.get("final_register_count") or 0),
+                    "register_called": False,
+                    "register_success": False,
+                    "fallback_reason": "register_count_zero",
                     "action": "continue_keep_previous_subscription",
                     "will_stop": False,
                 },
@@ -1959,7 +2091,8 @@ def run_live_dry_run(
             return
         try:
             from api.kabu_register import register_symbols_cleared
-
+            # Phase242b logs
+            register_called = True
             register_symbols_cleared(push, specs)
             code_to_symbol.clear()
             for row in merged:
@@ -1994,9 +2127,17 @@ def run_live_dry_run(
                     "register_count": reg_meta.get("register_count"),
                     "open_symbols": open_syms,
                     "open_symbols_count": len(open_syms),
+                    "refresh_csv_rows": refresh_csv_rows,
+                    "carried_open_symbols_count": int(merge_meta.get("carried_open_symbols_count") or 0),
+                    "refresh_symbols_added_count": int(merge_meta.get("refresh_symbols_added_count") or 0),
+                    "final_register_count": int(merge_meta.get("final_register_count") or 0),
+                    "register_called": True,
+                    "register_success": True,
+                    "fallback_reason": merge_meta.get("fallback_reason") or "",
                     "merge": merge_meta,
                     "added_symbols": added[:200],
                     "removed_symbols": removed[:200],
+                    "after_symbols": after_syms[:200],
                 },
             )
         except Exception as e:
@@ -2008,6 +2149,14 @@ def run_live_dry_run(
                 extra={
                     "reason": "register_exception",
                     "message": str(e),
+                    "open_symbols_count": int(merge_meta.get("open_symbols_count") or len(open_syms)),
+                    "refresh_csv_rows": refresh_csv_rows,
+                    "carried_open_symbols_count": int(merge_meta.get("carried_open_symbols_count") or 0),
+                    "refresh_symbols_added_count": int(merge_meta.get("refresh_symbols_added_count") or 0),
+                    "final_register_count": int(merge_meta.get("final_register_count") or 0),
+                    "register_called": True,
+                    "register_success": False,
+                    "fallback_reason": "register_exception",
                     "action": "continue_keep_previous_subscription",
                     "will_stop": False,
                 },
@@ -2278,8 +2427,21 @@ def run_live_dry_run(
             observer_stats=_observer_stats_dict(observer),
         )
     )
-    if discord and discord.active:
-        discord.notify_session_summary(summary=summary)
+    monitored_n: Optional[int] = None
+    if state.intraday_refresh_last_register_count:
+        monitored_n = int(state.intraday_refresh_last_register_count)
+    elif pipeline_ctx and pipeline_ctx.entry_eligible_symbols is not None:
+        monitored_n = len(pipeline_ctx.entry_eligible_symbols)
+    else:
+        monitored_n = len(symbols)
+    notify_discord_session_end(
+        discord,
+        events=state.events,
+        summary=summary,
+        monitored_symbol_count=monitored_n,
+        reject_rows=state.reject_rows,
+        ux_stats=state.discord_ux,
+    )
     _apply_quality_formula_shadow_finalize(state, summary)
     _apply_trading_value_shadow_finalize(state, summary)
     _apply_board_imbalance_shadow_finalize(state, summary)

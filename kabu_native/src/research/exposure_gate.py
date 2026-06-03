@@ -14,6 +14,7 @@ from research.continuation_quality_ranking import continuation_quality_score
 from research.research_exit_criteria import _as_float
 
 REJECT_LOW_QUALITY = "low_quality"
+REJECT_ENTRY_SCORE_V2_BELOW = "entry_score_v2_below_threshold"
 REJECT_MAX_CONCURRENT = "max_concurrent"
 REJECT_RISK_CLUSTER = "risk_cluster_block"
 REJECT_DAILY_LOSS = "daily_loss_guard"
@@ -56,6 +57,7 @@ class ExposureGateConfig:
     risk_cluster_consecutive_losses: int = 5
     min_above_median_quality: float = 0.42
     allowed_trading_windows: tuple[tuple[str, str], ...] = ()
+    entry_score_v2_min: int = 0
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "ExposureGateConfig":
@@ -65,6 +67,7 @@ class ExposureGateConfig:
             min_continuation_quality=float(data.get("min_continuation_quality", 0.55)),
             max_concurrent_positions=int(data.get("max_concurrent_positions", 3)),
             reject_below_quality=bool(data.get("reject_below_quality", True)),
+            entry_score_v2_min=int(data.get("entry_score_v2_min", 0) or 0),
             low_quality_log_only=bool(data.get("low_quality_log_only", True)),
             order_enabled=bool(data.get("order_enabled", False)),
             discord_enabled=bool(data.get("discord_enabled", False)),
@@ -106,6 +109,28 @@ class GateDecision:
     entry_price_risk_guard_price: Optional[float] = None
     entry_price_risk_guard_shadow_missing_price_bypassed: bool = False
     entry_price_risk_guard_universe_close_price_used: bool = False
+    entry_expectancy_score_v2: Optional[int] = None
+    entry_score_v2_threshold: Optional[int] = None
+    entry_score_v2_gate_pass: Optional[bool] = None
+
+
+def _entry_score_v2_fields(trade: Mapping[str, Any]) -> dict[str, Any]:
+    from small_paper.entry_expectancy_score_shadow import compute_entry_expectancy_score_fields
+
+    return compute_entry_expectancy_score_fields(trade=trade)
+
+
+def _entry_score_v2_int(trade: Mapping[str, Any]) -> Optional[int]:
+    raw = trade.get("entry_expectancy_score_v2")
+    if raw is None or raw == "":
+        fields = _entry_score_v2_fields(trade)
+        raw = fields.get("entry_expectancy_score_v2")
+    try:
+        if raw is None or raw == "":
+            return None
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 class ExposureGate:
@@ -233,7 +258,25 @@ class ExposureGate:
         )
         day = str(trade.get("trade_date", ""))[:10]
 
-        if self.config.reject_below_quality and q < self.config.min_continuation_quality:
+        v2_threshold = int(self.config.entry_score_v2_min or 0)
+        v2_score = _entry_score_v2_int(trade)
+        v2_pass = v2_score is not None and v2_score >= v2_threshold
+        v2_ctx = {
+            "entry_expectancy_score_v2": v2_score,
+            "entry_score_v2_threshold": v2_threshold if v2_threshold > 0 else None,
+            "entry_score_v2_gate_pass": v2_pass if v2_threshold > 0 else None,
+        }
+
+        if v2_threshold > 0:
+            if not v2_pass:
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_ENTRY_SCORE_V2_BELOW,
+                    continuation_quality_score=q,
+                    quality_tier=tier,
+                    **v2_ctx,
+                )
+        elif self.config.reject_below_quality and q < self.config.min_continuation_quality:
             return GateDecision(
                 accept=False,
                 reason=REJECT_LOW_QUALITY,
@@ -247,6 +290,7 @@ class ExposureGate:
                 reason=REJECT_RISK_CLUSTER,
                 continuation_quality_score=q,
                 quality_tier=tier,
+                **v2_ctx,
             )
 
         if day and self.state.day_pnl.get(day, 0.0) <= self.config.daily_loss_guard_pct:
@@ -255,6 +299,7 @@ class ExposureGate:
                 reason=REJECT_DAILY_LOSS,
                 continuation_quality_score=q,
                 quality_tier=tier,
+                **v2_ctx,
             )
 
         ent = _parse_ts(str(trade.get("entry_time") or ""))
@@ -268,6 +313,7 @@ class ExposureGate:
                 reason=REJECT_MAX_CONCURRENT,
                 continuation_quality_score=q,
                 quality_tier=tier,
+                **v2_ctx,
             )
 
         return GateDecision(
@@ -275,6 +321,7 @@ class ExposureGate:
             reason="",
             continuation_quality_score=q,
             quality_tier=tier,
+            **v2_ctx,
         )
 
     def record_accepted(self, trade: Mapping[str, Any]) -> None:

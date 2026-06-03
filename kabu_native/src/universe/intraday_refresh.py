@@ -108,7 +108,9 @@ def merge_universe_with_open_symbols(
         "duplicate_count": 0,
         "carried_count": 0,
     }
-    if len(open_set) > MAX_OPEN_SYMBOLS_CAP3:
+    # Phase242b: keep ALL open symbols, but never exceed TOTAL_SLOTS.
+    # If open positions exceed TOTAL_SLOTS, refresh cannot proceed without dropping open symbols (forbidden).
+    if len(open_set) > TOTAL_SLOTS:
         meta["error"] = "open_symbols_exceed_cap"
         return [], meta
 
@@ -134,13 +136,17 @@ def merge_universe_with_open_symbols(
         seen.add(sym)
         meta["carried_count"] += 1
 
+    refresh_symbols_added_count = 0
+
     core_rows = [dict(by_sym[s]) for s in by_sym if by_sym[s].get("universe_slot") == "core" and s not in seen]
     for row in core_rows:
         sym = _row_symbol(row)
         row["refresh_time"] = refresh_time
         row["is_open_position_carried"] = "false"
-        out.append(row)
-        seen.add(sym)
+        if len(out) < TOTAL_SLOTS:
+            out.append(row)
+            seen.add(sym)
+            refresh_symbols_added_count += 1
 
     dyn_rows = [dict(by_sym[s]) for s in by_sym if by_sym[s].get("universe_slot") != "core" and s not in seen]
     for row in dyn_rows:
@@ -150,17 +156,23 @@ def merge_universe_with_open_symbols(
             continue
         row["refresh_time"] = refresh_time
         row["is_open_position_carried"] = "false"
-        out.append(row)
-        seen.add(sym)
-
-    if len(out) > TOTAL_SLOTS:
-        meta["error"] = "register_count_over_50"
-        return out[:TOTAL_SLOTS], meta
+        if len(out) < TOTAL_SLOTS:
+            out.append(row)
+            seen.add(sym)
+            refresh_symbols_added_count += 1
+        else:
+            # Hard cap reached: silently trim refresh universe (Phase242b expected behavior).
+            break
 
     for i, row in enumerate(out[:TOTAL_SLOTS], start=1):
         row["rank"] = str(i)
     meta["total_count"] = len(out[:TOTAL_SLOTS])
     meta["register_count_ok"] = len(out[:TOTAL_SLOTS]) <= TOTAL_SLOTS
+    meta["carried_open_symbols_count"] = meta.get("carried_count", 0)
+    meta["refresh_symbols_added_count"] = refresh_symbols_added_count
+    meta["final_register_count"] = len(out[:TOTAL_SLOTS])
+    if meta.get("carried_open_symbols_count", 0) <= TOTAL_SLOTS and len(by_sym) > TOTAL_SLOTS:
+        meta["fallback_reason"] = "trim_refresh_to_fit_cap"
     return out[:TOTAL_SLOTS], meta
 
 

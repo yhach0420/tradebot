@@ -40,8 +40,9 @@ TRAILING_MFE_LOW_LIQ_POLICY_LABEL = (
 )
 FADE_HYBRID_POLICY_LABEL = "q070_cap3_entry_price_risk_guard_fade_hybrid_shadow_trial"
 FADE_BREAKDOWN_POLICY_LABEL = "q070_cap3_entry_price_risk_guard_fade_breakdown_shadow_trial"
-UNIVERSE_MODE_DEFAULT = "core10-dynamic40"
+UNIVERSE_MODE_LEGACY = "core10-dynamic40"
 UNIVERSE_MODE_PRICE_RISK = "core10-dynamic40-price-risk-filter-shadow"
+UNIVERSE_MODE_DEFAULT = UNIVERSE_MODE_PRICE_RISK
 FOCUS_SYMBOL_5856 = "5856.T"
 FOCUS_SYMBOL_4392 = "4392.T"
 REPORTS_REL = "kabu_native/results/reports"
@@ -72,7 +73,7 @@ class DailyRunnerOptions:
     dry_run_only: bool = False
     poll_interval_sec: float = 5.0
     generate_features: bool = True
-    config_rel: str = SHADOW_PILOT_YAML
+    config_rel: str = ENTRY_GUARD_SHADOW_YAML
     universe_mode: str = UNIVERSE_MODE_DEFAULT
     enable_intraday_refresh: bool = False
     exit_policy_shadow: str = ""
@@ -986,7 +987,7 @@ def build_commands_json(state: DailyRunnerState) -> dict[str, Any]:
         base = shadow_live_commands(am_csv_rel=am_rel, pm_csv_rel=pm_rel)
 
     runner_flags = f"--day-stamp {day} --universe-mode {mode}"
-    if mode != UNIVERSE_MODE_DEFAULT:
+    if mode == UNIVERSE_MODE_LEGACY:
         runner_flags += f" --config {state.options.config_rel}"
     if state.options.enable_intraday_refresh:
         runner_flags += " --enable-intraday-refresh"

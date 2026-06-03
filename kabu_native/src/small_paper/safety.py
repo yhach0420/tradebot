@@ -357,6 +357,7 @@ def check_discord_notifier_no_orders() -> SafetyCheck:
 
 
 _SMALL_PAPER_DISCORD_WEBHOOK_ENV = "KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL"
+_SMALL_PAPER_NOTIFY_WEBHOOK_ENV = "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL"
 
 
 def check_discord_webhook_env(config: SmallPaperPilotConfig) -> SafetyCheck:
@@ -365,26 +366,44 @@ def check_discord_webhook_env(config: SmallPaperPilotConfig) -> SafetyCheck:
     if not config.discord_enabled:
         return SafetyCheck("discord_webhook_env", True, "discord disabled", {})
     env_name = (config.discord_webhook_env or _SMALL_PAPER_DISCORD_WEBHOOK_ENV).strip()
+    notify_env = (
+        getattr(config, "discord_trade_notify_webhook_env", None)
+        or _SMALL_PAPER_NOTIFY_WEBHOOK_ENV
+    ).strip()
     cfg_ok = env_name == _SMALL_PAPER_DISCORD_WEBHOOK_ENV
-    url = (os.environ.get(env_name) or "").strip()
-    ok = cfg_ok and bool(url)
+    legacy_url = (os.environ.get(env_name) or "").strip()
+    notify_url = (os.environ.get(notify_env) or "").strip()
+    ok = cfg_ok and bool(legacy_url or notify_url)
     if not cfg_ok:
         msg = (
             f"discord_webhook_env must be {_SMALL_PAPER_DISCORD_WEBHOOK_ENV} "
             f"(got {env_name!r}; do not share KABU_SHADOW / Yahoo webhooks)"
         )
-    elif not url:
+    elif not legacy_url and not notify_url:
         msg = (
-            f"{_SMALL_PAPER_DISCORD_WEBHOOK_ENV} missing — load repo-root .env via "
-            "load_pilot_environment(repo_root) before safety"
+            f"{_SMALL_PAPER_DISCORD_WEBHOOK_ENV} or {notify_env} required — "
+            "load repo-root .env via load_pilot_environment(repo_root) before safety"
+        )
+    elif legacy_url and notify_url:
+        msg = f"{_SMALL_PAPER_DISCORD_WEBHOOK_ENV} and {notify_env} are set (split channels)"
+    elif notify_url:
+        msg = (
+            f"{notify_env} is set; {env_name} missing — trade notify OK, "
+            "HEARTBEAT/HOLD use legacy env or fallback"
         )
     else:
-        msg = f"{_SMALL_PAPER_DISCORD_WEBHOOK_ENV} is set"
+        msg = f"{_SMALL_PAPER_DISCORD_WEBHOOK_ENV} is set (trade notify falls back to same URL)"
     return SafetyCheck(
         "discord_webhook_env",
         ok,
         msg,
-        {"webhook_env": env_name, "expected_env": _SMALL_PAPER_DISCORD_WEBHOOK_ENV},
+        {
+            "webhook_env": env_name,
+            "trade_notify_webhook_env": notify_env,
+            "legacy_set": bool(legacy_url),
+            "notify_set": bool(notify_url),
+            "expected_env": _SMALL_PAPER_DISCORD_WEBHOOK_ENV,
+        },
     )
 
 

@@ -5,9 +5,11 @@
 profile: momentum_volume_v13_combined
 entry_profile: momentum_volume_v2
 
+# Phase267: quality entry reject off; entry_score_v2>=4 gate.
 min_continuation_quality: 0.70
 max_concurrent_positions: 3
-reject_below_quality: true
+reject_below_quality: false
+entry_score_v2_min: 5
 
 allowed_trading_windows:
   - start: "09:05"
@@ -31,6 +33,8 @@ discord_observer_only: true
 discord_send_rejects: false
 discord_heartbeat_min: 30
 discord_webhook_env: KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL
+# Trade notify channel (ENTRY/EXIT/Refresh/Summary); .env KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL
+discord_trade_notify_webhook_env: KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL
 discord_hold_min: 15
 discord_hold_quality_delta: 0.03
 discord_take_quality_drop: 0.08

@@ -19,12 +19,14 @@ class TestPhase230EntryExpectancyScoreShadow(unittest.TestCase):
         pilot_src = (
             Path(__file__).resolve().parents[1] / "src" / "small_paper" / "pilot_runner.py"
         ).read_text(encoding="utf-8")
-        for key in SHADOW_FIELD_KEYS:
+        from small_paper.entry_expectancy_score_shadow import ALL_SHADOW_FIELD_KEYS
+
+        for key in ALL_SHADOW_FIELD_KEYS:
             self.assertIn(f'"{key}"', pilot_src)
 
     def test_score_map_matches_phase229(self) -> None:
         self.assertEqual(SCORE_POINTS["HBRecent:no"], 2)
-        self.assertEqual(SCORE_POINTS["RollingMAE:mid"], 2)
+        self.assertEqual(SCORE_POINTS["RollingMAE:mid"], 0)
         self.assertEqual(SCORE_POINTS["TV:mid"], 1)
         self.assertAlmostEqual(TERTILE_CUTOFFS["TV"]["p33"], 12851022500.0)
 
@@ -39,7 +41,7 @@ class TestPhase230EntryExpectancyScoreShadow(unittest.TestCase):
             "current_price": 5000.0,
         }
         fields = compute_entry_expectancy_score_fields(trade=trade)
-        self.assertEqual(fields["entry_expectancy_score"], 10)
+        self.assertEqual(fields["entry_expectancy_score"], 8)
         self.assertTrue(fields["entry_expectancy_score_ge5_flag"])
         self.assertTrue(fields["entry_expectancy_score_ge6_flag"])
 

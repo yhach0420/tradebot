@@ -10,7 +10,7 @@ from research.low_price_risk_review import jpx_tick_size_yen, tick_ratio_pct
 
 UNIVERSE_MODE = "core10-dynamic40-price-risk-filter-shadow"
 
-MIN_CLOSE_PRICE = 50.0
+MIN_CLOSE_PRICE = 300.0
 MAX_TICK_RATIO_PCT = 5.0
 
 DYNAMIC_SELECTED_REASON = "vol_liq_dynamic40_price_risk_filtered"

@@ -1,6 +1,8 @@
 """
 Phase230: Entry expectancy score shadow (logging only; no hard reject).
 
+Phase237/250: v1 SCORE_POINTS RollingMAE:mid=0 (Phase236 B). v2 shadow列は mid キー除外で同等。
+
 Fixed Phase229 tertile cutoffs and score weights — not tuned per session.
 """
 
@@ -17,6 +19,14 @@ SHADOW_FIELD_KEYS = (
     "entry_expectancy_score_ge6_flag",
 )
 
+SHADOW_FIELD_KEYS_V2 = (
+    "entry_expectancy_score_v2",
+    "entry_expectancy_score_v2_ge5_flag",
+    "entry_expectancy_score_v2_ge6_flag",
+)
+
+ALL_SHADOW_FIELD_KEYS = SHADOW_FIELD_KEYS + SHADOW_FIELD_KEYS_V2
+
 SUMMARY_FIELD_KEYS = (
     "entry_expectancy_score_shadow_enabled",
     "score5_count",
@@ -25,6 +35,16 @@ SUMMARY_FIELD_KEYS = (
     "score6_count",
     "score6_pf",
     "score6_pnl",
+)
+
+SUMMARY_FIELD_KEYS_V2 = (
+    "phase237_entry_expectancy_score_v2_shadow",
+    "score5_v2_count",
+    "score5_v2_pf",
+    "score5_v2_pnl",
+    "score6_v2_count",
+    "score6_v2_pf",
+    "score6_v2_pnl",
 )
 
 # Phase229 tertile cutoffs (2503-trade population, Phase228 discovery).
@@ -40,12 +60,17 @@ TERTILE_CUTOFFS: dict[str, dict[str, float]] = {
 # Phase229 work3 score_map (+2 top 20% freq, +1 top 50% freq among target tokens).
 SCORE_POINTS: dict[str, int] = {
     "HBRecent:no": 2,
-    "RollingMAE:mid": 2,
+    "RollingMAE:mid": 0,
     "Duration:high": 2,
     "Momentum:low": 1,
     "Board:mid": 1,
     "Price:high": 1,
     "TV:mid": 1,
+}
+
+# Phase236 Scenario B: RollingMAE:mid contribution zeroed (HBRecent:no unchanged).
+SCORE_POINTS_V2: dict[str, int] = {
+    k: v for k, v in SCORE_POINTS.items() if k != "RollingMAE:mid"
 }
 
 SCORE_GE5_THRESHOLD = 5
@@ -100,19 +125,46 @@ def _feature_token(label: str, trade: Mapping[str, Any]) -> Optional[str]:
     return f"{label}:{level}"
 
 
-def compute_entry_expectancy_score_fields(*, trade: Mapping[str, Any]) -> dict[str, Any]:
-    """Compute Phase229 entry expectancy score at accept (shadow only)."""
+def _score_fields_from_points(
+    trade: Mapping[str, Any],
+    score_points: Mapping[str, int],
+    *,
+    score_key: str,
+    ge5_key: str,
+    ge6_key: str,
+) -> dict[str, Any]:
     score = 0
-    for token, pts in SCORE_POINTS.items():
+    for token, pts in score_points.items():
         lbl = token.split(":", 1)[0]
         tok = _feature_token(lbl, trade)
         if tok == token:
             score += pts
     return {
-        "entry_expectancy_score": score,
-        "entry_expectancy_score_ge5_flag": score >= SCORE_GE5_THRESHOLD,
-        "entry_expectancy_score_ge6_flag": score >= SCORE_GE6_THRESHOLD,
+        score_key: score,
+        ge5_key: score >= SCORE_GE5_THRESHOLD,
+        ge6_key: score >= SCORE_GE6_THRESHOLD,
     }
+
+
+def compute_entry_expectancy_score_fields(*, trade: Mapping[str, Any]) -> dict[str, Any]:
+    """Compute Phase229 score and Phase237 v2 (Scenario B) at accept — shadow only."""
+    out = _score_fields_from_points(
+        trade,
+        SCORE_POINTS,
+        score_key="entry_expectancy_score",
+        ge5_key="entry_expectancy_score_ge5_flag",
+        ge6_key="entry_expectancy_score_ge6_flag",
+    )
+    out.update(
+        _score_fields_from_points(
+            trade,
+            SCORE_POINTS_V2,
+            score_key="entry_expectancy_score_v2",
+            ge5_key="entry_expectancy_score_v2_ge5_flag",
+            ge6_key="entry_expectancy_score_v2_ge6_flag",
+        )
+    )
+    return out
 
 
 def enrich_exit_entry_expectancy_fields(
@@ -125,6 +177,13 @@ def enrich_exit_entry_expectancy_fields(
         "entry_expectancy_score": entry_shadow.get("entry_expectancy_score"),
         "entry_expectancy_score_ge5_flag": bool(entry_shadow.get("entry_expectancy_score_ge5_flag")),
         "entry_expectancy_score_ge6_flag": bool(entry_shadow.get("entry_expectancy_score_ge6_flag")),
+        "entry_expectancy_score_v2": entry_shadow.get("entry_expectancy_score_v2"),
+        "entry_expectancy_score_v2_ge5_flag": bool(
+            entry_shadow.get("entry_expectancy_score_v2_ge5_flag")
+        ),
+        "entry_expectancy_score_v2_ge6_flag": bool(
+            entry_shadow.get("entry_expectancy_score_v2_ge6_flag")
+        ),
         "pnl_pct": round(float(pnl_pct), 4),
         "exit_reason": exit_reason,
         "stop_hit": exit_reason == "stop_hit",
@@ -159,61 +218,119 @@ def _cohort_metrics(rows: Sequence[Mapping[str, Any]], flag_key: str) -> dict[st
 
 
 @dataclass
+class _CohortAccumulator:
+    count: int = 0
+    win_pnl: float = 0.0
+    loss_pnl: float = 0.0
+    stop_hit_count: int = 0
+
+    def record_accept(self, active: bool) -> None:
+        if active:
+            self.count += 1
+
+    def record_exit(self, active: bool, *, pnl: float, stop_hit: bool) -> None:
+        if not active:
+            return
+        if pnl > 0:
+            self.win_pnl = round(self.win_pnl + pnl, 4)
+        elif pnl < 0:
+            self.loss_pnl = round(self.loss_pnl + pnl, 4)
+        if stop_hit:
+            self.stop_hit_count += 1
+
+    def summary(self, *, count_key: str, pf_key: str, pnl_key: str, stop_key: str) -> dict[str, Any]:
+        gl = abs(self.loss_pnl)
+        pf: Optional[float]
+        if gl <= 0:
+            pf = None if self.win_pnl <= 0 else float("inf")
+        else:
+            pf = round(self.win_pnl / gl, 4)
+        return {
+            count_key: self.count,
+            pf_key: pf if pf != float("inf") else pf,
+            pnl_key: round(self.win_pnl + self.loss_pnl, 4),
+            stop_key: self.stop_hit_count,
+        }
+
+
+@dataclass
 class EntryExpectancyScoreCounters:
-    score5_count: int = 0
-    score6_count: int = 0
-    _score5_win_pnl: float = 0.0
-    _score5_loss_pnl: float = 0.0
-    _score6_win_pnl: float = 0.0
-    _score6_loss_pnl: float = 0.0
-    score5_stop_hit_count: int = 0
-    score6_stop_hit_count: int = 0
+    score5: _CohortAccumulator = field(default_factory=_CohortAccumulator)
+    score6: _CohortAccumulator = field(default_factory=_CohortAccumulator)
+    score5_v2: _CohortAccumulator = field(default_factory=_CohortAccumulator)
+    score6_v2: _CohortAccumulator = field(default_factory=_CohortAccumulator)
 
     def record_accept(self, fields: Mapping[str, Any]) -> None:
-        if fields.get("entry_expectancy_score_ge5_flag"):
-            self.score5_count += 1
-        if fields.get("entry_expectancy_score_ge6_flag"):
-            self.score6_count += 1
+        self.score5.record_accept(bool(fields.get("entry_expectancy_score_ge5_flag")))
+        self.score6.record_accept(bool(fields.get("entry_expectancy_score_ge6_flag")))
+        self.score5_v2.record_accept(bool(fields.get("entry_expectancy_score_v2_ge5_flag")))
+        self.score6_v2.record_accept(bool(fields.get("entry_expectancy_score_v2_ge6_flag")))
 
     def record_exit(self, row: Mapping[str, Any]) -> None:
         pnl = _float(row.get("pnl_pct")) or 0.0
         reason = str(row.get("exit_reason") or "")
-        if row.get("entry_expectancy_score_ge5_flag"):
-            if pnl > 0:
-                self._score5_win_pnl = round(self._score5_win_pnl + pnl, 4)
-            elif pnl < 0:
-                self._score5_loss_pnl = round(self._score5_loss_pnl + pnl, 4)
-            if bool(row.get("stop_hit")) or reason == "stop_hit":
-                self.score5_stop_hit_count += 1
-        if row.get("entry_expectancy_score_ge6_flag"):
-            if pnl > 0:
-                self._score6_win_pnl = round(self._score6_win_pnl + pnl, 4)
-            elif pnl < 0:
-                self._score6_loss_pnl = round(self._score6_loss_pnl + pnl, 4)
-            if bool(row.get("stop_hit")) or reason == "stop_hit":
-                self.score6_stop_hit_count += 1
-
-    def _pf_from_wl(self, win: float, loss: float) -> Optional[float]:
-        gl = abs(loss)
-        if gl <= 0:
-            return None if win <= 0 else float("inf")
-        return round(win / gl, 4)
+        stop = bool(row.get("stop_hit")) or reason == "stop_hit"
+        self.score5.record_exit(
+            bool(row.get("entry_expectancy_score_ge5_flag")),
+            pnl=pnl,
+            stop_hit=stop,
+        )
+        self.score6.record_exit(
+            bool(row.get("entry_expectancy_score_ge6_flag")),
+            pnl=pnl,
+            stop_hit=stop,
+        )
+        self.score5_v2.record_exit(
+            bool(row.get("entry_expectancy_score_v2_ge5_flag")),
+            pnl=pnl,
+            stop_hit=stop,
+        )
+        self.score6_v2.record_exit(
+            bool(row.get("entry_expectancy_score_v2_ge6_flag")),
+            pnl=pnl,
+            stop_hit=stop,
+        )
 
     def summary_fields(self) -> dict[str, Any]:
-        s5_pf = self._pf_from_wl(self._score5_win_pnl, self._score5_loss_pnl)
-        s6_pf = self._pf_from_wl(self._score6_win_pnl, self._score6_loss_pnl)
-        return {
+        out: dict[str, Any] = {
             "entry_expectancy_score_shadow_enabled": True,
             "phase230_entry_expectancy_shadow": True,
-            "score5_count": self.score5_count,
-            "score5_pf": s5_pf if s5_pf != float("inf") else s5_pf,
-            "score5_pnl": round(self._score5_win_pnl + self._score5_loss_pnl, 4),
-            "score6_count": self.score6_count,
-            "score6_pf": s6_pf if s6_pf != float("inf") else s6_pf,
-            "score6_pnl": round(self._score6_win_pnl + self._score6_loss_pnl, 4),
-            "score5_stop_hit_count": self.score5_stop_hit_count,
-            "score6_stop_hit_count": self.score6_stop_hit_count,
+            "phase237_entry_expectancy_score_v2_shadow": True,
+            "phase240_parallel_ge5_observation": True,
         }
+        out.update(
+            self.score5.summary(
+                count_key="score5_count",
+                pf_key="score5_pf",
+                pnl_key="score5_pnl",
+                stop_key="score5_stop_hit_count",
+            )
+        )
+        out.update(
+            self.score6.summary(
+                count_key="score6_count",
+                pf_key="score6_pf",
+                pnl_key="score6_pnl",
+                stop_key="score6_stop_hit_count",
+            )
+        )
+        out.update(
+            self.score5_v2.summary(
+                count_key="score5_v2_count",
+                pf_key="score5_v2_pf",
+                pnl_key="score5_v2_pnl",
+                stop_key="score5_v2_stop_hit_count",
+            )
+        )
+        out.update(
+            self.score6_v2.summary(
+                count_key="score6_v2_count",
+                pf_key="score6_v2_pf",
+                pnl_key="score6_v2_pnl",
+                stop_key="score6_v2_stop_hit_count",
+            )
+        )
+        return out
 
 
 def finalize_session_entry_expectancy_score(
@@ -234,13 +351,23 @@ def finalize_session_entry_expectancy_score(
     closed = [r for r in accepted_rows if _float(r.get("pnl_pct")) is not None]
     s5 = _cohort_metrics(closed, "entry_expectancy_score_ge5_flag")
     s6 = _cohort_metrics(closed, "entry_expectancy_score_ge6_flag")
+    s5_v2 = _cohort_metrics(closed, "entry_expectancy_score_v2_ge5_flag")
+    s6_v2 = _cohort_metrics(closed, "entry_expectancy_score_v2_ge6_flag")
     return {
         "entry_expectancy_score_shadow_enabled": True,
         "phase230_entry_expectancy_shadow": True,
+        "phase237_entry_expectancy_score_v2_shadow": True,
+        "phase240_parallel_ge5_observation": True,
         "score5_count": s5["count"],
         "score5_pf": s5["pf"],
         "score5_pnl": s5["total_pnl"],
         "score6_count": s6["count"],
         "score6_pf": s6["pf"],
         "score6_pnl": s6["total_pnl"],
+        "score5_v2_count": s5_v2["count"],
+        "score5_v2_pf": s5_v2["pf"],
+        "score5_v2_pnl": s5_v2["total_pnl"],
+        "score6_v2_count": s6_v2["count"],
+        "score6_v2_pf": s6_v2["pf"],
+        "score6_v2_pnl": s6_v2["total_pnl"],
     }

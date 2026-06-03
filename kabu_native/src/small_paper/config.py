@@ -29,13 +29,21 @@ class SmallPaperPilotConfig:
     min_continuation_quality: float = 0.55
     max_concurrent_positions: int = 3
     reject_below_quality: bool = True
+    entry_score_v2_min: int = 0
     order_enabled: bool = False
     paper_only: bool = True
     discord_enabled: bool = False
     discord_observer_only: bool = True
     discord_send_rejects: bool = False
+    discord_send_entry_deferred_max_concurrent: bool = True
+    discord_entry_deferred_cooldown_sec: float = 1800.0
+    discord_entry_deferred_min_score_v2: int = 5
+    discord_entry_deferred_daily_max: int = 50
+    discord_send_universe_refresh: bool = True
+    discord_send_daily_summary: bool = True
     discord_heartbeat_min: float = 30.0
     discord_webhook_env: str = "KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL"
+    discord_trade_notify_webhook_env: str = "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL"
     discord_cooldown_sec: float = 60.0
     discord_hard_stop_pct: float = 1.20
     discord_hold_min: float = 15.0
@@ -143,6 +151,9 @@ class SmallPaperPilotConfig:
             )
         if self.shadow_only:
             out["shadow_only"] = True
+        if self.entry_score_v2_min > 0:
+            out["entry_score_v2_min"] = self.entry_score_v2_min
+            out["reject_below_quality"] = self.reject_below_quality
         return out
 
     def exposure_gate_config(self) -> ExposureGateConfig:
@@ -151,6 +162,7 @@ class SmallPaperPilotConfig:
             min_continuation_quality=self.min_continuation_quality,
             max_concurrent_positions=self.max_concurrent_positions,
             reject_below_quality=self.reject_below_quality,
+            entry_score_v2_min=self.entry_score_v2_min,
             order_enabled=False,
             discord_enabled=self.discord_enabled,
             daily_loss_guard_pct=self.daily_loss_guard_pct,
@@ -211,13 +223,27 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         min_continuation_quality=float(raw.get("min_continuation_quality", 0.55)),
         max_concurrent_positions=int(raw.get("max_concurrent_positions", 3)),
         reject_below_quality=bool(raw.get("reject_below_quality", True)),
+        entry_score_v2_min=int(raw.get("entry_score_v2_min", 0) or 0),
         order_enabled=bool(raw.get("order_enabled", False)),
         paper_only=bool(raw.get("paper_only", True)),
         discord_enabled=bool(raw.get("discord_enabled", False)),
         discord_observer_only=bool(raw.get("discord_observer_only", True)),
         discord_send_rejects=bool(raw.get("discord_send_rejects", False)),
+        discord_send_entry_deferred_max_concurrent=bool(
+            raw.get("discord_send_entry_deferred_max_concurrent", True)
+        ),
+        discord_entry_deferred_cooldown_sec=float(
+            raw.get("discord_entry_deferred_cooldown_sec", 1800.0)
+        ),
+        discord_entry_deferred_min_score_v2=int(raw.get("discord_entry_deferred_min_score_v2", 5)),
+        discord_entry_deferred_daily_max=int(raw.get("discord_entry_deferred_daily_max", 50)),
+        discord_send_universe_refresh=bool(raw.get("discord_send_universe_refresh", True)),
+        discord_send_daily_summary=bool(raw.get("discord_send_daily_summary", True)),
         discord_heartbeat_min=float(raw.get("discord_heartbeat_min", 30.0)),
         discord_webhook_env=str(raw.get("discord_webhook_env", "KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL")),
+        discord_trade_notify_webhook_env=str(
+            raw.get("discord_trade_notify_webhook_env", "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL")
+        ),
         discord_cooldown_sec=float(raw.get("discord_cooldown_sec", 60.0)),
         discord_hard_stop_pct=float(raw.get("discord_hard_stop_pct", 1.20)),
         discord_hold_min=float(raw.get("discord_hold_min", 15.0)),

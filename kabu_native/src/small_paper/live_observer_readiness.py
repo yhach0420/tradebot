@@ -49,7 +49,15 @@ SUPPORTED_TRIAL_POLICY_LABELS = frozenset(
     }
 )
 EXPECTED_MIN_QUALITY = 0.70
+EXPECTED_ENTRY_SCORE_V2_MIN = 5
 EXPECTED_MAX_CONCURRENT = 3
+
+
+def _q070_entry_gate_ok(config: SmallPaperPilotConfig) -> bool:
+    """Phase267: v2>=4 gate replaces quality reject on q070 trial YAMLs."""
+    return int(getattr(config, "entry_score_v2_min", 0) or 0) == EXPECTED_ENTRY_SCORE_V2_MIN and (
+        not config.reject_below_quality
+    )
 MIN_PHASE54_PF = 1.20
 MIN_PHASE60_STRUCTURAL_PF = 1.20
 MIN_PHASE79_OOS_PF = 1.20
@@ -105,7 +113,7 @@ def check_phase79_symbol_cooloff_config(config: SmallPaperPilotConfig) -> Readin
         config.policy_label == EXPECTED_SYMBOL_COOLOFF_POLICY_LABEL
         and config.policy_trial
         and config.baseline_policy == EXPECTED_MFE_FAV_POLICY_LABEL
-        and abs(config.min_continuation_quality - EXPECTED_MIN_QUALITY) < 1e-6
+        and _q070_entry_gate_ok(config)
         and config.max_concurrent_positions == EXPECTED_MAX_CONCURRENT
         and config.favorable_mode == "mfe_linked"
         and config.favorable_mfe_scale > 0
@@ -289,7 +297,7 @@ def check_phase84_vol_liq_trial_config(config: SmallPaperPilotConfig) -> Readine
         config.policy_label == EXPECTED_VOL_LIQ_POLICY_LABEL
         and config.policy_trial
         and config.baseline_policy == EXPECTED_MFE_FAV_POLICY_LABEL
-        and abs(config.min_continuation_quality - EXPECTED_MIN_QUALITY) < 1e-6
+        and _q070_entry_gate_ok(config)
         and config.max_concurrent_positions == EXPECTED_MAX_CONCURRENT
         and config.favorable_mode == "mfe_linked"
         and config.favorable_mfe_scale > 0
@@ -457,7 +465,7 @@ def check_phase67_mfe_fav_config(config: SmallPaperPilotConfig) -> ReadinessChec
         config.policy_label == EXPECTED_MFE_FAV_POLICY_LABEL
         and config.policy_trial
         and config.baseline_policy == "q070_cap3_trial"
-        and abs(config.min_continuation_quality - EXPECTED_MIN_QUALITY) < 1e-6
+        and _q070_entry_gate_ok(config)
         and config.max_concurrent_positions == EXPECTED_MAX_CONCURRENT
         and config.favorable_mode == "mfe_linked"
         and config.favorable_mfe_scale > 0
@@ -485,7 +493,7 @@ def check_phase51_config(config: SmallPaperPilotConfig) -> ReadinessCheck:
     ok = (
         config.policy_label in SUPPORTED_TRIAL_POLICY_LABELS
         and config.policy_trial
-        and abs(config.min_continuation_quality - EXPECTED_MIN_QUALITY) < 1e-6
+        and _q070_entry_gate_ok(config)
         and config.max_concurrent_positions == EXPECTED_MAX_CONCURRENT
     )
     return ReadinessCheck(
@@ -495,7 +503,7 @@ def check_phase51_config(config: SmallPaperPilotConfig) -> ReadinessCheck:
         if ok
         else (
             f"expected one of {sorted(SUPPORTED_TRIAL_POLICY_LABELS)} "
-            f"q={EXPECTED_MIN_QUALITY} cap={EXPECTED_MAX_CONCURRENT}"
+            f"entry_score_v2_min={EXPECTED_ENTRY_SCORE_V2_MIN} cap={EXPECTED_MAX_CONCURRENT}"
         ),
         {
             "policy_label": config.policy_label,
@@ -515,7 +523,7 @@ def check_phase72_price_mom_exit_trial_config(config: SmallPaperPilotConfig) -> 
         config.policy_label == EXPECTED_PRICE_MOM_EXIT_POLICY_LABEL
         and config.policy_trial
         and config.baseline_policy == EXPECTED_MFE_FAV_POLICY_LABEL
-        and abs(config.min_continuation_quality - EXPECTED_MIN_QUALITY) < 1e-6
+        and _q070_entry_gate_ok(config)
         and config.max_concurrent_positions == EXPECTED_MAX_CONCURRENT
         and config.favorable_mode == "mfe_linked"
         and config.favorable_mfe_scale > 0

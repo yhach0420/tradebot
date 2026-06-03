@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Phase233: Phase230 entry expectancy shadow validation (review only).
+Phase233 / Phase240: Entry expectancy shadow validation (review only).
 
-Aggregate ge5/ge6 shadow cohorts from new Phase230 sessions at trade level.
-Splits: live / push_replay / combined. Requires 30+ sessions for evaluation.
+Phase240: parallel score_ge5_v1 vs score_ge5_v2 on the same sessions (trade_count, PF, PnL only).
+Auto-accumulates from live, paper_trade, and push_replay sessions with shadow fields.
 """
 
 from __future__ import annotations
@@ -20,13 +20,21 @@ OUT = REPO / "kabu_native/results/reports/phase233_entry_expectancy_shadow_valid
 SMALL_PAPER = REPO / "kabu_native/results/small_paper"
 MIN_SESSIONS = 30
 
-Stream = Literal["live", "push_replay", "combined"]
-Cohort = Literal["score_ge5", "score_ge6"]
+Stream = Literal["live", "paper_trade", "push_replay", "combined"]
+Cohort = Literal["score_ge5", "score_ge6", "score_ge5_v2", "score_ge6_v2"]
 
 FLAG_KEY = {
     "score_ge5": "entry_expectancy_score_ge5_flag",
     "score_ge6": "entry_expectancy_score_ge6_flag",
+    "score_ge5_v2": "entry_expectancy_score_v2_ge5_flag",
+    "score_ge6_v2": "entry_expectancy_score_v2_ge6_flag",
 }
+
+# Phase240 parallel observation (v1 vs v2 Score>=5).
+PHASE240_COHORT_V1 = "score_ge5_v1"
+PHASE240_COHORT_V2 = "score_ge5_v2"
+PHASE240_FLAG_V1 = FLAG_KEY["score_ge5"]
+PHASE240_FLAG_V2 = FLAG_KEY["score_ge5_v2"]
 
 
 def _load_module(name: str, rel_path: str) -> Any:
@@ -83,12 +91,15 @@ def _load_events(session_dir: Path) -> list[dict[str, Any]]:
     return []
 
 
-def _session_stream(summary: dict[str, Any]) -> Optional[Stream]:
+def _session_stream(summary: dict[str, Any], session_id: str = "") -> Optional[Stream]:
     mode = str(summary.get("mode") or "").lower()
     source = str(summary.get("source") or "").lower()
-    if "push_replay" in mode or source in ("push-replay", "push_replay"):
+    sid = session_id.replace("\\", "/").lower()
+    if "phase234" in sid or "paper_trade" in mode or "/paper" in sid:
+        return "paper_trade"
+    if "push_replay" in mode or source in ("push-replay", "push_replay") or "push_replay" in sid:
         return "push_replay"
-    if "live" in mode or source == "live":
+    if "live" in mode or source == "live" or "live_session" in sid or "live_full_session" in sid:
         return "live"
     return None
 
@@ -101,8 +112,11 @@ def _is_phase230_session(summary: dict[str, Any], events: list[dict[str, Any]]) 
     for ev in events:
         if ev.get("entry_expectancy_score") is not None:
             return True
-        if FLAG_KEY["score_ge5"] in ev or FLAG_KEY["score_ge6"] in ev:
+        if ev.get("entry_expectancy_score_v2") is not None:
             return True
+        for key in FLAG_KEY.values():
+            if key in ev:
+                return True
     return False
 
 
@@ -138,6 +152,12 @@ def _extract_trades(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ge6 = _boolish(acc.get(FLAG_KEY["score_ge6"]))
         if exit_ev and FLAG_KEY["score_ge6"] in exit_ev:
             ge6 = _boolish(exit_ev.get(FLAG_KEY["score_ge6"]))
+        ge5_v2 = _boolish(acc.get(FLAG_KEY["score_ge5_v2"]))
+        if exit_ev and FLAG_KEY["score_ge5_v2"] in exit_ev:
+            ge5_v2 = _boolish(exit_ev.get(FLAG_KEY["score_ge5_v2"]))
+        ge6_v2 = _boolish(acc.get(FLAG_KEY["score_ge6_v2"]))
+        if exit_ev and FLAG_KEY["score_ge6_v2"] in exit_ev:
+            ge6_v2 = _boolish(exit_ev.get(FLAG_KEY["score_ge6_v2"]))
 
         trades.append(
             {
@@ -146,6 +166,9 @@ def _extract_trades(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "entry_expectancy_score": acc.get("entry_expectancy_score"),
                 "entry_expectancy_score_ge5_flag": ge5,
                 "entry_expectancy_score_ge6_flag": ge6,
+                "entry_expectancy_score_v2": acc.get("entry_expectancy_score_v2"),
+                "entry_expectancy_score_v2_ge5_flag": ge5_v2,
+                "entry_expectancy_score_v2_ge6_flag": ge6_v2,
                 "pnl_pct": pnl,
                 "exit_reason": reason,
                 "stop_hit": stop_hit,
@@ -168,10 +191,10 @@ def _discover_sessions(base: Path) -> list[dict[str, Any]]:
         events = _load_events(session_dir)
         if not _is_phase230_session(summary, events):
             continue
-        stream = _session_stream(summary)
+        rel = session_dir.relative_to(base).as_posix()
+        stream = _session_stream(summary, rel)
         if stream is None:
             continue
-        rel = session_dir.relative_to(base).as_posix()
         trades = _extract_trades(events)
         out.append(
             {
@@ -195,6 +218,39 @@ def _split_label(session_id: str, mod: Any) -> str:
     if session_id in mod.OOS:
         return "oos"
     return "unknown"
+
+
+def _minimal_metrics(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    """Phase240: trade_count, PF, PnL only."""
+    closed = [t for t in trades if _float(t.get("pnl_pct")) is not None]
+    pnls = [float(t["pnl_pct"]) for t in closed]
+    n = len(closed)
+    if n == 0:
+        return {"trade_count": 0, "profit_factor": None, "total_pnl_pct": 0.0}
+    pf = _pf(pnls)
+    return {
+        "trade_count": n,
+        "profit_factor": pf if pf != float("inf") else pf,
+        "total_pnl_pct": round(sum(pnls), 4),
+    }
+
+
+def _phase240_parallel_ge5(sessions: list[dict[str, Any]]) -> dict[str, Any]:
+    def _cohort(flag_key: str) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        for sess in sessions:
+            for t in sess["trades"]:
+                if not t.get(flag_key):
+                    continue
+                if _float(t.get("pnl_pct")) is None:
+                    continue
+                rows.append(t)
+        return _minimal_metrics(rows)
+
+    return {
+        PHASE240_COHORT_V1: _cohort(PHASE240_FLAG_V1),
+        PHASE240_COHORT_V2: _cohort(PHASE240_FLAG_V2),
+    }
 
 
 def _trade_metrics(trades: list[dict[str, Any]]) -> dict[str, Any]:
@@ -293,37 +349,37 @@ def _build_stream_report(
     session_count = len(subset)
     ge5 = _cohort_block(subset, "score_ge5", mod)
     ge6 = _cohort_block(subset, "score_ge6", mod)
+    ge5_v2 = _cohort_block(subset, "score_ge5_v2", mod)
+    ge6_v2 = _cohort_block(subset, "score_ge6_v2", mod)
 
     ge5_ok, ge5_fail = _passes_validation(ge5)
     ge6_ok, ge6_fail = _passes_validation(ge6)
+    ge5_v2_ok, ge5_v2_fail = _passes_validation(ge5_v2)
+    ge6_v2_ok, ge6_v2_fail = _passes_validation(ge6_v2)
     eval_ready = session_count >= MIN_SESSIONS
+
+    def _cohort_report(cohort: Cohort, block: dict[str, Any], ok: bool, fail: list[str]) -> dict[str, Any]:
+        return {
+            "flag": FLAG_KEY[cohort],
+            "metrics": block,
+            "validation_pass": eval_ready and ok,
+            "validation_status": (
+                "pass"
+                if eval_ready and ok
+                else ("collecting_sessions" if not eval_ready else "criteria_not_met")
+            ),
+            "validation_fail_reasons": fail if eval_ready else ["session_count_lt_30"],
+        }
 
     return {
         "session_count": session_count,
         "evaluation_ready": eval_ready,
         "session_ids": [s["session_id"] for s in subset],
-        "score_ge5": {
-            "flag": FLAG_KEY["score_ge5"],
-            "metrics": ge5,
-            "validation_pass": eval_ready and ge5_ok,
-            "validation_status": (
-                "pass"
-                if eval_ready and ge5_ok
-                else ("collecting_sessions" if not eval_ready else "criteria_not_met")
-            ),
-            "validation_fail_reasons": ge5_fail if eval_ready else ["session_count_lt_30"],
-        },
-        "score_ge6": {
-            "flag": FLAG_KEY["score_ge6"],
-            "metrics": ge6,
-            "validation_pass": eval_ready and ge6_ok,
-            "validation_status": (
-                "pass"
-                if eval_ready and ge6_ok
-                else ("collecting_sessions" if not eval_ready else "criteria_not_met")
-            ),
-            "validation_fail_reasons": ge6_fail if eval_ready else ["session_count_lt_30"],
-        },
+        "phase240_parallel_ge5": _phase240_parallel_ge5(subset),
+        "score_ge5": _cohort_report("score_ge5", ge5, ge5_ok, ge5_fail),
+        "score_ge6": _cohort_report("score_ge6", ge6, ge6_ok, ge6_fail),
+        "score_ge5_v2": _cohort_report("score_ge5_v2", ge5_v2, ge5_v2_ok, ge5_v2_fail),
+        "score_ge6_v2": _cohort_report("score_ge6_v2", ge6_v2, ge6_v2_ok, ge6_v2_fail),
     }
 
 
@@ -336,59 +392,66 @@ def main() -> int:
 
     sessions = _discover_sessions(SMALL_PAPER)
     streams: dict[str, Any] = {}
-    for stream in ("live", "push_replay", "combined"):
+    for stream in ("live", "paper_trade", "push_replay", "combined"):
         streams[stream] = _build_stream_report(sessions, stream, p213)
 
     combined = streams["combined"]
+    p240 = combined["phase240_parallel_ge5"]
     report = {
-        "phase": 233,
+        "phase": 240,
         "mode": "entry_expectancy_shadow_validation",
         "constraints": {
             "review_only": True,
             "production_changes_forbidden": True,
             "yaml_changes_forbidden": True,
             "new_feature_exploration_forbidden": True,
-            "loser_analysis_forbidden": True,
-            "time_of_day_analysis_forbidden": True,
+            "new_score_exploration_forbidden": True,
             "symbol_analysis_forbidden": True,
+            "time_of_day_analysis_forbidden": True,
+            "stop_analysis_forbidden": True,
+            "board_analysis_forbidden": True,
             "new_sessions_only": True,
         },
         "method": {
-            "source": "Phase230 shadow sessions (phase230_entry_expectancy_shadow marker or score fields in events)",
-            "aggregation": "trade-level from accept+observer_exit pairs",
-            "streams": ["live", "push_replay", "combined"],
-            "cohorts": ["entry_expectancy_score_ge5_flag", "entry_expectancy_score_ge6_flag"],
-            "min_sessions_for_evaluation": MIN_SESSIONS,
-            "validation_requires": {
-                "score_ge5": "PF>1, IS_PF>1, OOS_PF>1, total_pnl>0",
-                "score_ge6": "PF>1, IS_PF>1, OOS_PF>1, total_pnl>0",
+            "source": "Phase230+237 shadow (v1 and v2 score fields logged at accept on same session)",
+            "aggregation": "trade-level accept+observer_exit; Phase240 metrics are trade_count/PF/PnL only",
+            "streams": ["live", "paper_trade", "push_replay", "combined"],
+            "phase240_parallel_cohorts": {
+                "score_ge5_v1": "entry_expectancy_score_ge5_flag (Phase229)",
+                "score_ge5_v2": "entry_expectancy_score_v2_ge5_flag (Phase237 Scenario B)",
             },
+            "auto_accumulation": "Re-run this script after live / paper_trade / push_replay sessions",
+            "min_sessions_for_legacy_validation": MIN_SESSIONS,
         },
         "observed_session_count": {
             "live": streams["live"]["session_count"],
+            "paper_trade": streams["paper_trade"]["session_count"],
             "push_replay": streams["push_replay"]["session_count"],
             "combined": combined["session_count"],
         },
+        "phase240_parallel_ge5_by_stream": {
+            stream: streams[stream]["phase240_parallel_ge5"] for stream in streams
+        },
         "streams": streams,
         "summary": {
-            "combined_evaluation_ready": combined["evaluation_ready"],
-            "score_ge5_combined_pass": combined["score_ge5"]["validation_pass"],
-            "score_ge6_combined_pass": combined["score_ge6"]["validation_pass"],
-            "score_ge5_combined_metrics": combined["score_ge5"]["metrics"]["all"],
-            "score_ge6_combined_metrics": combined["score_ge6"]["metrics"]["all"],
+            "combined_session_count": combined["session_count"],
+            "combined_score_ge5_v1": p240[PHASE240_COHORT_V1],
+            "combined_score_ge5_v2": p240[PHASE240_COHORT_V2],
         },
         "notes": [
-            "Only sessions with Phase230 shadow marker or entry_expectancy score fields are included.",
-            "Pre-Phase230 sessions are excluded by design.",
-            "IS/OOS split uses phase213c session lists.",
+            "phase240_parallel_ge5: same-session parallel observation; not an entry gate.",
+            "v2 fields require Phase237+ shadow logging; older sessions show v2 trade_count=0.",
+            "Legacy score_ge6 validation blocks remain under streams.* for Phase233 continuity.",
         ],
     }
 
     OUT.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    v1 = p240[PHASE240_COHORT_V1]
+    v2 = p240[PHASE240_COHORT_V2]
     print(
         f"wrote {OUT} sessions={combined['session_count']} "
-        f"ge5_pass={combined['score_ge5']['validation_pass']} "
-        f"ge6_pass={combined['score_ge6']['validation_pass']}",
+        f"ge5_v1_n={v1['trade_count']} ge5_v1_pf={v1['profit_factor']} "
+        f"ge5_v2_n={v2['trade_count']} ge5_v2_pf={v2['profit_factor']}",
         flush=True,
     )
     return 0
