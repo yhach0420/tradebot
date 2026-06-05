@@ -361,6 +361,28 @@ def build_exit_detail(
     )
 
 
+def build_universe_screening_overview(
+    *,
+    session_label: str,
+    watch_symbol_count: int,
+    name_map: Optional[Mapping[str, str]] = None,
+) -> str:
+    """Initial universe after AM/PM screening (no add/remove vs prior refresh)."""
+    _ = name_map
+    return "\n".join(
+        [
+            f"セッション: {session_label}",
+            f"現在監視: {watch_symbol_count}銘柄",
+            "",
+            "初期監視銘柄:",
+            "（下の監視銘柄一覧を参照）",
+            "",
+            "削除銘柄:",
+            "（なし）",
+        ]
+    )
+
+
 def build_universe_refresh_overview(
     *,
     session_label: str,

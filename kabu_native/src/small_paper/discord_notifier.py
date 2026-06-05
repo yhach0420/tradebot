@@ -29,6 +29,7 @@ from small_paper.discord_message_builder import (
     build_entry_detail,
     build_exit_detail,
     build_universe_refresh_overview,
+    build_universe_screening_overview,
     split_watch_symbols_discord_fields,
     format_slot_usage,
 )
@@ -573,6 +574,45 @@ class SmallPaperDiscordNotifier:
             color=0x3182CE,
             dedupe_key=f"refresh|{session_label}|{refresh_time}",
             cooldown_sec=60.0,
+            trade_notify=True,
+        )
+
+    def notify_universe_screening(
+        self,
+        *,
+        session_label: str,
+        watch_symbols: Sequence[str],
+        day_stamp: str = "",
+        status: str = "completed",
+    ) -> bool:
+        """Post initial watch list after AM/PM universe screening (not 10:00/14:30 refresh)."""
+        if not self.cfg.send_universe_refresh:
+            return False
+        name_map = get_cached_symbol_name_map()
+        overview = build_universe_screening_overview(
+            session_label=session_label,
+            watch_symbol_count=len(watch_symbols),
+            name_map=name_map,
+        )
+        if status != "completed":
+            overview = f"状態: {status}\n{overview}"
+        fields: list[dict[str, Any]] = []
+        if overview:
+            fields.append({"name": "概要", "value": overview[:1020], "inline": False})
+        for spec in split_watch_symbols_discord_fields(watch_symbols, name_map=name_map):
+            fields.append(
+                {"name": spec["name"], "value": spec["value"][:1020], "inline": False}
+            )
+        if not fields:
+            fields = [{"name": "詳細", "value": overview[:1020] or "—", "inline": False}]
+        dedupe_day = (day_stamp or datetime.now(JST).strftime("%Y%m%d")).strip()
+        return self._post(
+            event_tag="Universe Screening",
+            title_line=f"【Universe Screening】 {session_label}",
+            fields=fields,
+            color=0x2B6CB0,
+            dedupe_key=f"screening|{session_label}|{dedupe_day}",
+            cooldown_sec=43200.0,
             trade_notify=True,
         )
 

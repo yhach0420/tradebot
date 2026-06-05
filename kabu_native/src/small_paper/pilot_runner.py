@@ -1897,6 +1897,16 @@ def run_live_dry_run(
             observer = ObserverPositionTracker(am_pm_policy.observer_tracker_config(config))
         else:
             observer = ObserverPositionTracker(observer_tracker_config_from_pilot(config))
+        if discord.active and am_pm_policy is not None:
+            sk = str(getattr(am_pm_policy, "kind", "am")).lower()
+            screening_label = "PM Screening" if sk == "pm" else "AM Screening"
+            watch_syms = sorted({str(sym) for sym, _, _ in symbols})
+            day_stamp = datetime.now(JST).strftime("%Y%m%d")
+            discord.notify_universe_screening(
+                session_label=screening_label,
+                watch_symbols=watch_syms,
+                day_stamp=day_stamp,
+            )
 
     entry_eligible: Optional[set[str]] = {t[0] for t in symbols} if enable_intraday_refresh else None
     pipeline_ctx = _PushPipelineContext(

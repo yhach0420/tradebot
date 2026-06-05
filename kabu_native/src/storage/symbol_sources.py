@@ -7,7 +7,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,52 @@ class SymbolSpec:
     symbol_key: str
     exchange: int
     code: str
+
+
+def symbol_name(spec: SymbolSpec | Mapping[str, Any] | Sequence[Any] | str) -> str:
+    """Extract display symbol from SymbolSpec, dict, legacy tuple, or str."""
+    if isinstance(spec, str):
+        return spec.strip()
+    if isinstance(spec, SymbolSpec):
+        return str(spec.symbol)
+    if isinstance(spec, Mapping):
+        return str(spec.get("symbol") or spec.get("code") or "").strip()
+    if isinstance(spec, Sequence) and not isinstance(spec, (str, bytes)):
+        if len(spec) >= 1:
+            return str(spec[0]).strip()
+    return str(spec).strip()
+
+
+def symbol_key_name(spec: SymbolSpec | Mapping[str, Any] | Sequence[Any] | str) -> str:
+    """Extract kabu symbol_key from SymbolSpec, dict, legacy tuple, or str."""
+    if isinstance(spec, SymbolSpec):
+        return str(spec.symbol_key)
+    if isinstance(spec, Mapping):
+        key = str(spec.get("symbol_key") or "").strip()
+        if key:
+            return key
+        sym = symbol_name(spec)
+        ex = int(spec.get("exchange") or 1)
+        code = sym.split("@")[0].replace(".T", "")
+        return f"{code}@{ex}" if code else sym
+    if isinstance(spec, Sequence) and not isinstance(spec, (str, bytes)):
+        if len(spec) >= 2:
+            return str(spec[1]).strip()
+        return symbol_name(spec)
+    raw = str(spec).strip()
+    if "@" in raw:
+        return raw
+    code = raw.split("@")[0].replace(".T", "")
+    return f"{code}@1" if code else raw
+
+
+def symbols_list(specs: Sequence[Any]) -> list[str]:
+    out: list[str] = []
+    for spec in specs:
+        sym = symbol_name(spec)
+        if sym:
+            out.append(sym)
+    return out
 
 
 def _normalize_symbol(code: str) -> str:

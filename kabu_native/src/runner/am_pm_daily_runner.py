@@ -248,6 +248,42 @@ def validate_universe_csv(path: Path, *, expected_session: str) -> dict[str, Any
     return validate_runner_universe(path, expected_session=expected_session)
 
 
+def notify_screening_universe_discord(
+    state: DailyRunnerState,
+    *,
+    session_label: str,
+    universe_csv: Path,
+) -> dict[str, Any]:
+    """Discord trade-notify: initial universe after AM/PM screening CSV is ready."""
+    if state.options.dry_run_only:
+        return {"sent": False, "skipped": True, "reason": "dry_run_only"}
+    from small_paper.config import load_pilot_config
+    from small_paper.discord_notifier import discord_notifier_from_pilot
+    from storage.symbol_sources import load_symbols, symbols_list
+
+    cfg_path = state.repo_root / state.options.config_rel
+    cfg = load_pilot_config(cfg_path)
+    if not cfg.discord_enabled:
+        return {"sent": False, "skipped": True, "reason": "discord_disabled"}
+    notifier = discord_notifier_from_pilot(cfg)
+    if not notifier.active:
+        return {"sent": False, "skipped": True, "reason": "discord_not_active"}
+    syms = load_symbols(universe=universe_csv, native_root=state.native_root)
+    watch = symbols_list(syms)
+    sent = notifier.notify_universe_screening(
+        session_label=session_label,
+        watch_symbols=watch,
+        day_stamp=state.options.day_stamp,
+    )
+    return {
+        "sent": bool(sent),
+        "session_label": session_label,
+        "symbol_count": len(watch),
+        "universe_csv": rel_path(state.repo_root, universe_csv),
+        "trade_notify_webhook_source": notifier.trade_webhook_source(),
+    }
+
+
 def runner_load_check(
     path: Path,
     native_root: Path,
@@ -1505,6 +1541,13 @@ def _run_daily_runner_body(state: DailyRunnerState) -> int:
                 write_outputs(state)
                 return 2
 
+        am_csv_path = state.repo_root / str(state.am_prep.get("am_csv") or "")
+        state.am_prep["screening_notify"] = notify_screening_universe_discord(
+            state,
+            session_label="AM Screening",
+            universe_csv=am_csv_path,
+        )
+
         if not state.options.dry_run_only:
             try:
                 state.am_live = run_pilot_session(state, session="am")
@@ -1557,6 +1600,13 @@ def _run_daily_runner_body(state: DailyRunnerState) -> int:
         state.stopped_reason = "pm_universe"
         write_outputs(state)
         return 2
+
+    pm_csv_path = state.repo_root / str(state.pm_prep.get("pm_csv") or "")
+    state.pm_prep["screening_notify"] = notify_screening_universe_discord(
+        state,
+        session_label="PM Screening",
+        universe_csv=pm_csv_path,
+    )
 
     if state.options.enable_intraday_refresh and not state.am_prep.get("intraday_refresh"):
         from universe.daily_features import load_features_csv
