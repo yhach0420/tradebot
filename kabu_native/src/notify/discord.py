@@ -186,6 +186,8 @@ class ShadowDiscordNotifier:
         pnl_pct: Optional[float],
         mfe_pct: Optional[float],
         elapsed_min: Optional[float],
+        pnl_yen_100: Optional[float] = None,
+        side: str = "long",
     ) -> bool:
         if not self.active:
             return False
@@ -195,16 +197,22 @@ class ShadowDiscordNotifier:
             log.debug("[KABU_NOTIFY] skip exit dedupe/cooldown %s", dedupe_key)
             return False
 
+        from replay.pnl_yen import format_exit_pnl_line, resolve_pnl_yen_100
+
         pnl_pct_f = float(pnl_pct) if pnl_pct is not None else 0.0
-        pnl_yen = (float(exit_price) - float(entry_price)) * 100.0
+        yen = resolve_pnl_yen_100(
+            entry_price=entry_price,
+            exit_price=exit_price,
+            side=side,
+            pnl_yen_100=pnl_yen_100,
+        )
 
         title = f"[KABU_PAPER] EXIT EXECUTED {symbol}"
         fields = [
             {"name": "symbol", "value": str(symbol), "inline": True},
             {"name": "exit_price", "value": _fmt_num(exit_price), "inline": True},
             {"name": "entry_price", "value": _fmt_num(entry_price), "inline": True},
-            {"name": "pnl_pct", "value": _fmt_num(pnl_pct_f), "inline": True},
-            {"name": "pnl_yen_100shares", "value": _fmt_num(pnl_yen, digits=0), "inline": True},
+            {"name": "損益", "value": format_exit_pnl_line(pnl_pct_f, yen), "inline": False},
             {"name": "exit_reason", "value": str(exit_reason or "—"), "inline": True},
             {"name": "mfe_pct", "value": _fmt_num(mfe_pct), "inline": True},
             {"name": "elapsed_min", "value": _fmt_num(elapsed_min), "inline": True},

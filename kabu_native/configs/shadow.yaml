@@ -1,8 +1,8 @@
-# kabu_native shadow（発注なし・yahoo_kabu_watch 非接続）
+# kabu_native shadow�E�発注なし�Eyahoo_kabu_watch 非接続！E
 
 # 採用ルール: Phase 13 market_session_plus_B
 
-# Discord 仮想売買通知 [KABU_PAPER]: 既定 OFF（旧 Yahoo DISCORD_WEBHOOK_URL とは別 Webhook）
+# Discord 仮想売買通知 [KABU_PAPER]: 既宁EOFF�E�旧 Yahoo DISCORD_WEBHOOK_URL とは別 Webhook�E�E
 
 
 
@@ -26,7 +26,7 @@ rules:
 
 
 
-# 市場セッション（configs/session_control.yaml と同一）
+# 市場セチE��ョン�E�Eonfigs/session_control.yaml と同一�E�E
 
 session:
 
@@ -42,7 +42,7 @@ watchlist:
 
   source: morning_screen
 
-  # ディレクトリまたは CSV。未指定時は results/morning_screen 最新
+  # チE��レクトリまた�E CSV。未持E��時は results/morning_screen 最新
 
   path: null
 
@@ -66,7 +66,7 @@ runtime:
 
 
 
-# [KABU_PAPER] 仮想 ENTRY/EXIT Discord（3 フラグすべて true + Webhook URL 必須）
+# [KABU_PAPER] 仮想 ENTRY/EXIT Discord�E�E フラグすべて true + Webhook URL 忁E��！E
 
 discord_enabled: true
 

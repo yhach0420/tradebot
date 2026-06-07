@@ -93,6 +93,19 @@ def _rise_pct(entry_px: float, prior_px: Optional[float]) -> Optional[float]:
     return round((entry_px - prior_px) / prior_px * 100.0, 4)
 
 
+def compute_entry_high_break_recent_field(
+    *,
+    trade: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    price_ring: Sequence[tuple[float, float]],
+    entry_ts: float,
+) -> dict[str, Any]:
+    """Phase295: compute entry_high_break_recent before gate score (not None on reject path)."""
+    entry_px = _float(payload.get("CurrentPrice")) or _float(trade.get("current_price")) or 0.0
+    hb_recent = _high_break_recent(price_ring, entry_ts, entry_px) if entry_px > 0 else False
+    return {"entry_high_break_recent": bool(hb_recent)}
+
+
 def _high_break_recent(
     ring: Sequence[tuple[float, float]],
     entry_ts: float,
@@ -145,7 +158,12 @@ def compute_entry_shadow_fields(
 
         mom = float(continuation_components(trade).get("momentum_continuation", 0))
 
-    hb_recent = _high_break_recent(price_ring, entry_ts, entry_px) if entry_px > 0 else False
+    hb_recent = compute_entry_high_break_recent_field(
+        trade=trade,
+        payload=payload,
+        price_ring=price_ring,
+        entry_ts=entry_ts,
+    )["entry_high_break_recent"]
 
     reasons: list[str] = []
     if rise_5 is not None and rise_5 >= RISE_5MIN_PCT_MIN:

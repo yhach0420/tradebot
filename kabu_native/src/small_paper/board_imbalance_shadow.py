@@ -95,6 +95,30 @@ def is_imbalance_shadow_candidate(
     return imb >= cutoff
 
 
+def board_mid_token_active(imbalance: Optional[float]) -> bool:
+    """True when imbalance falls in Board:mid tertile (Phase229 cutoffs)."""
+    from small_paper.entry_expectancy_score_shadow import TERTILE_CUTOFFS, _bin_tertile
+
+    if imbalance is None:
+        return False
+    cuts = TERTILE_CUTOFFS["Board"]
+    level = _bin_tertile(float(imbalance), cuts["p33"], cuts["p66"])
+    return level == "mid"
+
+
+def compute_entry_order_book_imbalance_field(
+    *,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Phase299: compute entry_order_book_imbalance before gate score (reject path included)."""
+    imbalance = calc_board_imbalance(payload)
+    rounded = round(float(imbalance), 6) if imbalance is not None else None
+    return {
+        "entry_order_book_imbalance": rounded,
+        "entry_board_mid_token_active": board_mid_token_active(rounded),
+    }
+
+
 def compute_board_imbalance_shadow_fields(
     *,
     trade: Mapping[str, Any],
@@ -102,7 +126,8 @@ def compute_board_imbalance_shadow_fields(
     session_imbalance_samples: list[float],
 ) -> dict[str, Any]:
     """Shadow-only board imbalance fields at accept (does not block entry)."""
-    imbalance = calc_board_imbalance(payload)
+    pregate = compute_entry_order_book_imbalance_field(payload=payload)
+    imbalance = pregate.get("entry_order_book_imbalance")
     percentile: Optional[float] = None
     if imbalance is not None:
         percentile = session_imbalance_percentile(session_imbalance_samples, float(imbalance))
@@ -115,7 +140,7 @@ def compute_board_imbalance_shadow_fields(
         candidate = tier in ("10%", "20%")  # primary 20% band includes top-10%
 
     return {
-        "entry_order_book_imbalance": round(float(imbalance), 6) if imbalance is not None else None,
+        **pregate,
         "entry_imbalance_percentile": percentile,
         "imbalance_shadow_candidate": candidate,
         "imbalance_shadow_tier": tier,

@@ -1,4 +1,4 @@
-# kabu_native リプレイ（paper_trade ではなくシグナル/EXIT 検証が主目的）
+# kabu_native リプレイ�E�Eaper_trade ではなくシグナル/EXIT 検証が主目皁E��E
 
 data_roots:
   - kabu_native/data/intraday_1m
@@ -14,17 +14,17 @@ synthetic_spread_bps: 8.0
 synthetic_events_per_minute: 10
 eod_exit_reason: eod_close
 
-# 市場セッション ENTRY 枠（詳細: configs/session_control.yaml, docs/market_session_control.md）
+# 市場セチE��ョン ENTRY 枠�E�詳細: configs/session_control.yaml, docs/market_session_control.md�E�E
 market_session_control: false
 session_entry_start_jst: "09:05"
 session_entry_end_jst: "14:50"
 
-# universe / morning_screen から銘柄を読むとき
+# universe / morning_screen から銘柄を読むとぁE
 universe_passed_only: true
 morning_screen_passed_only: true
 morning_screen_ranked_only: false
 
-# [KABU_PAPER][REPLAY] Discord（replay 専用・realtime shadow とは別）
+# [KABU_PAPER][REPLAY] Discord�E�Eeplay 専用・realtime shadow とは別�E�E
 discord_replay_notify: false
 discord_webhook_env: KABU_SHADOW_DISCORD_WEBHOOK_URL
 discord_replay_max_messages: 50

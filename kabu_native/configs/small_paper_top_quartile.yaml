@@ -1,4 +1,4 @@
-# Phase 39: Top-quartile small paper exposure gate (simulation only — not live).
+# Phase 39: Top-quartile small paper exposure gate (simulation only  Enot live).
 # No new EXIT logic; v13 EXIT frozen; ENTRY remains momentum_volume_v2.
 
 profile: momentum_volume_v13_combined

@@ -1,7 +1,7 @@
 # kabu_native 朝スクリーニング
 # python kabu_native/scripts/run_morning_screen.py --universe kabu_native/data/universe/universe_20260516.csv
 
-# 寄り前 / 寄り直後 / 引け後 — board が取れれば実行（freshness は加点のみ）
+# 寁E��剁E/ 寁E��直征E/ 引け征E Eboard が取れれば実行！Ereshness は加点のみ�E�E
 session_mode: any
 
 weights:
@@ -27,8 +27,8 @@ gates:
   min_price: 100
   max_price: 150000
 
-# 出力銘柄数（pass_screen=true のみ、score 降順）
+# 出力銘柁E���E�Eass_screen=true のみ、score 降頁E��E
 max_symbols: 10
 
-# 全行を CSV に出す（false なら pass_screen のみ）
+# 全行を CSV に出す！Ealse なめEpass_screen のみ�E�E
 output_all_rows: true

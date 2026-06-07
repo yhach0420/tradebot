@@ -501,6 +501,11 @@ class SmallPaperDiscordNotifier:
             entry_px = 0.0
         mfe = context.get("mfe_pct") or context.get("peak_mfe_pct") or context.get("max_favorable")
         mae = context.get("mae_pct") or context.get("max_adverse") or context.get("rolling_mae_pct")
+        yen_raw = context.get("pnl_yen_100")
+        try:
+            pnl_yen_100 = float(yen_raw) if yen_raw is not None else None
+        except (TypeError, ValueError):
+            pnl_yen_100 = None
         detail = build_exit_detail(
             symbol=sym,
             entry_price=entry_px,
@@ -510,6 +515,8 @@ class SmallPaperDiscordNotifier:
             mae_pct=float(mae) if mae is not None else None,
             hold_minutes=hold_sec / 60.0,
             exit_reason=reason,
+            pnl_yen_100=pnl_yen_100,
+            side=str(context.get("side") or "long"),
         )
         fields = [
             {

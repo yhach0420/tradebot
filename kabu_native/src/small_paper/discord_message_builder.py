@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Mapping, Optional, Sequence
 
+from replay.pnl_yen import format_exit_pnl_line, resolve_pnl_yen_100
 from research.exposure_gate import REJECT_MAX_CONCURRENT
 from small_paper.discord_symbol_names import format_symbol_label
 from small_paper.entry_expectancy_score_shadow import SCORE_POINTS_V2, _feature_token
@@ -345,14 +346,21 @@ def build_exit_detail(
     mae_pct: Optional[float],
     hold_minutes: float,
     exit_reason: str,
+    pnl_yen_100: Optional[float] = None,
+    side: str = "long",
 ) -> str:
-    sign = "+" if pnl_pct >= 0 else ""
+    yen = resolve_pnl_yen_100(
+        entry_price=entry_price,
+        exit_price=exit_price,
+        side=side,
+        pnl_yen_100=pnl_yen_100,
+    )
     return "\n".join(
         [
             f"銘柄: {symbol}",
             f"ENTRY価格: {_fmt_num(entry_price)}",
             f"EXIT価格: {_fmt_num(exit_price)}",
-            f"損益: {sign}{_fmt_num(pnl_pct)}%",
+            format_exit_pnl_line(pnl_pct, yen),
             f"最大含み益 MFE: {_fmt_num(mfe_pct)}%",
             f"最大逆行 MAE: {_fmt_num(mae_pct)}%",
             f"保有時間: {int(round(hold_minutes))}分",

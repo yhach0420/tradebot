@@ -8,13 +8,15 @@ import statistics
 from collections import Counter, defaultdict
 from typing import Any, Mapping, Sequence
 
+from replay.pnl_yen import enrich_trade_pnl_yen, summarize_pnl_yen_100
+
 
 def trades_to_rows(trades: Sequence[Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for t in trades:
         base = t.to_row() if hasattr(t, "to_row") else dict(t)
         trade_date = getattr(t, "trade_date", None) or base.get("trade_date", "")
-        rows.append({**base, "trade_date": trade_date})
+        rows.append(enrich_trade_pnl_yen({**base, "trade_date": trade_date}))
     return rows
 
 
@@ -42,6 +44,13 @@ def _summary_block(trades: Sequence[Any]) -> dict[str, Any]:
             "max_loss_pct": None,
             "avg_loss_pct": None,
             "profit_factor": None,
+            "total_pnl_yen_100": 0.0,
+            "avg_pnl_yen_100": None,
+            "gross_profit_yen_100": 0.0,
+            "gross_loss_yen_100": 0.0,
+            "profit_factor_yen_100": None,
+            "max_win_yen_100": None,
+            "max_loss_yen_100": None,
             "exit_reason_counts": {},
         }
 
@@ -63,6 +72,8 @@ def _summary_block(trades: Sequence[Any]) -> dict[str, Any]:
             reason = t.get("exit_reason")
         exit_counts[str(reason or "unknown")] += 1
 
+    yen_block = summarize_pnl_yen_100(trades)
+
     return {
         "trades": n,
         "win_rate": len(wins) / n if n else None,
@@ -72,6 +83,7 @@ def _summary_block(trades: Sequence[Any]) -> dict[str, Any]:
         "max_loss_pct": min(pnls),
         "avg_loss_pct": statistics.mean(losses) if losses else None,
         "profit_factor": profit_factor,
+        **yen_block,
         "exit_reason_counts": dict(exit_counts),
     }
 

@@ -1,4 +1,4 @@
-# Phase 44: Small paper pilot (dry-run / paper_only — no live orders).
+# Phase 44: Small paper pilot (dry-run / paper_only  Eno live orders).
 # EXIT v13 frozen; ENTRY momentum_volume_v2; exposure gate from Phase 39.
 
 profile: momentum_volume_v13_combined
@@ -18,7 +18,7 @@ allowed_trading_windows:
 order_enabled: false
 paper_only: true
 
-# Phase 46: Discord observer (notification only — no orders)
+# Phase 46: Discord observer (notification only  Eno orders)
 discord_enabled: true
 discord_observer_only: true
 discord_send_rejects: false
@@ -42,7 +42,7 @@ default_source: replay
 max_polls: 1
 poll_interval_sec: 30.0
 
-# Phase 45: live session (full-day weekday observation — dry-run, no orders)
+# Phase 45: live session (full-day weekday observation  Edry-run, no orders)
 live:
   session_start: "09:00"
   session_end: "15:30"

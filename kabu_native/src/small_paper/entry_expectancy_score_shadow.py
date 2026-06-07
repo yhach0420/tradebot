@@ -68,10 +68,15 @@ SCORE_POINTS: dict[str, int] = {
     "TV:mid": 1,
 }
 
-# Phase236 Scenario B: RollingMAE:mid contribution zeroed (HBRecent:no unchanged).
+# Phase314: Momentum + Board only (HBRecent/TV/Duration/Price removed from v2).
 SCORE_POINTS_V2: dict[str, int] = {
-    k: v for k, v in SCORE_POINTS.items() if k != "RollingMAE:mid"
+    "Momentum:low": 2,
+    "Board:mid": 1,
 }
+
+REQUIRED_V2_TOKENS: frozenset[str] = frozenset({"Momentum:low"})
+
+ENTRY_SCORE_V2_GATE_MIN = 3
 
 SCORE_GE5_THRESHOLD = 5
 SCORE_GE6_THRESHOLD = 6
@@ -123,6 +128,19 @@ def _feature_token(label: str, trade: Mapping[str, Any]) -> Optional[str]:
         return None
     level = _bin_tertile(v, cuts["p33"], cuts["p66"])
     return f"{label}:{level}"
+
+
+def active_score_tokens_v2(trade: Mapping[str, Any]) -> list[str]:
+    active: list[str] = []
+    for token in SCORE_POINTS_V2:
+        lbl = token.split(":", 1)[0]
+        if _feature_token(lbl, trade) == token:
+            active.append(token)
+    return active
+
+
+def momentum_low_required_for_v2(trade: Mapping[str, Any]) -> bool:
+    return "Momentum:low" in active_score_tokens_v2(trade)
 
 
 def _score_fields_from_points(

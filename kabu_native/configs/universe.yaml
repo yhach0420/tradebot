@@ -1,34 +1,34 @@
-# kabu_native universe ビルド設定
-# 実行: python kabu_native/scripts/build_universe.py --config kabu_native/configs/universe.yaml
+# kabu_native universe ビルド設宁E
+# 実衁E python kabu_native/scripts/build_universe.py --config kabu_native/configs/universe.yaml
 
 market: prime
 
-# 初期は手動リスト。将来は銘柄マスタ取り込みに拡張。
+# 初期は手動リスト。封E��は銘柄マスタ取り込みに拡張、E
 include_symbols:
   - "9984"
   - "7203"
   - "6758"
   - "8306"
-  - "1306"   # TOPIX ETF（exclude_etf で除外される想定）
-  - "1321"   # 日経 ETF
+  - "1306"   # TOPIX ETF�E�Exclude_etf で除外される想定！E
+  - "1321"   # 日絁EETF
 
 exclude_symbols: []
 
 exclude_etf: true
 
-# 売買代金（円）下限 — 当日セッション累計 TradingValue
+# 売買代金（�E�E�下限  E当日セチE��ョン累訁ETradingValue
 min_trading_value: 5000000000
 
-# 売買高（株）下限（任意。null で無効）
+# 売買高（株�E�下限�E�任意。null で無効�E�E
 min_trading_volume: null
 
 min_price: 300
 max_price: 100000
 
-# 最良気配のスプレッド上限（bps）
+# 最良気�EのスプレチE��上限�E�Eps�E�E
 max_spread_bps: 30
 
-# 通過銘柄の上限（TradingValue 降順で cap）
+# 通過銘柄の上限�E�EradingValue 降頁E�� cap�E�E
 max_symbols: 20
 
 default_exchange: 1

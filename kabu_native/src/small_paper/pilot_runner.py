@@ -121,6 +121,7 @@ EVENT_FIELDS = (
     "trading_value_band",
     "tv_sweet_band_flag",
     "entry_order_book_imbalance",
+    "entry_board_mid_token_active",
     "entry_imbalance_percentile",
     "imbalance_shadow_candidate",
     "imbalance_shadow_tier",
@@ -858,6 +859,24 @@ def _process_push_payload(
         # keep both keys for compatibility with downstream guard readers
         trade.setdefault("CurrentPrice", live_px)
         trade.setdefault("current_price", live_px)
+    # Phase295: HBRecent must be set before gate score (reject path included).
+    from small_paper.extended_entry_shadow import (
+        compute_entry_high_break_recent_field,
+        tick_ts_from_payload,
+    )
+
+    trade.update(
+        compute_entry_high_break_recent_field(
+            trade=trade,
+            payload=payload,
+            price_ring=ctx.symbol_price_ring.get(sym, []),
+            entry_ts=tick_ts_from_payload(payload),
+        )
+    )
+    # Phase299: board imbalance must be set before gate score (reject path included).
+    from small_paper.board_imbalance_shadow import compute_entry_order_book_imbalance_field
+
+    trade.update(compute_entry_order_book_imbalance_field(payload=enriched))
     if snapshot.quality_fallback_path:
         ctx.state.quality_fallback_count += 1
     if snapshot.live_feature_complete:

@@ -15,6 +15,7 @@ from research.research_exit_criteria import _as_float
 
 REJECT_LOW_QUALITY = "low_quality"
 REJECT_ENTRY_SCORE_V2_BELOW = "entry_score_v2_below_threshold"
+REJECT_MOMENTUM_LOW_REQUIRED = "momentum_low_required"
 REJECT_MAX_CONCURRENT = "max_concurrent"
 REJECT_RISK_CLUSTER = "risk_cluster_block"
 REJECT_DAILY_LOSS = "daily_loss_guard"
@@ -268,6 +269,16 @@ class ExposureGate:
         }
 
         if v2_threshold > 0:
+            from small_paper.entry_expectancy_score_shadow import momentum_low_required_for_v2
+
+            if not momentum_low_required_for_v2(trade):
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_MOMENTUM_LOW_REQUIRED,
+                    continuation_quality_score=q,
+                    quality_tier=tier,
+                    **v2_ctx,
+                )
             if not v2_pass:
                 return GateDecision(
                     accept=False,

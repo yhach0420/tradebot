@@ -176,6 +176,8 @@ class ShadowRunner:
                 pnl_pct=exit_snapshot.get("pnl_pct"),
                 mfe_pct=exit_snapshot.get("mfe_pct"),
                 elapsed_min=exit_snapshot.get("elapsed_min"),
+                pnl_yen_100=exit_snapshot.get("pnl_yen_100"),
+                side=str(exit_snapshot.get("side") or "long"),
             )
         except Exception as e:
             log.warning("[KABU_NOTIFY] error %s", e, exc_info=False)

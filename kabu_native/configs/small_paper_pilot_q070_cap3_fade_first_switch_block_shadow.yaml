@@ -7,7 +7,7 @@ entry_profile: momentum_volume_v2
 min_continuation_quality: 0.70
 max_concurrent_positions: 3
 reject_below_quality: false
-entry_score_v2_min: 5
+entry_score_v2_min: 3
 
 allowed_trading_windows:
   - start: "09:05"
