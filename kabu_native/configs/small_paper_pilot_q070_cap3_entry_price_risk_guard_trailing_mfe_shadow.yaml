@@ -1,4 +1,4 @@
-# Phase 174: Trailing-MFE structural EXIT shadow (not production).
+# Phase 332: Board-dynamic trailing-MFE structural EXIT (production).
 # Baseline settings match Phase153b entry_price_risk_guard_shadow; entry/universe unchanged.
 
 profile: momentum_volume_v13_combined
@@ -21,7 +21,7 @@ policy_label: q070_cap3_entry_price_risk_guard_trailing_mfe_shadow_trial
 policy_trial: true
 shadow_only: true
 
-# Key change: structural EXIT policy (shadow-only)
+# Structural EXIT policy (board-dynamic trailing_mfe — Phase332 production)
 structural_exit_policy: combined_structural_exit_v1_trailing_mfe_shadow
 
 entry_price_risk_guard_enabled: true
@@ -29,6 +29,12 @@ entry_price_risk_guard_shadow: true
 entry_price_risk_guard_min_entry_price: 50
 entry_price_risk_guard_max_tick_ratio_pct: 5.0
 entry_price_risk_guard_apply_mode: reject_entry
+
+# Phase355: production ENTRY guard — Dynamic40 pullback misread only
+enable_pullback_misread_dynamic40_guard: true
+
+# Phase364: production ENTRY guard — Dynamic40 near day high + low momentum
+enable_near_day_high_low_momentum_dynamic40_guard: true
 
 favorable_mode: mfe_linked
 favorable_mfe_scale: 0.003
@@ -40,9 +46,11 @@ daytrade_suitability_lookback_sessions: prior_only
 daytrade_suitability_apply_mode: reject_entry
 
 comparison_note: >
-  Phase174 shadow: structural_exit_policy=combined_structural_exit_v1_trailing_mfe_shadow.
-  Stop/session_close/overlap preserved; no momentum_fade/quality_decay exits.
-  Trailing rule: activate at MFE>=0.8%, exit on 50% giveback from peak MFE.
+  Phase332 production: board-dynamic trailing_mfe via structural_exit_policy=
+  combined_structural_exit_v1_trailing_mfe_shadow. Stop/session_close/overlap preserved;
+  no momentum_fade/quality_decay exits. board_high (entry_imbalance_percentile>=47.62):
+  activate 1.0%, giveback 60%. board_low (<47.62): activate 0.6%, giveback 40%.
+  Shadow logs compare legacy fixed (0.8%/50%) counterfactual vs actual.
 
 order_enabled: false
 paper_only: true
@@ -62,6 +70,14 @@ dry_run_required: true
 default_source: replay
 max_polls: 1
 poll_interval_sec: 30.0
+
+# ENTRY timing guard (push-driven eval; batch + freshness)
+entry_max_price_age_sec: 3.0
+entry_max_board_age_sec: 3.0
+max_entries_per_scan: 1
+entry_scan_window_sec: 2.0
+entry_freshness_guard_enabled: true
+entry_scan_batch_enabled: true
 
 live:
   session_start: "09:00"

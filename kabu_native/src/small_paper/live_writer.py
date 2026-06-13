@@ -55,6 +55,11 @@ class LiveSessionWriter:
         with self._errors_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
 
+    def append_entry_scan_audit(self, record: Mapping[str, Any]) -> None:
+        path = self.output_dir / "entry_scan_audit.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
     def append_heartbeat(self, record: Mapping[str, Any]) -> None:
         with self._heartbeat_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")

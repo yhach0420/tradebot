@@ -133,6 +133,32 @@ EVENT_FIELDS = (
     "entry_expectancy_score_v2_ge6_flag",
     "entry_score_v2_threshold",
     "entry_score_v2_gate_pass",
+    "shadow_board_dynamic_tier",
+    "shadow_board_dynamic_activate_pct",
+    "shadow_board_dynamic_giveback_frac",
+    "shadow_exit_reason",
+    "shadow_exit_price",
+    "shadow_exit_time",
+    "shadow_pnl_pct",
+    "shadow_pnl_yen_100",
+    "actual_vs_shadow_delta_yen",
+    "actual_vs_shadow_delta_pct",
+    "board_dynamic_trailing_tier",
+    "board_dynamic_trailing_activate_pct",
+    "board_dynamic_trailing_giveback_frac",
+    "pullback_misread_dynamic40_guard_blocked",
+    "pullback_misread_dynamic40_guard_candidate",
+    "day_high_distance_pct",
+    "entry_momentum_score",
+    "near_day_high_low_momentum_dynamic40_guard_blocked",
+    "near_day_high_low_momentum_dynamic40_guard_candidate",
+    "pullback_misread_guard_shadow_blocked",
+    "pullback_misread_shadow_pnl_yen_100",
+    "pullback_misread_shadow_delta_yen",
+    "universe_slot",
+    "universe_bucket",
+    "source_bucket",
+    "reject_reason",
 )
 
 
@@ -143,6 +169,8 @@ class PilotRunResult:
     events: list[dict[str, Any]] = field(default_factory=list)
     accepted: list[dict[str, Any]] = field(default_factory=list)
     rejects: list[dict[str, Any]] = field(default_factory=list)
+    realtime_board_shadow: Any = None
+    exit_candidate_shadow: Any = None
 
 
 def _now_iso() -> str:
@@ -434,6 +462,53 @@ def _default_board_imbalance_shadow_counters() -> Any:
     return BoardImbalanceShadowCounters()
 
 
+def _default_board_dynamic_trailing_shadow_counters() -> Any:
+    from small_paper.board_dynamic_trailing_shadow import BoardDynamicTrailingShadowCounters
+
+    return BoardDynamicTrailingShadowCounters()
+
+
+def _default_limit_up_proximity_entry_guard_shadow_counters() -> Any:
+    from small_paper.limit_up_proximity_entry_guard_shadow import (
+        LimitUpProximityEntryGuardShadowCounters,
+    )
+
+    return LimitUpProximityEntryGuardShadowCounters()
+
+
+def _default_pullback_misread_entry_guard_shadow_counters() -> Any:
+    from small_paper.pullback_misread_entry_guard_shadow import (
+        PullbackMisreadEntryGuardShadowCounters,
+    )
+
+    return PullbackMisreadEntryGuardShadowCounters()
+
+
+def _default_realtime_board_exit_shadow() -> Any:
+    from small_paper.realtime_board_exit_shadow import RealtimeBoardExitShadowLogger
+
+    return RealtimeBoardExitShadowLogger()
+
+
+def _make_observer_tracker(
+    config: SmallPaperPilotConfig,
+    state: _LiveRunState,
+    *,
+    am_pm_policy: Optional[Any] = None,
+) -> ObserverPositionTracker:
+    shadow = getattr(state, "realtime_board_exit_shadow", None)
+    exit_pack = getattr(state, "exit_candidate_shadow", None)
+    if am_pm_policy is not None:
+        cfg = am_pm_policy.observer_tracker_config(config)
+    else:
+        cfg = observer_tracker_config_from_pilot(config)
+    return ObserverPositionTracker(
+        cfg,
+        board_exit_shadow=shadow,
+        exit_candidate_shadow=exit_pack,
+    )
+
+
 def _default_entry_expectancy_score_counters() -> Any:
     from small_paper.entry_expectancy_score_shadow import EntryExpectancyScoreCounters
 
@@ -465,6 +540,12 @@ class _LiveRunState:
     symbol_cooloff_reject_count: int = 0
     daytrade_suitability_reject_count: int = 0
     entry_price_risk_guard_reject_count: int = 0
+    pullback_misread_dynamic40_reject_count: int = 0
+    pullback_misread_dynamic40_reject_symbols: set[str] = field(default_factory=set)
+    near_day_high_low_momentum_dynamic40_reject_count: int = 0
+    near_day_high_low_momentum_dynamic40_reject_symbols: set[str] = field(
+        default_factory=set
+    )
     low_liquidity_shadow_reject_count: int = 0
     intraday_refresh_done: bool = False
     intraday_refresh_count: int = 0
@@ -482,6 +563,16 @@ class _LiveRunState:
     extended_entry_shadow: Any = field(default_factory=_default_extended_shadow_counters)
     vwap_shadow_reject: Any = field(default_factory=_default_vwap_shadow_counters)
     board_imbalance_shadow: Any = field(default_factory=_default_board_imbalance_shadow_counters)
+    board_dynamic_trailing_shadow: Any = field(
+        default_factory=_default_board_dynamic_trailing_shadow_counters
+    )
+    limit_up_proximity_entry_guard_shadow: Any = field(
+        default_factory=_default_limit_up_proximity_entry_guard_shadow_counters
+    )
+    pullback_misread_entry_guard_shadow: Any = field(
+        default_factory=_default_pullback_misread_entry_guard_shadow_counters
+    )
+    realtime_board_exit_shadow: Any = field(default_factory=_default_realtime_board_exit_shadow)
     entry_expectancy_score_shadow: Any = field(default_factory=_default_entry_expectancy_score_counters)
     discord_ux: DiscordUxSessionStats = field(default_factory=DiscordUxSessionStats)
 
@@ -665,6 +756,15 @@ def _log_and_dispatch_observer_events(
                 imb_counters = getattr(state, "board_imbalance_shadow", None)
                 if imb_counters is not None:
                     imb_counters.record_exit(row)
+                bd_counters = getattr(state, "board_dynamic_trailing_shadow", None)
+                if bd_counters is not None:
+                    bd_counters.record_exit(row)
+                lu_counters = getattr(state, "limit_up_proximity_entry_guard_shadow", None)
+                if lu_counters is not None:
+                    lu_counters.record_exit(row)
+                pb_counters = getattr(state, "pullback_misread_entry_guard_shadow", None)
+                if pb_counters is not None:
+                    pb_counters.record_exit(row)
                 score_counters = getattr(state, "entry_expectancy_score_shadow", None)
                 if score_counters is not None:
                     score_counters.record_exit(row)
@@ -710,6 +810,67 @@ def _vwap_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
 
 def _board_imbalance_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
     counters = getattr(state, "board_imbalance_shadow", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
+def _board_dynamic_trailing_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "board_dynamic_trailing_shadow", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
+def _limit_up_proximity_entry_guard_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "limit_up_proximity_entry_guard_shadow", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
+def _pullback_misread_dynamic40_guard_summary_fields(
+    gate: ExposureGate,
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    guard = getattr(gate, "pullback_misread_dynamic40_guard", None)
+    if guard is None:
+        return {
+            "pullback_misread_dynamic40_guard_enabled": False,
+            "pullback_misread_dynamic40_reject_count": 0,
+            "pullback_misread_dynamic40_reject_symbols": [],
+        }
+    out = guard.summary_fields()
+    out["pullback_misread_dynamic40_reject_count"] = state.pullback_misread_dynamic40_reject_count
+    out["pullback_misread_dynamic40_reject_symbols"] = sorted(
+        state.pullback_misread_dynamic40_reject_symbols
+    )
+    return out
+
+
+def _near_day_high_low_momentum_dynamic40_guard_summary_fields(
+    gate: ExposureGate,
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    guard = getattr(gate, "near_day_high_low_momentum_dynamic40_guard", None)
+    if guard is None:
+        return {
+            "near_day_high_low_momentum_dynamic40_guard_enabled": False,
+            "near_day_high_low_momentum_dynamic40_reject_count": 0,
+            "near_day_high_low_momentum_dynamic40_reject_symbols": [],
+        }
+    out = guard.summary_fields()
+    out["near_day_high_low_momentum_dynamic40_reject_count"] = (
+        state.near_day_high_low_momentum_dynamic40_reject_count
+    )
+    out["near_day_high_low_momentum_dynamic40_reject_symbols"] = sorted(
+        state.near_day_high_low_momentum_dynamic40_reject_symbols
+    )
+    return out
+
+
+def _pullback_misread_entry_guard_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "pullback_misread_entry_guard_shadow", None)
     if counters is None:
         return {}
     return counters.summary_fields()
@@ -792,9 +953,346 @@ class _PushPipelineContext:
     am_pm_policy: Optional[Any] = None
     entry_eligible_symbols: Optional[set[str]] = None
     symbol_price_ring: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
+    entry_scan: Optional[Any] = None
+    symbol_universe_meta: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 REJECT_OUTSIDE_REFRESH_UNIVERSE = "outside_refresh_universe"
+
+
+def _load_symbol_universe_meta_for_day(
+    *,
+    repo_root: Path,
+    day_compact: str,
+    session_kind: str = "am",
+    universe_csv_path: Optional[str] = None,
+) -> dict[str, dict[str, str]]:
+    from small_paper.pullback_misread_dynamic40_entry_guard import (
+        load_symbol_universe_meta,
+        resolve_universe_meta_path,
+    )
+
+    reports_dir = repo_root / "kabu_native" / "results" / "reports"
+    path = resolve_universe_meta_path(
+        day_compact=day_compact,
+        session_kind=session_kind,
+        reports_dir=reports_dir,
+        universe_csv_path=universe_csv_path,
+    )
+    if path is None:
+        return {}
+    return load_symbol_universe_meta(path)
+
+
+def _enrich_trade_for_entry_guards(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: dict[str, Any],
+    payload: Mapping[str, Any],
+) -> None:
+    meta = (ctx.symbol_universe_meta or {}).get(sym, {})
+    if meta:
+        from small_paper.pullback_misread_dynamic40_entry_guard import attach_universe_fields
+
+        attach_universe_fields(trade, meta)
+    pullback_guard = getattr(ctx.gate, "pullback_misread_dynamic40_guard", None)
+    near_day_guard = getattr(ctx.gate, "near_day_high_low_momentum_dynamic40_guard", None)
+    if pullback_guard is None and near_day_guard is None:
+        return
+    from small_paper.extended_entry_shadow import compute_entry_shadow_fields, tick_ts_from_payload
+
+    shadow = compute_entry_shadow_fields(
+        trade=trade,
+        payload=payload,
+        price_ring=ctx.symbol_price_ring.get(sym, []),
+        entry_ts=tick_ts_from_payload(payload),
+        session_momentum_samples=ctx.state.session_momentum_samples,
+    )
+    for key in ("entry_rise_5min_pct", "entry_vwap_dev_pct"):
+        if shadow.get(key) is not None:
+            trade[key] = shadow[key]
+    if shadow.get("entry_near_day_high_pct") is not None:
+        trade["entry_near_day_high_pct"] = shadow["entry_near_day_high_pct"]
+        trade["day_high_distance_pct"] = shadow["entry_near_day_high_pct"]
+    if shadow.get("entry_momentum_continuation_score") is not None:
+        trade["entry_momentum_continuation_score"] = shadow[
+            "entry_momentum_continuation_score"
+        ]
+        trade["entry_momentum_score"] = shadow["entry_momentum_continuation_score"]
+    elif trade.get("momentum_continuation_score") is not None:
+        trade["entry_momentum_score"] = trade.get("momentum_continuation_score")
+
+
+def _enrich_trade_for_pullback_guard(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: dict[str, Any],
+    payload: Mapping[str, Any],
+) -> None:
+    _enrich_trade_for_entry_guards(ctx, sym=sym, trade=trade, payload=payload)
+
+
+def _make_entry_scan_controller(
+    config: SmallPaperPilotConfig,
+    *,
+    source: str,
+    writer: LiveSessionWriter,
+) -> Any:
+    from small_paper.entry_scan_controller import entry_scan_controller_from_config
+
+    return entry_scan_controller_from_config(
+        config,
+        pipeline_source=source,
+        audit_writer=writer.append_entry_scan_audit,
+    )
+
+
+def _execute_accepted_entry(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: dict[str, Any],
+    decision: Any,
+    payload: Mapping[str, Any],
+    enriched: Mapping[str, Any],
+    msg_i: int,
+    bucket: str,
+    score5_ord: Optional[int],
+    scan_meta: Optional[Mapping[str, Any]] = None,
+) -> None:
+    from small_paper.extended_entry_shadow import compute_entry_shadow_fields, tick_ts_from_payload
+
+    ll_shadow = bool(getattr(ctx.config, "low_liquidity_shadow_enabled", False))
+    tv_min = float(getattr(ctx.config, "low_liquidity_shadow_trading_value_min", 1e8) or 1e8)
+    to_min = float(getattr(ctx.config, "low_liquidity_shadow_turnover_proxy_min", 0.002) or 0.002)
+    tv = _as_float(trade.get("trading_value"))
+    to = _as_float(trade.get("turnover_proxy"))
+    ll_rejected = False
+    ll_reason = ""
+    if ll_shadow:
+        if tv is not None and float(tv) < tv_min:
+            ll_rejected = True
+            ll_reason = "trading_value_below_min"
+        if not ll_rejected and to is not None and float(to) < to_min:
+            ll_rejected = True
+            ll_reason = "turnover_proxy_below_min"
+        if ll_rejected:
+            ctx.state.low_liquidity_shadow_reject_count += 1
+    trade["low_liquidity_shadow_rejected"] = bool(ll_rejected)
+    trade["low_liquidity_shadow_reason"] = ll_reason
+    trade["low_liquidity_shadow_trading_value"] = tv
+    trade["low_liquidity_shadow_turnover_proxy"] = to
+    if scan_meta:
+        trade.update({k: v for k, v in dict(scan_meta).items() if v is not None})
+    _enrich_accept_audit_fields(
+        trade,
+        gate=ctx.gate,
+        current_price=payload.get("CurrentPrice"),
+    )
+    mom_sample = _as_float(trade.get("momentum_continuation_score"))
+    if mom_sample is not None:
+        ctx.state.session_momentum_samples.append(float(mom_sample))
+    shadow = compute_entry_shadow_fields(
+        trade=trade,
+        payload=payload,
+        price_ring=ctx.symbol_price_ring.get(sym, []),
+        entry_ts=tick_ts_from_payload(payload),
+        session_momentum_samples=ctx.state.session_momentum_samples,
+    )
+    trade.update(shadow)
+    ctx.state.extended_entry_shadow.record_accept(shadow)
+    from small_paper.vwap_shadow_reject import compute_vwap_shadow_reject_fields
+
+    try:
+        entry_px_vwap = float(payload.get("CurrentPrice") or 0)
+    except (TypeError, ValueError):
+        entry_px_vwap = 0.0
+    vwap_shadow = compute_vwap_shadow_reject_fields(
+        payload=payload,
+        entry_px=entry_px_vwap,
+        entry_vwap_dev_pct=shadow.get("entry_vwap_dev_pct"),
+    )
+    trade.update(vwap_shadow)
+    ctx.state.vwap_shadow_reject.record_accept(vwap_shadow)
+    from small_paper.limit_up_proximity_entry_guard_shadow import (
+        compute_limit_up_proximity_guard_fields,
+    )
+
+    try:
+        entry_px_lu = float(payload.get("CurrentPrice") or 0)
+    except (TypeError, ValueError):
+        entry_px_lu = 0.0
+    prev_close_lu = _as_float(payload.get("PreviousClose")) or _as_float(trade.get("close_price"))
+    limit_up_shadow = compute_limit_up_proximity_guard_fields(
+        entry_px=entry_px_lu,
+        prev_close=prev_close_lu,
+        entry_near_day_high_pct=shadow.get("entry_near_day_high_pct"),
+        board_high=_as_float(payload.get("HighPrice")),
+    )
+    trade.update(limit_up_shadow)
+    ctx.state.limit_up_proximity_entry_guard_shadow.record_accept(limit_up_shadow)
+    from small_paper.pullback_misread_dynamic40_entry_guard import compute_pullback_misread_guard_fields
+
+    pb_shadow = compute_pullback_misread_guard_fields(trade)
+    trade.update(pb_shadow)
+    ctx.state.pullback_misread_entry_guard_shadow.record_accept(pb_shadow)
+    from small_paper.near_day_high_low_momentum_dynamic40_entry_guard import (
+        compute_near_day_high_low_momentum_guard_fields,
+    )
+
+    nd_shadow = compute_near_day_high_low_momentum_guard_fields(trade)
+    trade.update(nd_shadow)
+    from small_paper.board_imbalance_shadow import compute_board_imbalance_shadow_fields
+
+    imb_shadow = compute_board_imbalance_shadow_fields(
+        trade=trade,
+        payload=payload,
+        session_imbalance_samples=ctx.state.session_order_book_imbalance_samples,
+    )
+    trade.update(imb_shadow)
+    ctx.state.board_imbalance_shadow.record_accept(imb_shadow)
+    from small_paper.quality_formula_shadow import compute_shadow_quality_fields
+    from small_paper.trading_value_shadow_gate import compute_trading_value_shadow_fields
+
+    trade.update(compute_shadow_quality_fields(trade))
+    trade.update(compute_trading_value_shadow_fields(trade))
+    from small_paper.entry_expectancy_score_shadow import compute_entry_expectancy_score_fields
+
+    score_fields = compute_entry_expectancy_score_fields(trade=trade)
+    trade.update(score_fields)
+    ctx.state.entry_expectancy_score_shadow.record_accept(score_fields)
+
+    slot_before = len(ctx.gate.state.open_slots)
+    ctx.gate.record_accepted(trade)
+    slot_after = len(ctx.gate.state.open_slots)
+    ctx.state.peak_open_slots = max(ctx.state.peak_open_slots, slot_after)
+    acc = _event_from_gate(
+        event_type="accepted",
+        trade=trade,
+        decision=decision,
+        source=ctx.source,
+        message_index=msg_i,
+        current_price=payload.get("CurrentPrice"),
+    )
+    if scan_meta:
+        acc.update({k: v for k, v in dict(scan_meta).items() if v is not None})
+    acc["position_slot_before"] = slot_before
+    acc["position_slot_after"] = slot_after
+    ctx.state.events.append(acc)
+    ctx.writer.append_event(acc)
+    ctx.state.accepted_rows.append(dict(trade))
+    _record_bucket(ctx.state, "accepted")
+    ctx.writer.append_position_row(
+        {
+            "symbol": trade.get("symbol"),
+            "entry_time": trade.get("entry_time"),
+            "exit_time": trade.get("exit_time"),
+            "open_slots_after": slot_after,
+        },
+        fields=ctx.pos_fields,
+    )
+    if ctx.observer:
+        try:
+            entry_px = float(payload.get("CurrentPrice") or 0)
+        except (TypeError, ValueError):
+            entry_px = 0.0
+        if entry_px > 0 and ctx.observer.has_open(sym):
+            overlap_events = ctx.observer.close_for_overlap(
+                symbol=sym,
+                trade=trade,
+                payload=enriched,
+                current_price=entry_px,
+                session_bucket=bucket,
+            )
+            _log_and_dispatch_observer_events(
+                overlap_events,
+                discord=ctx.discord,
+                writer=ctx.writer,
+                state=ctx.state,
+                source=ctx.source,
+                message_index=msg_i,
+                profile=ctx.config.profile,
+            )
+        if entry_px > 0 and not ctx.observer.has_open(sym):
+            ctx.observer.register_entry(
+                trade=trade,
+                payload=enriched,
+                quality_tier=str(decision.quality_tier or ""),
+                entry_price=entry_px,
+            )
+    if ctx.discord and ctx.discord.active:
+        import time
+
+        notify_mono = time.monotonic()
+        signal_mono = float((scan_meta or {}).get("entry_signal_mono") or notify_mono)
+        ctx.discord.notify_entry(
+            event=acc,
+            payload=enriched,
+            open_slots=slot_after,
+            session_bucket=bucket,
+            score5_candidate_ordinal=score5_ord,
+            ux_stats=ctx.state.discord_ux,
+            entry_signal_mono=signal_mono,
+            notify_mono=notify_mono,
+        )
+
+
+def _process_scan_flush(ctx: _PushPipelineContext, flush: Any) -> None:
+    from research.exposure_gate import GateDecision
+    from small_paper.entry_scan_controller import REJECT_MAX_ENTRIES_PER_SCAN
+
+    for cand in flush.accepted:
+        n_cand = flush.entry_candidates_count
+        rank_i = flush.accepted.index(cand) + 1
+        scan_meta = {
+            "scan_id": flush.scan_id,
+            "data_source": cand.freshness.data_source,
+            "price_age_sec": cand.freshness.price_age_sec,
+            "board_age_sec": cand.freshness.board_age_sec,
+            "same_scan_rank": f"{rank_i}/{n_cand}" if n_cand else "1/1",
+            "same_scan_candidates": n_cand,
+            "is_same_scan_batch_entry": n_cand > 1,
+            "entry_signal_ts": cand.entry_signal_ts,
+            "entry_signal_mono": cand.entry_signal_mono,
+        }
+        _execute_accepted_entry(
+            ctx,
+            sym=cand.symbol,
+            trade=cand.trade,
+            decision=cand.decision,
+            payload=cand.payload,
+            enriched=cand.enriched,
+            msg_i=cand.msg_i,
+            bucket=cand.bucket,
+            score5_ord=cand.score5_ord,
+            scan_meta=scan_meta,
+        )
+    for cand in flush.rejected_max_scan:
+        rej_row = dict(cand.trade)
+        rej_row["gate_reject_reason"] = REJECT_MAX_ENTRIES_PER_SCAN
+        rej_row["scan_id"] = flush.scan_id
+        ctx.state.reject_rows.append(rej_row)
+        decision = GateDecision(
+            accept=False,
+            reason=REJECT_MAX_ENTRIES_PER_SCAN,
+            continuation_quality_score=float(cand.trade.get("continuation_quality_score") or 0),
+            quality_tier="",
+        )
+        rej = _event_from_gate(
+            event_type="rejected",
+            trade=cand.trade,
+            decision=decision,
+            source=ctx.source,
+            message_index=cand.msg_i,
+            current_price=cand.payload.get("CurrentPrice"),
+        )
+        rej["scan_id"] = flush.scan_id
+        rej["reject_reason"] = REJECT_MAX_ENTRIES_PER_SCAN
+        ctx.state.events.append(rej)
+        ctx.writer.append_event(rej)
+        _record_bucket(ctx.state, "rejected")
 
 
 def _record_score5_ordinal(ctx: _PushPipelineContext, trade: Mapping[str, Any]) -> Optional[int]:
@@ -814,9 +1312,22 @@ def _process_push_payload(
     *,
     symbol: Optional[str] = None,
 ) -> None:
+    import time
+
+    eval_start_mono = time.monotonic()
+    eval_start_ts = _now_iso()
+    scan_id = ""
+    if ctx.entry_scan is not None:
+        scan_id, flush_on_begin = ctx.entry_scan.begin_symbol_eval(now_mono=eval_start_mono)
+        if flush_on_begin is not None:
+            _process_scan_flush(ctx, flush_on_begin)
+
     sym = symbol or _symbol_from_push(payload, ctx.code_to_symbol)
     if not sym:
         return
+    board_shadow = getattr(ctx.state, "realtime_board_exit_shadow", None)
+    if board_shadow is not None:
+        board_shadow.record_push_board_tick(symbol=sym, payload=payload)
     ctx.state.push_messages = msg_i
     age = _tick_age_sec(payload)
     if age is not None and age > ctx.stale_tick_sec:
@@ -933,7 +1444,39 @@ def _process_push_payload(
         from small_paper.entry_expectancy_score_shadow import compute_entry_expectancy_score_fields
 
         trade.update(compute_entry_expectancy_score_fields(trade=trade))
-        decision = ctx.gate.evaluate_entry(trade)
+        from small_paper.entry_scan_controller import (
+            check_entry_data_freshness,
+            compute_entry_freshness,
+        )
+
+        freshness = compute_entry_freshness(enriched, pipeline_source=ctx.source)
+        trade["entry_data_source"] = freshness.data_source
+        trade["price_age_sec"] = freshness.price_age_sec
+        trade["board_age_sec"] = freshness.board_age_sec
+        trade["last_price_update_ts"] = freshness.last_price_update_ts
+        trade["last_board_update_ts"] = freshness.last_board_update_ts
+        if scan_id:
+            trade["scan_id"] = scan_id
+        stale_reason = None
+        if ctx.entry_scan is not None:
+            stale_reason = check_entry_data_freshness(
+                freshness,
+                max_price_age_sec=ctx.entry_scan.max_price_age_sec,
+                max_board_age_sec=ctx.entry_scan.max_board_age_sec,
+                guard_enabled=ctx.entry_scan.freshness_guard_enabled,
+            )
+        if stale_reason:
+            from research.exposure_gate import GateDecision
+
+            decision = GateDecision(
+                accept=False,
+                reason=stale_reason,
+                continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
+                quality_tier="",
+            )
+        else:
+            _enrich_trade_for_pullback_guard(ctx, sym=sym, trade=trade, payload=payload)
+            decision = ctx.gate.evaluate_entry(trade)
     ctx.state.gate_evaluations += 1
 
     cand = _event_from_gate(
@@ -949,140 +1492,72 @@ def _process_push_payload(
     _record_bucket(ctx.state, "candidate")
     score5_ord = _record_score5_ordinal(ctx, trade)
 
+    eval_end_ts = _now_iso()
+    eval_latency_ms = (time.monotonic() - eval_start_mono) * 1000.0
+    if ctx.entry_scan is not None:
+        from small_paper.entry_scan_controller import (
+            PendingEntryCandidate,
+            compute_entry_freshness,
+        )
+
+        fresh_log = compute_entry_freshness(enriched, pipeline_source=ctx.source)
+        ctx.entry_scan.record_symbol_eval(
+            scan_id=scan_id or "",
+            symbol=sym,
+            freshness=fresh_log,
+            trade=trade,
+            entry_decision=bool(decision.accept),
+            reject_reason="" if decision.accept else str(decision.reason or ""),
+            eval_start_ts=eval_start_ts,
+            eval_end_ts=eval_end_ts,
+            eval_latency_ms=eval_latency_ms,
+        )
+
     if decision.accept:
-        # Phase179: low-liquidity shadow-only reject (logging only; do not block accept).
-        ll_shadow = bool(getattr(ctx.config, "low_liquidity_shadow_enabled", False))
-        tv_min = float(getattr(ctx.config, "low_liquidity_shadow_trading_value_min", 1e8) or 1e8)
-        to_min = float(getattr(ctx.config, "low_liquidity_shadow_turnover_proxy_min", 0.002) or 0.002)
-        tv = _as_float(trade.get("trading_value"))
-        to = _as_float(trade.get("turnover_proxy"))
-        ll_rejected = False
-        ll_reason = ""
-        if ll_shadow:
-            if tv is not None and float(tv) < tv_min:
-                ll_rejected = True
-                ll_reason = "trading_value_below_min"
-            if not ll_rejected and to is not None and float(to) < to_min:
-                ll_rejected = True
-                ll_reason = "turnover_proxy_below_min"
-            if ll_rejected:
-                ctx.state.low_liquidity_shadow_reject_count += 1
-        trade["low_liquidity_shadow_rejected"] = bool(ll_rejected)
-        trade["low_liquidity_shadow_reason"] = ll_reason
-        trade["low_liquidity_shadow_trading_value"] = tv
-        trade["low_liquidity_shadow_turnover_proxy"] = to
-        _enrich_accept_audit_fields(
-            trade,
-            gate=ctx.gate,
-            current_price=payload.get("CurrentPrice"),
-        )
-        from small_paper.extended_entry_shadow import compute_entry_shadow_fields
+        if ctx.entry_scan is not None and ctx.entry_scan.batch_enabled:
+            from small_paper.entry_scan_controller import (
+                PendingEntryCandidate,
+                compute_entry_freshness,
+            )
 
-        mom_sample = _as_float(trade.get("momentum_continuation_score"))
-        if mom_sample is not None:
-            ctx.state.session_momentum_samples.append(float(mom_sample))
-        shadow = compute_entry_shadow_fields(
-            trade=trade,
-            payload=payload,
-            price_ring=ctx.symbol_price_ring.get(sym, []),
-            entry_ts=tick_ts_from_payload(payload),
-            session_momentum_samples=ctx.state.session_momentum_samples,
-        )
-        trade.update(shadow)
-        ctx.state.extended_entry_shadow.record_accept(shadow)
-        from small_paper.vwap_shadow_reject import compute_vwap_shadow_reject_fields
-
-        try:
-            entry_px_vwap = float(payload.get("CurrentPrice") or 0)
-        except (TypeError, ValueError):
-            entry_px_vwap = 0.0
-        vwap_shadow = compute_vwap_shadow_reject_fields(
-            payload=payload,
-            entry_px=entry_px_vwap,
-            entry_vwap_dev_pct=shadow.get("entry_vwap_dev_pct"),
-        )
-        trade.update(vwap_shadow)
-        ctx.state.vwap_shadow_reject.record_accept(vwap_shadow)
-        from small_paper.board_imbalance_shadow import compute_board_imbalance_shadow_fields
-
-        imb_shadow = compute_board_imbalance_shadow_fields(
-            trade=trade,
-            payload=payload,
-            session_imbalance_samples=ctx.state.session_order_book_imbalance_samples,
-        )
-        trade.update(imb_shadow)
-        ctx.state.board_imbalance_shadow.record_accept(imb_shadow)
-        from small_paper.quality_formula_shadow import compute_shadow_quality_fields
-        from small_paper.trading_value_shadow_gate import compute_trading_value_shadow_fields
-
-        trade.update(compute_shadow_quality_fields(trade))
-        trade.update(compute_trading_value_shadow_fields(trade))
-        from small_paper.entry_expectancy_score_shadow import compute_entry_expectancy_score_fields
-
-        score_fields = compute_entry_expectancy_score_fields(trade=trade)
-        trade.update(score_fields)
-        ctx.state.entry_expectancy_score_shadow.record_accept(score_fields)
-
-        ctx.gate.record_accepted(trade)
-        ctx.state.peak_open_slots = max(ctx.state.peak_open_slots, len(ctx.gate.state.open_slots))
-        acc = _event_from_gate(
-            event_type="accepted",
-            trade=trade,
-            decision=decision,
-            source=ctx.source,
-            message_index=msg_i,
-            current_price=payload.get("CurrentPrice"),
-        )
-        ctx.state.events.append(acc)
-        ctx.writer.append_event(acc)
-        ctx.state.accepted_rows.append(dict(trade))
-        _record_bucket(ctx.state, "accepted")
-        ctx.writer.append_position_row(
-            {
-                "symbol": trade.get("symbol"),
-                "entry_time": trade.get("entry_time"),
-                "exit_time": trade.get("exit_time"),
-                "open_slots_after": len(ctx.gate.state.open_slots),
-            },
-            fields=ctx.pos_fields,
-        )
-        if ctx.observer:
-            try:
-                entry_px = float(payload.get("CurrentPrice") or 0)
-            except (TypeError, ValueError):
-                entry_px = 0.0
-            if entry_px > 0 and ctx.observer.has_open(sym):
-                overlap_events = ctx.observer.close_for_overlap(
-                    symbol=sym,
-                    trade=trade,
-                    payload=enriched,
-                    current_price=entry_px,
-                    session_bucket=bucket,
-                )
-                _log_and_dispatch_observer_events(
-                    overlap_events,
-                    discord=ctx.discord,
-                    writer=ctx.writer,
-                    state=ctx.state,
-                    source=ctx.source,
-                    message_index=msg_i,
-                    profile=ctx.config.profile,
-                )
-            if entry_px > 0 and not ctx.observer.has_open(sym):
-                ctx.observer.register_entry(
-                    trade=trade,
-                    payload=enriched,
-                    quality_tier=str(decision.quality_tier or ""),
-                    entry_price=entry_px,
-                )
-        if ctx.discord and ctx.discord.active:
-            ctx.discord.notify_entry(
-                event=acc,
-                payload=enriched,
-                open_slots=len(ctx.gate.state.open_slots),
-                session_bucket=bucket,
-                score5_candidate_ordinal=score5_ord,
-                ux_stats=ctx.state.discord_ux,
+            freshness = compute_entry_freshness(enriched, pipeline_source=ctx.source)
+            cand = PendingEntryCandidate(
+                symbol=sym,
+                trade=dict(trade),
+                decision=decision,
+                payload=dict(payload),
+                enriched=dict(enriched),
+                msg_i=msg_i,
+                freshness=freshness,
+                eval_start_ts=eval_start_ts,
+                eval_end_ts=eval_end_ts,
+                eval_latency_ms=eval_latency_ms,
+                entry_signal_ts=eval_end_ts,
+                entry_signal_mono=eval_start_mono,
+                bucket=bucket,
+                score5_ord=score5_ord,
+            )
+            ctx.entry_scan.queue_accepted_candidate(cand)
+            flush_now = ctx.entry_scan.maybe_flush_after_eval()
+            if flush_now is not None:
+                _process_scan_flush(ctx, flush_now)
+        else:
+            _execute_accepted_entry(
+                ctx,
+                sym=sym,
+                trade=trade,
+                decision=decision,
+                payload=payload,
+                enriched=enriched,
+                msg_i=msg_i,
+                bucket=bucket,
+                score5_ord=score5_ord,
+                scan_meta={
+                    "scan_id": scan_id,
+                    "entry_signal_mono": eval_start_mono,
+                }
+                if scan_id
+                else {"entry_signal_mono": eval_start_mono},
             )
     else:
         rej_row = dict(trade)
@@ -1148,6 +1623,81 @@ def _process_push_payload(
                 "universe_close_price_used": close_used,
             }
             ctx.writer.append_error(log_rec)
+        if decision.reason == "pullback_misread_dynamic40_guard":
+            from small_paper.pullback_misread_dynamic40_entry_guard import (
+                LOG_EVENT_KIND as PB_LOG_EVENT_KIND,
+                REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD,
+                compute_pullback_misread_guard_fields,
+            )
+
+            ctx.state.pullback_misread_dynamic40_reject_count += 1
+            ctx.state.pullback_misread_dynamic40_reject_symbols.add(sym)
+            pb_fields = compute_pullback_misread_guard_fields(trade)
+            trade.update(pb_fields)
+            rej_row.update(pb_fields)
+            rej_row["reject_reason"] = REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD
+            pb_counters = getattr(ctx.state, "pullback_misread_entry_guard_shadow", None)
+            if pb_counters is not None:
+                pb_counters.record_reject_candidate(pb_fields)
+            ctx.writer.append_error(
+                {
+                    "event_kind": PB_LOG_EVENT_KIND,
+                    "symbol": sym,
+                    "entry_rise_5min_pct": getattr(
+                        decision, "pullback_misread_dynamic40_entry_rise_5min_pct", None
+                    ),
+                    "entry_vwap_dev_pct": getattr(
+                        decision, "pullback_misread_dynamic40_entry_vwap_dev_pct", None
+                    ),
+                    "universe_slot": getattr(
+                        decision, "pullback_misread_dynamic40_universe_slot", ""
+                    ),
+                    "universe_bucket": getattr(
+                        decision, "pullback_misread_dynamic40_universe_bucket", ""
+                    ),
+                    "reject_reason": REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD,
+                }
+            )
+        if decision.reason == "near_day_high_low_momentum_dynamic40_guard":
+            from small_paper.near_day_high_low_momentum_dynamic40_entry_guard import (
+                LOG_EVENT_KIND as ND_LOG_EVENT_KIND,
+                REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD,
+                compute_near_day_high_low_momentum_guard_fields,
+            )
+
+            ctx.state.near_day_high_low_momentum_dynamic40_reject_count += 1
+            ctx.state.near_day_high_low_momentum_dynamic40_reject_symbols.add(sym)
+            nd_fields = compute_near_day_high_low_momentum_guard_fields(trade)
+            trade.update(nd_fields)
+            rej_row.update(nd_fields)
+            rej_row["reject_reason"] = REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD
+            ctx.writer.append_error(
+                {
+                    "event_kind": ND_LOG_EVENT_KIND,
+                    "symbol": sym,
+                    "day_high_distance_pct": getattr(
+                        decision,
+                        "near_day_high_low_momentum_dynamic40_day_high_distance_pct",
+                        None,
+                    ),
+                    "entry_momentum_score": getattr(
+                        decision,
+                        "near_day_high_low_momentum_dynamic40_entry_momentum_score",
+                        None,
+                    ),
+                    "universe_slot": getattr(
+                        decision,
+                        "near_day_high_low_momentum_dynamic40_universe_slot",
+                        "",
+                    ),
+                    "universe_bucket": getattr(
+                        decision,
+                        "near_day_high_low_momentum_dynamic40_universe_bucket",
+                        "",
+                    ),
+                    "reject_reason": REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD,
+                }
+            )
         ctx.state.reject_rows.append(rej_row)
         rej = _event_from_gate(
             event_type="rejected",
@@ -1183,15 +1733,11 @@ def _process_push_payload(
                     entry_ts=tick_ts_from_payload(payload),
                     session_momentum_samples=ctx.state.session_momentum_samples,
                 )
-                holdings: list[dict[str, Any]] = []
-                if ctx.observer is not None:
-                    holdings = ctx.observer.snapshot_open_holdings()
-                ctx.discord.notify_entry_deferred_max_concurrent(
+                ctx.discord.notify_entry_cap_blocked(
                     event=rej,
                     payload=enriched,
                     trade_data={**trade, **shadow},
                     open_slots=len(ctx.gate.state.open_slots),
-                    open_positions=holdings,
                     score5_candidate_ordinal=score5_ord,
                     ux_stats=ctx.state.discord_ux,
                 )
@@ -1256,37 +1802,65 @@ def _parse_recorded_at_ts(recorded_at: str) -> float:
         return 0.0
 
 
+def _parse_push_replay_line(
+    line: str,
+    *,
+    file_sym: str,
+) -> Optional[tuple[str, str, dict[str, Any]]]:
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        rec = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    src = str(rec.get("source") or "")
+    if src and src not in ("live_push", "push", "dry_run"):
+        return None
+    payload = rec.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    sym = str(rec.get("symbol") or file_sym).strip().upper()
+    if not sym.endswith(".T"):
+        sym = f"{sym}.T"
+    recorded_at = str(rec.get("recorded_at") or "")
+    return recorded_at, sym, payload
+
+
+def _iter_push_replay_records(
+    push_dir: Path,
+    *,
+    max_rows: Optional[int] = None,
+):
+    """Stream push_jsonl rows in recorded_at order without loading full day into RAM."""
+    import heapq
+
+    def _file_iter(fp: Path):
+        file_sym = fp.stem
+        with fp.open(encoding="utf-8") as f:
+            for line in f:
+                row = _parse_push_replay_line(line, file_sym=file_sym)
+                if row is not None:
+                    yield row
+
+    files = sorted(push_dir.glob("*.jsonl"))
+    if not files:
+        return
+    merged = heapq.merge(*[_file_iter(fp) for fp in files], key=lambda r: r[0])
+    count = 0
+    for row in merged:
+        yield row
+        count += 1
+        if max_rows is not None and count >= max_rows:
+            break
+
+
 def _load_push_replay_records(
     push_dir: Path,
     *,
     max_rows: Optional[int] = None,
 ) -> list[tuple[str, str, dict[str, Any]]]:
-    rows: list[tuple[str, str, dict[str, Any]]] = []
-    for fp in sorted(push_dir.glob("*.jsonl")):
-        file_sym = fp.stem
-        with fp.open(encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                src = str(rec.get("source") or "")
-                if src and src not in ("live_push", "push", "dry_run"):
-                    continue
-                payload = rec.get("payload")
-                if not isinstance(payload, dict):
-                    continue
-                sym = str(rec.get("symbol") or file_sym).strip().upper()
-                if not sym.endswith(".T"):
-                    sym = f"{sym}.T"
-                recorded_at = str(rec.get("recorded_at") or "")
-                rows.append((recorded_at, sym, payload))
-                if max_rows is not None and len(rows) >= max_rows:
-                    return sorted(rows, key=lambda r: r[0])
-    return sorted(rows, key=lambda r: r[0])
+    return list(_iter_push_replay_records(push_dir, max_rows=max_rows))
 
 
 _C_GROUP_FAVORABLE_FADE_KEYS = frozenset(
@@ -1340,6 +1914,29 @@ def _structural_metrics_for_push_replay(
         "favorable_mfe_scale": config.favorable_mfe_scale,
         "use_market_time_window": config.use_market_time_window,
     }
+
+
+def _observer_exit_pnl_summary_fields(events: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    from small_paper.discord_message_builder import summarize_observer_exit_metrics
+
+    return summarize_observer_exit_metrics(events)
+
+
+def _attach_canonical_summary_fields(
+    summary: dict[str, Any],
+    events: Sequence[dict[str, Any]],
+    *,
+    config: SmallPaperPilotConfig,
+    watch_symbols_count: Optional[int] = None,
+) -> dict[str, Any]:
+    from small_paper.canonical_summary import enrich_summary_with_canonical
+
+    return enrich_summary_with_canonical(
+        summary,
+        events,
+        max_concurrent_positions=config.max_concurrent_positions,
+        watch_symbols_count=watch_symbols_count,
+    )
 
 
 def _build_push_replay_summary(
@@ -1405,7 +2002,14 @@ def _build_push_replay_summary(
     base.update(_extended_shadow_summary_fields(state))
     base.update(_vwap_shadow_summary_fields(state))
     base.update(_board_imbalance_shadow_summary_fields(state))
+    base.update(_board_dynamic_trailing_shadow_summary_fields(state))
+    base.update(_limit_up_proximity_entry_guard_shadow_summary_fields(state))
+    base.update(_pullback_misread_dynamic40_guard_summary_fields(gate, state))
+    base.update(_near_day_high_low_momentum_dynamic40_guard_summary_fields(gate, state))
+    base.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     base.update(_entry_expectancy_score_summary_fields(state))
+    base.update(_observer_exit_pnl_summary_fields(state.events))
+    _attach_canonical_summary_fields(base, state.events, config=config)
     return base
 
 
@@ -1463,6 +2067,19 @@ def run_push_replay_dry_run(
     replay_speed_sec: float = 0.0,
     max_push_rows: Optional[int] = None,
     enable_discord: bool = False,
+    write_board_shadow_reports: bool = True,
+    enable_exit_candidate_shadow: bool = False,
+    exit_candidate_ids: Optional[Sequence[str]] = None,
+    enable_vwap_tuning_shadow: bool = False,
+    vwap_tuning_variants: Optional[Sequence[Any]] = None,
+    enable_board_failure_shadow: bool = False,
+    enable_board_failure_tuning_shadow: bool = False,
+    board_failure_tuning_variants: Optional[Sequence[Any]] = None,
+    enable_board_failure_forensic_shadow: bool = False,
+    enable_board_failure_guard_shadow: bool = False,
+    board_failure_guard_variants: Optional[Sequence[Any]] = None,
+    enable_phase356_exit_rebaseline_shadow: bool = False,
+    streaming_push_replay: bool = False,
 ) -> PilotRunResult:
     """Replay saved push_jsonl through live feature bridge + exposure gate (no kabu connection)."""
     import time
@@ -1479,13 +2096,20 @@ def run_push_replay_dry_run(
         replay_config = replace(config, discord_enabled=False)
     # else: respect config.discord_enabled (trial q070 keeps observer on for push-replay)
 
-    records = _load_push_replay_records(push_dir, max_rows=max_push_rows)
-    push_rows = len(records)
+    if streaming_push_replay:
+        record_iter = _iter_push_replay_records(push_dir, max_rows=max_push_rows)
+        push_rows = 0
+    else:
+        records = _load_push_replay_records(push_dir, max_rows=max_push_rows)
+        push_rows = len(records)
+        record_iter = iter(records)
 
     code_to_symbol: dict[str, str] = {}
-    for _, sym, _ in records:
-        code = sym.replace(".T", "")
-        code_to_symbol[code] = sym
+    for fp in sorted(push_dir.glob("*.jsonl")):
+        sym = fp.stem.strip().upper()
+        if not sym.endswith(".T"):
+            sym = f"{sym}.T"
+        code_to_symbol[sym.replace(".T", "")] = sym
 
     root = repo_root or Path(__file__).resolve().parents[3]
     from small_paper.symbol_cooloff import session_key_from_output_dir
@@ -1497,30 +2121,100 @@ def run_push_replay_dry_run(
     output_dir.mkdir(parents=True, exist_ok=True)
     writer = LiveSessionWriter(output_dir, incremental=True, event_fields=EVENT_FIELDS)
     state = _LiveRunState(started_mono=time.monotonic())
+    if enable_board_failure_forensic_shadow:
+        from small_paper.board_failure_forensic_pack import BoardFailureForensicPack
+
+        state.realtime_board_exit_shadow = None
+        state.exit_candidate_shadow = BoardFailureForensicPack()
+    elif enable_board_failure_guard_shadow:
+        from small_paper.board_failure_false_positive_guard import (
+            BoardFailureGuardTuningPack,
+            default_phase346_variants,
+        )
+
+        guard_variants = (
+            tuple(board_failure_guard_variants)
+            if board_failure_guard_variants
+            else default_phase346_variants()
+        )
+        state.realtime_board_exit_shadow = None
+        state.exit_candidate_shadow = BoardFailureGuardTuningPack(variants=guard_variants)
+    elif enable_board_failure_tuning_shadow:
+        from small_paper.board_failure_exit_tuning import (
+            BoardFailureTuningPack,
+            default_phase343_variants,
+        )
+
+        variants = (
+            tuple(board_failure_tuning_variants)
+            if board_failure_tuning_variants
+            else default_phase343_variants()
+        )
+        state.realtime_board_exit_shadow = None
+        state.exit_candidate_shadow = BoardFailureTuningPack(variants=variants)
+    elif enable_board_failure_shadow:
+        from small_paper.board_failure_exit_shadow import BoardFailureExitShadowPack
+
+        state.realtime_board_exit_shadow = None
+        state.exit_candidate_shadow = BoardFailureExitShadowPack()
+    elif enable_vwap_tuning_shadow:
+        from small_paper.vwap_assisted_loss_tuning import (
+            VwapAssistedLossTuningPack,
+            default_phase339_variants,
+        )
+
+        variants = (
+            tuple(vwap_tuning_variants)
+            if vwap_tuning_variants
+            else default_phase339_variants()
+        )
+        state.realtime_board_exit_shadow = None
+        state.exit_candidate_shadow = VwapAssistedLossTuningPack(variants=variants)
+    elif enable_exit_candidate_shadow:
+        from small_paper.exit_candidate_shadow import EXIT_CANDIDATE_IDS, ExitCandidateShadowPack
+
+        active = tuple(exit_candidate_ids) if exit_candidate_ids else EXIT_CANDIDATE_IDS
+        state.realtime_board_exit_shadow = None
+        state.exit_candidate_shadow = ExitCandidateShadowPack(
+            active_candidates=active,
+            enable_extend=exit_candidate_ids is None,
+        )
+    elif enable_phase356_exit_rebaseline_shadow:
+        from small_paper.phase356_exit_rebaseline_pack import Phase356ExitRebaselinePack
+
+        state.realtime_board_exit_shadow = None
+        state.exit_candidate_shadow = Phase356ExitRebaselinePack()
     pos_fields = ["symbol", "entry_time", "exit_time", "open_slots_after"]
 
     observer: Optional[ObserverPositionTracker] = None
     discord: Optional[SmallPaperDiscordNotifier] = None
-    if replay_config.discord_enabled and replay_config.discord_observer_only:
+    if replay_config.discord_observer_only:
+        observer = _make_observer_tracker(replay_config, state)
+        if replay_config.discord_enabled:
 
-        def _discord_error_logger(op: str, msg: str, extra: Mapping[str, Any]) -> None:
-            writer.append_error(
-                {
-                    "event_time": _now_iso(),
-                    "error_type": "discord_error",
-                    "operation": op,
-                    "message": msg,
-                    **dict(extra),
-                }
+            def _discord_error_logger(op: str, msg: str, extra: Mapping[str, Any]) -> None:
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "error_type": "discord_error",
+                        "operation": op,
+                        "message": msg,
+                        **dict(extra),
+                    }
+                )
+
+            discord = discord_notifier_from_pilot(
+                replay_config,
+                error_logger=_discord_error_logger,
             )
 
-        discord = discord_notifier_from_pilot(
-            replay_config,
-            error_logger=_discord_error_logger,
-        )
-        observer = ObserverPositionTracker(observer_tracker_config_from_pilot(replay_config))
-
     gap_threshold_sec = max(replay_config.live_stale_tick_sec * 2, max(poll_interval_sec, 0.001) * 3)
+    day_compact = push_dir.name.replace("-", "")
+    universe_meta = _load_symbol_universe_meta_for_day(
+        repo_root=root,
+        day_compact=day_compact,
+        session_kind="am",
+    )
     ctx = _PushPipelineContext(
         config=replay_config,
         gate=gate,
@@ -1534,12 +2228,16 @@ def run_push_replay_dry_run(
         discord=discord,
         stale_tick_sec=replay_config.live_stale_tick_sec,
         gap_threshold_sec=gap_threshold_sec,
+        entry_scan=_make_entry_scan_controller(replay_config, source="push-replay", writer=writer),
+        symbol_universe_meta=universe_meta,
     )
 
     last_eval_ts: dict[str, float] = {}
     msg_i = 0
-    for recorded_at, sym, payload in records:
+    for recorded_at, sym, payload in record_iter:
         msg_i += 1
+        if streaming_push_replay:
+            push_rows = msg_i
         if poll_interval_sec > 0:
             ts = _parse_recorded_at_ts(recorded_at)
             prev = last_eval_ts.get(sym)
@@ -1549,6 +2247,11 @@ def run_push_replay_dry_run(
         _process_push_payload(ctx, payload, msg_i, symbol=sym)
         if replay_speed_sec > 0:
             time.sleep(replay_speed_sec)
+
+    if ctx.entry_scan is not None:
+        final_flush = ctx.entry_scan.flush_pending()
+        if final_flush is not None:
+            _process_scan_flush(ctx, final_flush)
 
     if observer:
         exit_events = observer.close_all(reason="push_replay_end")
@@ -1589,6 +2292,7 @@ def run_push_replay_dry_run(
                 observer_stats=_observer_stats_dict(observer),
             )
         )
+        _attach_canonical_summary_fields(summary, state.events, config=config)
         notify_discord_session_end(
             discord,
             events=state.events,
@@ -1608,13 +2312,31 @@ def run_push_replay_dry_run(
         pos_fields=pos_fields,
     )
     _write_quality_top_debug(output_dir, state.events)
+    board_shadow = getattr(state, "realtime_board_exit_shadow", None)
+    if write_board_shadow_reports:
+        _write_phase335_lite_board_shadow_reports(state, repo_root=root)
+    exit_pack = getattr(state, "exit_candidate_shadow", None)
     return PilotRunResult(
         output_dir=output_dir,
         summary=summary,
         events=state.events,
         accepted=state.accepted_rows,
         rejects=state.reject_rows,
+        realtime_board_shadow=board_shadow,
+        exit_candidate_shadow=exit_pack,
     )
+
+
+def _write_phase335_lite_board_shadow_reports(
+    state: _LiveRunState,
+    *,
+    repo_root: Path,
+    day_stamp: Optional[str] = None,
+) -> None:
+    from small_paper.realtime_board_exit_shadow import write_phase335_lite_outputs
+
+    logger = getattr(state, "realtime_board_exit_shadow", None)
+    write_phase335_lite_outputs(logger, repo_root=repo_root, day_stamp=day_stamp)
 
 
 def _build_live_summary(
@@ -1698,7 +2420,14 @@ def _build_live_summary(
     summary.update(_extended_shadow_summary_fields(state))
     summary.update(_vwap_shadow_summary_fields(state))
     summary.update(_board_imbalance_shadow_summary_fields(state))
+    summary.update(_board_dynamic_trailing_shadow_summary_fields(state))
+    summary.update(_limit_up_proximity_entry_guard_shadow_summary_fields(state))
+    summary.update(_pullback_misread_dynamic40_guard_summary_fields(gate, state))
+    summary.update(_near_day_high_low_momentum_dynamic40_guard_summary_fields(gate, state))
+    summary.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     summary.update(_entry_expectancy_score_summary_fields(state))
+    summary.update(_observer_exit_pnl_summary_fields(state.events))
+    _attach_canonical_summary_fields(summary, state.events, config=config)
     return summary
 
 
@@ -1898,25 +2627,23 @@ def run_live_dry_run(
 
     discord: Optional[SmallPaperDiscordNotifier] = None
     observer: Optional[ObserverPositionTracker] = None
-    if config.discord_enabled and not config.order_enabled and config.discord_observer_only:
+    if config.discord_observer_only and not config.order_enabled:
+        observer = _make_observer_tracker(config, state, am_pm_policy=am_pm_policy)
+        if config.discord_enabled:
 
-        def _discord_error_logger(op: str, msg: str, extra: Mapping[str, Any]) -> None:
-            writer.append_error(
-                {
-                    "event_time": _now_iso(),
-                    "error_type": "discord_error",
-                    "operation": op,
-                    "message": msg,
-                    **dict(extra),
-                }
-            )
+            def _discord_error_logger(op: str, msg: str, extra: Mapping[str, Any]) -> None:
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "error_type": "discord_error",
+                        "operation": op,
+                        "message": msg,
+                        **dict(extra),
+                    }
+                )
 
-        discord = discord_notifier_from_pilot(config, error_logger=_discord_error_logger)
-        if am_pm_policy is not None:
-            observer = ObserverPositionTracker(am_pm_policy.observer_tracker_config(config))
-        else:
-            observer = ObserverPositionTracker(observer_tracker_config_from_pilot(config))
-        if discord.active and am_pm_policy is not None:
+            discord = discord_notifier_from_pilot(config, error_logger=_discord_error_logger)
+        if discord is not None and discord.active and am_pm_policy is not None:
             sk = str(getattr(am_pm_policy, "kind", "am")).lower()
             screening_label = "PM Screening" if sk == "pm" else "AM Screening"
             watch_syms = sorted({str(sym) for sym, _, _ in symbols})
@@ -1928,6 +2655,14 @@ def run_live_dry_run(
             )
 
     entry_eligible: Optional[set[str]] = {t[0] for t in symbols} if enable_intraday_refresh else None
+    day_compact = datetime.now(JST).strftime("%Y%m%d")
+    session_kind = str(getattr(am_pm_policy, "kind", "am") or "am").lower()
+    universe_meta = _load_symbol_universe_meta_for_day(
+        repo_root=repo_root,
+        day_compact=day_compact,
+        session_kind=session_kind,
+        universe_csv_path=universe_csv_path,
+    )
     pipeline_ctx = _PushPipelineContext(
         config=config,
         gate=gate,
@@ -1943,6 +2678,8 @@ def run_live_dry_run(
         gap_threshold_sec=gap_threshold_sec,
         am_pm_policy=am_pm_policy,
         entry_eligible_symbols=entry_eligible,
+        entry_scan=_make_entry_scan_controller(config, source="live", writer=writer),
+        symbol_universe_meta=universe_meta,
     )
     refresh_hhmm = "10:00"
     if am_pm_policy is not None and getattr(am_pm_policy, "kind", "") == "pm":
@@ -2414,6 +3151,10 @@ def run_live_dry_run(
                 if not await _reconnect_push():
                     break
         finally:
+            if pipeline_ctx.entry_scan is not None:
+                final_flush = pipeline_ctx.entry_scan.flush_pending()
+                if final_flush is not None:
+                    _process_scan_flush(pipeline_ctx, final_flush)
             try:
                 push.unregister_all()
             except Exception:
@@ -2463,6 +3204,12 @@ def run_live_dry_run(
         monitored_n = len(pipeline_ctx.entry_eligible_symbols)
     else:
         monitored_n = len(symbols)
+    _attach_canonical_summary_fields(
+        summary,
+        state.events,
+        config=config,
+        watch_symbols_count=monitored_n,
+    )
     notify_discord_session_end(
         discord,
         events=state.events,
@@ -2482,6 +3229,8 @@ def run_live_dry_run(
         pos_fields=pos_fields,
     )
     _write_quality_top_debug(output_dir, state.events)
+    day_stamp = datetime.now(JST).strftime("%Y%m%d")
+    _write_phase335_lite_board_shadow_reports(state, repo_root=repo_root, day_stamp=day_stamp)
     return PilotRunResult(
         output_dir=output_dir,
         summary=summary,

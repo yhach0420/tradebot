@@ -2,8 +2,10 @@
 Phase 46–47: Small paper pilot Discord observer (judgment events — no orders).
 
 Webhooks:
-- Trade notify (ENTRY / ENTRY見送り / EXIT / Refresh / Daily Summary):
+- Trade notify (adopted ENTRY / EXIT / Refresh / Daily Summary):
   KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL, fallback KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL
+- Trade cap blocked (ENTRY qualified but position cap full):
+  KABU_SMALL_PAPER_CAP_BLOCKED_WEBHOOK_URL only (no trade-notify fallback)
 - Legacy observer (HEARTBEAT / HOLD / TAKE / REJECT / ERROR / SESSION SUMMARY):
   KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL only — not KABU_SHADOW / Yahoo / IssueBot.
 """
@@ -23,11 +25,12 @@ import requests
 
 from research.exposure_gate import REJECT_MAX_CONCURRENT
 from small_paper.discord_message_builder import (
-    aggregate_daily_metrics,
     build_daily_summary_detail,
+    build_entry_cap_blocked_detail,
     build_entry_deferred_detail,
     build_entry_detail,
     build_exit_detail,
+    summary_notification_labels,
     build_universe_refresh_overview,
     build_universe_screening_overview,
     split_watch_symbols_discord_fields,
@@ -44,6 +47,7 @@ _DISPLAY_TAKE_PCT = 4.0
 _DEFAULT_HARD_STOP_PCT = 1.20
 _LEGACY_WEBHOOK_ENV = "KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL"
 _TRADE_NOTIFY_WEBHOOK_ENV = "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL"
+_CAP_BLOCKED_WEBHOOK_ENV = "KABU_SMALL_PAPER_CAP_BLOCKED_WEBHOOK_URL"
 
 ErrorLogger = Callable[[str, str, Mapping[str, Any]], None]
 
@@ -54,6 +58,7 @@ class SmallPaperDiscordConfig:
     observer_only: bool = True
     send_rejects: bool = False
     send_entry_deferred_max_concurrent: bool = True
+    send_entry_cap_blocked: bool = True
     entry_deferred_cooldown_sec: float = 1800.0
     entry_deferred_min_score_v2: int = 5
     entry_deferred_daily_max: int = 50
@@ -63,6 +68,7 @@ class SmallPaperDiscordConfig:
     heartbeat_min: float = 30.0
     webhook_env: str = _LEGACY_WEBHOOK_ENV
     trade_notify_webhook_env: str = _TRADE_NOTIFY_WEBHOOK_ENV
+    trade_cap_blocked_webhook_env: str = _CAP_BLOCKED_WEBHOOK_ENV
     cooldown_sec: float = 60.0
     hard_stop_pct: float = _DEFAULT_HARD_STOP_PCT
     hold_min: float = 15.0
@@ -117,6 +123,7 @@ class SmallPaperDiscordNotifier:
         self._legacy_webhook_url = ""
         self._trade_webhook_url = ""
         self._trade_webhook_source = ""
+        self._cap_blocked_webhook_url = ""
         self._last_sent_mono: dict[str, float] = {}
         self._last_heartbeat_mono: float = 0.0
 
@@ -168,6 +175,15 @@ class SmallPaperDiscordNotifier:
             return legacy, "legacy_fallback"
         return "", ""
 
+    def _resolve_cap_blocked_webhook(self) -> str:
+        if self._cap_blocked_webhook_url:
+            return self._cap_blocked_webhook_url
+        env_name = (self.cfg.trade_cap_blocked_webhook_env or _CAP_BLOCKED_WEBHOOK_ENV).strip()
+        url = (os.getenv(env_name) or "").strip()
+        if url:
+            self._cap_blocked_webhook_url = url
+        return url
+
     def _cooldown_ok(self, key: str, *, cooldown_sec: Optional[float] = None) -> bool:
         last = self._last_sent_mono.get(key)
         if last is None:
@@ -217,17 +233,26 @@ class SmallPaperDiscordNotifier:
         dedupe_key: Optional[str] = None,
         cooldown_sec: Optional[float] = None,
         trade_notify: bool = False,
+        cap_blocked: bool = False,
     ) -> bool:
-        if not self.active:
+        if not self.cfg.enabled or not self.cfg.observer_only:
             return False
         if dedupe_key and not self._cooldown_ok(dedupe_key, cooldown_sec=cooldown_sec):
             return False
-        if trade_notify:
+        if cap_blocked:
+            webhook = self._resolve_cap_blocked_webhook()
+            env_hint = self.cfg.trade_cap_blocked_webhook_env
+            source = "cap_blocked"
+        elif trade_notify:
+            if not self.active:
+                return False
             webhook, source = self._resolve_trade_webhook()
             env_hint = self.cfg.trade_notify_webhook_env
             if source == "legacy_fallback":
                 env_hint = f"{self.cfg.trade_notify_webhook_env} (fallback {self.cfg.webhook_env})"
         else:
+            if not self.active:
+                return False
             webhook = self._resolve_legacy_webhook()
             env_hint = self.cfg.webhook_env
             source = "legacy"
@@ -273,6 +298,8 @@ class SmallPaperDiscordNotifier:
         session_bucket: str,
         score5_candidate_ordinal: Optional[int] = None,
         ux_stats: Optional[DiscordUxSessionStats] = None,
+        entry_signal_mono: Optional[float] = None,
+        notify_mono: Optional[float] = None,
     ) -> bool:
         sym = str(event.get("symbol") or "")
         entry_px = event.get("current_price") or payload.get("CurrentPrice")
@@ -282,6 +309,13 @@ class SmallPaperDiscordNotifier:
             entry_f = 0.0
         stop_px, _ = _stop_take(entry_f, self.cfg.hard_stop_pct) if entry_f > 0 else (0.0, 0.0)
         merged: dict[str, Any] = {**dict(payload), **dict(event)}
+        if entry_signal_mono is not None and notify_mono is not None:
+            merged["signal_to_notify_latency_ms"] = round(
+                (float(notify_mono) - float(entry_signal_mono)) * 1000.0,
+                1,
+            )
+        if notify_mono is not None:
+            merged["discord_sent_ts"] = datetime.now(JST).isoformat(timespec="milliseconds")
         v2_raw = merged.get("entry_expectancy_score_v2")
         try:
             v2 = int(v2_raw) if v2_raw is not None and v2_raw != "" else None
@@ -313,6 +347,60 @@ class SmallPaperDiscordNotifier:
             ux_stats.record_score5_entry()
         return ok
 
+    def notify_entry_cap_blocked(
+        self,
+        *,
+        event: Mapping[str, Any],
+        payload: Mapping[str, Any],
+        trade_data: Mapping[str, Any],
+        open_slots: int,
+        score5_candidate_ordinal: Optional[int] = None,
+        ux_stats: Optional[DiscordUxSessionStats] = None,
+    ) -> bool:
+        if not (self.cfg.send_entry_cap_blocked or self.cfg.send_entry_deferred_max_concurrent):
+            return False
+        sym = str(event.get("symbol") or "")
+        v2_raw = event.get("entry_expectancy_score_v2") or trade_data.get("entry_expectancy_score_v2")
+        v2: Optional[int]
+        try:
+            v2 = int(v2_raw) if v2_raw is not None and v2_raw != "" else None
+        except (TypeError, ValueError):
+            v2 = None
+        daily_max = int(self.cfg.entry_deferred_daily_max or 0)
+        if (
+            daily_max > 0
+            and ux_stats is not None
+            and ux_stats.entry_deferred_notify_count >= daily_max
+        ):
+            return False
+        merged: dict[str, Any] = {**dict(payload), **dict(trade_data), **dict(event)}
+        if score5_candidate_ordinal is not None:
+            merged["score5_candidate_ordinal"] = score5_candidate_ordinal
+        cap = self._max_slots()
+        detail = build_entry_cap_blocked_detail(
+            symbol=sym,
+            entry_score_v2=v2,
+            data=merged,
+            active_positions=int(open_slots),
+            position_cap=cap,
+        )
+        event_time = str(event.get("event_time") or "")[:40]
+        ok = self._post(
+            event_tag="CAP BLOCKED",
+            title_line=sym,
+            fields=[
+                {"name": "詳細", "value": detail[:1020], "inline": False},
+                {"name": "時刻", "value": event_time or "—", "inline": True},
+            ],
+            color=0xDD6B20,
+            dedupe_key=f"cap_blocked|{sym}",
+            cooldown_sec=float(self.cfg.entry_deferred_cooldown_sec),
+            cap_blocked=True,
+        )
+        if ok and ux_stats is not None and v2 is not None:
+            ux_stats.record_entry_deferred_notify(symbol=sym, entry_score_v2=v2)
+        return ok
+
     def notify_entry_deferred_max_concurrent(
         self,
         *,
@@ -324,51 +412,15 @@ class SmallPaperDiscordNotifier:
         score5_candidate_ordinal: Optional[int] = None,
         ux_stats: Optional[DiscordUxSessionStats] = None,
     ) -> bool:
-        if not self.cfg.send_entry_deferred_max_concurrent:
-            return False
-        sym = str(event.get("symbol") or "")
-        v2_raw = event.get("entry_expectancy_score_v2") or trade_data.get("entry_expectancy_score_v2")
-        try:
-            v2 = int(v2_raw)
-        except (TypeError, ValueError):
-            return False
-        if v2 < int(self.cfg.entry_deferred_min_score_v2):
-            return False
-        daily_max = int(self.cfg.entry_deferred_daily_max or 0)
-        if (
-            daily_max > 0
-            and ux_stats is not None
-            and ux_stats.entry_deferred_notify_count >= daily_max
-        ):
-            return False
-        entry_px = event.get("current_price") or payload.get("CurrentPrice")
-        try:
-            px = float(entry_px) if entry_px is not None else 0.0
-        except (TypeError, ValueError):
-            px = 0.0
-        merged: dict[str, Any] = {**dict(payload), **dict(trade_data), **dict(event)}
-        slot = format_slot_usage(open_slots, self._max_slots())
-        detail = build_entry_deferred_detail(
-            symbol=sym,
-            current_price=px,
-            entry_score_v2=v2,
-            slot_usage=slot,
-            data=merged,
-            open_positions=open_positions,
+        del open_positions
+        return self.notify_entry_cap_blocked(
+            event=event,
+            payload=payload,
+            trade_data=trade_data,
+            open_slots=open_slots,
             score5_candidate_ordinal=score5_candidate_ordinal,
+            ux_stats=ux_stats,
         )
-        ok = self._post(
-            event_tag="ENTRY見送り",
-            title_line=f"【ENTRY見送り】 {sym}",
-            fields=[{"name": "詳細", "value": detail[:1020], "inline": False}],
-            color=0xDD6B20,
-            dedupe_key=f"entry_deferred|{sym}",
-            cooldown_sec=float(self.cfg.entry_deferred_cooldown_sec),
-            trade_notify=True,
-        )
-        if ok and ux_stats is not None:
-            ux_stats.record_entry_deferred_notify(symbol=sym, entry_score_v2=v2)
-        return ok
 
     def notify_hold(self, *, context: Mapping[str, Any]) -> bool:
         comps = context.get("components") or {}
@@ -517,6 +569,16 @@ class SmallPaperDiscordNotifier:
             exit_reason=reason,
             pnl_yen_100=pnl_yen_100,
             side=str(context.get("side") or "long"),
+            board_dynamic_trailing_tier=str(
+                context.get("board_dynamic_trailing_tier") or ""
+            )
+            or None,
+            board_dynamic_trailing_activate_pct=context.get(
+                "board_dynamic_trailing_activate_pct"
+            ),
+            board_dynamic_trailing_giveback_frac=context.get(
+                "board_dynamic_trailing_giveback_frac"
+            ),
         )
         fields = [
             {
@@ -623,7 +685,7 @@ class SmallPaperDiscordNotifier:
             trade_notify=True,
         )
 
-    def notify_daily_summary(
+    def _production_summary_fields(
         self,
         *,
         events: Sequence[Mapping[str, Any]],
@@ -631,19 +693,18 @@ class SmallPaperDiscordNotifier:
         monitored_symbol_count: Optional[int] = None,
         reject_rows: Optional[Sequence[Mapping[str, Any]]] = None,
         ux_stats: Optional[DiscordUxSessionStats] = None,
-    ) -> bool:
-        if not self.cfg.send_daily_summary:
-            return False
-        ux_map = ux_stats.to_summary_dict() if ux_stats is not None else None
-        metrics = aggregate_daily_metrics(
-            events,
-            summary,
-            max_concurrent_positions=self._max_slots(),
-            monitored_symbol_count=monitored_symbol_count,
-            reject_rows=reject_rows,
-            ux_stats=ux_map,
-        )
-        detail = build_daily_summary_detail(metrics, name_map=get_cached_symbol_name_map())
+    ) -> Optional[list[dict[str, Any]]]:
+        if summary.get("summary_integrity_error"):
+            log.warning(
+                "Discord summary skipped: integrity error %s",
+                summary.get("summary_integrity_error"),
+            )
+            return None
+        canonical = summary.get("canonical_summary")
+        if not isinstance(canonical, Mapping):
+            log.warning("Discord summary skipped: missing canonical_summary")
+            return None
+        detail = build_daily_summary_detail(canonical, name_map=get_cached_symbol_name_map())
         fields: list[dict[str, Any]] = []
         chunk = detail
         idx = 1
@@ -657,12 +718,40 @@ class SmallPaperDiscordNotifier:
             )
             chunk = chunk[1020:]
             idx += 1
+        return fields
+
+    def notify_daily_summary(
+        self,
+        *,
+        events: Sequence[Mapping[str, Any]],
+        summary: Mapping[str, Any],
+        monitored_symbol_count: Optional[int] = None,
+        reject_rows: Optional[Sequence[Mapping[str, Any]]] = None,
+        ux_stats: Optional[DiscordUxSessionStats] = None,
+    ) -> bool:
+        if not self.cfg.send_daily_summary:
+            return False
+        fields = self._production_summary_fields(
+            events=events,
+            summary=summary,
+            monitored_symbol_count=monitored_symbol_count,
+            reject_rows=reject_rows,
+            ux_stats=ux_stats,
+        )
+        if not fields:
+            return False
+        event_tag, title_line = summary_notification_labels(summary)
+        dedupe_key = "daily_summary"
+        if event_tag == "AM Summary":
+            dedupe_key = "am_summary"
+        elif event_tag == "PM Summary":
+            dedupe_key = "pm_summary"
         return self._post(
-            event_tag="Daily Summary",
-            title_line="【Daily Summary】",
+            event_tag=event_tag,
+            title_line=title_line,
             fields=fields,
             color=0x805AD5,
-            dedupe_key="daily_summary",
+            dedupe_key=dedupe_key,
             cooldown_sec=300.0,
             trade_notify=True,
         )
@@ -676,7 +765,9 @@ class SmallPaperDiscordNotifier:
         session_bucket: str,
     ) -> bool:
         reason = str(event.get("gate_reject_reason") or "")
-        if reason == REJECT_MAX_CONCURRENT and self.cfg.send_entry_deferred_max_concurrent:
+        if reason == REJECT_MAX_CONCURRENT and (
+            self.cfg.send_entry_cap_blocked or self.cfg.send_entry_deferred_max_concurrent
+        ):
             return False
         if not self.cfg.send_rejects:
             return False
@@ -743,62 +834,26 @@ class SmallPaperDiscordNotifier:
             self._last_heartbeat_mono = time.monotonic()
         return ok
 
-    def notify_session_summary(self, *, summary: Mapping[str, Any]) -> bool:
+    def notify_session_summary(
+        self,
+        *,
+        events: Sequence[Mapping[str, Any]],
+        summary: Mapping[str, Any],
+        monitored_symbol_count: Optional[int] = None,
+        reject_rows: Optional[Sequence[Mapping[str, Any]]] = None,
+        ux_stats: Optional[DiscordUxSessionStats] = None,
+    ) -> bool:
         if not self.active:
             return False
-        avg_hold = summary.get("observer_avg_hold_sec")
-        fields = [
-            *self._policy_fields(),
-            {"name": "ENTRY_count", "value": str(summary.get("observer_entry_count", 0)), "inline": True},
-            {"name": "EXIT_count", "value": str(summary.get("observer_exit_count", 0)), "inline": True},
-            {
-                "name": "structural_exit_policy",
-                "value": str(summary.get("structural_exit_policy", "—")),
-                "inline": True,
-            },
-            {
-                "name": "official_exit_count",
-                "value": str(summary.get("official_exit_count", 0)),
-                "inline": True,
-            },
-            {
-                "name": "structural_exit_count",
-                "value": str(summary.get("structural_exit_count", 0)),
-                "inline": True,
-            },
-            {
-                "name": "virtual_hold_ignored",
-                "value": str(summary.get("virtual_hold_expired_ignored_count", 0)),
-                "inline": True,
-            },
-            {
-                "name": "structural_exit_reasons",
-                "value": str(summary.get("structural_exit_reason_counts", {}))[:900],
-                "inline": False,
-            },
-            {"name": "HOLD_notifications", "value": str(summary.get("observer_hold_count", 0)), "inline": True},
-            {"name": "TAKE_signals", "value": str(summary.get("observer_take_count", 0)), "inline": True},
-            {"name": "avg_hold_sec", "value": _fmt_num(avg_hold, digits=0), "inline": True},
-            {"name": "max_concurrent", "value": str(summary.get("peak_open_slots", "—")), "inline": True},
-            {
-                "name": "continuation_quality_distribution",
-                "value": str(summary.get("quality_distribution", {}))[:900],
-                "inline": False,
-            },
-            {
-                "name": "reject_reason_counts",
-                "value": str(summary.get("reject_reason_counts", {}))[:900],
-                "inline": False,
-            },
-            {
-                "name": "top_continuation_quality",
-                "value": _fmt_num(summary.get("top_continuation_quality"), digits=4),
-                "inline": True,
-            },
-            {"name": "worst_period", "value": str(summary.get("worst_period", "—")), "inline": True},
-            {"name": "top_symbols", "value": str(summary.get("top_symbols") or "—"), "inline": False},
-            {"name": "api_error_count", "value": str(summary.get("api_error_count", 0)), "inline": True},
-        ]
+        fields = self._production_summary_fields(
+            events=events,
+            summary=summary,
+            monitored_symbol_count=monitored_symbol_count,
+            reject_rows=reject_rows,
+            ux_stats=ux_stats,
+        )
+        if not fields:
+            return False
         return self._post(
             event_tag="SUMMARY",
             title_line="SESSION END",
@@ -844,7 +899,13 @@ def notify_discord_session_end(
             ux_stats=ux_stats,
         )
     else:
-        discord.notify_session_summary(summary=summary)
+        discord.notify_session_summary(
+            events=events,
+            summary=summary,
+            monitored_symbol_count=monitored_symbol_count,
+            reject_rows=reject_rows,
+            ux_stats=ux_stats,
+        )
 
 
 def build_session_summary_extras(
@@ -926,6 +987,13 @@ def discord_config_from_pilot(config: Any) -> SmallPaperDiscordConfig:
         send_entry_deferred_max_concurrent=bool(
             getattr(config, "discord_send_entry_deferred_max_concurrent", True)
         ),
+        send_entry_cap_blocked=bool(
+            getattr(
+                config,
+                "discord_send_entry_cap_blocked",
+                getattr(config, "discord_send_entry_deferred_max_concurrent", True),
+            )
+        ),
         entry_deferred_cooldown_sec=float(
             getattr(config, "discord_entry_deferred_cooldown_sec", 1800.0)
         ),
@@ -940,6 +1008,13 @@ def discord_config_from_pilot(config: Any) -> SmallPaperDiscordConfig:
         webhook_env=str(config.discord_webhook_env),
         trade_notify_webhook_env=str(
             getattr(config, "discord_trade_notify_webhook_env", _TRADE_NOTIFY_WEBHOOK_ENV)
+        ),
+        trade_cap_blocked_webhook_env=str(
+            getattr(
+                config,
+                "discord_trade_cap_blocked_webhook_env",
+                _CAP_BLOCKED_WEBHOOK_ENV,
+            )
         ),
         cooldown_sec=float(config.discord_cooldown_sec),
         hard_stop_pct=float(config.discord_hard_stop_pct),

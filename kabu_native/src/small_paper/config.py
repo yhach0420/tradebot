@@ -44,6 +44,8 @@ class SmallPaperPilotConfig:
     discord_heartbeat_min: float = 30.0
     discord_webhook_env: str = "KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL"
     discord_trade_notify_webhook_env: str = "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL"
+    discord_trade_cap_blocked_webhook_env: str = "KABU_SMALL_PAPER_CAP_BLOCKED_WEBHOOK_URL"
+    discord_send_entry_cap_blocked: bool = True
     discord_cooldown_sec: float = 60.0
     discord_hard_stop_pct: float = 1.20
     discord_hold_min: float = 15.0
@@ -95,10 +97,18 @@ class SmallPaperPilotConfig:
     entry_price_risk_guard_min_entry_price: float = 50.0
     entry_price_risk_guard_max_tick_ratio_pct: float = 5.0
     entry_price_risk_guard_apply_mode: str = "reject_entry"
+    enable_pullback_misread_dynamic40_guard: bool = True
+    enable_near_day_high_low_momentum_dynamic40_guard: bool = True
     low_liquidity_shadow_enabled: bool = False
     low_liquidity_shadow_trading_value_min: float = 1e8
     low_liquidity_shadow_turnover_proxy_min: float = 0.002
     shadow_only: bool = False
+    entry_max_price_age_sec: float = 3.0
+    entry_max_board_age_sec: float = 3.0
+    max_entries_per_scan: int = 1
+    entry_scan_window_sec: float = 2.0
+    entry_freshness_guard_enabled: bool = True
+    entry_scan_batch_enabled: bool = True
     raw: dict[str, Any] = field(default_factory=dict)
 
     def feature_bridge_config(self) -> Any:
@@ -143,6 +153,10 @@ class SmallPaperPilotConfig:
             out["entry_price_risk_guard_max_tick_ratio_pct"] = (
                 self.entry_price_risk_guard_max_tick_ratio_pct
             )
+        if self.enable_pullback_misread_dynamic40_guard:
+            out["enable_pullback_misread_dynamic40_guard"] = True
+        if self.enable_near_day_high_low_momentum_dynamic40_guard:
+            out["enable_near_day_high_low_momentum_dynamic40_guard"] = True
         if self.low_liquidity_shadow_enabled:
             out["low_liquidity_shadow_enabled"] = True
             out["low_liquidity_shadow_trading_value_min"] = self.low_liquidity_shadow_trading_value_min
@@ -183,10 +197,26 @@ class SmallPaperPilotConfig:
         cooloff = None
         suitability = None
         price_guard = None
+        pullback_guard = None
+        near_day_momentum_guard = None
         if self.entry_price_risk_guard_enabled:
             from small_paper.entry_price_risk_guard import build_entry_price_risk_guard_state
 
             price_guard = build_entry_price_risk_guard_state(self)
+        if self.enable_pullback_misread_dynamic40_guard:
+            from small_paper.pullback_misread_dynamic40_entry_guard import (
+                build_pullback_misread_dynamic40_guard_state,
+            )
+
+            pullback_guard = build_pullback_misread_dynamic40_guard_state(self)
+        if self.enable_near_day_high_low_momentum_dynamic40_guard:
+            from small_paper.near_day_high_low_momentum_dynamic40_entry_guard import (
+                build_near_day_high_low_momentum_dynamic40_guard_state,
+            )
+
+            near_day_momentum_guard = build_near_day_high_low_momentum_dynamic40_guard_state(
+                self
+            )
         if repo_root is not None and run_session_key:
             if self.symbol_cooloff_enabled:
                 from small_paper.symbol_cooloff import build_symbol_cooloff_state
@@ -210,6 +240,8 @@ class SmallPaperPilotConfig:
             symbol_cooloff=cooloff,
             daytrade_suitability=suitability,
             entry_price_risk_guard=price_guard,
+            pullback_misread_dynamic40_guard=pullback_guard,
+            near_day_high_low_momentum_dynamic40_guard=near_day_momentum_guard,
         )
 
 
@@ -243,6 +275,18 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         discord_webhook_env=str(raw.get("discord_webhook_env", "KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL")),
         discord_trade_notify_webhook_env=str(
             raw.get("discord_trade_notify_webhook_env", "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL")
+        ),
+        discord_trade_cap_blocked_webhook_env=str(
+            raw.get(
+                "discord_trade_cap_blocked_webhook_env",
+                "KABU_SMALL_PAPER_CAP_BLOCKED_WEBHOOK_URL",
+            )
+        ),
+        discord_send_entry_cap_blocked=bool(
+            raw.get(
+                "discord_send_entry_cap_blocked",
+                raw.get("discord_send_entry_deferred_max_concurrent", True),
+            )
         ),
         discord_cooldown_sec=float(raw.get("discord_cooldown_sec", 60.0)),
         discord_hard_stop_pct=float(raw.get("discord_hard_stop_pct", 1.20)),
@@ -317,6 +361,12 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         entry_price_risk_guard_apply_mode=str(
             raw.get("entry_price_risk_guard_apply_mode", "reject_entry")
         ),
+        enable_pullback_misread_dynamic40_guard=bool(
+            raw.get("enable_pullback_misread_dynamic40_guard", True)
+        ),
+        enable_near_day_high_low_momentum_dynamic40_guard=bool(
+            raw.get("enable_near_day_high_low_momentum_dynamic40_guard", True)
+        ),
         low_liquidity_shadow_enabled=bool(raw.get("low_liquidity_shadow_enabled", False)),
         low_liquidity_shadow_trading_value_min=float(
             raw.get("low_liquidity_shadow_trading_value_min", 1e8)
@@ -325,6 +375,12 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
             raw.get("low_liquidity_shadow_turnover_proxy_min", 0.002)
         ),
         shadow_only=bool(raw.get("shadow_only", False)),
+        entry_max_price_age_sec=float(raw.get("entry_max_price_age_sec", 3.0)),
+        entry_max_board_age_sec=float(raw.get("entry_max_board_age_sec", 3.0)),
+        max_entries_per_scan=int(raw.get("max_entries_per_scan", 1) or 1),
+        entry_scan_window_sec=float(raw.get("entry_scan_window_sec", 2.0)),
+        entry_freshness_guard_enabled=bool(raw.get("entry_freshness_guard_enabled", True)),
+        entry_scan_batch_enabled=bool(raw.get("entry_scan_batch_enabled", True)),
         raw=raw,
     )
 

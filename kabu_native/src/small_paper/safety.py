@@ -358,6 +358,7 @@ def check_discord_notifier_no_orders() -> SafetyCheck:
 
 _SMALL_PAPER_DISCORD_WEBHOOK_ENV = "KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL"
 _SMALL_PAPER_NOTIFY_WEBHOOK_ENV = "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL"
+_SMALL_PAPER_CAP_BLOCKED_WEBHOOK_ENV = "KABU_SMALL_PAPER_CAP_BLOCKED_WEBHOOK_URL"
 
 
 def check_discord_webhook_env(config: SmallPaperPilotConfig) -> SafetyCheck:
@@ -370,9 +371,14 @@ def check_discord_webhook_env(config: SmallPaperPilotConfig) -> SafetyCheck:
         getattr(config, "discord_trade_notify_webhook_env", None)
         or _SMALL_PAPER_NOTIFY_WEBHOOK_ENV
     ).strip()
+    cap_blocked_env = (
+        getattr(config, "discord_trade_cap_blocked_webhook_env", None)
+        or _SMALL_PAPER_CAP_BLOCKED_WEBHOOK_ENV
+    ).strip()
     cfg_ok = env_name == _SMALL_PAPER_DISCORD_WEBHOOK_ENV
     legacy_url = (os.environ.get(env_name) or "").strip()
     notify_url = (os.environ.get(notify_env) or "").strip()
+    cap_blocked_url = (os.environ.get(cap_blocked_env) or "").strip()
     ok = cfg_ok and bool(legacy_url or notify_url)
     if not cfg_ok:
         msg = (
@@ -400,8 +406,10 @@ def check_discord_webhook_env(config: SmallPaperPilotConfig) -> SafetyCheck:
         {
             "webhook_env": env_name,
             "trade_notify_webhook_env": notify_env,
+            "trade_cap_blocked_webhook_env": cap_blocked_env,
             "legacy_set": bool(legacy_url),
             "notify_set": bool(notify_url),
+            "cap_blocked_set": bool(cap_blocked_url),
             "expected_env": _SMALL_PAPER_DISCORD_WEBHOOK_ENV,
         },
     )

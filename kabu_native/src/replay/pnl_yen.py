@@ -64,6 +64,32 @@ def format_pnl_yen_100_display(yen: float) -> str:
     return f"{rounded:,}円(100株)"
 
 
+def format_summary_avg_pnl_yen_100(avg_yen: Optional[float]) -> Optional[str]:
+    if avg_yen is None:
+        return None
+    rounded = int(round(float(avg_yen)))
+    return f"{rounded:,}円/取引(100株)"
+
+
+def format_summary_profit_factor_yen(pf: Optional[float] | str) -> str:
+    if pf is None:
+        return "—"
+    if str(pf).lower() == "inf":
+        return "inf"
+    return f"{float(pf):.3f}"
+
+
+def format_summary_total_pnl_line(
+    total_pnl_pct: float,
+    total_pnl_yen_100: Optional[float] = None,
+) -> str:
+    sign = "+" if float(total_pnl_pct) >= 0 else ""
+    pct_part = f"{sign}{float(total_pnl_pct):.2f}%"
+    if total_pnl_yen_100 is None:
+        return f"最終損益: {pct_part}"
+    return f"最終損益: {pct_part} / {format_pnl_yen_100_display(total_pnl_yen_100)}"
+
+
 def format_exit_pnl_line(pnl_pct: float, pnl_yen_100: Optional[float] = None) -> str:
     sign = "+" if float(pnl_pct) >= 0 else ""
     pct_part = f"{sign}{float(pnl_pct):.2f}%"
@@ -115,18 +141,26 @@ def summarize_pnl_yen_100(trades: Sequence[Any]) -> dict[str, Any]:
     gross_profit = sum(wins)
     gross_loss = abs(sum(losses))
     if gross_loss > 0:
-        profit_factor: float | None = gross_profit / gross_loss
+        profit_factor: float | str | None = gross_profit / gross_loss
     elif gross_profit > 0:
-        profit_factor = None
+        profit_factor = "inf"
     else:
         profit_factor = None
+
+    pf_out: float | str | None
+    if isinstance(profit_factor, str):
+        pf_out = profit_factor
+    elif profit_factor is not None:
+        pf_out = round(profit_factor, 4)
+    else:
+        pf_out = None
 
     return {
         "total_pnl_yen_100": round(sum(values), 2),
         "avg_pnl_yen_100": round(statistics.mean(values), 2),
         "gross_profit_yen_100": round(gross_profit, 2),
         "gross_loss_yen_100": round(gross_loss, 2),
-        "profit_factor_yen_100": round(profit_factor, 4) if profit_factor is not None else None,
+        "profit_factor_yen_100": pf_out,
         "max_win_yen_100": round(max(values), 2),
         "max_loss_yen_100": round(min(values), 2),
     }

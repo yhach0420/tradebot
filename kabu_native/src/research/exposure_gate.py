@@ -24,6 +24,10 @@ REJECT_OUTSIDE_ALLOWED_TRADING_WINDOW = "outside_allowed_trading_window"
 REJECT_SYMBOL_COOLDOWN = "symbol_cooloff"
 REJECT_DAYTRADE_SUITABILITY = "daytrade_suitability"
 REJECT_ENTRY_PRICE_RISK_GUARD = "entry_price_risk_guard"
+REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD = "pullback_misread_dynamic40_guard"
+REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD = (
+    "near_day_high_low_momentum_dynamic40_guard"
+)
 
 QUALITY_TIER_TOP = "top_quartile"
 QUALITY_TIER_ABOVE = "above_median"
@@ -110,6 +114,14 @@ class GateDecision:
     entry_price_risk_guard_price: Optional[float] = None
     entry_price_risk_guard_shadow_missing_price_bypassed: bool = False
     entry_price_risk_guard_universe_close_price_used: bool = False
+    pullback_misread_dynamic40_entry_rise_5min_pct: Optional[float] = None
+    pullback_misread_dynamic40_entry_vwap_dev_pct: Optional[float] = None
+    pullback_misread_dynamic40_universe_slot: str = ""
+    pullback_misread_dynamic40_universe_bucket: str = ""
+    near_day_high_low_momentum_dynamic40_day_high_distance_pct: Optional[float] = None
+    near_day_high_low_momentum_dynamic40_entry_momentum_score: Optional[float] = None
+    near_day_high_low_momentum_dynamic40_universe_slot: str = ""
+    near_day_high_low_momentum_dynamic40_universe_bucket: str = ""
     entry_expectancy_score_v2: Optional[int] = None
     entry_score_v2_threshold: Optional[int] = None
     entry_score_v2_gate_pass: Optional[bool] = None
@@ -145,6 +157,8 @@ class ExposureGate:
         symbol_cooloff: Optional[Any] = None,
         daytrade_suitability: Optional[Any] = None,
         entry_price_risk_guard: Optional[Any] = None,
+        pullback_misread_dynamic40_guard: Optional[Any] = None,
+        near_day_high_low_momentum_dynamic40_guard: Optional[Any] = None,
     ) -> None:
         self.config = config
         self.state = ExposureGateState()
@@ -152,6 +166,10 @@ class ExposureGate:
         self.symbol_cooloff = symbol_cooloff
         self.daytrade_suitability = daytrade_suitability
         self.entry_price_risk_guard = entry_price_risk_guard
+        self.pullback_misread_dynamic40_guard = pullback_misread_dynamic40_guard
+        self.near_day_high_low_momentum_dynamic40_guard = (
+            near_day_high_low_momentum_dynamic40_guard
+        )
 
     def evaluate_entry(self, trade: Mapping[str, Any]) -> GateDecision:
         profile = str(trade.get("profile", ""))
@@ -228,6 +246,54 @@ class ExposureGate:
                     entry_price_risk_guard_universe_close_price_used=bool(
                         getattr(gr, "universe_close_price_used", False)
                     ),
+                )
+
+        if self.pullback_misread_dynamic40_guard is not None:
+            pb = self.pullback_misread_dynamic40_guard.check(trade)
+            if pb.blocked:
+                self.pullback_misread_dynamic40_guard.reject_count += 1
+                sym = str(trade.get("symbol") or "")
+                if sym:
+                    self.pullback_misread_dynamic40_guard.rejected_symbols.add(sym)
+                q_pre = continuation_quality_score(trade)
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD,
+                    continuation_quality_score=q_pre,
+                    quality_tier=quality_tier(
+                        q_pre,
+                        min_top=self.config.min_continuation_quality,
+                        min_above=self.config.min_above_median_quality,
+                    ),
+                    pullback_misread_dynamic40_entry_rise_5min_pct=pb.entry_rise_5min_pct,
+                    pullback_misread_dynamic40_entry_vwap_dev_pct=pb.entry_vwap_dev_pct,
+                    pullback_misread_dynamic40_universe_slot=pb.universe_slot,
+                    pullback_misread_dynamic40_universe_bucket=pb.universe_bucket,
+                )
+
+        if self.near_day_high_low_momentum_dynamic40_guard is not None:
+            nd = self.near_day_high_low_momentum_dynamic40_guard.check(trade)
+            if nd.blocked:
+                self.near_day_high_low_momentum_dynamic40_guard.reject_count += 1
+                sym = str(trade.get("symbol") or "")
+                if sym:
+                    self.near_day_high_low_momentum_dynamic40_guard.rejected_symbols.add(
+                        sym
+                    )
+                q_pre = continuation_quality_score(trade)
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD,
+                    continuation_quality_score=q_pre,
+                    quality_tier=quality_tier(
+                        q_pre,
+                        min_top=self.config.min_continuation_quality,
+                        min_above=self.config.min_above_median_quality,
+                    ),
+                    near_day_high_low_momentum_dynamic40_day_high_distance_pct=nd.day_high_distance_pct,
+                    near_day_high_low_momentum_dynamic40_entry_momentum_score=nd.entry_momentum_score,
+                    near_day_high_low_momentum_dynamic40_universe_slot=nd.universe_slot,
+                    near_day_high_low_momentum_dynamic40_universe_bucket=nd.universe_bucket,
                 )
 
         if self.daytrade_suitability is not None:

@@ -47,7 +47,7 @@ use_market_time_window: true
 
 comparison_note: >
   Phase179c shadow: low_liquidity_shadow logging only (no hard reject).
-  structural_exit_policy=combined_structural_exit_v1_trailing_mfe_shadow (unchanged).
+  structural_exit_policy=combined_structural_exit_v1_trailing_mfe_shadow (Phase332 board-dynamic trailing).
   low_liquidity_shadow rule: trading_value>=1e8 and turnover_proxy>=0.002 (log-only).
 
 order_enabled: false

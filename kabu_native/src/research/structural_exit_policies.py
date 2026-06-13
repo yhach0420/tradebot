@@ -117,9 +117,32 @@ TRAILING_GIVEBACK_PCT = 0.18
 LOWER_HIGH_TICKS = 3
 PRICE_MOM_NORM_SCALE = 0.008
 
-# Phase174 fixed trailing-MFE policy params (do not tune per-day).
-TRAILING_MFE_ACTIVATE_PCT = 0.80
-TRAILING_MFE_GIVEBACK_FRAC = 0.50
+# Phase332 production: board-dynamic trailing-MFE (entry_imbalance_percentile tier).
+# Legacy fixed params retained for shadow counterfactual comparison only.
+LEGACY_TRAILING_MFE_ACTIVATE_PCT = 0.80
+LEGACY_TRAILING_MFE_GIVEBACK_FRAC = 0.50
+# Back-compat aliases (pre-Phase332 scripts).
+TRAILING_MFE_ACTIVATE_PCT = LEGACY_TRAILING_MFE_ACTIVATE_PCT
+TRAILING_MFE_GIVEBACK_FRAC = LEGACY_TRAILING_MFE_GIVEBACK_FRAC
+
+
+def trailing_mfe_params(
+    entry_imbalance_percentile: Optional[float] = None,
+) -> tuple[float, float, str]:
+    """Board-dynamic trailing activate/giveback for production EXIT."""
+    from small_paper.board_dynamic_trailing_shadow import trailing_params_for_board_tier
+
+    return trailing_params_for_board_tier(entry_imbalance_percentile)
+
+
+def trailing_mfe_exit_triggered(
+    *,
+    peak_pnl: float,
+    pnl: float,
+    entry_imbalance_percentile: Optional[float] = None,
+) -> bool:
+    activate, giveback, _ = trailing_mfe_params(entry_imbalance_percentile)
+    return peak_pnl >= activate and pnl <= peak_pnl * giveback
 
 
 def _normalized_price_momentum(ppm: float) -> float:
@@ -182,6 +205,7 @@ def simulate_structural_policy(
     cfg: Any,
     *,
     allow_session_end: bool = True,
+    entry_imbalance_percentile: Optional[float] = None,
 ) -> Optional[tuple[float, str]]:
     """Return (pnl_pct, exit_reason) when policy fires; None if still open and session_end disallowed."""
     if not ticks:
@@ -237,9 +261,12 @@ def simulate_structural_policy(
             if peak_pnl > 0 and pnl <= peak_pnl - TRAILING_GIVEBACK_PCT:
                 return pnl, "mfe_giveback_exit"
         if policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW:
-            # Phase174: stop_hit is already handled above. No momentum/quality/fade exits.
-            # Activate when MFE >= 0.8%, then exit on 50% giveback from peak.
-            if peak_pnl >= TRAILING_MFE_ACTIVATE_PCT and pnl <= peak_pnl * TRAILING_MFE_GIVEBACK_FRAC:
+            # Phase332: board-dynamic trailing (stop_hit handled above; no fade exits).
+            if trailing_mfe_exit_triggered(
+                peak_pnl=peak_pnl,
+                pnl=pnl,
+                entry_imbalance_percentile=entry_imbalance_percentile,
+            ):
                 return pnl, "trailing_mfe_exit"
         if policy == POLICY_COMBINED_STRUCTURAL_EXIT_V2_PRICE_MOM:
             if q <= peak_q - cfg.take_quality_drop:
@@ -263,6 +290,8 @@ def combined_exit_signal_on_latest_tick(
     rich_ticks: Sequence[Mapping[str, Any]],
     entry_price: float,
     cfg: Any,
+    *,
+    entry_imbalance_percentile: Optional[float] = None,
 ) -> Optional[tuple[float, str, float]]:
     """Incremental combined check; does not treat hold as session_end."""
     policy = str(
@@ -274,6 +303,7 @@ def combined_exit_signal_on_latest_tick(
         policy,
         cfg,
         allow_session_end=False,
+        entry_imbalance_percentile=entry_imbalance_percentile,
     )
     if result is None:
         return None

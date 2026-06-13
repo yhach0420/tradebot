@@ -91,6 +91,7 @@ class ObserverTrackerConfig:
 @dataclass
 class _VirtualPosition:
     symbol: str
+    position_id: str
     profile: str
     entry_price: float
     stop_price: float
@@ -149,10 +150,18 @@ class ObserverSessionStats:
 class ObserverPositionTracker:
     """Track gate-accepted virtual holds and emit observer judgment events."""
 
-    def __init__(self, cfg: ObserverTrackerConfig) -> None:
+    def __init__(
+        self,
+        cfg: ObserverTrackerConfig,
+        *,
+        board_exit_shadow: Any = None,
+        exit_candidate_shadow: Any = None,
+    ) -> None:
         self.cfg = cfg
         self._positions: dict[str, _VirtualPosition] = {}
         self.stats = ObserverSessionStats()
+        self.board_exit_shadow = board_exit_shadow
+        self.exit_candidate_shadow = exit_candidate_shadow
 
     def open_count(self) -> int:
         return sum(1 for p in self._positions.values() if not p.closed)
@@ -270,8 +279,12 @@ class ObserverPositionTracker:
         take = entry_price * (1.0 + self.cfg.display_take_pct / 100.0)
         comps = continuation_components(trade)
         q = float(comps["continuation_quality"])
+        from small_paper.realtime_board_exit_shadow import make_position_id
+
+        position_id = make_position_id(sym, ent)
         self._positions[sym] = _VirtualPosition(
             symbol=sym,
+            position_id=position_id,
             profile=str(trade.get("profile", "")),
             entry_price=entry_price,
             stop_price=stop,
@@ -314,10 +327,42 @@ class ObserverPositionTracker:
                     "entry_expectancy_score_v2",
                     "entry_expectancy_score_v2_ge5_flag",
                     "entry_expectancy_score_v2_ge6_flag",
+                    "limit_up_proximity_guard_shadow_blocked",
+                    "limit_up_proximity_guard_shadow_reason",
+                    "distance_to_limit_up_pct",
+                    "day_high_near_limit",
+                    "daily_limit_up_price",
+                    "limit_up_proximity_prev_close_used",
+                    "pullback_misread_dynamic40_guard_blocked",
+                    "pullback_misread_guard_shadow_blocked",
+                    "day_high_distance_pct",
+                    "entry_momentum_score",
+                    "near_day_high_low_momentum_dynamic40_guard_blocked",
+                    "universe_slot",
+                    "universe_bucket",
+                    "source_bucket",
                 )
                 if k in trade
             },
         )
+        if self.board_exit_shadow is not None:
+            self.board_exit_shadow.register_position(
+                position_id=position_id,
+                symbol=sym,
+                entry_time=ent,
+                entry_price=entry_price,
+                payload=payload,
+                entry_shadow=self._positions[sym].entry_shadow or {},
+            )
+        if self.exit_candidate_shadow is not None:
+            self.exit_candidate_shadow.register_position(
+                position_id=position_id,
+                symbol=sym,
+                entry_time=ent,
+                entry_price=entry_price,
+                payload=payload,
+                entry_shadow=self._positions[sym].entry_shadow or {},
+            )
         self.stats.entry_count += 1
 
     def on_tick(
@@ -353,6 +398,29 @@ class ObserverPositionTracker:
         tick["ts_epoch"] = now.timestamp()
         pos.rich_ticks.append(tick)
 
+        if self.board_exit_shadow is not None:
+            self.board_exit_shadow.record_holding_tick(
+                symbol=symbol,
+                position_id=pos.position_id,
+                entry_time=pos.entry_time,
+                payload=payload,
+                current_price=float(price),
+                entry_price=pos.entry_price,
+                mfe_pct=float(pos.peak_pnl_pct),
+                entry_shadow=pos.entry_shadow or {},
+            )
+        if self.exit_candidate_shadow is not None:
+            self.exit_candidate_shadow.record_holding_tick(
+                symbol=symbol,
+                position_id=pos.position_id,
+                entry_time=pos.entry_time,
+                payload=payload,
+                current_price=float(price),
+                entry_price=pos.entry_price,
+                mfe_pct=float(pos.peak_pnl_pct),
+                entry_shadow=pos.entry_shadow or {},
+            )
+
         base_ctx = {
             "symbol": symbol,
             "profile": pos.profile,
@@ -375,12 +443,19 @@ class ObserverPositionTracker:
             "structural_exit_policy": self.cfg.structural_exit_policy,
         }
         if self.cfg.structural_exit_policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW:
+            from research.structural_exit_policies import trailing_mfe_params
+
             peak = float(pos.peak_pnl_pct or 0.0)
             cur = float(pnl_pct or 0.0)
-            active = peak >= 0.8
+            imb_pct = _as_float((pos.entry_shadow or {}).get("entry_imbalance_percentile"))
+            activate_pct, giveback_frac, board_tier = trailing_mfe_params(imb_pct)
+            active = peak >= activate_pct
             capture = (cur / peak) if peak > 0 else 0.0
             base_ctx = {
                 **base_ctx,
+                "board_dynamic_trailing_tier": board_tier,
+                "board_dynamic_trailing_activate_pct": activate_pct,
+                "board_dynamic_trailing_giveback_frac": giveback_frac,
                 "trailing_mfe_active": active,
                 "trailing_mfe_threshold_reached": active,
                 "trailing_mfe_peak_pnl": round(peak, 4),
@@ -485,8 +560,12 @@ class ObserverPositionTracker:
                         if uses_take_exit_shadow(self.cfg.structural_exit_policy)
                         else self.cfg
                     )
+                    imb_pct = _as_float((pos.entry_shadow or {}).get("entry_imbalance_percentile"))
                     sig = combined_exit_signal_on_latest_tick(
-                        pos.rich_ticks, pos.entry_price, sig_cfg
+                        pos.rich_ticks,
+                        pos.entry_price,
+                        sig_cfg,
+                        entry_imbalance_percentile=imb_pct,
                     )
                     trigger = ("exit", sig[0], sig[2], sig[1]) if sig else None
                 if trigger:
@@ -519,10 +598,20 @@ class ObserverPositionTracker:
                         == POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW
                         and reason == "trailing_mfe_exit"
                     ):
+                        _, giveback_frac, board_tier = trailing_mfe_params(imb_pct)
+                        activate_pct = float(
+                            base_ctx.get("board_dynamic_trailing_activate_pct") or 0.0
+                        )
                         ctx = {
                             **ctx,
+                            "board_dynamic_trailing_tier": board_tier,
+                            "board_dynamic_trailing_activate_pct": activate_pct,
+                            "board_dynamic_trailing_giveback_frac": giveback_frac,
                             "trailing_mfe_exit_triggered": True,
-                            "trailing_mfe_exit_reason": "giveback_50pct_after_mfe_0p8pct",
+                            "trailing_mfe_exit_reason": (
+                                f"giveback_{int(giveback_frac * 100)}pct_after_mfe_"
+                                f"{activate_pct}pct_{board_tier}"
+                            ),
                         }
                     events.append(
                         self._close(
@@ -745,4 +834,70 @@ class ObserverPositionTracker:
                 exit_reason=reason,
             )
             full.update(score_exit)
+            from small_paper.limit_up_proximity_entry_guard_shadow import (
+                enrich_exit_limit_up_proximity_shadow_fields,
+            )
+
+            actual_exit_price = float(
+                ctx.get("current_price") or pos.last_price or pos.entry_price
+            )
+            limit_up_exit = enrich_exit_limit_up_proximity_shadow_fields(
+                pos.entry_shadow,
+                entry_price=pos.entry_price,
+                exit_price=actual_exit_price,
+                exit_reason=reason,
+            )
+            full.update(limit_up_exit)
+            from small_paper.pullback_misread_entry_guard_shadow import (
+                enrich_exit_pullback_misread_shadow_fields,
+            )
+
+            pb_exit = enrich_exit_pullback_misread_shadow_fields(
+                pos.entry_shadow,
+                entry_price=pos.entry_price,
+                exit_price=actual_exit_price,
+                exit_reason=reason,
+            )
+            full.update(pb_exit)
+        if pos.rich_ticks:
+            from small_paper.board_dynamic_trailing_shadow import (
+                enrich_exit_board_dynamic_shadow_fields,
+            )
+
+            actual_exit_price = float(
+                ctx.get("current_price") or pos.last_price or pos.entry_price
+            )
+            board_dynamic_shadow = enrich_exit_board_dynamic_shadow_fields(
+                pos.entry_shadow or {},
+                rich_ticks=pos.rich_ticks,
+                entry_price=pos.entry_price,
+                entry_ts=pos.entry_time.timestamp(),
+                hard_stop_pct=self.cfg.hard_stop_pct,
+                actual_exit_time=now.timestamp(),
+                actual_exit_price=actual_exit_price,
+                actual_pnl_pct=pnl_pct,
+            )
+            full.update(board_dynamic_shadow)
+        if self.board_exit_shadow is not None:
+            actual_exit_price = float(
+                ctx.get("current_price") or pos.last_price or pos.entry_price
+            )
+            self.board_exit_shadow.finalize_position(
+                position_id=pos.position_id,
+                actual_exit_reason=reason,
+                actual_exit_time=now,
+                actual_exit_price=actual_exit_price,
+                entry_price=pos.entry_price,
+            )
+        if self.exit_candidate_shadow is not None:
+            actual_exit_price = float(
+                ctx.get("current_price") or pos.last_price or pos.entry_price
+            )
+            self.exit_candidate_shadow.finalize_position(
+                position_id=pos.position_id,
+                actual_exit_reason=reason,
+                actual_exit_time=now,
+                actual_exit_price=actual_exit_price,
+                entry_price=pos.entry_price,
+            )
         return ObserverJudgmentEvent(kind=OBSERVER_EXIT, symbol=pos.symbol, context=full)

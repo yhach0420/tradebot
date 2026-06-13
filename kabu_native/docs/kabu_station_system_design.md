@@ -2,28 +2,59 @@
 
 **対象リポジトリ:** tradebotfile / `kabu_native/`  
 **想定読者:** kabu_native を初めて触れる開発者・運用者  
-**位置づけ:** 本文書は **kabuステーション® API を一次データ源とする新系**（universe・朝スクリーニング・リプレイ検証・shadow・**small paper observer**）の設計仕様である。**売買ロジックの意味は、採用済みルール（Phase 13 / Logic Lab v13 frozen）を変えない**前提で、パスと起動方法を **2026-05-20（Phase 61 / structural observer）** 時点の実装に合わせて記述する。  
+**位置づけ:** 本文書は **kabuステーション® API を一次データ源とする新系**（universe・朝スクリーニング・リプレイ検証・shadow・**small paper observer**・データ蓄積・日次 runner）の設計仕様である。**EXIT v13 / continuation quality core / frozen runtime** は変更しない前提で、パスと起動方法を **2026-06-08（Phase 314–317）** 時点の実装に合わせて記述する。  
 **別系統:** **旧 Yahoo 非公式 API 系**はリポジトリ内 **`market/yahoo/`**（互換シム `yahoo_kabu_watch.py`）に分離されている。詳細は **`docs/DESIGN.md`** を参照。**本書は旧 Yahoo 監視ループの仕様書ではない。**
 
-**現在の主検証ランタイム（2026-05-20）:** **small paper observer**（`run_small_paper_pilot.py`、`--source live` / `push-replay`）。既定 trial は **`q070_cap3`** + 任意で **`structural_exit_policy: combined_structural_exit_v1`**（Phase 61）。**observer only**・**実発注なし**・**runtime verification**（performance guarantee ではない）。参照 live セッション: **`results/small_paper/20260519/live_full_session_081047/`**。
+**現在の主検証ランタイム（2026-06-08）:** **small paper observer**（`run_small_paper_pilot.py`、`--source live` / `push-replay`）。**現行運用 config:** **`small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml`** — `min_continuation_quality: 0.70`、`max_concurrent_positions: 3`、**`entry_score_v2_min: 3`**（Phase 314）、**Momentum:low 必須 + Board:mid**。**observer only**・**実発注なし**・**runtime verification**（performance guarantee ではない）。平日 orchestration: **`run_core10_dynamic40_am_pm_daily_runner.py --exit-policy-shadow trailing-mfe --enable-intraday-refresh`**（Phase 148）。翌営業日前確認: **`run_phase317_tomorrow_paper_trade_preflight.py`**（Phase 317）。
+
+### 現行運用 Config 分類（Source of Truth）
+
+| 用途 | Config |
+|------|--------|
+| 旧 trial（参照・比較用） | `kabu_native/configs/small_paper_pilot_q070_cap3.yaml` |
+| **現行運用** | `kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml` |
+| Preflight 対象（Phase 317 既定） | 同上 |
+| Daily Runner（`--exit-policy-shadow trailing-mfe`） | 同上 |
+| push-replay / live smoke（推奨） | 同上 |
+
+### Current Runtime Entry Rule（Source of Truth — Phase 314）
+
+**現行運用における ENTRY 成立条件。** 実装: `entry_expectancy_score_shadow.py` + `exposure_gate.py`。詳細フロー: **§16.14**。
+
+| 項目 | 内容 |
+|------|------|
+| **Momentum:low** | **+2**（**必須** — 単独では ACCEPT 不可） |
+| **Board:mid** | **+1** |
+| **`entry_score_v2_min`** | **3** |
+| **ENTRY 成立** | 上記 **2 トークンのみ**で score = 3 → ACCEPT |
+
+**ENTRY 判定に使用しない（Phase 314 で v2 から除外済）:** HBRecent, TV, Duration, Price（RollingMAE 含む v1 shadow 列はログ用に残る場合あり）。
+
+**最終条件:** **`Momentum:low` AND `Board:mid`**（score ≥ 3）。
 
 **PDF 化:** 推奨は `python tools/md_to_pdf.py kabu_native/docs/kabu_station_system_design.md kabu_native/docs/kabu_station_system_design.pdf`（日本語フォントを PDF に埋め込み、表・コードの視認性を調整済み）。代替として VS Code / Cursor のプレビューから「印刷 → PDFへ保存」。
 
-### 現在のコード配置（2026-05-20）
+### 現在のコード配置（2026-06-08）
 
 | 役割 | 実体（編集・import の正） | 備考 |
 |------|---------------------------|------|
 | **small paper observer（主検証ランタイム）** | **`kabu_native/src/small_paper/`** | observer only・実発注なし（**§16**） |
+| entry score v2 gate | **`kabu_native/src/small_paper/entry_expectancy_score_shadow.py`** | Momentum+Board のみ（Phase 314）。`ExposureGate` 連携 |
 | continuation quality / ExposureGate | **`kabu_native/src/research/`** | `continuation_quality_ranking.py`, `exposure_gate.py` |
-| structural EXIT（observer 層） | **`kabu_native/src/research/structural_exit_policies.py`** | `structural_observer_v1` / `combined_structural_exit_v1`（**EXIT v13 ではない**） |
+| structural EXIT（observer 層） | **`kabu_native/src/research/structural_exit_policies.py`** | `combined_structural_exit_v1`（**EXIT v13 ではない**） |
+| 日次 AM/PM runner | **`kabu_native/src/runner/am_pm_daily_runner.py`** | Phase 148 orchestration（**§17**） |
+| dynamic universe | **`kabu_native/src/universe/`** | `opening_dynamic50_universe.py`, `am_pm_universe.py`, `core10_dynamic40_*` |
 | API（REST / PUSH） | **`kabu_native/src/api/`** | `KabuNativeRestClient` / `KabuNativePushClient` |
-| universe / 朝スクリーン | **`kabu_native/src/universe/`**, **`src/screening/`** | 成果物は `kabu_native/data/universe/`, `results/morning_screen/` |
-| リプレイ・検証バッチ | **`kabu_native/src/replay/`** | エンジン本体はルート **`src/kabu_signal_replay.py`** 等を **import 参照** |
+| universe / 朝スクリーン | **`kabu_native/src/universe/`**, **`src/screening/`** | JPX master 連携（Phase 100+）含む |
+| リプレイ・検証バッチ | **`kabu_native/src/replay/`** | `pnl_yen.py`（100 株円換算・Phase 316）含む |
+| Discord（small paper） | **`kabu_native/src/small_paper/discord_notifier.py`**, **`src/notify/discord.py`** | observer 通知。**売買指示ではない** |
 | shadow（発注なし live・旧検証） | **`kabu_native/src/shadow/`** | `run_shadow.py`（small paper と **別経路**） |
 | Logic Lab（研究） | **`kabu_native/src/research/logic_lab.py`** 等 | Phase 17–36（**§15**） |
-| シグナル / EXIT | **ルート `src/kabu_signal_engine.py`**, **`src/kabu_exit_engine.py`** | `kabu_native/src/signals/` は **未移植**（`.gitkeep` のみ） |
-| PUSH 記録 | **`kabu_native/scripts/record_push_jsonl.py`** | `kabu_native/data/push_jsonl/YYYY-MM-DD/` |
-| 市場データ永続化 | **`kabu_native/src/storage/`** | minute bar builder は **未実装**（Phase 16 候補） |
+| シグナル / EXIT | **ルート `src/kabu_signal_engine.py`**, **`src/kabu_exit_engine.py`** | `kabu_native/src/signals/` は **未移植** |
+| データ蓄積 | **`kabu_native/src/storage/`** | `push_recorder.py`, `intraday_recorder.py`（Phase 42 — **§17**） |
+| PUSH 記録 CLI | **`kabu_native/scripts/record_push_jsonl.py`** | `data/push_jsonl/YYYY-MM-DD/{symbol}.jsonl` |
+| EOD 1 分足 | **`kabu_native/scripts/save_intraday_eod.py`** | JSONL → `data/intraday_1m/` |
+| Tomorrow Preflight | **`kabu_native/scripts/run_phase317_tomorrow_paper_trade_preflight.py`** | Phase 317 — 翌営業日前統合確認 |
 
 - **推奨起動:** リポジトリルートを cwd に **`python kabu_native/scripts/<script>.py`**（例: `run_shadow.py`）。
 - **import:** shadow / replay は実行時にルートを `sys.path` に追加し、**`from src.kabu_signal_engine import …`** を利用。
@@ -41,12 +72,19 @@
 | shadow 安全チェック | `python kabu_native/scripts/check_shadow_safety.py` |
 | Logic Lab | `python kabu_native/scripts/run_logic_lab.py --start-date … --end-date … --universe …` |
 | 研究終了基準（Phase 36） | `python kabu_native/scripts/run_research_exit_criteria.py --run-dir …/run_HHMMSS` |
-| **small paper observer（主検証ランタイム）** | `python kabu_native/scripts/run_small_paper_pilot.py --dry-run --source live …`（**§16**） |
-| live observer 準備 | `python kabu_native/scripts/check_live_observer_readiness.py --config …/small_paper_pilot_q070_cap3.yaml` |
-| push-replay（場外） | `run_small_paper_pilot.py --dry-run --source push-replay --push-dir …` |
+| **small paper observer（現行運用）** | `run_small_paper_pilot.py --dry-run --source live --config kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml …` |
+| live observer 準備 | `check_live_observer_readiness.py --config kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml` |
+| push-replay（場外） | `run_small_paper_pilot.py --dry-run --source push-replay --push-dir … --config …/trailing_mfe_shadow.yaml` |
+| **Tomorrow Preflight（Phase 317）** | `python kabu_native/scripts/run_phase317_tomorrow_paper_trade_preflight.py --day-stamp YYYYMMDD` |
+| **日次 AM/PM runner** | `run_core10_dynamic40_am_pm_daily_runner.py --universe-mode core10-dynamic40-price-risk-filter-shadow --enable-intraday-refresh --exit-policy-shadow trailing-mfe …` |
 | セッション後 review | `review_runtime_exit.py` / `review_structural_observer.py` / `review_phase56_diagnosis.py` 等 |
 | structural 公式 PF | `review_structural_observer.py --structural-exit-policy combined_structural_exit_v1` |
+| PUSH 記録（場中） | `python kabu_native/scripts/record_push_jsonl.py --universe …` |
+| EOD 1 分足保存 | `python kabu_native/scripts/save_intraday_eod.py --universe …` |
+| データ蓄積ステータス | `python kabu_native/scripts/check_data_accumulation.py --universe …` |
 | intraday 在庫監査 | `python kabu_native/scripts/audit_intraday_data.py` |
+
+**現行運用 config 短名:** `trailing_mfe_shadow.yaml` = `small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml`
 
 **watchdog / bat:** 現時点で **kabu_native 専用の watchdog は未整備**。旧系 `scripts/watchdog.py` は **Yahoo paper_trade / Issue Bot** 用（**§8.1**）。shadow 常駐化は手動起動または将来拡張（Phase 16 以降）。
 
@@ -69,7 +107,10 @@
 13. [realtime / replay 統一: 共有エンジンと shadow](#13-realtime--replay-統一共用エンジンと-shadow)
 14. [未実装・将来構想（Phase 16 以降）](#14-未実装将来構想phase-16-以降)
 15. [Logic Lab と研究終了基準（Phase 17–36）](#15-logic-lab-と研究終了基準phase-17-36)
-16. [Small Paper Observer System（Phase 45–67）](#16-small-paper-observer-systemphase-45-67)
+16. [Small Paper Observer System（Phase 45–317）](#16-small-paper-observer-systemphase-45-317)
+    - [16.0 ペーパートレード日次フロー（朝スクリーニング→閉場）](#160-ペーパートレード日次フロー朝スクリーニング閉場)
+17. [日次運用とデータ蓄積（Phase 42 / 113–148 / 317）](#17-日次運用とデータ蓄積phase-42--113148)
+    - [17.4 Tomorrow Preflight（Phase 317）](#174-tomorrow-preflightphase-317)
 
 ---
 
@@ -107,10 +148,11 @@
 | `kabu_native/src/shadow/` | REST ポール（任意 PUSH）、仮想売買、イベントログ | **実装済**（検証系） |
 | **`kabu_native/src/small_paper/`** | **主検証ランタイム** — observer only、live / push-replay、仮想ポジション | **実装済** |
 | `kabu_native/src/research/` | `ExposureGate`, `continuation_quality_ranking`, Logic Lab | **実装済** |
-| `record_push_jsonl.py` | PUSH 生ログ記録 | **実装済** |
-| `kabu_native/src/storage/` | 1 分足 builder（recorder は script 経由） | **部分** |
-| `kabu_native/data/push_jsonl/` | PUSH 生ログ（push-replay 入力） | **運用中** |
-| `kabu_native/data/intraday_1m/` | 自前 1 分足（replay 正の将来先） | **空** |
+| `record_push_jsonl.py` | PUSH 生ログ記録 | **実装済**（Phase 42） |
+| `kabu_native/src/storage/` | JSONL append・PUSH→1m 集計・蓄積レポート | **部分実装**（Phase 42） |
+| `save_intraday_eod.py` | JSONL → `data/intraday_1m/` | **実装済** |
+| `kabu_native/data/push_jsonl/` | PUSH 生ログ（push-replay 入力） | **運用中**（git 外の日次データあり） |
+| `kabu_native/data/intraday_1m/` | 自前 1 分足（replay 正の将来先） | **蓄積基盤あり**（在庫は `check_data_accumulation.py` で確認） |
 | `data/intraday_1m/`（ルート） | Yahoo 由来 1 分足（replay **現行の主入力**） | **参照のみ**（540 symbol-days 例） |
 | `kabu_native/configs/*.yaml` | universe / screen / replay / shadow 閾値 | **実装済** |
 | `kabu_native/results/` | morning_screen / replay / shadow / **small_paper** / reports | **実装済** |
@@ -210,6 +252,14 @@
 
 日付は **`--start-date` / `--end-date`**（YYYY-MM-DD）必須。
 
+### 3.5 small paper / 日次 runner（`run_small_paper_pilot.py` / Phase 148）
+
+1. **config** の `watchlist` / universe モード（runner 経由時は Phase 113/117 生成 CSV）
+2. **ExposureGate** — quality・`entry_score_v2_min`・windows・cap
+3. 出力: `results/small_paper/YYYYMMDD/live_*` または `push_replay_*`
+
+日次 runner は **§17.3** 参照。
+
 ---
 
 ## 4. 機能一覧 {#4-機能一覧}
@@ -233,11 +283,17 @@
 | shadow 安全チェック | `check_shadow_safety.py` | safety フラグ・legacy 未接続の機械検証 | **DONE** |
 | **small paper observer** | `run_small_paper_pilot.py` | runtime verification・observer only・**実発注なし** | **DONE（主検証ランタイム）** |
 | small paper 安全チェック | `check_small_paper_safety.py` | `order_enabled` / `dry_run_required` 等 | **DONE** |
-| live observer readiness | `check_live_observer_readiness.py` | Phase 55 再試験前ゲート | **DONE** |
+| live observer readiness | `check_live_observer_readiness.py` | live 再試験前ゲート | **DONE** |
+| **entry score v2 gate** | `entry_expectancy_score_shadow.py` | Momentum+Board、**min=3**（Phase 267/314） | **DONE** |
+| **日次 AM/PM runner** | `run_core10_dynamic40_am_pm_daily_runner.py` | Core10+Dynamic40・PUSH 記録・live pilot 連鎖 | **DONE** |
+| **データ蓄積** | `record_push_jsonl.py` / `save_intraday_eod.py` / `check_data_accumulation.py` | Phase 42 — ロジック変更なし | **DONE** |
+| dynamic universe（AM/PM） | `run_phase113_vol_liq_dynamic50_universe.py` 等 | 流動性・出来高ベース銘柄集合 | **DONE** |
 | paper_trade / Discord 実売買 | — | small paper は **observer only**（実発注経路なし） | **STOPPED** |
 | PUSH 記録 | `record_push_jsonl.py` | `data/push_jsonl/YYYY-MM-DD/` | **DONE** |
-| 自前 1 分足 | （未配置） | `kabu_native/data/intraday_1m/` | **TODO** |
-| Discord 通知 | `shadow.yaml` | **既定 OFF**（参考通知用フラグあり） | **DISABLED** |
+| 自前 1 分足（EOD） | `save_intraday_eod.py` | `kabu_native/data/intraday_1m/` | **DONE**（在庫は日次蓄積） |
+| Discord 通知（shadow） | `shadow.yaml` | **既定 OFF** | **DISABLED** |
+| Discord 通知（small paper） | `small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml` | **`discord_enabled: true`**・**observer only**（Phase 316: EXIT に 100 株円表示） | **ENABLED（通知のみ）** |
+| **Tomorrow Preflight（Phase 317）** | `run_phase317_tomorrow_paper_trade_preflight.py` | 翌営業日前の統合事前確認 | **DONE** |
 | 自動発注 | — | API 発注経路なし | **DISABLED** |
 
 ### 4.1 検証・分析スクリプトの出力先
@@ -254,6 +310,10 @@
 | `run_logic_lab.py` | `results/research/logic_lab/YYYYMMDD/run_HHMMSS/` |
 | `run_research_exit_criteria.py` | 同一 run 配下の `research_exit_report.*`, `phase_progression_analysis.json` |
 | `run_small_paper_pilot.py` | `results/small_paper/YYYYMMDD/{live_*,push_replay_*}/` |
+| `record_push_jsonl.py` / `check_data_accumulation.py` | `results/reports/data_accumulation_status_YYYYMMDD.*` |
+| `run_core10_dynamic40_am_pm_daily_runner.py` | `results/reports/daily_runner_*_YYYYMMDD.json` 等 |
+| `run_phase317_tomorrow_paper_trade_preflight.py` | `results/reports/phase317_tomorrow_paper_trade_preflight.json` |
+| `run_phase314_*` 等 | `results/reports/phase314_final_entry_score_simplification_report.json` 等 |
 | `review_runtime_exit.py` 等 | 同一 session 配下の `runtime_exit_review.json` 等 |
 
 ### 4.2 リプレイのスキップ理由（`skipped_inputs.csv`）
@@ -346,7 +406,7 @@ shadow 採用（Phase 13）: **`bf_confirm_count=2`**, **`fail_buffer_pct=0.12`*
 
 本章の **shadow / replay 採用値**は `configs/shadow.yaml`・`configs/replay.yaml`・`configs/session_control.yaml` に基づく。シグナル v1 のゲート初期値は **`docs/kabu_signal_design.md` §4**。
 
-### 6.1 shadow / replay 採用ルール（Phase 13 正）
+### 6.1 shadow / replay 採用ルール（Phase 13 正 — shadow 系）
 
 | キー | 値 | 意味 |
 |------|-----|------|
@@ -358,8 +418,40 @@ shadow 採用（Phase 13）: **`bf_confirm_count=2`**, **`fail_buffer_pct=0.12`*
 | `fail_buffer_pct` | **0.12** | ブレイク水準からの失敗バッファ（%） |
 | `hard_stop_pct` | **1.20** | tier B の hard stop（%・実装は絶対値化） |
 | `tier` | **B** | EXIT プロファイル tier |
-| `entry_score_min` | **60** | ENTRY に必要な最低 `signal_score` |
+| `entry_score_min` | **60** | ENTRY に必要な最低 `signal_score`（`kabu_signal_v1`） |
 | `require_timing_ok` | **true** | タイミングゲート必須 |
+
+### 6.1b small paper 現行運用 config（`small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml`）
+
+**Preflight・Daily Runner・live / push-replay の既定 config。** 旧 trial `small_paper_pilot_q070_cap3.yaml` との比較は **§1 Config 分類** 参照。
+
+| キー | 値 | 意味 |
+|------|-----|------|
+| `min_continuation_quality` | **0.70** | ExposureGate — continuation quality 下限 |
+| `max_concurrent_positions` | **3** | 同時仮想建玉上限 |
+| `reject_below_quality` | **false** | Phase 267: quality 単独 reject を off |
+| **`entry_score_v2_min`** | **3** | **Phase 314** — v2 スコア下限（Momentum+Board のみ） |
+| `structural_exit_policy` | **`combined_structural_exit_v1_trailing_mfe_shadow`** | observer 層 EXIT（**Phase 332** board-dynamic trailing） |
+| `entry_price_risk_guard_enabled` | **true** | エントリー価格リスクガード（shadow apply） |
+| `allowed_trading_windows` | 09:05–11:23 / 12:33–15:20 | 昼休み除外（**§16.4**） |
+| `order_enabled` | **false** | 固定 |
+| `discord_enabled` | **true** | observer 通知（**売買指示ではない**） |
+| `live.record_push_jsonl` | **true** | live セッション中の JSONL 同時記録 |
+
+### 6.1c Board Dynamic Trailing（Phase 332 — 本番 EXIT）
+
+**適用:** 本番 EXIT・paper trade・replay（`ObserverPositionTracker` + `structural_exit_policies`）。**hard_stop 1.2%** は変更なし。trailing_mfe の **activate / giveback のみ** `entry_imbalance_percentile` で分岐。
+
+| tier | 条件 | activate | giveback |
+|------|------|----------|----------|
+| **board_high** | `entry_imbalance_percentile >= 47.62` | **1.0%** | **60%** |
+| **board_low** | `< 47.62`（欠損時も board_low） | **0.6%** | **40%** |
+
+**旧固定（Phase 174 以前）:** activate 0.8% / giveback 50% — **本番から廃止**。shadow ログは legacy fixed を counterfactual として `actual_vs_shadow_delta_*` に記録（採用前後比較用）。
+
+**ログ / Discord:** `board_dynamic_trailing_tier`・`activate_pct`・`giveback_frac` を `observer_exit` に記録。Discord EXIT 詳細に `board_high` / `board_low` をデバッグ表示（任意・trailing_mfe_exit 時）。
+
+**検証:** `run_phase332_board_dynamic_trailing_production_adoption_report.py` — `phase332_board_dynamic_trailing_production_adoption_report.json`
 
 ### 6.2 universe（`configs/universe.yaml` 代表）
 
@@ -572,7 +664,7 @@ python kabu_native/scripts/run_shadow.py --use-push --max-polls 5
 | 48 | offline push-replay | 保存 JSONL で live と同一 pipeline を場外再生 |
 | 49 | push-replay performance review | accepted / rejected / quality 分布のレビュー |
 | 50 | runtime pilot policy review | policy grid・what-if（q070 等） |
-| 51 | q070_cap3 trial config | **trial のみ**（`small_paper_pilot_q070_cap3.yaml`） |
+| 51 | q070_cap3 trial config | **旧 trial のみ**（`small_paper_pilot_q070_cap3.yaml`）。現行運用は **trailing_mfe_shadow.yaml** |
 | 52 | allowed trading windows + weakness | 市場構造ウィンドウ・弱点診断 |
 | 53 | exposure cap what-if | max_concurrent 感度 |
 | 54 | TAKE/HOLD/EXIT runtime review | **TAKE は EXIT 扱いしない**（legacy VH PF は参考のみ） |
@@ -583,19 +675,46 @@ python kabu_native/scripts/run_shadow.py --use-push --max-polls 5
 | 59 | structural exit design review | 損失分解・policy 候補比較（分析のみ） |
 | 60 | `combined_structural_exit_v1` | 公式 structural EXIT policy（review 選択可） |
 | 61 | live + combined structural EXIT | Discord **`[STRUCTURAL EXIT]`**、`virtual_hold_expired` は通知しない |
-| 67 | MFE-linked favorable trial | `small_paper_pilot_q070_cap3_mfe_fav.yaml`（本番 yaml 不変） |
+| 67 | MFE-linked favorable trial | `small_paper_pilot_q070_cap3_mfe_fav.yaml`。現行運用は **trailing_mfe_shadow.yaml**（Phase 174+） |
+| 230–237 | entry expectancy score shadow / v2 | ログ→hard gate 試行（**§16.14**） |
+| 267 | `entry_score_v2_min: 3` | quality reject off + v2 gate 採用（trial yaml） |
+| 295/299 | board / HBRecent pregate fix | v2 入力欠損の reject 修正 |
+| 310–314 | entry score token 整理 | **HBRecent/TV/Duration/Price 削除** → **Momentum+Board のみ** |
+| 315–316 | 100 株円表示 | EXIT Discord に `pnl_yen_100` 行（**§16.15**） |
+| 317 | Tomorrow paper trade preflight | 翌営業日前統合確認 — **§17.4** |
 
 詳細手順: **`kabu_native/docs/small_paper_pilot.md`**。設計アーキ: **§16**・**§16.13**。
 
-### 10.10 未着手（参考）
+### 10.11 データ蓄積（Phase 42）
+
+| 項目 | 内容 |
+|------|------|
+| **目的** | Logic Lab / OOS の **サンプル・銘柄・日付** ボトルネック解消（**ロジック変更なし**） |
+| **PUSH JSONL** | `record_push_jsonl.py` → `data/push_jsonl/YYYY-MM-DD/{symbol}.jsonl` |
+| **1 分足 EOD** | `save_intraday_eod.py` → `data/intraday_1m/YYYY-MM-DD/{symbol}.csv` |
+| **監査** | `check_data_accumulation.py` → `results/reports/data_accumulation_status_*` |
+| **モジュール** | `src/storage/push_recorder.py`, `intraday_recorder.py`, `data_accumulation_report.py` |
+
+詳細: **`kabu_native/docs/data_accumulation.md`**。
+
+### 10.12 動的 universe・日次 runner（Phase 113–148）
+
+| Phase | テーマ | 要点 |
+|-------|--------|------|
+| 109–113 | opening dynamic50 / vol-liq universe | 寄り・流動性ベース銘柄集合 |
+| 114–116 | AM/PM universe / session policy | 前場・後場 universe（**legacy:** Phase 114 の 12:25 PM 再生成） |
+| 117 | core10 + dynamic40 | 固定 core + 動的 40 銘柄 |
+| **148** | **AM/PM daily runner + intraday refresh** | 現行運用: **10:00 / 14:30** universe refresh（`--enable-intraday-refresh`）— **§17.3** |
+
+### 10.13 未着手・低優先（参考）
 
 | 項目 | 状態 |
 |------|------|
 | Phase 12 | 未定義 |
-| `src/storage/` minute bar | 未着手 |
 | `src/signals/` 移植 | 未着手 |
 | Logic Lab → shadow 自動接続 | **未接続** |
 | small paper → 実発注 | **未接続・非目標** |
+| replay 入力の Yahoo 完全廃止 | **部分** — 自前 `intraday_1m` 蓄積中、フォールバック残存 |
 
 ---
 
@@ -712,7 +831,7 @@ python kabu_native/scripts/run_shadow.py --use-push --max-polls 5
 
 - replay で改善したルールは、**shadow で live 確認するまで採用確定しない**。
 - replay 同士の比較は **同一 `--start-date`/`--end-date`/universe**・同一合成設定で行う。
-- **PUSH JSONL 経路が無い現状**では、replay は **相対比較**に留め、live との **PnL 一致は期待しない**。
+- **PUSH JSONL 経路は実装済**（Phase 42/48）。batch replay（Yahoo 合成）と small paper push-replay / live の **PnL・trade 数一致は期待しない**。
 
 ### 13.2 Target architecture（目標・理想状態）
 
@@ -757,12 +876,18 @@ market data (PUSH/REST)
 | Logic Lab（multi-profile replay） | **implemented** | Phase 17–35 |
 | research exit / validation freeze | **implemented** | Phase 36 |
 | small paper observer（live / push-replay） | **implemented** | Phase 45–61、**主検証ランタイム** |
+| entry score v2 gate | **implemented** | Phase 267/314、`entry_score_v2_min: 3` |
 | structural PF / combined EXIT | **implemented** | Phase 58–61（observer 層・**§16.13**） |
+| Discord observer + 100 株円表示 | **implemented** | Phase 316（**§16.15** — EXIT のみ） |
+| Tomorrow Preflight | **implemented** | Phase 317（**§17.4**） |
 | live feature bridge | **implemented** | Phase 47 |
-| PUSH JSONL recorder | **implemented** | `record_push_jsonl.py` |
+| data accumulation（Phase 42） | **implemented** | PUSH JSONL + EOD intraday + status report |
+| AM/PM daily runner | **implemented** | Phase 148（**§17**） |
+| dynamic universe（AM/PM） | **implemented** | Phase 113–117 |
+| PUSH JSONL recorder | **implemented** | `src/storage/push_recorder.py` + CLI |
 | push-replay（small paper） | **implemented** | Phase 48–49 |
 | paper_trade / 実発注 | **stopped** | observer only、`order_enabled=false` |
-| minute bar builder | **planned** | Phase 16 |
+| replay 自前化（Yahoo 廃止） | **partial** | 自前 `intraday_1m` 蓄積中、合成 replay フォールバック残 |
 | execution adapter | **planned** | **無効・非目標** |
 | `src/signals/` 移植 | **planned** | ルート import 脱却 |
 
@@ -775,9 +900,10 @@ market data (PUSH/REST)
 **small paper（主検証ランタイム・observer only・実発注なし）**
 
 1. `python kabu_native/scripts/check_small_paper_safety.py`
-2. `python kabu_native/scripts/check_live_observer_readiness.py --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml`
-3. `python kabu_native/scripts/run_small_paper_pilot.py --dry-run --source push-replay --push-dir kabu_native/data/push_jsonl/YYYY-MM-DD --config …/small_paper_pilot_q070_cap3.yaml --poll-interval-sec 5 --skip-safety`（場外 smoke）
-4. `python kabu_native/scripts/run_small_paper_pilot.py --dry-run --source live --full-session --wait-until-session --config …/small_paper_pilot_q070_cap3.yaml --poll-interval-sec 5`（平日・kabu 起動・`.env` 必須）
+2. `python kabu_native/scripts/check_live_observer_readiness.py --config kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml`
+3. `python kabu_native/scripts/run_small_paper_pilot.py --dry-run --source push-replay --push-dir kabu_native/data/push_jsonl/YYYY-MM-DD --config …/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml --poll-interval-sec 5 --skip-safety`（場外 smoke）
+4. `python kabu_native/scripts/run_small_paper_pilot.py --dry-run --source live --full-session --wait-until-session --config …/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml --poll-interval-sec 5`（平日・kabu 起動・`.env` 必須）
+5. `python kabu_native/scripts/run_phase317_tomorrow_paper_trade_preflight.py --day-stamp YYYYMMDD`（翌営業日前 Preflight — **§17.4**）
 
 **shadow / replay（研究・旧検証）**
 
@@ -791,16 +917,17 @@ market data (PUSH/REST)
 
 > 本章は **計画**である。現段階で **自動発注を有効化しない**。
 
-### 14.1 Phase 16 — Market data & 完全自前 replay
+### 14.1 Phase 16 — Market data & 完全自前 replay（**部分完了 — Phase 42**）
 
-| コンポーネント | ファイル（予定） | 内容 |
-|----------------|------------------|------|
-| market data recorder | `src/storage/market_data_recorder.py` | PUSH/REST の append-only 記録 |
-| push JSONL | `data/push_jsonl/YYYYMMDD/` | 生ログ |
-| minute bar builder | `src/storage/minute_bar_builder.py` | OHLCV + VWAP、昼休み handling |
-| replay 自前化 | `replay/runner.py` 拡張 | 新系 `intraday_1m` を正、Yahoo をフォールバック |
+| コンポーネント | ファイル | 状態 | 内容 |
+|----------------|----------|------|------|
+| PUSH JSONL recorder | `src/storage/push_recorder.py`, `record_push_jsonl.py` | **DONE** | append-only per symbol/day |
+| EOD 1 分足 | `src/storage/intraday_recorder.py`, `save_intraday_eod.py` | **DONE** | JSONL → CSV |
+| 蓄積レポート | `check_data_accumulation.py`, `data_accumulation_report.py` | **DONE** | 日次ステータス |
+| replay 自前化 | `replay/runner.py` 拡張 | **部分** | `data_roots` で新系優先、Yahoo フォールバック |
+| PUSH 直接 batch replay | `replay/runner.py` | **未実装** | Phase 17 候補 |
 
-**推奨実装順:** recorder → minute bars → audit primary 切替 → replay `data_roots` → Yahoo deprecated。
+**残タスク:** 十分な自前 `intraday_1m` 在庫 → replay primary 切替 → Yahoo 合成 deprecated。
 
 ### 14.2 Phase 17 — PUSH replay
 
@@ -954,7 +1081,7 @@ Phase ごとに **state / persistence / weighted / transition** 成分を点数�
 
 ---
 
-## 16. Small Paper Observer System（Phase 45–67） {#16-small-paper-observer-systemphase-45-67}
+## 16. Small Paper Observer System（Phase 45–317） {#16-small-paper-observer-systemphase-45-317}
 
 > **本章が現在の主検証ランタイム（observer only）。** shadow / batch replay / Logic Lab は残すが、**runtime verification**（観測・Discord 通知・ゲート整合）は small paper observer が担う。  
 > **small paper observer は execution system ではない** — order client の import なし・`order_enabled=false`・`paper_only=true`・**`--dry-run` 必須**・**実発注なし**。
@@ -969,6 +1096,166 @@ Phase ごとに **state / persistence / weighted / transition** 成分を点数�
 | **TAKE≠SELL** | TAKE は continuation weakening の観測。売却・利確の根拠にしない |
 | **EXIT≠実売却** | EXIT は仮想終了イベント。推奨売却・注文執行を意味しない |
 
+> **用語注意:** 本章の「ペーパートレード」は **small paper observer**（`run_small_paper_pilot.py`）を指す。旧 Yahoo 系 **`market.yahoo.watch --paper-trade`** や証券発注 API とは **無関係**。
+
+### 16.0 ペーパートレード日次フロー（朝スクリーニング→閉場） {#160-ペーパートレード日次フロー朝スクリーニング閉場}
+
+平日の **一括 orchestration** は `run_core10_dynamic40_am_pm_daily_runner.py`（Phase 148）。単体 live は `run_small_paper_pilot.py --source live` でも可。いずれも **`--dry-run` 必須**・**`order_enabled=false`**・**実発注なし**。
+
+#### 16.0.1 日次タイムライン（JST）
+
+| 時刻帯 | フェーズ | 主な処理 |
+|--------|----------|----------|
+| 寄り前 | **Preflight** | safety・Core10・kabu・Discord・register クリア |
+| 寄り前〜09:05 | **AM スクリーニング** | Core10+Dynamic40 universe 生成・CSV 検証・Discord 通知 |
+| **09:05–11:23** | **前場 Live Observer** | PUSH → feature bridge → gate → observer → Discord |
+| 11:23–11:30 | 前場終了 | AM セッション summary・register クリア |
+| **11:30–12:30** | **昼休み** | 取引ウィンドウ外（PUSH 停止の可能性） |
+| **10:00** | **Intraday Refresh（AM）** | Dynamic Universe 再計算（`--enable-intraday-refresh` 時・**§17.3**） |
+| **14:30** | **Intraday Refresh（PM）** | Dynamic Universe 再計算（後場向け universe 更新） |
+| **12:33–15:20** | **後場 Live Observer** | AM と同一 pipeline |
+| 15:20–15:30 | 後場終了 | PM summary・register クリア |
+| 引け後 | **Post-session Review** | structural PF・弱点診断・daily_runner レポート |
+
+**legacy（Phase 114）:** 12:25 JST の PM universe 再生成は **intraday refresh 導入前**の設計。現行運用（`--enable-intraday-refresh`）では **10:00 / 14:30 refresh が正式** — 12:25 単独を現状仕様と読まないこと（runner 内部では昼休み前後の PM prep が残る場合あり）。
+
+#### 16.0.2 全体フローチャート（Orchestrator）
+
+```mermaid
+flowchart TD
+  START([営業日開始<br/>kabuステーション起動]) --> PF
+
+  subgraph PF_BLOCK [Preflight — 寄り前]
+    PF[check_small_paper_safety] --> PF2[Core10 watchlist 確認]
+    PF2 --> PF3[kabu 接続 / Discord Webhook]
+    PF3 --> PF4[PUT /unregister/all]
+  end
+
+  PF_BLOCK -->|blocked| STOP1([終了: preflight_blocked])
+  PF_BLOCK -->|ready| AMS
+
+  subgraph AM_SCREEN [AM 朝スクリーニング]
+    AMS[build_am_universe<br/>Core10 + Dynamic40] --> AMS2[universe AM CSV 検証]
+    AMS2 --> AMS3[Discord: AM Screening 銘柄一覧]
+  end
+
+  AMS3 -->|失敗| STOP2([終了: universe_generation_failed])
+  AMS3 --> AML
+
+  subgraph AM_LIVE [前場 Live Observer 09:05–11:23]
+    AML[run_small_paper_pilot<br/>--source live --am-pm-session am] --> AML2[small_paper_summary.json]
+  end
+
+  AML2 --> AMCLR[kabu register クリア after AM]
+  AMCLR --> REF10
+
+  REF10[10:00 Intraday Refresh<br/>Dynamic Universe 再計算] --> WAIT
+
+  WAIT[昼休み 11:30–12:30<br/>後場待機] --> REF14
+
+  REF14[14:30 Intraday Refresh<br/>Dynamic Universe 再計算] --> PMCLR
+
+  PMCLR[kabu register クリア before PM] --> PML
+
+  subgraph PM_LIVE [後場 Live Observer 12:33–15:20]
+    PML[run_small_paper_pilot<br/>--source live --am-pm-session pm] --> PML2[small_paper_summary.json]
+  end
+
+  PML2 --> PMEND[kabu register クリア after PM]
+  PMEND --> REV
+
+  subgraph POST [引け後 Review]
+    REV[review_structural_observer.py<br/>structural_pf 公式] --> REV2[review_runtime_exit.py 等]
+    REV2 --> REV3[daily_runner_summary JSON]
+  end
+
+  REV3 --> END([日次完了<br/>order_enabled=false 維持])
+```
+
+**エントリ（現行運用・一括）:**
+
+```bash
+python kabu_native/scripts/run_core10_dynamic40_am_pm_daily_runner.py \
+  --universe-mode core10-dynamic40-price-risk-filter-shadow \
+  --enable-intraday-refresh \
+  --exit-policy-shadow trailing-mfe \
+  --day-stamp YYYYMMDD
+```
+
+#### 16.0.3 Live Observer 内部フロー（場中・1 PUSH イベントあたり）
+
+AM / PM セッション共通。`pilot_runner.py` が WebSocket で PUSH を受信し、以下を **逐次** 実行する。
+
+```mermaid
+flowchart LR
+  subgraph IN [入力]
+    PUSH[kabu PUSH WebSocket]
+    REST[REST /board 補完]
+  end
+
+  subgraph PIPE [処理パイプライン]
+    REC[record_push_jsonl<br/>並行保存]
+    BR[live_feature_bridge<br/>rolling MFE/MAE 等]
+    CQ[continuation_quality_ranking]
+    EG[ExposureGate<br/>quality / v2 / windows / cap]
+  end
+
+  subgraph OUT [出力 — observer only]
+    ACC[accepted イベント]
+    REJ[rejected イベント]
+    OBS[ObserverPositionTracker<br/>仮想ポジション]
+    DISC[Discord 通知]
+    LOG[small_paper_events.jsonl]
+  end
+
+  PUSH --> BR
+  REST -.-> BR
+  PUSH --> REC
+  BR --> CQ --> EG
+  EG -->|accept| ACC --> OBS
+  EG -->|reject| REJ
+  OBS --> DISC
+  ACC --> LOG
+  REJ --> LOG
+  OBS --> LOG
+```
+
+**ExposureGate で reject されうる代表理由:** `outside_allowed_trading_window`（昼休み等）、`entry_score_v2_below_min`、`max_concurrent_positions`、`continuation_quality_below_min`、risk cluster / daily loss guard 等。
+
+#### 16.0.4 Observer 通知フロー（Discord — 売買指示ではない）
+
+```mermaid
+flowchart TD
+  A[Gate accept → 仮想 ENTRY] --> B{場中 tick 更新}
+  B --> C[HOLD 通知<br/>品質変化が閾値超]
+  B --> D[TAKE 通知<br/>continuation weakening<br/>⚠ TAKE≠SELL]
+  B --> E[STRUCTURAL EXIT<br/>combined_structural_exit_v1]
+  B --> F[セッション終了]
+  F --> G[SESSION END / SUMMARY<br/>100株円 PnL 行 Phase316]
+```
+
+| 通知 | 意味 | 禁止 |
+|------|------|------|
+| ENTRY | 仮想建玉開始（observer） | 証券会社で買い注文しない |
+| HOLD | 品質・水準の更新観測 | — |
+| TAKE | 継続弱体化の **観測のみ** | **売却・利確の根拠にしない** |
+| STRUCTURAL EXIT | 構造 EXIT による **仮想終了** | **実売却しない** |
+| SUMMARY | セッション集計 | — |
+
+#### 16.0.5 成果物の流れ
+
+```text
+results/small_paper/YYYYMMDD/
+  live_session_* または live_full_session_* /   ← AM / PM 各セッション
+    small_paper_events.jsonl
+    small_paper_summary.json
+    structural_observer_review.json   ← 引け後 review
+data/push_jsonl/YYYY-MM-DD/{symbol}.jsonl         ← 場中 recorder
+results/reports/daily_runner_summary_YYYYMMDD.json ← orchestrator 総括
+```
+
+**関連:** **§16.2**（コンポーネント表）、**§17.3**（daily runner 詳細）、**§16.13**（structural PF）。
+
 ### 16.1 位置づけ（shadow / replay との関係）
 
 | 系統 | 役割 | 状態 |
@@ -979,6 +1266,8 @@ Phase ごとに **state / persistence / weighted / transition** 成分を点数�
 | Logic Lab | 固定プロファイル横比較・Phase 36 freeze | 研究（in-sample 停止後は固定） |
 
 ### 16.2 運用フロー（現在）
+
+**日次の全体像（朝スクリーニング→閉場）は §16.0 のフローチャートを正とする。** 以下は場中 pipeline のテキスト要約。
 
 ```text
 PUSH（live）または push_jsonl（push-replay）
@@ -1010,6 +1299,7 @@ PUSH（live）または push_jsonl（push-replay）
 | 役割 | 内容 |
 |------|------|
 | continuation quality | `min_continuation_quality` 等で候補を accept / reject |
+| **entry score v2** | `entry_score_v2_min`（Phase 267/314 — **§16.14**） |
 | `max_concurrent_positions` | 同時仮想建玉上限 |
 | `allowed_trading_windows` | 市場構造上の許可時間（**§16.4**） |
 | duplicate exposure | 同一銘柄・重複エクスポージャの抑制 |
@@ -1033,7 +1323,7 @@ python kabu_native/scripts/run_small_paper_pilot.py \
   --dry-run \
   --source push-replay \
   --push-dir kabu_native/data/push_jsonl/YYYY-MM-DD \
-  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml \
   --poll-interval-sec 5 \
   --skip-safety
 ```
@@ -1072,6 +1362,8 @@ python kabu_native/scripts/run_small_paper_pilot.py \
 | `policy_trial` | `true` |
 | `min_continuation_quality` | `0.70` |
 | `max_concurrent_positions` | `3` |
+| **`entry_score_v2_min`** | **`3`**（Phase 267/314） |
+| `reject_below_quality` | `false`（Phase 267） |
 | `baseline_policy` | `q055_cap3` |
 | `profile` | `momentum_volume_v13_combined` |
 | `entry_profile` | `momentum_volume_v2` |
@@ -1173,7 +1465,7 @@ python kabu_native/scripts/run_small_paper_pilot.py \
 
 ```text
 python kabu_native/scripts/check_live_observer_readiness.py \
-  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml \
   --structural-session-dir kabu_native/results/small_paper/20260519/live_full_session_081047
 ```
 
@@ -1187,7 +1479,7 @@ python kabu_native/scripts/run_small_paper_pilot.py \
   --source live \
   --full-session \
   --wait-until-session \
-  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml \
   --poll-interval-sec 5
 ```
 
@@ -1196,18 +1488,18 @@ python kabu_native/scripts/run_small_paper_pilot.py \
 ```text
 python kabu_native/scripts/review_runtime_exit.py \
   --session-dir kabu_native/results/small_paper/YYYYMMDD/live_full_session_HHMMSS \
-  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml
 
 python kabu_native/scripts/review_runtime_weakness.py \
   --session-dir kabu_native/results/small_paper/YYYYMMDD/live_full_session_HHMMSS
 
 python kabu_native/scripts/review_exposure_cap_whatif.py \
   --session-dir kabu_native/results/small_paper/YYYYMMDD/live_full_session_HHMMSS \
-  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml
 
 python kabu_native/scripts/review_structural_observer.py \
   --session-dir kabu_native/results/small_paper/20260519/live_full_session_081047 \
-  --config kabu_native/configs/small_paper_pilot_q070_cap3.yaml \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml \
   --structural-exit-policy combined_structural_exit_v1
 ```
 
@@ -1255,6 +1547,7 @@ TAKE 通知からも **売却・発注してはならない**（§16.6・**TAKE�
 | `kabu_signal_v1` | ENTRY ゲート・スコア本体 |
 | EXIT v13 | `momentum_volume_v13_combined` の EXIT ロジック |
 | `continuation_quality_ranking` | **core formula**（係数・合成式） |
+| **`entry_score_v2` token 定義** | Phase 314 確定（Momentum+Board のみ）— セッション別再チューニング禁止 |
 | `allowed_trading_windows` | 09:05–11:23 / 12:33–15:20（市場構造制約） |
 | `q070_cap3` baseline | trial 比較の基準（`baseline_policy: q055_cap3`） |
 | `order_enabled` | **false**（固定） |
@@ -1295,9 +1588,208 @@ Phase 54 までの **300 秒 `virtual_hold` マーク PF** は live 運用と乖
 | `structure_exit_rate` | ~71% |
 | `session_end_exit_rate` | 0%（VH 公式経路から除外） |
 
-**Phase 67 trial:** `small_paper_pilot_q070_cap3_mfe_fav.yaml` — `favorable_mode: mfe_linked`（`min(1, rolling_mfe/0.003)`）、`use_market_time_window: true`。本番 `small_paper_pilot_q070_cap3.yaml` は **変更しない**。
+**Phase 67 trial:** `small_paper_pilot_q070_cap3_mfe_fav.yaml` — `favorable_mode: mfe_linked`（`min(1, rolling_mfe/0.003)`）、`use_market_time_window: true`。現行運用 config（`trailing_mfe_shadow.yaml`）は **Phase 174 以降の正式運用** — 旧 `small_paper_pilot_q070_cap3.yaml` は参照・比較用のみ。
 
 **関連:** `kabu_native/docs/small_paper_pilot.md`（Phase 44–67 手順・禁止事項の詳細）。
+
+### 16.14 Entry score v2（Phase 230–314 — 確定仕様）
+
+**`ExposureGate` の追加ゲート**（ENTRY v13 / continuation quality core は **frozen**）。**Source of Truth:** 冒頭 **Current Runtime Entry Rule** および下記フロー。
+
+#### 正式スコア定義
+
+| v2 トークン | 加点 | 備考 |
+|-------------|------|------|
+| **`Momentum:low`** | **+2** | **必須**（`REQUIRED_V2_TOKENS`） |
+| **`Board:mid`** | **+1** | 板不均衡 tertile mid |
+| **`entry_score_v2_min`** | **3** | config / `ENTRY_SCORE_V2_GATE_MIN` |
+
+**必須条件:** **`Momentum:low` 必須** — Board のみでは ENTRY 不可。
+
+#### ENTRY 判定フロー（現行運用）
+
+```mermaid
+flowchart TD
+  S1[allowed_trading_windows] --> S2[continuation_quality]
+  S2 --> S3[Momentum:low 必須]
+  S3 --> S4[Board:mid]
+  S4 --> S5[score 算出<br/>Momentum:low +2 + Board:mid +1]
+  S5 --> S6{score >= 3?}
+  S6 -->|No| R1[reject: entry_score_v2_below_threshold]
+  S6 -->|Yes| S7[max_concurrent_positions]
+  S7 --> S8[ACCEPT]
+  S8 --> S9[ObserverPositionTracker 登録]
+  S9 --> S10[Discord ENTRY 通知]
+```
+
+| ステップ | 内容 | reject 例 |
+|----------|------|-----------|
+| 1 | `allowed_trading_windows` | `outside_allowed_trading_window` |
+| 2 | `continuation_quality` | quality 関連（`reject_below_quality: false` 時は v2 が主因） |
+| 3 | **Momentum:low 必須** | **`momentum_low_required`** |
+| 4 | Board:mid | tertile からトークン生成 |
+| 5 | score 算出 | — |
+| 6 | score ≥ 3 | `entry_score_v2_below_threshold` |
+| 7 | max_concurrent_positions | cap 超過 |
+| 8–10 | ACCEPT → Tracker → Discord | — |
+
+| 項目 | 内容 |
+|------|------|
+| 実装 | `src/small_paper/entry_expectancy_score_shadow.py`, `src/research/exposure_gate.py` |
+| Phase 267 | `reject_below_quality: false` — quality 単独 reject を off、v2 gate を主因に |
+| 過学習防止 | tertile cutoff は **Phase 229 固定 population** — セッション別再チューニング禁止 |
+
+**最終 ENTRY 条件（運用要約）:** **`Momentum:low` AND `Board:mid`**（score = 3 ≥ min 3）。HBRecent / TV / Duration / Price は **使用しない**。
+
+### 16.15 Discord 通知 — 100 株円表示（Phase 315–316）
+
+| 項目 | 内容 |
+|------|------|
+| 目的 | **EXIT 通知のみ** に **100 株あたり円 PnL** を併記（observer の理解補助） |
+| 実装 | `src/replay/pnl_yen.py`, `discord_message_builder.build_exit_detail`, `format_exit_pnl_line` |
+| Webhook | `KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL`（observer）/ `KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL`（trade notify） |
+| 制約 | **売買指示ではない**。`discord_observer_only: true` 維持。**ENTRY 通知には表示しない** |
+| テスト | `tests/test_phase316_exit_discord_100share_yen_notification.py` |
+
+**EXIT 通知例（損益行）:**
+
+```text
+損益: +0.42% / +1,200円(100株)
+```
+
+**算出式（100 株・手数料・税抜）:**
+
+```text
+pnl_yen_100 = (exit_price - entry_price) * 100
+```
+
+**short / sell サイド:** 符号反転（`compute_pnl_yen_100` が `-diff` を返す）。
+
+**ENTRY 通知:** 従来どおり `entry_score_v2` 等のみ — **100 株円損益は EXIT のみ**。
+
+---
+
+## 17. 日次運用とデータ蓄積（Phase 42 / 113–148 / 317） {#17-日次運用とデータ蓄積phase-42--113148}
+
+> **ロジック変更なし**のインフラ層。small paper observer の **runtime verification** と Logic Lab OOS の **データ母集団拡大**が目的。
+
+### 17.1 データ蓄積（Phase 42）
+
+```text
+場中: record_push_jsonl.py
+    → data/push_jsonl/YYYY-MM-DD/{symbol}.jsonl
+
+引け後: save_intraday_eod.py
+    → data/intraday_1m/YYYY-MM-DD/{symbol}.csv
+
+監査: check_data_accumulation.py
+    → results/reports/data_accumulation_status_YYYYMMDD.*
+```
+
+| モジュール | 役割 |
+|------------|------|
+| `push_recorder.py` | append-only JSONL |
+| `intraday_recorder.py` | PUSH 行 → 1 分 OHLCV 集計 |
+| `symbol_sources.py` | universe / morning_screen から銘柄解決 |
+| `data_accumulation_report.py` | カバレッジ・欠損レポート |
+
+**May 16+ 蓄積の理由:** Phase 41 OOS `oos_may_late` が on-disk データを要求。詳細 **`kabu_native/docs/data_accumulation.md`**。
+
+### 17.2 動的 universe（Phase 113–117）
+
+| 概念 | 実装 |
+|------|------|
+| opening dynamic50 | `opening_dynamic50_universe.py` — 寄り流動性スコア |
+| vol-liq dynamic50 | `run_phase113_vol_liq_dynamic50_universe.py` |
+| AM/PM universe | `am_pm_universe.py` — 前場・後場で銘柄集合を再生成 |
+| core10 + dynamic40 | 固定 10 + 動的 40（`core10_dynamic40_*`） |
+
+PUSH register 上限（50 銘柄）を意識した **register-limit-aware** 設計（Phase 105 等）。
+
+### 17.3 日次 AM/PM runner（Phase 148）
+
+**エントリ:** `python kabu_native/scripts/run_core10_dynamic40_am_pm_daily_runner.py`
+
+**役割（orchestration のみ — 売買ロジックは small paper config に委譲）**
+
+フローチャート: **§16.0.2**（全体）、**§16.0.3**（場中 pipeline）。
+
+**現行運用コマンド例:**
+
+```bash
+python kabu_native/scripts/run_core10_dynamic40_am_pm_daily_runner.py \
+  --universe-mode core10-dynamic40-price-risk-filter-shadow \
+  --enable-intraday-refresh \
+  --exit-policy-shadow trailing-mfe \
+  --day-stamp YYYYMMDD
+```
+
+| 項目 | 内容 |
+|------|------|
+| 実装 | `src/runner/am_pm_daily_runner.py` |
+| **現行運用 config** | `small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml`（`--exit-policy-shadow trailing-mfe`） |
+| **universe mode** | `core10-dynamic40-price-risk-filter-shadow`（price-risk filter + core10/dynamic40） |
+| 成果物 | `results/reports/daily_runner_*_YYYYMMDD.json`, `results/small_paper/YYYYMMDD/live_*` |
+
+#### Intraday Refresh（Phase 148 拡張 — 現行運用の正式仕様）
+
+**`--enable-intraday-refresh`** を指定した場合、場中に **Dynamic Universe を再計算**し、live observer の register 対象を差し替える。実装定数: `AM_REFRESH_HHMM = "10:00"`, `PM_REFRESH_HHMM = "14:30"`（JST）。
+
+| 時刻（JST） | イベント | 内容 |
+|-------------|----------|------|
+| **10:00** | **AM intraday refresh** | 寄り後の出来高・流動性変化を universe に反映 |
+| **14:30** | **PM intraday refresh** | 後場向け流動性再評価・universe 更新 |
+
+**目的:** 寄り後〜後場にかけて変化する出来高・流動性を **core10 + dynamic40** 銘柄集合へ反映する。
+
+**運用上の位置づけ:** AM/PM Daily Runner の **最重要イベント**（Preflight **§17.4** で policy・argv を事前確認）。成果物例:
+
+- `universe_core10_dynamic40_price_risk_am_refresh1000_YYYYMMDD.csv`
+- `universe_core10_dynamic40_price_risk_pm_refresh1430_YYYYMMDD.csv`
+
+**legacy（Phase 114）:** 12:25 JST の **PM universe 再生成のみ** は intraday refresh 導入前の設計。**現行運用では 10:00 / 14:30 refresh が正式** — 「12:25 PM 再生成のみ」は現状仕様として記載しない。
+
+**注意:** runner は **平日・kabu ステーション起動**が前提。watchdog 自動復帰は **未整備**（**§8.1**）。
+
+### 17.4 Tomorrow Preflight（Phase 317） {#174-tomorrow-preflightphase-317}
+
+**スクリプト:** `python kabu_native/scripts/run_phase317_tomorrow_paper_trade_preflight.py`
+
+**目的:** **翌営業日開始前**の統合事前確認 — config・ENTRY 条件・Discord・kabu API・Daily Runner・intraday refresh・observer runtime の整合を 1 本で検証する。
+
+**既定 config:** `kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml`
+
+| 確認項目（check_id） | 内容 |
+|----------------------|------|
+| `py_compile` | 関連モジュールの構文チェック |
+| `phase314_final_entry_conditions` | Momentum+Board、min=3、削除トークン不在 |
+| `phase316_exit_discord_yen_display` | EXIT Discord 100 株円表示 |
+| `config_entry_score_v2_min_3` | config 整合・`entry_score_v2_min: 3` |
+| `momentum_low_required` | Momentum:low 必須 gate |
+| `discord_notification_connectivity` | Discord webhook 疎通 |
+| `kabu_station_connection` | Kabu API 接続（`--skip-kabu` で省略可） |
+| `am_pm_intraday_refresh_will_not_block` | Daily Runner・10:00/14:30 refresh 設定 |
+
+**出力:** `kabu_native/results/reports/phase317_tomorrow_paper_trade_preflight.json`
+
+**判定:**
+
+| フィールド | 意味 |
+|------------|------|
+| **`preflight_ok: true`** | 全 check 合格 — 翌営業日 paper trade observer 開始可能 |
+| **`preflight_ok: false`** | 1 件以上 failed — `failed_checks` を修正して再実行 |
+
+**verdict:** `ready_for_paper_trade` / `fix_before_trade`
+
+**CLI 例:**
+
+```text
+python kabu_native/scripts/run_phase317_tomorrow_paper_trade_preflight.py \
+  --day-stamp 20260609 \
+  --config kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml
+```
+
+**関連:** **§16.14**（ENTRY Score V2）、**§17.3**（intraday refresh）、**§16.0**（日次フロー Preflight ノード）。
 
 ---
 
@@ -1307,7 +1799,8 @@ TODO は設計仕様書とは別ファイルで管理する。
 
 - **`kabu_native/docs/TODO.md`** — Phase 完了状況・Yahoo 依存・優先 TODO
 - **`kabu_native/docs/logic_lab.md`** — Logic Lab Phase 17–36 手順・出力一覧
-- **`kabu_native/docs/small_paper_pilot.md`** — small paper Phase 44–67 手順（**主検証ランタイム**）
+- **`kabu_native/docs/data_accumulation.md`** — Phase 42 データ蓄積手順
+- **`kabu_native/docs/small_paper_pilot.md`** — small paper Phase 44+ 手順（**主検証ランタイム**）
 - **`kabu_native/docs/phase57_realistic_trade_evaluation_design.md`** — structural PF 設計（Phase 57）
 - **`docs/DESIGN.md`** — 旧 Yahoo 系
 - **`docs/kabu_signal_design.md`** — `kabu_signal_v1` 詳細
@@ -1324,3 +1817,10 @@ TODO は設計仕様書とは別ファイルで管理する。
 | 2026-05-18 | **§16 Small Paper Observer（Phase 45–55）** を追加。主検証ランタイム・live/push-replay・`allowed_trading_windows`・`q070_cap3_trial`・TAKE 扱い・live_feature_bridge・review CLI。§1・§4・§5.4・§10.9・§13 を更新。PDF 再生成。 |
 | 2026-05-18 | **§16 誤解防止改訂:** TAKE≠SELL・EXIT≠実売却・ExposureGate 責務・readiness/PF 注意・昼休み除外理由・§16.12 Frozen Runtime・§8.1 watchdog 警告。用語を observer only / runtime verification に統一。PDF 再生成。 |
 | 2026-05-20 | **§16 拡張（Phase 56–61, 67）:** structural PF・`combined_structural_exit_v1`・`[STRUCTURAL EXIT]` Discord・VH 公式廃止・review CLI 追加・`live_full_session_081047` 参照・`q070_cap3_mfe_fav` trial。§10.9・§13.4 更新。PDF 再生成。 |
+| 2026-06-07 | **§16.0 ペーパートレード日次フローチャート**（Preflight→AM/PM screening→Live Observer→Review）を追加。Mermaid 4 図 + JST タイムライン。PDF 再生成。 |
+| 2026-06-08 | **Phase 314** — ENTRY Score V2 簡素化（Momentum:low +2, Board:mid +1, `entry_score_v2_min=3`, Momentum 必須）。HBRecent/TV/Duration/Price 削除。**§16.14** |
+| 2026-06-08 | **Phase 315** — 100 株換算円損益指標追加（`pnl_yen.py`） |
+| 2026-06-08 | **Phase 316** — Discord EXIT 通知へ 100 株円損益表示（`損益: +0.42% / +1,200円(100株)`）。ENTRY には非表示。**§16.15** |
+| 2026-06-08 | **Phase 317** — Tomorrow Paper Trade Preflight 追加（`run_phase317_tomorrow_paper_trade_preflight.py`）。現行運用 config・intraday refresh 同期。**§17.4**。PDF 再生成。 |
+| 2026-06-08 | **運用仕様整理:** §17.3 Intraday Refresh（10:00/14:30）を正式仕様化・12:25 legacy 明記。冒頭 Source of Truth（ENTRY Rule）独立節。**§16.14** ENTRY フロー図。Daily Runner 運用コマンド例。PDF 再生成。 |
+| 2026-06-09 | **Phase 332** — Board Dynamic Trailing 本番採用。board_high（imb≥47.62）1.0%/60%、board_low 0.6%/40%。本番 EXIT・paper trade・replay に適用。legacy 0.8%/50% は shadow counterfactual のみ。**§6.1c** |

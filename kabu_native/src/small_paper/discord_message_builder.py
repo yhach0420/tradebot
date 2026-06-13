@@ -7,7 +7,16 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Mapping, Optional, Sequence
 
-from replay.pnl_yen import format_exit_pnl_line, resolve_pnl_yen_100
+from replay.pnl_yen import (
+    enrich_trade_pnl_yen,
+    format_exit_pnl_line,
+    format_pnl_yen_100_display,
+    format_summary_avg_pnl_yen_100,
+    format_summary_profit_factor_yen,
+    format_summary_total_pnl_line,
+    resolve_pnl_yen_100,
+    summarize_pnl_yen_100,
+)
 from research.exposure_gate import REJECT_MAX_CONCURRENT
 from small_paper.discord_symbol_names import format_symbol_label
 from small_paper.entry_expectancy_score_shadow import SCORE_POINTS_V2, _feature_token
@@ -296,6 +305,22 @@ def build_entry_detail(
     ]
     if score5_candidate_ordinal is not None and entry_score_v2 is not None and entry_score_v2 >= 5:
         lines.append(f"本日score5候補: {score5_candidate_ordinal}件目")
+    scan_id = data.get("scan_id")
+    if scan_id:
+        lines.append(f"scan_id: {scan_id}")
+    data_source = data.get("data_source") or data.get("entry_data_source")
+    if data_source:
+        lines.append(f"data_source: {data_source}")
+    if data.get("price_age_sec") is not None:
+        lines.append(f"price_age_sec: {_fmt_num(data.get('price_age_sec'), digits=1)}")
+    if data.get("board_age_sec") is not None:
+        lines.append(f"board_age_sec: {_fmt_num(data.get('board_age_sec'), digits=1)}")
+    if data.get("signal_to_notify_latency_ms") is not None:
+        lines.append(f"latency_ms: {int(float(data.get('signal_to_notify_latency_ms')))}")
+    if data.get("same_scan_rank"):
+        lines.append(f"same_scan_rank: {data.get('same_scan_rank')}")
+    if data.get("same_scan_candidates") is not None:
+        lines.append(f"same_scan_candidates: {data.get('same_scan_candidates')}")
     lines.extend(
         [
             "ENTRY理由:",
@@ -303,6 +328,35 @@ def build_entry_detail(
         ]
     )
     return "\n".join(lines)
+
+
+def build_entry_cap_blocked_detail(
+    *,
+    symbol: str,
+    entry_score_v2: Optional[int],
+    data: Mapping[str, Any],
+    active_positions: int,
+    position_cap: int,
+) -> str:
+    bullets = build_entry_reason_bullets(data)
+    reason_block = "\n".join(f"・{b}" for b in bullets) if bullets else "・（なし）"
+    return "\n".join(
+        [
+            symbol,
+            "",
+            "ENTRY条件成立",
+            f"active_positions: {active_positions}",
+            f"position_cap: {position_cap}",
+            "",
+            "見送り理由:",
+            "保有上限到達",
+            "",
+            f"entry_score_v2: {entry_score_v2 if entry_score_v2 is not None else '—'}",
+            "",
+            "ENTRY理由:",
+            reason_block,
+        ]
+    )
 
 
 def build_entry_deferred_detail(
@@ -348,6 +402,9 @@ def build_exit_detail(
     exit_reason: str,
     pnl_yen_100: Optional[float] = None,
     side: str = "long",
+    board_dynamic_trailing_tier: Optional[str] = None,
+    board_dynamic_trailing_activate_pct: Optional[float] = None,
+    board_dynamic_trailing_giveback_frac: Optional[float] = None,
 ) -> str:
     yen = resolve_pnl_yen_100(
         entry_price=entry_price,
@@ -355,18 +412,32 @@ def build_exit_detail(
         side=side,
         pnl_yen_100=pnl_yen_100,
     )
-    return "\n".join(
-        [
-            f"銘柄: {symbol}",
-            f"ENTRY価格: {_fmt_num(entry_price)}",
-            f"EXIT価格: {_fmt_num(exit_price)}",
-            format_exit_pnl_line(pnl_pct, yen),
-            f"最大含み益 MFE: {_fmt_num(mfe_pct)}%",
-            f"最大逆行 MAE: {_fmt_num(mae_pct)}%",
-            f"保有時間: {int(round(hold_minutes))}分",
-            f"EXIT理由: {humanize_exit_reason(exit_reason)}",
-        ]
-    )
+    lines = [
+        f"銘柄: {symbol}",
+        f"ENTRY価格: {_fmt_num(entry_price)}",
+        f"EXIT価格: {_fmt_num(exit_price)}",
+        format_exit_pnl_line(pnl_pct, yen),
+        f"最大含み益 MFE: {_fmt_num(mfe_pct)}%",
+        f"最大逆行 MAE: {_fmt_num(mae_pct)}%",
+        f"保有時間: {int(round(hold_minutes))}分",
+        f"EXIT理由: {humanize_exit_reason(exit_reason)}",
+    ]
+    if (
+        "trailing_mfe" in str(exit_reason or "")
+        and board_dynamic_trailing_tier
+    ):
+        gb_pct = (
+            int(round(float(board_dynamic_trailing_giveback_frac) * 100))
+            if board_dynamic_trailing_giveback_frac is not None
+            else None
+        )
+        lines.append(
+            "Trailing: "
+            f"{board_dynamic_trailing_tier} "
+            f"(activate {_fmt_num(board_dynamic_trailing_activate_pct)}% / "
+            f"giveback {gb_pct if gb_pct is not None else '—'}%)"
+        )
+    return "\n".join(lines)
 
 
 def build_universe_screening_overview(
@@ -439,13 +510,98 @@ def build_universe_refresh_detail(
     return "\n".join([overview, "", "監視銘柄一覧:", watch_block])
 
 
-def _profit_factor(pnls: Sequence[float]) -> Optional[float]:
-    wins = sum(p for p in pnls if p > 0)
-    loss = sum(p for p in pnls if p < 0)
-    gl = abs(loss)
-    if gl <= 0:
-        return None if wins <= 0 else float("inf")
-    return wins / gl
+def observer_exit_rows(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        enrich_trade_pnl_yen(dict(e))
+        for e in events
+        if e.get("event_type") == "observer_exit" and e.get("pnl_pct") is not None
+    ]
+
+
+def summarize_observer_exit_metrics(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """100-share yen summary from observer_exit events."""
+    exits = observer_exit_rows(events)
+    pnls = [float(e["pnl_pct"]) for e in exits if e.get("pnl_pct") is not None]
+    yen = summarize_pnl_yen_100(exits)
+    return {
+        "total_pnl_pct": round(sum(pnls), 2) if pnls else 0.0,
+        "avg_pnl_pct": round(sum(pnls) / len(pnls), 2) if pnls else 0.0,
+        "total_pnl_yen_100": yen.get("total_pnl_yen_100"),
+        "avg_pnl_yen_100": yen.get("avg_pnl_yen_100"),
+        "profit_factor_yen_100": yen.get("profit_factor_yen_100"),
+        "gross_profit_yen_100": yen.get("gross_profit_yen_100"),
+        "gross_loss_yen_100": yen.get("gross_loss_yen_100"),
+        "max_win_yen_100": yen.get("max_win_yen_100"),
+        "max_loss_yen_100": yen.get("max_loss_yen_100"),
+        "observer_exit_count_with_pnl": len(exits),
+    }
+
+
+def summary_notification_labels(summary: Mapping[str, Any]) -> tuple[str, str]:
+    """Return (event_tag, title_line) for Daily / AM / PM summary Discord."""
+    am_pm = summary.get("am_pm_session") or {}
+    kind = str(am_pm.get("kind") or "").lower()
+    if kind == "am":
+        return "AM Summary", "【AM Summary】"
+    if kind == "pm":
+        return "PM Summary", "【PM Summary】"
+    return "Daily Summary", "【Daily Summary】"
+
+
+def format_summary_yen_display_lines(metrics: Mapping[str, Any]) -> list[str]:
+    """Legacy compact yen block (phase reports). Prefer format_discord_summary_lines for Discord."""
+    lines = [
+        format_summary_total_pnl_line(
+            float(metrics.get("total_pnl_pct") or 0.0),
+            metrics.get("total_pnl_yen_100"),
+        )
+    ]
+    avg_line = format_summary_avg_pnl_yen_100(metrics.get("avg_pnl_yen_100"))
+    if avg_line is not None:
+        lines.append(f"平均損益: {avg_line}")
+    pf = metrics.get("profit_factor")
+    if pf is not None:
+        lines.append(f"PF: {format_summary_profit_factor_yen(pf)}")
+    return lines
+
+
+def _format_summary_yen_value(yen: Any) -> str:
+    if yen is None:
+        return "—"
+    try:
+        return format_pnl_yen_100_display(float(yen))
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _canonical_trade_display(metrics: Mapping[str, Any], key: str) -> str:
+    trade = metrics.get(key)
+    if isinstance(trade, Mapping):
+        return str(trade.get("display") or "—")
+    return str(trade or "—")
+
+
+def format_discord_summary_lines(metrics: Mapping[str, Any]) -> list[str]:
+    """Production Discord summary from canonical_summary only (100-share yen primary)."""
+    watch_n = metrics.get("watch_symbols_count", metrics.get("monitored_symbol_count"))
+    watch_s = str(watch_n) if watch_n is not None else "—"
+    traded_n = metrics.get("traded_symbols_count", metrics.get("traded_symbol_count", 0))
+    avg_yen = format_summary_avg_pnl_yen_100(metrics.get("avg_pnl_yen_100"))
+    win_rate = metrics.get("win_rate_yen_100", metrics.get("win_rate", 0))
+    pf = metrics.get("profit_factor_yen_100", metrics.get("profit_factor"))
+    return [
+        f"trade_count: {metrics.get('trade_count', 0)}",
+        f"win_rate_yen_100: {_fmt_num(float(win_rate) * 100, digits=0)}%",
+        f"profit_factor_yen_100: {format_summary_profit_factor_yen(pf)}",
+        f"total_pnl_yen_100: {_format_summary_yen_value(metrics.get('total_pnl_yen_100'))}",
+        f"avg_pnl_yen_100: {avg_yen or '—'}",
+        f"stop_rate: {_fmt_num(float(metrics.get('stop_rate', 0)) * 100, digits=0)}%",
+        f"best_trade: {_canonical_trade_display(metrics, 'best_trade')}",
+        f"worst_trade: {_canonical_trade_display(metrics, 'worst_trade')}",
+        f"max_concurrent: {metrics.get('max_concurrent', 0)}/{metrics.get('max_concurrent_cap', 3)}",
+        f"監視銘柄数: {watch_s}",
+        f"取引銘柄数: {traded_n}",
+    ]
 
 
 def _iter_score5_max_concurrent_rejects(
@@ -581,46 +737,18 @@ def aggregate_daily_metrics(
     monitored_symbol_count: Optional[int] = None,
     reject_rows: Optional[Sequence[Mapping[str, Any]]] = None,
     ux_stats: Optional[Mapping[str, Any]] = None,
-    name_map: Optional[Mapping[str, str]] = None,
+    name_map: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
-    exits = [
-        e
-        for e in events
-        if e.get("event_type") == "observer_exit"
-        and e.get("pnl_pct") is not None
-    ]
-    pnls = [float(e["pnl_pct"]) for e in exits]
-    wins = [p for p in pnls if p > 0]
-    losses = [p for p in pnls if p < 0]
-    stop_n = sum(1 for e in exits if e.get("stop_hit") or e.get("exit_reason") == "stop_hit")
+    from small_paper.canonical_summary import build_canonical_summary, collect_canonical_trades
 
-    best_trade = worst_trade = "—"
-    best_sym = worst_sym = "—"
-    if exits:
-        best_e = max(exits, key=lambda e: float(e["pnl_pct"]))
-        worst_e = min(exits, key=lambda e: float(e["pnl_pct"]))
-        b_code = _symbol_short(str(best_e.get("symbol", "")))
-        w_code = _symbol_short(str(worst_e.get("symbol", "")))
-        best_sym = f"{b_code} {_fmt_num(best_e.get('pnl_pct'))}%"
-        worst_sym = f"{w_code} {_fmt_num(worst_e.get('pnl_pct'))}%"
-        best_trade = (
-            f"{b_code} {_fmt_num(best_e.get('pnl_pct'))}% "
-            f"({humanize_exit_reason(str(best_e.get('exit_reason', '')))})"
-        )
-        worst_trade = (
-            f"{w_code} {_fmt_num(worst_e.get('pnl_pct'))}% "
-            f"({humanize_exit_reason(str(worst_e.get('exit_reason', '')))})"
-        )
-
-    traded = {str(e.get("symbol")) for e in exits if e.get("symbol")}
-    pf = _profit_factor(pnls)
-    pf_out: Any
-    if pf is None:
-        pf_out = "—"
-    elif pf == float("inf"):
-        pf_out = "∞"
-    else:
-        pf_out = round(pf, 2)
+    trades = collect_canonical_trades(events)
+    canonical = build_canonical_summary(
+        trades,
+        peak_open_slots=int(summary.get("peak_open_slots") or 0),
+        max_concurrent_positions=max_concurrent_positions,
+        watch_symbols_count=monitored_symbol_count,
+    )
+    yen_block = summarize_observer_exit_metrics(events)
 
     score5_candidates = int(
         (ux_stats or {}).get("score5_candidate_count")
@@ -655,24 +783,16 @@ def aggregate_daily_metrics(
     top_deferred = _top_deferred_opportunity(rejects, ux_stats)
 
     return {
-        "trade_count": len(exits),
-        "profit_factor": pf_out,
-        "total_pnl_pct": round(sum(pnls), 2) if pnls else 0.0,
-        "avg_pnl_pct": round(sum(pnls) / len(pnls), 2) if pnls else 0.0,
-        "win_rate": round(len(wins) / len(pnls), 2) if pnls else 0.0,
-        "stop_rate": round(stop_n / len(exits), 2) if exits else 0.0,
-        "max_concurrent": int(summary.get("peak_open_slots") or 0),
-        "max_concurrent_cap": max_concurrent_positions,
+        **canonical,
+        **yen_block,
+        "profit_factor": canonical.get("profit_factor_yen_100"),
+        "total_pnl_pct": yen_block.get("total_pnl_pct"),
+        "total_pnl_pct_raw": canonical.get("total_pnl_pct_raw"),
+        "win_rate": canonical.get("win_rate_yen_100"),
         "entry_count": int(
             summary.get("observer_entry_count") or summary.get("accepted_count") or 0
         ),
-        "exit_count": int(summary.get("observer_exit_count") or len(exits)),
-        "win_count": len(wins),
-        "loss_count": len(losses),
-        "best_symbol": best_sym,
-        "worst_symbol": worst_sym,
-        "best_trade": best_trade,
-        "worst_trade": worst_trade,
+        "exit_count": int(summary.get("observer_exit_count") or canonical.get("trade_count") or 0),
         "score5_candidate_count": score5_candidates,
         "score5_entry_count": score5_entries,
         "score5_deferred_count": score5_deferred,
@@ -681,7 +801,7 @@ def aggregate_daily_metrics(
         "deferred_count_ranking": deferred_count_ranking,
         "top_deferred_opportunity": top_deferred,
         "monitored_symbol_count": monitored_symbol_count,
-        "traded_symbol_count": len(traded),
+        "traded_symbol_count": canonical.get("traded_symbols_count"),
     }
 
 
@@ -690,49 +810,9 @@ def build_daily_summary_detail(
     *,
     name_map: Optional[Mapping[str, str]] = None,
 ) -> str:
-    mon = metrics.get("monitored_symbol_count")
-    mon_s = str(mon) if mon is not None else "—"
-    top_def = metrics.get("top_deferred_opportunity") or {}
-    top_line = "—"
-    if top_def:
-        label = format_symbol_label(str(top_def.get("symbol", "")), name_map)
-        top_line = f"{label} score{top_def.get('entry_score_v2', '—')}"
-    count_rank_lines = format_deferred_ranking_lines(
-        metrics.get("deferred_count_ranking") or [],
-        name_map=name_map,
-        with_count=True,
-    )
-    return "\n".join(
-        [
-            "見送り最高score:",
-            top_line,
-            "理由: 保有枠上限",
-            "",
-            "ENTRY見送り上位:",
-            count_rank_lines,
-            "",
-            f"score5以上候補: {metrics.get('score5_candidate_count', 0)}",
-            f"ENTRY: {metrics.get('score5_entry_count', 0)}",
-            f"枠不足見送り: {metrics.get('score5_deferred_count', 0)}",
-            "",
-            f"trade_count: {metrics.get('trade_count', 0)}",
-            f"PF: {metrics.get('profit_factor', '—')}",
-            f"total_pnl_pct: {_fmt_num(metrics.get('total_pnl_pct'))}%",
-            f"avg_pnl_pct: {_fmt_num(metrics.get('avg_pnl_pct'))}%",
-            f"win_rate: {_fmt_num(float(metrics.get('win_rate', 0)) * 100, digits=0)}%",
-            f"stop_rate: {_fmt_num(float(metrics.get('stop_rate', 0)) * 100, digits=0)}%",
-            f"max_concurrent: {metrics.get('max_concurrent', 0)}/{metrics.get('max_concurrent_cap', 3)}",
-            f"ENTRY見送り通知数: {metrics.get('entry_deferred_notify_count', 0)}",
-            f"entry_count: {metrics.get('entry_count', 0)}",
-            f"exit_count: {metrics.get('exit_count', 0)}",
-            f"best_trade: {metrics.get('best_trade', '—')}",
-            f"worst_trade: {metrics.get('worst_trade', '—')}",
-            f"best_symbol: {metrics.get('best_symbol', '—')}",
-            f"worst_symbol: {metrics.get('worst_symbol', '—')}",
-            f"監視銘柄数: {mon_s}",
-            f"取引銘柄数: {metrics.get('traded_symbol_count', 0)}",
-        ]
-    )
+    """Operator-facing Discord summary (actual paper trades only)."""
+    del name_map
+    return "\n".join(format_discord_summary_lines(metrics))
 
 
 def preview_payload(
