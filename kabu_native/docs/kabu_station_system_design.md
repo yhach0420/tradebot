@@ -2,20 +2,27 @@
 
 **対象リポジトリ:** tradebotfile / `kabu_native/`  
 **想定読者:** kabu_native を初めて触れる開発者・運用者  
-**位置づけ:** 本文書は **kabuステーション® API を一次データ源とする新系**（universe・朝スクリーニング・リプレイ検証・shadow・**small paper observer**・データ蓄積・日次 runner）の設計仕様である。**EXIT v13 / continuation quality core / frozen runtime** は変更しない前提で、パスと起動方法を **2026-06-08（Phase 314–317）** 時点の実装に合わせて記述する。  
+**位置づけ:** 本文書は **kabuステーション® API を一次データ源とする新系**（universe・朝スクリーニング・リプレイ検証・shadow・**small paper observer**・データ蓄積・日次 runner）の設計仕様である。**EXIT v13 / continuation quality core / frozen runtime** は変更しない前提で、パスと起動方法を **2026-06-14（Phase 314–389）** 時点の実装に合わせて記述する。  
 **別系統:** **旧 Yahoo 非公式 API 系**はリポジトリ内 **`market/yahoo/`**（互換シム `yahoo_kabu_watch.py`）に分離されている。詳細は **`docs/DESIGN.md`** を参照。**本書は旧 Yahoo 監視ループの仕様書ではない。**
 
-**現在の主検証ランタイム（2026-06-08）:** **small paper observer**（`run_small_paper_pilot.py`、`--source live` / `push-replay`）。**現行運用 config:** **`small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml`** — `min_continuation_quality: 0.70`、`max_concurrent_positions: 3`、**`entry_score_v2_min: 3`**（Phase 314）、**Momentum:low 必須 + Board:mid**。**observer only**・**実発注なし**・**runtime verification**（performance guarantee ではない）。平日 orchestration: **`run_core10_dynamic40_am_pm_daily_runner.py --exit-policy-shadow trailing-mfe --enable-intraday-refresh`**（Phase 148）。翌営業日前確認: **`run_phase317_tomorrow_paper_trade_preflight.py`**（Phase 317）。
+**System Source of Truth（開発史・採用判定）:** **`docs/architecture/full_system_development_history.md`**（PDF: **`docs/architecture/full_system_development_history.pdf`**）— Phase 採用・撤回・置換時に更新。Phase 一覧監査: **`docs/audits/full_phase_history_audit.csv`**。一時検証成果物は **`results/reports/`** のみ。
+
+**現在の主検証ランタイム（2026-06-14）:** **small paper observer**（`run_small_paper_pilot.py`、`--source live` / `push-replay`）。**現行運用 config（Stack C）:** **`small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml`** — Phase **314** entry_score_v2（Momentum:low + Board:mid, min=3）、Phase **355/364** Dynamic40 ENTRY guard、Phase **332** board-dynamic trailing-MFE EXIT、`max_concurrent_positions: 3`。**observer only**・**実発注なし**・**runtime verification**（performance guarantee ではない）。平日 orchestration: **`run_core10_dynamic40_am_pm_daily_runner.py --universe-mode core10-dynamic40-price-risk-filter-shadow --enable-intraday-refresh --exit-policy-shadow trailing-mfe`**（Phase 148）。翌営業日前: **`run_phase317_tomorrow_paper_trade_preflight.py`**。引け後レビュー: Phase **376/377**。
 
 ### 現行運用 Config 分類（Source of Truth）
 
 | 用途 | Config |
 |------|--------|
 | 旧 trial（参照・比較用） | `kabu_native/configs/small_paper_pilot_q070_cap3.yaml` |
-| **現行運用** | `kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml` |
+| **現行運用（Stack C）** | `kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml` |
 | Preflight 対象（Phase 317 既定） | 同上 |
-| Daily Runner（`--exit-policy-shadow trailing-mfe`） | 同上 |
-| push-replay / live smoke（推奨） | 同上 |
+| Daily Runner **本番**（`--exit-policy-shadow trailing-mfe`） | 同上 |
+| Daily Runner **既定**（exit shadow 未指定） | `small_paper_pilot_q070_cap3_entry_price_risk_guard_shadow.yaml`（trailing_mfe **なし**） |
+| push-replay / live smoke（推奨） | trailing_mfe_shadow（Stack C） |
+
+**Stack C（現行検証・PnL 集計の primary stack）:** Phase **355** pullback guard + Phase **364** near-day-high guard + Phase **314** entry_score_v2 + Phase **332** trailing-MFE EXIT（上記 trailing_mfe_shadow config）。
+
+**runtime CAP（Source of Truth）:** 現行 config の **`max_concurrent_positions: 3`**。**CAP=2**（Phase 389 研究候補）は **runtime 未反映** — 詳細 **§17.6**。
 
 ### Current Runtime Entry Rule（Source of Truth — Phase 314）
 
@@ -32,18 +39,118 @@
 
 **最終条件:** **`Momentum:low` AND `Board:mid`**（score ≥ 3）。
 
+**追加 ENTRY guard（Stack C — Dynamic40 のみ、Core10 除外）:**
+
+| Phase | guard | 条件（要約） |
+|-------|-------|--------------|
+| **355** | pullback misread | Dynamic40 かつ 5分騰落 < 0 かつ VWAP 乖離 < 0 |
+| **364** | near day high + low momentum | Dynamic40 かつ 高値距離 ≤ 1.5% かつ momentum < 0.30 |
+
+詳細: **§6.1d**、完全ゲート順: **§16.14**。
+
+### Current Runtime EXIT Rule（Source of Truth — Phase 332）
+
+**現行運用 EXIT（trailing_mfe_shadow config）:** `combined_structural_exit_v1_trailing_mfe_shadow`
+
+| 機構 | ルール |
+|------|--------|
+| **hard_stop** | **1.2%** → `stop_hit` |
+| **board-dynamic trailing MFE** | `entry_imbalance_percentile >= 47.62` → activate **1.0%** / giveback **60%**（`board_high`）。それ以外 → **0.6%** / **40%**（`board_low`）→ `trailing_mfe_exit` |
+| **fade 系** | quality_decay / momentum_fade / favorable_fade **無効**（trailing_mfe policy） |
+| **session close** | AM 11:25 / PM 15:23 強制決済（`am_pm_session_policy`） |
+| **overlap** | cap 満杯時の置換 → `overlap_replaced` |
+
+詳細: **§6.1c**。**Daily Runner 本番**は `--exit-policy-shadow trailing-mfe` 必須（未指定時は legacy structural v1）。
+
+### Current Known Limitations and Top Risks（2026-06-14）
+
+> 外部レビュー指摘を **実装実態・Phase 314–389 検証結果** に照らして整理。レビュー原文の貼付は行わない。詳細ロードマップ: **§Near-term Technical Roadmap**。
+
+### Risk S1: Replay / Live divergence（最重要）
+
+| 経路 | データ源 | 状態 |
+|------|----------|------|
+| **live** | kabu API **PUSH** / board / `live_feature_bridge` / realtime 特徴抽出 | 本番 observer |
+| **batch replay / Logic Lab** | 旧 **`data/intraday_1m/`**（Yahoo 由来 CSV）→ **synthetic board event** | 研究・回帰用 |
+| **push-replay（場外）** | 保存 **PUSH JSONL** → live と同一 pipeline 再生 | **部分検証** — normalized replay **未完成** |
+
+**問題の正確な表現:** Live runtime が PUSH/board に依存するのは **妥当**。問題は **「PUSH 依存が悪い」** ではなく、**live の PUSH/board 依存判断を PUSH JSONL からの完全 normalized replay で検証できていない** こと。
+
+| 保証しないもの | 理由 |
+|----------------|------|
+| 数値一致 | Yahoo 1 分足 ≠ kabu PUSH 更新タイミング |
+| trade count 一致 | synthetic イベント生成の差 |
+| board 系特徴の完全再現 | 合成 board ≠ 実 PUSH |
+| `trailing_mfe_exit` / `overlap_replaced` / `board_dynamic_trailing` の replay 忠実度 | **板・PUSH 挙動依存** — Yahoo synthetic では **評価ずれリスク大**（Phase 381） |
+
+**最重要技術課題:** **PUSH JSONL → normalized replay** — 目標: **same input → same decision → same trade**。
+
+`record_push_jsonl.py` は **存在**するが、JSONL からの **完全 normalized replay パイプラインは未完成**（**§14.2**）。
+
+### Risk S2: EXIT-dependent profit structure
+
+Stack C の黒字（Period B +813,140円）は **ENTRY guard だけ**では説明できない（Phase 381）。
+
+| 利益源 | 寄与（Period B 参考） |
+|--------|----------------------|
+| **`trailing_mfe_exit`** | +1,440,200円（全 accepted） |
+| **`overlap_replaced`** | +1,223,330円 |
+
+**懸念:** **ENTRY edge** / **EXIT edge** / **Universe edge** の **分離評価が未完了**。
+
+**今後必要な指標（edge attribution）:** `entry_pf`, `exit_pf`, **`mfe_capture_rate`**, **`overlap_contribution`**, **`trailing_contribution`**, **`universe_contribution`**（**§Near-term Technical Roadmap**）。
+
+### Risk A1: overlap_replaced dependency
+
+Phase 381: **`overlap_replaced` は主要利益源**（勝ち側 +1,717,620円）。削る counterfactual で PF **1.30→0.81**。
+
+**懸念:** 「最初から良い銘柄を選んでいる」のではなく、**「後から来た候補へ乗り換える（cap 満杯時の置換）」** ことで利益が出ている可能性。回転率低下・テーマ集中・トレンド銘柄数減少で overlap 利益が減るリスク。
+
+**常時監視:** `overlap_replaced_count`, `overlap_replaced_pnl`, **`overlap_disabled_counterfactual_pf`**, **`overlap_disabled_counterfactual_pnl`**
+
+### Risk A2: Dynamic40 lower-rank dependency
+
+Phase 374/375/381: **`rank_21_40` / `rank_31_40` が利益源**。Dynamic40 は設計上 **監視対象選定** だが、実績上 **Universe が alpha を持つ統計的依存** がある（**§17.2**）。
+
+**将来:** Dynamic40 生成ロジック変更時は必ず rank bucket 別 PnL・rank_21_40 維持可否・rank_31_40 劣化有無を確認。
+
+### Risk A3: Universe / Exposure / Entry contribution not separated
+
+現状成績 = **Universe × Ranking × ExposureGate × Entry score × Exit policy × Capital/CAP** の合成。「ENTRY が勝っている」「Universe が勝っている」「EXIT が勝っている」の **分離が不十分**。
+
+**今後必要:** Universe PF / Exposure PF / Entry PF / Exit PF / Capital contribution（**edge attribution metrics**）。
+
+### Risk B1: CAP=2 live robustness
+
+Phase 385/386/387/388/389 で **CAP=2** が **research_candidate**。ただし **runtime config は CAP=3**（**runtime reflected: false**）。Phase 387 **shadow_monitoring** 継続中。**live 後続セッションでの再現確認後** に採用判断（**§17.6**）。
+
+### レビュー誤認の整理（要約）
+
+| レビュー指摘 | 分類 | 本書の整理 |
+|--------------|------|------------|
+| Phase 増加 = rule 堆積 | **C（誤認）** | Phase 314 で ENTRY **簡素化**。runtime rule は **むしろ減少**（**§9.1**） |
+| 特徴量が少なすぎる | **B（表現修正）** | Phase 314 で **不要特徴削除が改善方向**。汎化性は **監視**（**§9.2**） |
+| PUSH 依存が悪い | **C（誤認）** | PUSH/board 依存は live として妥当。**replay 検証ギャップ**が問題（Risk S1） |
+| watchdog 完全未実装 | **C（誤認）** | legacy **partial recovery implemented**。**kabu_native 専用は未成熟**（**§8.1**） |
+| Universe と売買ロジック結合 | **B（表現修正）** | 設計上は **分離**。実績は **統計的依存**（**§17.2**） |
+| replay / push-replay 未実装 | **B** | push-replay **部分実装**。**normalized replay 未完成** |
+
 **PDF 化:** 推奨は `python tools/md_to_pdf.py kabu_native/docs/kabu_station_system_design.md kabu_native/docs/kabu_station_system_design.pdf`（日本語フォントを PDF に埋め込み、表・コードの視認性を調整済み）。代替として VS Code / Cursor のプレビューから「印刷 → PDFへ保存」。
 
-### 現在のコード配置（2026-06-08）
+### 現在のコード配置（2026-06-14）
 
 | 役割 | 実体（編集・import の正） | 備考 |
 |------|---------------------------|------|
 | **small paper observer（主検証ランタイム）** | **`kabu_native/src/small_paper/`** | observer only・実発注なし（**§16**） |
-| entry score v2 gate | **`kabu_native/src/small_paper/entry_expectancy_score_shadow.py`** | Momentum+Board のみ（Phase 314）。`ExposureGate` 連携 |
-| continuation quality / ExposureGate | **`kabu_native/src/research/`** | `continuation_quality_ranking.py`, `exposure_gate.py` |
-| structural EXIT（observer 層） | **`kabu_native/src/research/structural_exit_policies.py`** | `combined_structural_exit_v1`（**EXIT v13 ではない**） |
-| 日次 AM/PM runner | **`kabu_native/src/runner/am_pm_daily_runner.py`** | Phase 148 orchestration（**§17**） |
-| dynamic universe | **`kabu_native/src/universe/`** | `opening_dynamic50_universe.py`, `am_pm_universe.py`, `core10_dynamic40_*` |
+| entry score v2 gate | **`entry_expectancy_score_shadow.py`** | Momentum+Board（Phase 314） |
+| Phase 355/364 ENTRY guard | **`pullback_misread_dynamic40_entry_guard.py`**, **`near_day_high_low_momentum_dynamic40_entry_guard.py`** | Dynamic40 のみ |
+| board-dynamic trailing EXIT | **`board_dynamic_trailing_shadow.py`**, **`structural_exit_policies.py`** | Phase 332 本番 EXIT |
+| continuation quality / ExposureGate | **`continuation_quality_ranking.py`**, **`exposure_gate.py`** | |
+| 日次 AM/PM runner | **`am_pm_daily_runner.py`** | Phase 148（**§17**） |
+| price-risk universe | **`price_risk_filter.py`**, **`core10_dynamic40_*`** | 既定 universe mode（Phase 269） |
+| 資金・CAP 研究 | **`phase384_*`〜`phase389_*`** | **シミュレーションのみ** — runtime 未反映（**§17.6**） |
+| Tomorrow Preflight | **`run_phase317_tomorrow_paper_trade_preflight.py`** | **§17.4** |
+| 引け後 PnL / regime | **`run_phase376_*`**, **`run_phase377_*`** | **§17.5** |
 | API（REST / PUSH） | **`kabu_native/src/api/`** | `KabuNativeRestClient` / `KabuNativePushClient` |
 | universe / 朝スクリーン | **`kabu_native/src/universe/`**, **`src/screening/`** | JPX master 連携（Phase 100+）含む |
 | リプレイ・検証バッチ | **`kabu_native/src/replay/`** | `pnl_yen.py`（100 株円換算・Phase 316）含む |
@@ -76,6 +183,7 @@
 | live observer 準備 | `check_live_observer_readiness.py --config kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml` |
 | push-replay（場外） | `run_small_paper_pilot.py --dry-run --source push-replay --push-dir … --config …/trailing_mfe_shadow.yaml` |
 | **Tomorrow Preflight（Phase 317）** | `python kabu_native/scripts/run_phase317_tomorrow_paper_trade_preflight.py --day-stamp YYYYMMDD` |
+| **引け後 PnL / regime** | `run_phase376_production_daily_pnl_review.py` / `run_phase377_daily_regime_breakdown.py` |
 | **日次 AM/PM runner** | `run_core10_dynamic40_am_pm_daily_runner.py --universe-mode core10-dynamic40-price-risk-filter-shadow --enable-intraday-refresh --exit-policy-shadow trailing-mfe …` |
 | セッション後 review | `review_runtime_exit.py` / `review_structural_observer.py` / `review_phase56_diagnosis.py` 等 |
 | structural 公式 PF | `review_structural_observer.py --structural-exit-policy combined_structural_exit_v1` |
@@ -86,7 +194,7 @@
 
 **現行運用 config 短名:** `trailing_mfe_shadow.yaml` = `small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml`
 
-**watchdog / bat:** 現時点で **kabu_native 専用の watchdog は未整備**。旧系 `scripts/watchdog.py` は **Yahoo paper_trade / Issue Bot** 用（**§8.1**）。shadow 常駐化は手動起動または将来拡張（Phase 16 以降）。
+**watchdog / bat:** **Operational Recovery** — legacy 系（`scripts/watchdog.py`, `start_watchdog.bat`, `paper_trade.lock`）は **partial recovery implemented**。**kabu_native small paper observer 専用 watchdog は未成熟**（**§8.1**）。Windows Update 後の kabu 起動確認・PUSH 再接続・完全自動復旧は **未完**。
 
 ---
 
@@ -101,16 +209,21 @@
 7. [環境変数・外部連携](#7-環境変数外部連携)
 8. [依存関係・実行](#8-依存関係実行)
 9. [設計上の注意](#9-設計上の注意)
+    - [9.1 Rule accretion と runtime 簡素化](#91-rule-accretion-と-runtime-簡素化)
+    - [9.2 ENTRY 特徴量と汎化性監視](#92-entry-特徴量と汎化性監視)
 10. [実装工程のトピック（これまでの経緯）](#10-実装工程のトピック)
 11. [コマンドライン引数・実行分岐（kabu_native scripts）](#11-コマンドライン引数実行分岐kabu_native-scripts)
 12. [成果物の命名とディレクトリ規則](#12-成果物の命名とディレクトリ規則)
 13. [realtime / replay 統一: 共有エンジンと shadow](#13-realtime--replay-統一共用エンジンと-shadow)
 14. [未実装・将来構想（Phase 16 以降）](#14-未実装将来構想phase-16-以降)
 15. [Logic Lab と研究終了基準（Phase 17–36）](#15-logic-lab-と研究終了基準phase-17-36)
-16. [Small Paper Observer System（Phase 45–317）](#16-small-paper-observer-systemphase-45-317)
+16. [Small Paper Observer System（Phase 45–389）](#16-small-paper-observer-systemphase-45-389)
     - [16.0 ペーパートレード日次フロー（朝スクリーニング→閉場）](#160-ペーパートレード日次フロー朝スクリーニング閉場)
-17. [日次運用とデータ蓄積（Phase 42 / 113–148 / 317）](#17-日次運用とデータ蓄積phase-42--113148)
+17. [日次運用とデータ蓄積（Phase 42 / 113–389）](#17-日次運用とデータ蓄積phase-42--113389)
     - [17.4 Tomorrow Preflight（Phase 317）](#174-tomorrow-preflightphase-317)
+    - [17.5 引け後 Production Review（Phase 376–377）](#175-引け後-production-reviewphase-376377)
+    - [17.6 資金・CAP 研究（Phase 384–389 — runtime 未反映）](#176-資金cap-研究phase-384389--runtime-未反映)
+18. [Near-term Technical Roadmap](#near-term-technical-roadmap)
 
 ---
 
@@ -254,11 +367,13 @@
 
 ### 3.5 small paper / 日次 runner（`run_small_paper_pilot.py` / Phase 148）
 
-1. **config** の `watchlist` / universe モード（runner 経由時は Phase 113/117 生成 CSV）
-2. **ExposureGate** — quality・`entry_score_v2_min`・windows・cap
+1. **universe CSV** — 日次 runner が生成する **Core10 + Dynamic40**（**§17.2**）。人間が銘柄を手選りするのではなく、価格・流動性・出来高・price-risk 等から **監視集合** を自動生成する。
+2. **ExposureGate** — quality・`entry_score_v2_min`・Phase 355/364 guard・windows・cap
 3. 出力: `results/small_paper/YYYYMMDD/live_*` または `push_replay_*`
 
-日次 runner は **§17.3** 参照。
+**Dynamic40 の位置づけ:** 売買判断ではなく **監視対象選定**。ENTRY 可否はその後の ExposureGate / entry_score_v2 / production guards が判定する（**§16.14**）。
+
+日次 runner は **§17.3** 参照。Dynamic40 選定ロジックの詳細は **§17.2**。
 
 ---
 
@@ -294,6 +409,9 @@
 | Discord 通知（shadow） | `shadow.yaml` | **既定 OFF** | **DISABLED** |
 | Discord 通知（small paper） | `small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml` | **`discord_enabled: true`**・**observer only**（Phase 316: EXIT に 100 株円表示） | **ENABLED（通知のみ）** |
 | **Tomorrow Preflight（Phase 317）** | `run_phase317_tomorrow_paper_trade_preflight.py` | 翌営業日前の統合事前確認 | **DONE** |
+| **Production daily PnL review（Phase 376）** | `run_phase376_production_daily_pnl_review.py` | 引け後 PnL 集計 | **DONE** |
+| **Daily regime breakdown（Phase 377）** | `run_phase377_daily_regime_breakdown.py` | Period A/B regime 分解（Stack C） | **DONE** |
+| **CAP sensitivity（Phase 385）** | `run_phase385_cap_sensitivity_study.py` | CAP 1–6 シミュレーション（**runtime 未反映**） | **DONE（研究）** |
 | 自動発注 | — | API 発注経路なし | **DISABLED** |
 
 ### 4.1 検証・分析スクリプトの出力先
@@ -313,6 +431,9 @@
 | `record_push_jsonl.py` / `check_data_accumulation.py` | `results/reports/data_accumulation_status_YYYYMMDD.*` |
 | `run_core10_dynamic40_am_pm_daily_runner.py` | `results/reports/daily_runner_*_YYYYMMDD.json` 等 |
 | `run_phase317_tomorrow_paper_trade_preflight.py` | `results/reports/phase317_tomorrow_paper_trade_preflight.json` |
+| `run_phase376_production_daily_pnl_review.py` | `results/reports/phase376_*` |
+| `run_phase377_daily_regime_breakdown.py` | `results/reports/phase377_*` |
+| `run_phase385_cap_sensitivity_study.py` | `results/reports/phase385_*`（研究） |
 | `run_phase314_*` 等 | `results/reports/phase314_final_entry_score_simplification_report.json` 等 |
 | `review_runtime_exit.py` 等 | 同一 session 配下の `runtime_exit_review.json` 等 |
 
@@ -432,11 +553,28 @@ shadow 採用（Phase 13）: **`bf_confirm_count=2`**, **`fail_buffer_pct=0.12`*
 | `reject_below_quality` | **false** | Phase 267: quality 単独 reject を off |
 | **`entry_score_v2_min`** | **3** | **Phase 314** — v2 スコア下限（Momentum+Board のみ） |
 | `structural_exit_policy` | **`combined_structural_exit_v1_trailing_mfe_shadow`** | observer 層 EXIT（**Phase 332** board-dynamic trailing） |
-| `entry_price_risk_guard_enabled` | **true** | エントリー価格リスクガード（shadow apply） |
+| `entry_price_risk_guard_enabled` | **true** | エントリー価格リスクガード min **50¥** / tick ratio **5%**（Phase 153b） |
+| `enable_pullback_misread_dynamic40_guard` | **true** | Phase **355** — Dynamic40 pullback misread guard |
+| `enable_near_day_high_low_momentum_dynamic40_guard` | **true** | Phase **364** — Dynamic40 near day high + low momentum guard |
+| `entry_freshness_guard_enabled` | **true** | board/price age **≤ 3s**（Phase 180） |
+| `entry_max_board_age_sec` / `entry_max_price_age_sec` | **3.0** | freshness 閾値（秒） |
 | `allowed_trading_windows` | 09:05–11:23 / 12:33–15:20 | 昼休み除外（**§16.4**） |
 | `order_enabled` | **false** | 固定 |
 | `discord_enabled` | **true** | observer 通知（**売買指示ではない**） |
 | `live.record_push_jsonl` | **true** | live セッション中の JSONL 同時記録 |
+
+#### Entry freshness guard（Phase 180 — 安全制約）
+
+**Freshness guard は ENTRY スコアより前段の安全制約である。** `pilot_runner` / `entry_scan_controller` が `ExposureGate` **より前**に評価する。
+
+| 項目 | 内容 |
+|------|------|
+| 条件 | `board_age_sec > 3` **または** `price_age_sec > 3` |
+| 動作 | ENTRY 評価を **停止** — Momentum/Board/guard 判定へ **進まない** |
+| 目的 | stale PUSH / stale board による **誤 ENTRY 防止** |
+| 性質 | **runtime safety** — 銘柄・時間帯のパフォーマンス最適化 **ではない** |
+
+詳細フロー: **§16.14** ステップ 0。
 
 ### 6.1c Board Dynamic Trailing（Phase 332 — 本番 EXIT）
 
@@ -452,6 +590,37 @@ shadow 採用（Phase 13）: **`bf_confirm_count=2`**, **`fail_buffer_pct=0.12`*
 **ログ / Discord:** `board_dynamic_trailing_tier`・`activate_pct`・`giveback_frac` を `observer_exit` に記録。Discord EXIT 詳細に `board_high` / `board_low` をデバッグ表示（任意・trailing_mfe_exit 時）。
 
 **検証:** `run_phase332_board_dynamic_trailing_production_adoption_report.py` — `phase332_board_dynamic_trailing_production_adoption_report.json`
+
+#### Stack C における EXIT の収益貢献（Phase 381 Winner Profile Review）
+
+Stack C の収益は **ENTRY guard のみ**で成立しているわけではない。Phase 381 では次が確認された。
+
+| EXIT 経路 | 役割 |
+|-----------|------|
+| **`trailing_mfe_exit`** | **主要利益源** — board-dynamic trailing（board_high / **board_low** 含む） |
+| **`overlap_replaced`** | **主要利益源** — cap 満杯時の置換 EXIT |
+
+**運用上の結論:**
+
+- **`trailing_mfe_exit` / `overlap_replaced` を削ると PF が大きく悪化**する（Phase 381）
+- **board_low** tier・**Dynamic40 下位 rank**（例: rank_21_40）は消してはいけない利益源
+- ENTRY 側は **負け削減**（355/364 guard）、EXIT 側は **利益伸長**（Phase 332 trailing MFE）の役割分担
+- **安易な短縮・早期利確・board_low reject は行わない** — 現行 board-dynamic trailing MFE を維持
+
+詳細: **§16.13**。
+
+### 6.1d Production ENTRY guards（Phase 355 / 364 — Stack C）
+
+**適用:** 現行運用 config（trailing_mfe_shadow）で **有効**。いずれも **Dynamic40 のみ** — Core10（`universe_slot=core`）は **対象外**。
+
+| Phase | reject 理由 | 条件 |
+|-------|-------------|------|
+| **355** | `pullback_misread_dynamic40_guard` | Dynamic40 かつ `entry_rise_5min_pct < 0` **AND** `entry_vwap_dev_pct < 0` |
+| **364** | `near_day_high_low_momentum_dynamic40_guard` | Dynamic40 かつ `day_high_distance_pct ≤ 1.5%` **AND** `entry_momentum_score < 0.30` |
+
+実装: `pullback_misread_dynamic40_entry_guard.py`, `near_day_high_low_momentum_dynamic40_entry_guard.py` — `ExposureGate` 内で entry_score_v2 **より前**に評価。
+
+**検証 stack 名（Phase 377）:** `C_phase355_plus_phase364` = 355 + 364 + 314 entry + 332 EXIT。
 
 ### 6.2 universe（`configs/universe.yaml` 代表）
 
@@ -568,30 +737,59 @@ python kabu_native/scripts/run_shadow.py --use-push --max-polls 5
 
 **ログ:** `logs/runtime/kabu_native_<task>_YYYYMMDD.log`（例: `kabu_native_shadow_20260517.log`）。
 
-### 8.1 Windows 自動復帰（現状）
+### 8.1 Windows 自動復帰 — Operational Recovery（現状）
 
-| 項目 | kabu_native | 旧系 |
-|------|-------------|------|
-| watchdog | **未整備** | `scripts/watchdog.py`（paper_trade / Issue Bot） |
-| lock file | **未実装** | `results/paper_trade/paper_trade.lock` |
-| 推奨 | shadow 手動起動前に `check_shadow_safety.py` | `docs/DESIGN.md` §8.1 |
+| 項目 | kabu_native small paper | legacy（旧 Yahoo 系） |
+|------|-------------------------|------------------------|
+| watchdog | **未成熟** — 専用プロセスなし | **`scripts/watchdog.py`** — **partial recovery implemented** |
+| 起動 bat | Daily Runner 手動 / 日次 orchestration | `start_watchdog.bat`, `start_paper_trade.bat`, `start_issue_bot.bat` |
+| lock file | **未実装**（observer 専用） | **`results/paper_trade/paper_trade.lock`** — paper_trade / Issue Bot 用 |
+| force start | — | legacy bat 経由で再起動可能 |
 
-**運用事故防止（現状）:** watchdog / auto-recovery は **未整備**のため、**Windows Update・OS 再起動・kabu ステーション停止**時に observer runtime は **停止したまま復帰しない**。手動再起動が必要。**常時無人運用の前に** small paper 用 watchdog 実装が必要（**§16** と併せて確認）。
+**正確な表現:**
 
-**将来（Phase 16+）:** recorder / shadow 用 lock・watchdog 連携を **§14** に記載。
+- レビューの「watchdog / lock **完全未実装**」は **誤り** — legacy paper_trade / Issue Bot 側に **partial recovery implemented** がある。
+- ただし **kabu_native small paper observer 専用**の watchdog / lock / auto-restart は **未成熟**。
+- **Windows Update 後**の kabu ステーション起動確認、**PUSH 再接続保証**、observer の **完全自動復旧**は **未完**。
+
+**運用事故防止（現状）:** small paper observer は **OS 再起動・kabu 停止**時に **停止したまま復帰しない**可能性が高い。手動再起動または Daily Runner 再実行が必要。**実運用水準の自動復旧は弱い**（**Current Known Limitations — Risk 関連 §冒頭**、**§Near-term Technical Roadmap #5**）。
+
+**将来:** kabu_native 専用 watchdog — **§14.4**、**§Near-term Technical Roadmap**。
 
 ---
 
 ## 9. 設計上の注意 {#9-設計上の注意}
 
-1. **replay 入力は当面 Yahoo 由来 CSV**である。場中 shadow は kabu のみ。**数値・trade 数は一致しない**。
-2. **合成 PUSH パラメータ**（`synthetic_*`）に replay 結果が依存する。PUSH JSONL 正規経路（Phase 17）まで、改善比較は **同一合成設定**で行う。
-3. **`kabu_native/src/signals/` 未移植**のため、シグナル変更は **ルート `src/kabu_signal_engine.py`** が実体。ドキュメントと PR ではパスを混同しない。
-4. **Phase 10 の 09:30 ゲート（A+B）**は replay 上は良化したが **過学習寄り**のため **正式採用しない**（Phase 13 が正）。
-5. **screen × replay** は PnL を改善しうるが、**9984 偏重を必ずしも解消しない**（構造分析で継続監視）。
-6. **非公式 API ではない**が、kabu 側の仕様変更・PUSH 停止（昼休み等）に耐性が必要。
-7. **発注を有効化しない** — `check_shadow_safety.py` が `place_orders` / `order_enabled` を検証。
+1. **Replay / Live divergence（最重要）** — batch replay は Yahoo 合成、live は kabu PUSH。**数値・trade 数一致は保証しない**。**PUSH JSONL normalized replay** が未完成（**Current Known Limitations — Risk S1**）。
+2. **push-replay** — 保存 JSONL から live pipeline を **部分再生**可能（`--source push-replay`）。ただし **完全 normalized replay**（same input / same decision / same trade）では **ない**。
+3. **合成 PUSH パラメータ**（`synthetic_*`）に batch replay 結果が依存。改善比較は **同一合成設定**で行う。
+4. **`kabu_native/src/signals/` 未移植** — シグナル変更は **ルート `src/kabu_signal_engine.py`** が実体。
+5. **Phase 10 の 09:30 ゲート**は **過学習寄り**のため **正式採用しない**（Phase 13 が正）。
+6. **非公式 API ではない**が、kabu 仕様変更・PUSH 停止（昼休み等）に耐性が必要。
+7. **発注を有効化しない** — `order_enabled=false`、observer only。
 8. **旧系 `data/intraday_1m/` を破壊的に変更しない** — read-only 参照。
+9. **成績解釈** — Period B PnL は **ENTRY + EXIT + Universe + CAP** の合成。単一レイヤー優位と読まない（**Risk A3**）。
+10. **研究 vs 運用** — Phase 384–389 等は **runtime reflected: false**。研究スタックと運用スタックの乖離に注意（**§17.6**）。
+
+### 9.1 Rule accretion と runtime 簡素化 {#91-rule-accretion-と-runtime-簡素化}
+
+**Phase 番号の増加 ≠ runtime rule の堆積。**
+
+| 時期 | 実態 |
+|------|------|
+| Phase 314 | ENTRY **簡素化** — HBRecent / TV / Duration / Price **削除**。現行 = **Momentum:low + Board:mid** のみ |
+| Phase 355/364 | Dynamic40 の **明確な失敗パターン除外**（guard 2 本） |
+| Phase 332 | EXIT 方針の **収束**（board-dynamic trailing MFE） |
+
+**Rule accretion risk** は **監視対象**だが、**2026-06-14 時点の runtime config はむしろ簡素化されている**（Stack C = 355 + 364 + 314 + 332）。
+
+### 9.2 ENTRY 特徴量と汎化性監視 {#92-entry-特徴量と汎化性監視}
+
+外部レビューの「特徴量が少なすぎる」に対し:
+
+- **現時点では「特徴量不足」は未確認** — Phase 314 で **不要特徴削除が改善方向**だった。
+- **今後の監視課題:** 市場レジーム変化で **Momentum:low + Board:mid** の汎化性が落ちないか（Phase 377 regime breakdown 等）。
+- **特徴追加は research-only** — runtime frozen（**§16.12**）。
 
 ---
 
@@ -682,6 +880,13 @@ python kabu_native/scripts/run_shadow.py --use-push --max-polls 5
 | 310–314 | entry score token 整理 | **HBRecent/TV/Duration/Price 削除** → **Momentum+Board のみ** |
 | 315–316 | 100 株円表示 | EXIT Discord に `pnl_yen_100` 行（**§16.15**） |
 | 317 | Tomorrow paper trade preflight | 翌営業日前統合確認 — **§17.4** |
+| 332 | Board-dynamic trailing MFE EXIT | 本番 EXIT — **§6.1c** |
+| 355 | Pullback misread Dynamic40 guard | 本番 ENTRY guard — **§6.1d** |
+| 364 | Near day high + low momentum guard | 本番 ENTRY guard — **§6.1d** |
+| 365–373 | Production stack validation / monitoring | Stack C 検証・監視パック |
+| 376 | Production daily PnL review | 引け後集計 — **§17.5** |
+| 377 | Daily regime breakdown | Period A/B — **§17.5** |
+| 384–389 | Capital / CAP simulation | 1.5M/CAP=2 候補検証 — **§17.6**（**runtime 未反映**） |
 
 詳細手順: **`kabu_native/docs/small_paper_pilot.md`**。設計アーキ: **§16**・**§16.13**。
 
@@ -798,7 +1003,10 @@ python kabu_native/scripts/run_shadow.py --use-push --max-polls 5
 | `kabu_native/results/replay/.../skipped_inputs.csv` | スキップ (日, 銘柄) |
 | `kabu_native/results/replay/.../aggregate_summary.json` | 全体集計 |
 | `kabu_native/results/shadow/YYYYMMDD/shadow_events.{csv,jsonl}` | shadow イベント |
-| `kabu_native/results/reports/*.csv,*.json` |  phase レポート・safety・在庫監査 |
+| `kabu_native/results/reports/*.csv,*.json` | Phase 検証結果（一時 snapshot） |
+| `kabu_native/docs/architecture/full_system_development_history.md` | **System Source of Truth** — 開発史・採用判定 |
+| `kabu_native/docs/architecture/full_system_development_history.pdf` | 上記の PDF 版 |
+| `kabu_native/docs/audits/full_phase_history_audit.csv` | Phase 一覧監査（恒久） |
 | `logs/runtime/kabu_native_*_YYYYMMDD.log` | CLI ログ |
 
 ### 12.3 リプレイ出力（`run_replay.py`）
@@ -929,10 +1137,16 @@ market data (PUSH/REST)
 
 **残タスク:** 十分な自前 `intraday_1m` 在庫 → replay primary 切替 → Yahoo 合成 deprecated。
 
-### 14.2 Phase 17 — PUSH replay
+### 14.2 Phase 17 — PUSH JSONL replay / normalized replay
 
-- 保存 JSONL からの高忠実度 replay（合成 `synthetic_*` 依存の低減）。
-- Yahoo 経路との差分レポート（回帰用）。
+| 状態 | 内容 |
+|------|------|
+| **DONE（部分）** | `record_push_jsonl.py` — 場中 JSONL 蓄積。`run_small_paper_pilot.py --source push-replay` — live pipeline **部分再生** |
+| **未完成** | **PUSH JSONL → normalized replay** — same input / same decision / same trade |
+| **問題の正確な表現** | Live が PUSH/board に依存するのは妥当。**その判断を JSONL replay で完全検証できていない**ことがギャップ（**Risk S1**） |
+
+- Yahoo 合成 batch replay との **差分レポート**（回帰用）も Phase 17 候補。
+- **`trailing_mfe_exit` / `overlap_replaced`** 等は replay 忠実度に敏感 — normalized replay 完成まで **live / push-replay 優先**で評価。
 
 ### 14.3 Phase 18 — Execution simulation
 
@@ -1081,7 +1295,7 @@ Phase ごとに **state / persistence / weighted / transition** 成分を点数�
 
 ---
 
-## 16. Small Paper Observer System（Phase 45–317） {#16-small-paper-observer-systemphase-45-317}
+## 16. Small Paper Observer System（Phase 45–389） {#16-small-paper-observer-systemphase-45-389}
 
 > **本章が現在の主検証ランタイム（observer only）。** shadow / batch replay / Logic Lab は残すが、**runtime verification**（観測・Discord 通知・ゲート整合）は small paper observer が担う。  
 > **small paper observer は execution system ではない** — order client の import なし・`order_enabled=false`・`paper_only=true`・**`--dry-run` 必須**・**実発注なし**。
@@ -1166,10 +1380,12 @@ flowchart TD
 
   subgraph POST [引け後 Review]
     REV[review_structural_observer.py<br/>structural_pf 公式] --> REV2[review_runtime_exit.py 等]
-    REV2 --> REV3[daily_runner_summary JSON]
+    REV2 --> REV3[phase376 production PnL review]
+    REV3 --> REV4[phase377 regime breakdown]
+    REV4 --> REV5[daily_runner_summary JSON]
   end
 
-  REV3 --> END([日次完了<br/>order_enabled=false 維持])
+  REV5 --> END([日次完了<br/>order_enabled=false 維持])
 ```
 
 **エントリ（現行運用・一括）:**
@@ -1571,15 +1787,29 @@ Phase 54 までの **300 秒 `virtual_hold` マーク PF** は live 運用と乖
 
 | 指標 | 意味 |
 |------|------|
-| **`structural_pf`** | 公式（go/no-go 用）。`stop_hit` / `session_end` / 構造 EXIT（quality_decay, momentum_fade, favorable_fade, vwap_break, mfe_giveback, overlap） |
+| **`structural_pf`** | 公式（go/no-go 用）。現行 Stack C では **`trailing_mfe_exit`** / `stop_hit` / `session_close` / `overlap_replaced` が主経路 |
 | **`legacy_virtual_hold_pf`** | 参考のみ。`virtual_hold_expired` / 固定 horizon を含む旧集計 |
 
 | policy | 用途 |
 |--------|------|
-| `structural_observer_v1` | Phase 58 baseline（最初の公式 structural 経路） |
-| **`combined_structural_exit_v1`** | Phase 60/61 推奨。上記構造 EXIT を統合 |
+| `structural_observer_v1` | Phase 58 baseline |
+| `combined_structural_exit_v1` | Phase 60/61（fade 系 EXIT あり）— **Daily Runner 既定**（trailing-mfe 未指定時） |
+| **`combined_structural_exit_v1_trailing_mfe_shadow`** | **Phase 332 本番** — board-dynamic trailing（**§6.1c**） |
 
-**2026-05-19 `live_full_session_081047` + `combined_structural_exit_v1`（review 再計算例）:**
+#### Stack C の収益構造（Phase 381 — EXIT が収益源）
+
+**Stack C の PF は ENTRY だけでは説明できない。** Phase 381 Winner Profile Review の要点:
+
+| 区分 | 役割 | 代表経路 |
+|------|------|----------|
+| **ENTRY 側** | 負け削減 | Phase 355/364 guard、entry_score_v2 |
+| **EXIT 側** | **利益伸長** | **`trailing_mfe_exit`**、**`overlap_replaced`** |
+
+- **`trailing_mfe_exit`** と **`overlap_replaced`** は **主要な利益源** — これらを削ると PF が大きく悪化（Phase 381）
+- **board_low** tier・**rank_21_40** / **Dynamic40 下位 bucket** は利益源 — 安易な board_low 短縮・早期利確は **非推奨**
+- EXIT policy は現行 **board-dynamic trailing MFE**（Phase 332）を維持する
+
+**2026-05-19 `live_full_session_081047` + `combined_structural_exit_v1`（review 再計算例 — 参考）:**
 
 | 指標 | 値（参考） |
 |------|------------|
@@ -1606,32 +1836,66 @@ Phase 54 までの **300 秒 `virtual_hold` マーク PF** は live 運用と乖
 
 **必須条件:** **`Momentum:low` 必須** — Board のみでは ENTRY 不可。
 
-#### ENTRY 判定フロー（現行運用）
+#### Entry freshness guard（Phase 180 — 前段安全制約）
+
+Freshness guard は **ENTRY スコアより前段**の安全制約である。`price_age_sec` または `board_age_sec` が **3 秒を超える**場合、Momentum/Board/guard 判定へ **進まず reject** する。
+
+| 項目 | 内容 |
+|------|------|
+| 評価タイミング | `ExposureGate` **より前**（`entry_scan_controller` / `pilot_runner`） |
+| 閾値 | `entry_max_board_age_sec: 3.0`、`entry_max_price_age_sec: 3.0` |
+| 目的 | **stale data** による誤 ENTRY 防止 |
+| 性質 | **runtime safety** — 銘柄・時間帯最適化 **ではない** |
+
+**文章要約:** Freshness guard は ENTRY スコアより前段の安全制約である。price_age_sec または board_age_sec が 3 秒を超える場合、Momentum/Board/guard 判定へ進まず reject する。これは stale data による誤 ENTRY を防ぐための runtime safety であり、銘柄・時間帯最適化ではない。
+
+#### ENTRY 判定フロー（現行運用 Stack C）
+
+**完全ゲート順（`ExposureGate` + pilot 前処理）:**
 
 ```mermaid
 flowchart TD
-  S1[allowed_trading_windows] --> S2[continuation_quality]
-  S2 --> S3[Momentum:low 必須]
-  S3 --> S4[Board:mid]
-  S4 --> S5[score 算出<br/>Momentum:low +2 + Board:mid +1]
-  S5 --> S6{score >= 3?}
-  S6 -->|No| R1[reject: entry_score_v2_below_threshold]
-  S6 -->|Yes| S7[max_concurrent_positions]
-  S7 --> S8[ACCEPT]
-  S8 --> S9[ObserverPositionTracker 登録]
-  S9 --> S10[Discord ENTRY 通知]
+  S0[entry_freshness_guard<br/>board/price age ≤ 3s] --> S1[allowed_trading_windows]
+  S1 --> S2[entry_price_risk_guard]
+  S2 --> S3[Phase355 pullback guard<br/>Dynamic40 only]
+  S3 --> S4[Phase364 near-day-high guard<br/>Dynamic40 only]
+  S4 --> S5[daytrade_suitability]
+  S5 --> S6[continuation_quality ログ]
+  S6 --> S7[Momentum:low 必須]
+  S7 --> S8[Board:mid]
+  S8 --> S9[score 算出 ≥ 3]
+  S9 --> S10[risk guards<br/>daily loss / cluster]
+  S10 --> S11[max_concurrent_positions]
+  S11 --> S12[ACCEPT]
+  S12 --> S13[ObserverPositionTracker]
+  S13 --> S14[Discord ENTRY]
 ```
 
 | ステップ | 内容 | reject 例 |
 |----------|------|-----------|
+| 0 | **entry freshness guard**（Phase 180） | `board_age_sec > 3` または `price_age_sec > 3` — stale board/price。**ExposureGate へ進まない** |
 | 1 | `allowed_trading_windows` | `outside_allowed_trading_window` |
-| 2 | `continuation_quality` | quality 関連（`reject_below_quality: false` 時は v2 が主因） |
-| 3 | **Momentum:low 必須** | **`momentum_low_required`** |
-| 4 | Board:mid | tertile からトークン生成 |
-| 5 | score 算出 | — |
-| 6 | score ≥ 3 | `entry_score_v2_below_threshold` |
-| 7 | max_concurrent_positions | cap 超過 |
-| 8–10 | ACCEPT → Tracker → Discord | — |
+| 2 | entry price risk（Phase 153b） | `entry_price_risk_guard` |
+| 3 | **Phase 355** pullback | `pullback_misread_dynamic40_guard` |
+| 4 | **Phase 364** near day high | `near_day_high_low_momentum_dynamic40_guard` |
+| 5 | daytrade suitability | `daytrade_suitability` |
+| 6 | continuation_quality | ログのみ（`reject_below_quality: false`） |
+| 7 | **Momentum:low 必須** | **`momentum_low_required`** |
+| 8 | Board:mid | tertile トークン |
+| 9 | score ≥ 3 | `entry_score_v2_below_threshold` |
+| 10 | risk guards | daily loss / cluster |
+| 11 | max_concurrent_positions | cap 超過 |
+| 12–14 | ACCEPT → Tracker → Discord | — |
+
+**entry_score_v2 部分（Phase 314 — frozen）:**
+
+```mermaid
+flowchart LR
+  A[Momentum:low +2] --> C[score=3]
+  B[Board:mid +1] --> C
+  C --> D{≥ entry_score_v2_min=3?}
+  D -->|Yes| E[ACCEPT]
+```
 
 | 項目 | 内容 |
 |------|------|
@@ -1669,7 +1933,7 @@ pnl_yen_100 = (exit_price - entry_price) * 100
 
 ---
 
-## 17. 日次運用とデータ蓄積（Phase 42 / 113–148 / 317） {#17-日次運用とデータ蓄積phase-42--113148}
+## 17. 日次運用とデータ蓄積（Phase 42 / 113–389） {#17-日次運用とデータ蓄積phase-42--113389}
 
 > **ロジック変更なし**のインフラ層。small paper observer の **runtime verification** と Logic Lab OOS の **データ母集団拡大**が目的。
 
@@ -1695,16 +1959,70 @@ pnl_yen_100 = (exit_price - entry_price) * 100
 
 **May 16+ 蓄積の理由:** Phase 41 OOS `oos_may_late` が on-disk データを要求。詳細 **`kabu_native/docs/data_accumulation.md`**。
 
-### 17.2 動的 universe（Phase 113–117）
+### 17.2 動的 universe（Phase 113–117）— Core10 + Dynamic40
+
+#### 構造
+
+| 区分 | 件数 | 性質 |
+|------|------|------|
+| **Core10** | 固定 **10** 銘柄 | 固定監視銘柄（watchlist）。price-risk は warn のみ — ENTRY guard が最終防御 |
+| **Dynamic40** | 動的 **40** 銘柄 | **当日データ**（出来高・流動性・vol-liq スコア・price-risk 等）から **自動選定** — 人間がデイトレ銘柄を手選りしている **わけではない** |
+
+**合計:** kabu PUSH **register 上限 50 銘柄**を意識した **register-limit-aware** 設計（Phase 105 等）。
+
+#### Dynamic40 選定ロジック（監視対象選定 — 売買判断ではない）
+
+Dynamic40 は **「どの銘柄を監視するか」** を決める層である。**ENTRY 可否**はその後の ExposureGate / entry_score_v2 / Phase 355/364 production guards が判定する（**§16.14**）。
+
+| 入力 | 処理 |
+|------|------|
+| Phase 113 vol-liq features | 寄り〜前場の出来高・流動性スコア |
+| price-risk filter（Phase 269） | dynamic 銘柄: close **≥ 300¥**、tick_ratio **≤ 5%** |
+| core10_dynamic40 生成 | AM 寄り前 universe CSV → 場中 **intraday refresh** で差し替え |
+
+**intraday refresh（本番 `--enable-intraday-refresh` 時）:**
+
+| 時刻（JST） | 内容 |
+|-------------|------|
+| **10:00** | AM refresh — 寄り後の出来高・流動性変化を反映 |
+| **14:30** | PM refresh — 後場向け universe 更新 |
+
+#### Dynamic40 順位と利益源（Phase 374/375 — 縮小非推奨）
+
+**Dynamic40 の課題は銘柄数そのものより、順位品質と監視枠の使い方である。**
+
+| 知見（Phase 374/375） | 意味 |
+|------------------------|------|
+| **rank_31_40** が利益源 | Dynamic40 **下位 bucket** が PnL に寄与 |
+| 順位と利益源は単調一致 **しない** | 上位 20 限定・dynamic30 縮小は **採用しない** |
+
+**結論:** Phase 374/375 では下位 rank bucket（**rank_31_40**）が利益源であり、**単純な上位 20 限定・dynamic30 縮小は採用しない。** 監視枠 50 の使い方（Core10 + Dynamic40 + refresh）を維持し、ENTRY/EXIT guard で品質を制御する。
+
+#### Universe と売買ロジック — 設計分離 vs 統計的依存
+
+**設計上の分離（コード構造）:**
+
+```text
+Universe（監視集合選定）
+  → Ranking / dynamic40_rank_bucket
+  → ExposureGate
+  → Entry score v2 + production guards
+  → Exit policy
+```
+
+**レビュー指摘「Universe と売買ロジックが結合」への整理:**
+
+- **設計結合ではない** — Universe は **監視対象選定**、ENTRY 可否は **ExposureGate 以降**（**§3.5**）。
+- **統計的依存はある** — Phase 374/375/381 で **rank_21_40 / rank_31_40** が利益源。Universe 変更は **損益へ強く影響し得る**。
+- Dynamic40 ロジック変更時は **rank bucket 別 PnL** を必須確認（**Risk A2**）。
 
 | 概念 | 実装 |
 |------|------|
 | opening dynamic50 | `opening_dynamic50_universe.py` — 寄り流動性スコア |
 | vol-liq dynamic50 | `run_phase113_vol_liq_dynamic50_universe.py` |
-| AM/PM universe | `am_pm_universe.py` — 前場・後場で銘柄集合を再生成 |
+| AM/PM universe | `am_pm_universe.py` — 前場・後場 universe（legacy: Phase 114） |
 | core10 + dynamic40 | 固定 10 + 動的 40（`core10_dynamic40_*`） |
-
-PUSH register 上限（50 銘柄）を意識した **register-limit-aware** 設計（Phase 105 等）。
+| price-risk filter | `price_risk_filter.py`（Phase 269） |
 
 ### 17.3 日次 AM/PM runner（Phase 148）
 
@@ -1727,9 +2045,12 @@ python kabu_native/scripts/run_core10_dynamic40_am_pm_daily_runner.py \
 | 項目 | 内容 |
 |------|------|
 | 実装 | `src/runner/am_pm_daily_runner.py` |
-| **現行運用 config** | `small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml`（`--exit-policy-shadow trailing-mfe`） |
-| **universe mode** | `core10-dynamic40-price-risk-filter-shadow`（price-risk filter + core10/dynamic40） |
+| **現行運用 config** | `trailing_mfe_shadow.yaml`（**`--exit-policy-shadow trailing-mfe` 必須**） |
+| **runner 既定 config** | `entry_price_risk_guard_shadow.yaml`（exit shadow **未指定**時 — trailing_mfe **なし**） |
+| **universe mode** | `core10-dynamic40-price-risk-filter-shadow`（Phase 269 既定） |
 | 成果物 | `results/reports/daily_runner_*_YYYYMMDD.json`, `results/small_paper/YYYYMMDD/live_*` |
+
+**注意:** フラグなし起動は **本番 Stack C ではない**（trailing_mfe EXIT・355/364 guard yaml が異なる場合あり）。本番運用は下記コマンドを使用すること。
 
 #### Intraday Refresh（Phase 148 拡張 — 現行運用の正式仕様）
 
@@ -1749,7 +2070,7 @@ python kabu_native/scripts/run_core10_dynamic40_am_pm_daily_runner.py \
 
 **legacy（Phase 114）:** 12:25 JST の **PM universe 再生成のみ** は intraday refresh 導入前の設計。**現行運用では 10:00 / 14:30 refresh が正式** — 「12:25 PM 再生成のみ」は現状仕様として記載しない。
 
-**注意:** runner は **平日・kabu ステーション起動**が前提。watchdog 自動復帰は **未整備**（**§8.1**）。
+**注意:** runner は **平日・kabu ステーション起動**が前提。**kabu_native 専用 watchdog / PUSH 再接続自動復旧は未成熟**（**§8.1 Operational Recovery**）。
 
 ### 17.4 Tomorrow Preflight（Phase 317） {#174-tomorrow-preflightphase-317}
 
@@ -1791,6 +2112,113 @@ python kabu_native/scripts/run_phase317_tomorrow_paper_trade_preflight.py \
 
 **関連:** **§16.14**（ENTRY Score V2）、**§17.3**（intraday refresh）、**§16.0**（日次フロー Preflight ノード）。
 
+### 17.5 引け後 Production Review（Phase 376–377） {#175-引け後-production-reviewphase-376377}
+
+**目的:** 本番 observer セッションの PnL 集計と regime 分解。**Stack C**（355+364+314+332）を primary stack として分析。
+
+| スクリプト | 出力 | 内容 |
+|------------|------|------|
+| `run_phase376_production_daily_pnl_review.py` | `phase376_production_daily_pnl_review_*.json` | 日次 production PnL 集計 |
+| `run_phase377_daily_regime_breakdown.py` | `phase377_daily_regime_breakdown_by_day.csv` 等 | Period A / B regime 別 breakdown |
+
+**Phase 377 primary stack:** `C_phase355_plus_phase364`
+
+**CLI 例（引け後）:**
+
+```bash
+python kabu_native/scripts/run_phase376_production_daily_pnl_review.py
+python kabu_native/scripts/run_phase377_daily_regime_breakdown.py
+```
+
+### 17.6 資金・CAP 研究（Phase 384–389 — runtime 未反映） {#176-資金cap-研究phase-384389--runtime-未反映}
+
+> **重要:** 本章は **研究・シミュレーション結果** の記録。**runtime config / Daily Runner / ExposureGate は変更していない。** 現行 observer は **`max_concurrent_positions: 3`** のまま。買付余力シミュレーションは replay 上のみ。**CAP=2 は本番未採用。**
+
+| Phase | スクリプト | 要点 |
+|-------|------------|------|
+| **384** | `run_phase384_capital_scaling_study.py` | 元本水準感度 — 推奨 **2M¥**（研究） |
+| **385** | `run_phase385_cap_sensitivity_study.py` | CAP 1–6 — PnL 最大は **CAP=2**、**live 推奨は CAP=3**（リスク） |
+| **387** | `run_phase387_cap2_shadow_validation.py` | **CAP=2 shadow validation** — live 後続セッションを **継続監視中**（production CAP=3 との差分） |
+| **388** | `run_phase388_cap1500k_live_candidate_validation.py` | **1.5M¥ / CAP=2** 候補 — Period B +148,200¥（研究） |
+| **389** | `run_phase389_full_regime_live_candidate_validation.py` | 全 regime 検証 — **Phase 389 最終候補**（下表） |
+
+#### Phase 389 — 研究上の最有力ライブ候補（runtime 未反映）
+
+| 項目 | 値 |
+|------|-----|
+| **initial_equity** | **1,500,000円** |
+| **leverage_limit** | **2.0**（信用2倍） |
+| **shares** | **100 固定** |
+| **position_cap** | **2**（**CAP=2**） |
+| **Stack** | **Stack C** — Phase 355 + Phase 364 + Phase 314 + Phase 332 |
+| **対象期間** | **20260518–20260612** |
+| **final_equity** | **1,582,600円** |
+| **total_pnl** | **+82,600円** |
+| **return** | **+5.51%** |
+| **PF** | **1.52** |
+| **win_rate** | **63.9%** |
+| **max_drawdown** | **112,200円 / 7.09%** |
+| **min_maintenance_ratio** | **0.5419** |
+| **force_exit_count** | **0** |
+| **maintenance_warning_count** | **0** |
+| **maintenance_stop_count** | **0** |
+| **accepted** | **97** |
+| **rejected** | **2,581** |
+| **reject 主因** | **`max_concurrent_positions`** |
+
+**Phase 389 時点の運用判断（文章）:**
+
+Phase 389 時点では、**1.5M円・信用2倍・100株固定・CAP=2** が **研究上の最有力ライブ候補**である。ただし、**runtime config には未反映**であり、現行 Stack C は **`max_concurrent_positions: 3`** のままである。**CAP=2** は **Phase 387 shadow validation** を通じて **継続監視**し、**追加 live セッション**で CAP=3 追加群が継続して低品質であることを確認してから **採用判断**する。
+
+**重要な注意（再掲）:**
+
+| 項目 | 研究（Phase 389） | **runtime 現状** |
+|------|-------------------|------------------|
+| position_cap | **2**（CAP=2） | **3**（config 固定） |
+| initial_equity | **1,500,000円** | シミュレーションのみ |
+| Stack C guards / EXIT | 355+364+314+332 | **同一**（config は cap=3） |
+| 本番採用 | **未決定** | **CAP=3 運用継続** |
+
+**Phase 385 / 388 参考（Period B 等 — 未採用）:**
+
+| 項目 | 研究値 | **runtime 現状** |
+|------|--------|------------------|
+| 推奨 CAP（PnL 最大） | **2** | **3**（config 固定） |
+| Phase 388（Period B） | 1.5M/CAP=2 → +148,200¥ | シミュレーションのみ |
+| live 推奨 CAP（385） | **3**（DD 抑制） | **3** |
+
+**禁止事項（各 Phase レポート共通）:** ENTRY / EXIT / Universe / Discord / canonical stack の **runtime 変更なし**。
+
+#### 研究結果の管理 — runtime reflected 必須フィールド
+
+Phase 384–389 等の **runtime 未反映** 研究は、運用スタックとの **乖離リスク** がある。各研究結果には以下を明記する。
+
+| フィールド | 意味 | Phase 389 例 |
+|------------|------|--------------|
+| **`runtime reflected`** | config / runner に反映済か | **`false`** |
+| **`config path`** | 対象 yaml | `trailing_mfe_shadow.yaml`（cap=3 運用） |
+| **`adoption status`** | 採用状態 | **`research_candidate`** — **production adopted ではない** |
+| **`shadow validation status`** | shadow 監視 | Phase 387 **shadow_monitoring** 継続中 |
+| **`live validation status`** | live 再現 | **pending** — 追加 live セッション要 |
+
+**CAP=2:** **research_candidate** / **shadow_monitoring** — **production adopted ではない**（runtime **`max_concurrent_positions: 3`** 維持）。
+
+---
+
+## Near-term Technical Roadmap {#near-term-technical-roadmap}
+
+> **2026-06-14 時点の技術優先順位。** 機能追加より **検証ギャップ解消・寄与分解・運用硬直化** を優先。
+
+| 優先 | 項目 | 目的 | 主要成果物 / 指標 |
+|------|------|------|-------------------|
+| **1** | **PUSH JSONL normalized replay** | Yahoo synthetic replay 依存を減らす。**same input / same decision / same trade** | normalized replay runner、live vs push-replay 一致レポート |
+| **2** | **Edge attribution metrics** | Universe / Exposure / Entry / Exit / Capital **寄与分解** | `universe_pf`, `exposure_pf`, `entry_pf`, `exit_pf`, **`overlap_contribution`**, **`trailing_contribution`**, **`mfe_capture_rate`**, `capital_constrained_pnl` |
+| **3** | **CAP=2 live shadow continuation** | Phase 389 **research_candidate** の live 再現性 | Phase 387 継続、`runtime reflected` 判定 |
+| **4** | **Profit driver preservation monitor** | `trailing_mfe_exit` / `overlap_replaced` / `rank_31_40` / `board_low` の日次維持確認 | Phase 376/381 系 daily metrics、`overlap_disabled_counterfactual_*` |
+| **5** | **Operational recovery hardening** | small paper 専用 watchdog、kabu heartbeat、PUSH reconnect、auto restart | **§8.1** 完成度向上 |
+
+**研究・改善の優先（Phase 381 結論）:** **負け削り < EXIT 維持 ≈ Universe 維持 < 勝ち源泉監視**。
+
 ---
 
 ## TODO / ロードマップ
@@ -1823,4 +2251,9 @@ TODO は設計仕様書とは別ファイルで管理する。
 | 2026-06-08 | **Phase 316** — Discord EXIT 通知へ 100 株円損益表示（`損益: +0.42% / +1,200円(100株)`）。ENTRY には非表示。**§16.15** |
 | 2026-06-08 | **Phase 317** — Tomorrow Paper Trade Preflight 追加（`run_phase317_tomorrow_paper_trade_preflight.py`）。現行運用 config・intraday refresh 同期。**§17.4**。PDF 再生成。 |
 | 2026-06-08 | **運用仕様整理:** §17.3 Intraday Refresh（10:00/14:30）を正式仕様化・12:25 legacy 明記。冒頭 Source of Truth（ENTRY Rule）独立節。**§16.14** ENTRY フロー図。Daily Runner 運用コマンド例。PDF 再生成。 |
-| 2026-06-09 | **Phase 332** — Board Dynamic Trailing 本番採用。board_high（imb≥47.62）1.0%/60%、board_low 0.6%/40%。本番 EXIT・paper trade・replay に適用。legacy 0.8%/50% は shadow counterfactual のみ。**§6.1c** |
+| 2026-06-09 | **Phase 332** — Board Dynamic Trailing 本番採用。**§6.1c** |
+| 2026-06-14 | **Phase 355/364** 本番 ENTRY guard（Stack C）。**§6.1d** |
+| 2026-06-14 | **Phase 376–377** 引け後 review、**Phase 384–389** 資金/CAP 研究（runtime 未反映）。**§17.5–17.6** |
+| 2026-06-14 | 冒頭 Source of Truth（ENTRY/EXIT Rule）、完全 ENTRY フロー、Daily Runner 既定 vs 本番の区別。PDF 再生成。 |
+| 2026-06-14 | **追補:** §17.6 Phase389 CAP=2候補詳細、§17.2 Dynamic40選定、§6.1b/§16.14 freshness guard、§6.1c/§16.13 EXIT利益源（Phase381）。PDF 再生成。 |
+| 2026-06-14 | **外部レビュー対応:** Current Known Limitations / Top Risks、Rule accretion 整理、Operational Recovery 修正、Near-term Technical Roadmap、research `runtime reflected` 管理。PDF 再生成。 |

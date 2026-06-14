@@ -37,6 +37,11 @@ tradebotfile/                          # リポジトリルート
     │   ├── shadow/
     │   └── reports/
     └── docs/
+        ├── architecture/
+        │   ├── full_system_development_history.md  # System Source of Truth
+        │   └── full_system_development_history.pdf
+        ├── audits/
+        │   └── full_phase_history_audit.csv        # Phase 一覧監査（恒久）
         ├── directory_structure.md     # 本ファイル
         └── architecture.md
 ```

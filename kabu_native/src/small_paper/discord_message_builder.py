@@ -581,6 +581,94 @@ def _canonical_trade_display(metrics: Mapping[str, Any], key: str) -> str:
     return str(trade or "—")
 
 
+def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> list[str]:
+    """Research-only shadow blocks appended to Daily / AM / PM Summary."""
+    lines: list[str] = []
+    sector = summary.get("sector_heat_forward_shadow")
+    if isinstance(sector, Mapping):
+        lines.append("SectorHeat Forward Shadow:")
+        if sector.get("trade_overlap_days") is not None:
+            lines.append(f"trade_overlap_days={sector.get('trade_overlap_days')}")
+        if sector.get("adopt_not_allowed") is not None:
+            lines.append(f"adopt_not_allowed={sector.get('adopt_not_allowed')}")
+        status = sector.get("status")
+        if status:
+            lines.append(f"status={status}")
+
+    risk = summary.get("risk_sizing_forward_shadow")
+    if isinstance(risk, Mapping):
+        lines.append("RiskAware Sizing Shadow:")
+        if risk.get("trade_overlap_days") is not None:
+            lines.append(f"days={risk.get('trade_overlap_days')}")
+        if risk.get("best_policy") is not None:
+            lines.append(f"best_policy={risk.get('best_policy')}")
+        if risk.get("adopt_not_allowed") is not None:
+            lines.append(f"adopt_not_allowed={risk.get('adopt_not_allowed')}")
+        status = risk.get("status")
+        if status:
+            lines.append(f"status={status}")
+
+    equity_stop = summary.get("equity_dynamic_stop_shadow")
+    if isinstance(equity_stop, Mapping):
+        lines.append("Equity Dynamic Stop Shadow:")
+        if equity_stop.get("days") is not None:
+            lines.append(f"days={equity_stop.get('days')}")
+        if equity_stop.get("best_policy_1p5m") is not None:
+            lines.append(f"best_policy_1p5m={equity_stop.get('best_policy_1p5m')}")
+        if equity_stop.get("best_policy_5m") is not None:
+            lines.append(f"best_policy_5m={equity_stop.get('best_policy_5m')}")
+        if equity_stop.get("adopt_not_allowed") is not None:
+            lines.append(f"adopt_not_allowed={equity_stop.get('adopt_not_allowed')}")
+        status = equity_stop.get("status")
+        if status:
+            lines.append(f"status={status}")
+
+    live_cfg = summary.get("live_config_forward_shadow")
+    if isinstance(live_cfg, Mapping):
+        lines.append("LiveConfig Shadow:")
+        if live_cfg.get("day_count") is not None:
+            lines.append(f"days={live_cfg.get('day_count')}")
+        c1500 = live_cfg.get("candidate_1500k")
+        if isinstance(c1500, Mapping):
+            lines.append(
+                "1500k: "
+                f"final={c1500.get('final_equity')}, "
+                f"DD={c1500.get('max_drawdown_pct')}, "
+                f"verdict={c1500.get('verdict')}"
+            )
+        c2000 = live_cfg.get("candidate_2000k")
+        if isinstance(c2000, Mapping):
+            lines.append(
+                "2000k: "
+                f"final={c2000.get('final_equity')}, "
+                f"DD={c2000.get('max_drawdown_pct')}, "
+                f"verdict={c2000.get('verdict')}"
+            )
+        if live_cfg.get("current_recommendation") is not None:
+            lines.append(f"current={live_cfg.get('current_recommendation')}")
+        status = live_cfg.get("status")
+        if status:
+            lines.append(f"status={status}")
+
+    live_trans = summary.get("live_config_transition_shadow")
+    if isinstance(live_trans, Mapping):
+        lines.append("LiveConfig Transition Shadow:")
+        if live_trans.get("current_equity") is not None:
+            lines.append(f"equity={live_trans.get('current_equity')}")
+        if live_trans.get("active_policy_band") is not None:
+            lines.append(f"band={live_trans.get('active_policy_band')}")
+        if live_trans.get("cap_used") is not None:
+            lines.append(f"cap={live_trans.get('cap_used')}")
+        if live_trans.get("stop_policy_used") is not None:
+            lines.append(f"stop={live_trans.get('stop_policy_used')}")
+        if live_trans.get("transition_to_2000k") is not None:
+            lines.append(f"transition_to_2000k={live_trans.get('transition_to_2000k')}")
+        status = live_trans.get("status")
+        if status:
+            lines.append(f"status={status}")
+    return lines
+
+
 def format_discord_summary_lines(metrics: Mapping[str, Any]) -> list[str]:
     """Production Discord summary from canonical_summary only (100-share yen primary)."""
     watch_n = metrics.get("watch_symbols_count", metrics.get("monitored_symbol_count"))

@@ -706,6 +706,17 @@ class SmallPaperDiscordNotifier:
             return None
         detail = build_daily_summary_detail(canonical, name_map=get_cached_symbol_name_map())
         fields: list[dict[str, Any]] = []
+        from small_paper.discord_message_builder import format_research_shadow_daily_summary_lines
+
+        research_shadow = format_research_shadow_daily_summary_lines(summary)
+        if research_shadow:
+            fields.append(
+                {
+                    "name": "Research Shadow",
+                    "value": "\n".join(research_shadow)[:1020],
+                    "inline": False,
+                }
+            )
         chunk = detail
         idx = 1
         while chunk:

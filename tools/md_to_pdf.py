@@ -161,15 +161,12 @@ blockquote {
   color: #475569;
 }
 
-/* 改ページ: 表は分割しない。### 小項目単位でまとめて避ける（収まらない場合はエンジン任せ） */
-div.table-keep,
-table {
-  page-break-inside: avoid;
-  break-inside: avoid;
+/* 改ページ: 巨大な表・h3 ブロックに avoid を付けると Story が収束しないため、分割を許可 */
+div.table-keep {
+  margin: 0;
 }
 div.h3-block {
-  page-break-inside: avoid;
-  break-inside: avoid;
+  margin: 0;
 }
 """
 
@@ -239,7 +236,7 @@ def md_to_pdf(md_path: Path, pdf_path: Path) -> None:
         raw,
         extensions=["extra", "tables", "fenced_code", "nl2br", "sane_lists"],
     )
-    body = _wrap_tables(body)
+    # table-keep div は PyMuPDF Story が収束しないため付けない（大規模 MD で 500+ ページループ）
     body = _wrap_h3_sections(body)
     html = _wrap_html(body)
 

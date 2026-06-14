@@ -2339,6 +2339,161 @@ def _write_phase335_lite_board_shadow_reports(
     write_phase335_lite_outputs(logger, repo_root=repo_root, day_stamp=day_stamp)
 
 
+def _run_equity_dynamic_stop_shadow_auto(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    summary: dict[str, Any],
+    config: SmallPaperPilotConfig,
+    poll_interval_sec: Optional[float],
+) -> None:
+    """Phase266: research-only equity dynamic stop shadow after canonical summary."""
+    from small_paper.equity_dynamic_stop_shadow_auto import run_equity_dynamic_stop_shadow_auto
+
+    try:
+        summary["equity_dynamic_stop_shadow"] = run_equity_dynamic_stop_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            config=config,
+            poll_interval_sec=poll_interval_sec,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[equity_dynamic_stop_shadow] unexpected error: %s", exc
+        )
+        summary["equity_dynamic_stop_shadow"] = {
+            "day": output_dir.parent.name if output_dir.parent else "",
+            "status": "warning",
+            "warning": str(exc),
+        }
+
+
+def _run_risk_sizing_forward_shadow_auto(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    summary: dict[str, Any],
+    config: SmallPaperPilotConfig,
+    poll_interval_sec: Optional[float],
+) -> None:
+    """Phase262: research-only risk-aware sizing forward shadow after canonical summary."""
+    from small_paper.risk_sizing_forward_shadow_auto import run_risk_sizing_forward_shadow_auto
+
+    try:
+        summary["risk_sizing_forward_shadow"] = run_risk_sizing_forward_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            config=config,
+            poll_interval_sec=poll_interval_sec,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[risk_sizing_forward_shadow] unexpected error: %s", exc
+        )
+        summary["risk_sizing_forward_shadow"] = {
+            "day": output_dir.parent.name if output_dir.parent else "",
+            "status": "warning",
+            "warning": str(exc),
+        }
+
+
+def _run_live_config_transition_shadow_auto(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    summary: dict[str, Any],
+    config: SmallPaperPilotConfig,
+    poll_interval_sec: Optional[float],
+) -> None:
+    """Phase274: research-only auto-transition shadow after Phase273."""
+    from small_paper.live_config_transition_shadow_auto import run_live_config_transition_shadow_auto
+
+    try:
+        summary["live_config_transition_shadow"] = run_live_config_transition_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            config=config,
+            poll_interval_sec=poll_interval_sec,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[live_config_transition_shadow] unexpected error: %s", exc
+        )
+        summary["live_config_transition_shadow"] = {
+            "day": output_dir.parent.name if output_dir.parent else "",
+            "status": "warning",
+            "warning": str(exc),
+        }
+
+
+def _run_live_config_forward_shadow_auto(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    summary: dict[str, Any],
+    config: SmallPaperPilotConfig,
+    poll_interval_sec: Optional[float],
+) -> None:
+    """Phase273: research-only live config forward shadow after equity dynamic stop."""
+    from small_paper.live_config_forward_shadow_auto import run_live_config_forward_shadow_auto
+
+    try:
+        summary["live_config_forward_shadow"] = run_live_config_forward_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            config=config,
+            poll_interval_sec=poll_interval_sec,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[live_config_forward_shadow] unexpected error: %s", exc
+        )
+        summary["live_config_forward_shadow"] = {
+            "day": output_dir.parent.name if output_dir.parent else "",
+            "status": "warning",
+            "warning": str(exc),
+        }
+
+
+def _run_sector_heat_forward_shadow_auto(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    summary: dict[str, Any],
+    config: SmallPaperPilotConfig,
+    poll_interval_sec: Optional[float],
+) -> None:
+    """Phase256: research-only forward shadow logging after canonical summary."""
+    from small_paper.sector_heat_forward_shadow_auto import run_sector_heat_forward_shadow_auto
+
+    try:
+        summary["sector_heat_forward_shadow"] = run_sector_heat_forward_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            config=config,
+            poll_interval_sec=poll_interval_sec,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[sector_heat_forward_shadow] unexpected error: %s", exc
+        )
+        summary["sector_heat_forward_shadow"] = {
+            "day": output_dir.parent.name if output_dir.parent else "",
+            "status": "warning",
+            "warning": str(exc),
+        }
+
+
 def _build_live_summary(
     *,
     config: SmallPaperPilotConfig,
@@ -3209,6 +3364,41 @@ def run_live_dry_run(
         state.events,
         config=config,
         watch_symbols_count=monitored_n,
+    )
+    _run_sector_heat_forward_shadow_auto(
+        repo_root=repo_root,
+        output_dir=output_dir,
+        summary=summary,
+        config=config,
+        poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
+    )
+    _run_risk_sizing_forward_shadow_auto(
+        repo_root=repo_root,
+        output_dir=output_dir,
+        summary=summary,
+        config=config,
+        poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
+    )
+    _run_equity_dynamic_stop_shadow_auto(
+        repo_root=repo_root,
+        output_dir=output_dir,
+        summary=summary,
+        config=config,
+        poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
+    )
+    _run_live_config_forward_shadow_auto(
+        repo_root=repo_root,
+        output_dir=output_dir,
+        summary=summary,
+        config=config,
+        poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
+    )
+    _run_live_config_transition_shadow_auto(
+        repo_root=repo_root,
+        output_dir=output_dir,
+        summary=summary,
+        config=config,
+        poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
     )
     notify_discord_session_end(
         discord,
