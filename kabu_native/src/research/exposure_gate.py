@@ -54,6 +54,7 @@ class ExposureGateConfig:
     profile: str = "momentum_volume_v13_combined"
     min_continuation_quality: float = 0.55
     max_concurrent_positions: int = 3
+    position_cap_mode: bool = False
     reject_below_quality: bool = True
     low_quality_log_only: bool = True
     order_enabled: bool = False
@@ -71,6 +72,7 @@ class ExposureGateConfig:
             profile=str(data.get("profile", "momentum_volume_v13_combined")),
             min_continuation_quality=float(data.get("min_continuation_quality", 0.55)),
             max_concurrent_positions=int(data.get("max_concurrent_positions", 3)),
+            position_cap_mode=bool(data.get("position_cap_mode", False)),
             reject_below_quality=bool(data.get("reject_below_quality", True)),
             entry_score_v2_min=int(data.get("entry_score_v2_min", 0) or 0),
             low_quality_log_only=bool(data.get("low_quality_log_only", True)),
@@ -171,7 +173,13 @@ class ExposureGate:
             near_day_high_low_momentum_dynamic40_guard
         )
 
-    def evaluate_entry(self, trade: Mapping[str, Any]) -> GateDecision:
+    def evaluate_entry(
+        self,
+        trade: Mapping[str, Any],
+        *,
+        observer_open_count: Optional[int] = None,
+        observer_symbol_open: bool = False,
+    ) -> GateDecision:
         profile = str(trade.get("profile", ""))
         if profile != self.config.profile:
             return GateDecision(
@@ -379,19 +387,32 @@ class ExposureGate:
                 **v2_ctx,
             )
 
-        ent = _parse_ts(str(trade.get("entry_time") or ""))
-        ex = _parse_ts(str(trade.get("exit_time") or "")) or ent + 3600
-        self.state.open_slots = [
-            (a, b, sym) for a, b, sym in self.state.open_slots if b >= ent
-        ]
-        if len(self.state.open_slots) >= self.config.max_concurrent_positions:
-            return GateDecision(
-                accept=False,
-                reason=REJECT_MAX_CONCURRENT,
-                continuation_quality_score=q,
-                quality_tier=tier,
-                **v2_ctx,
-            )
+        if self.config.position_cap_mode and observer_open_count is not None:
+            if (
+                not observer_symbol_open
+                and observer_open_count >= self.config.max_concurrent_positions
+            ):
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_MAX_CONCURRENT,
+                    continuation_quality_score=q,
+                    quality_tier=tier,
+                    **v2_ctx,
+                )
+        else:
+            ent = _parse_ts(str(trade.get("entry_time") or ""))
+            ex = _parse_ts(str(trade.get("exit_time") or "")) or ent + 3600
+            self.state.open_slots = [
+                (a, b, sym) for a, b, sym in self.state.open_slots if b >= ent
+            ]
+            if len(self.state.open_slots) >= self.config.max_concurrent_positions:
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_MAX_CONCURRENT,
+                    continuation_quality_score=q,
+                    quality_tier=tier,
+                    **v2_ctx,
+                )
 
         return GateDecision(
             accept=True,
@@ -402,10 +423,11 @@ class ExposureGate:
         )
 
     def record_accepted(self, trade: Mapping[str, Any]) -> None:
-        ent = _parse_ts(str(trade.get("entry_time") or ""))
-        ex = _parse_ts(str(trade.get("exit_time") or "")) or ent + 3600
-        sym = str(trade.get("symbol", ""))
-        self.state.open_slots.append((ent, ex, sym))
+        if not self.config.position_cap_mode:
+            ent = _parse_ts(str(trade.get("entry_time") or ""))
+            ex = _parse_ts(str(trade.get("exit_time") or "")) or ent + 3600
+            sym = str(trade.get("symbol", ""))
+            self.state.open_slots.append((ent, ex, sym))
 
         pnl = _as_float(trade.get("pnl_pct")) or 0.0
         day = str(trade.get("trade_date", ""))[:10]

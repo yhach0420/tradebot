@@ -16,6 +16,8 @@ from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
 
+log = __import__("logging").getLogger(__name__)
+
 SHADOW_PILOT_YAML = "kabu_native/configs/small_paper_pilot_q070_cap3_mfe_fav_vol_liq.yaml"
 ENTRY_GUARD_SHADOW_YAML = (
     "kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_shadow.yaml"
@@ -46,6 +48,20 @@ UNIVERSE_MODE_DEFAULT = UNIVERSE_MODE_PRICE_RISK
 FOCUS_SYMBOL_5856 = "5856.T"
 FOCUS_SYMBOL_4392 = "4392.T"
 REPORTS_REL = "kabu_native/results/reports"
+
+
+def _dual_write_runtime_artifacts(state: "DailyRunnerState") -> None:
+    """Phase392: dual-write runtime report files; legacy reports/ remains canonical."""
+    try:
+        from storage.results_paths import dual_write_runtime_day_artifacts
+
+        for msg in dual_write_runtime_day_artifacts(
+            state.repo_root, state.options.day_stamp
+        ):
+            if msg.startswith("dual_write_failed"):
+                log.warning(msg)
+    except Exception as exc:
+        log.warning("dual_write_runtime_artifacts error: %s", exc)
 SMALL_PAPER_REL = "kabu_native/results/small_paper"
 PUSH_ROOT_REL = "kabu_native/data/push_jsonl"
 PHASE113_SCRIPT = "kabu_native/scripts/run_phase113_vol_liq_dynamic50_universe.py"
@@ -239,6 +255,7 @@ def ensure_features_csv(
     }
     if not feat_path.is_file():
         return feat_path, []
+    _dual_write_runtime_artifacts(state)
     return feat_path, load_features_csv(feat_path)
 
 
@@ -421,6 +438,7 @@ def build_am_universe(state: DailyRunnerState) -> dict[str, Any]:
     else:
         built = _build_am_universe_standard(state, feature_rows, feat_path)
     out.update(built)
+    _dual_write_runtime_artifacts(state)
     return out
 
 
@@ -514,6 +532,7 @@ def build_pm_universe(state: DailyRunnerState) -> dict[str, Any]:
     else:
         built = _build_pm_universe_standard(state, feature_rows)
     built["universe_mode"] = state.options.universe_mode
+    _dual_write_runtime_artifacts(state)
     return built
 
 
@@ -612,7 +631,7 @@ def build_intraday_refresh_universes(
     pm_specs, pm_reg = merge_register_specs(pm_rows, symbol_meta=symbol_meta)
 
     ok = bool(am_val.get("ok")) and bool(pm_val.get("ok")) and merge_test.get("ok", True)
-    return {
+    out = {
         "ok": ok,
         "am_refresh_csv": rel_path(state.repo_root, am_refresh_path),
         "pm_refresh_csv": rel_path(state.repo_root, pm_refresh_path),
@@ -636,6 +655,8 @@ def build_intraday_refresh_universes(
         "am_register_specs_count": len(am_specs),
         "pm_register_specs_count": len(pm_specs),
     }
+    _dual_write_runtime_artifacts(state)
+    return out
 
 
 def wait_until_hhmm(
@@ -688,6 +709,7 @@ def run_safety_check(state: DailyRunnerState) -> dict[str, Any]:
     report: dict[str, Any] = {}
     if report_path.is_file():
         report = json.loads(report_path.read_text(encoding="utf-8"))
+    _dual_write_runtime_artifacts(state)
     return {
         "exit_code": proc.returncode,
         "report_path": rel_path(state.repo_root, report_path),
@@ -1460,6 +1482,13 @@ def write_outputs(state: DailyRunnerState) -> dict[str, str]:
             encoding="utf-8",
         )
         paths["phase157_review"] = p157
+    _dual_write_runtime_artifacts(state)
+    try:
+        from storage.daily_artifact_organizer import organize_daily_artifacts
+
+        organize_daily_artifacts(state.repo_root, day)
+    except Exception as exc:
+        log.warning("daily_artifact_organizer failed day=%s: %s", day, exc)
     return {k: rel_path(state.repo_root, v) for k, v in paths.items()}
 
 

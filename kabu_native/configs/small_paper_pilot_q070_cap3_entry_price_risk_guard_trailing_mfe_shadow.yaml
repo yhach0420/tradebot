@@ -7,6 +7,12 @@ entry_profile: momentum_volume_v2
 # Phase267: quality entry reject off; entry_score_v2>=4 gate.
 min_continuation_quality: 0.70
 max_concurrent_positions: 3
+position_cap_mode: true
+position_cap_release: structural_exit
+# Phase414: reject same-symbol ENTRY while position open (no overlap_replaced_review chain)
+same_symbol_open_policy: no_overlap_replace
+virtual_hold_sec: 300
+entry_cooldown_sec: 300
 reject_below_quality: false
 entry_score_v2_min: 3
 

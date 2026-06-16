@@ -575,6 +575,60 @@ class _LiveRunState:
     realtime_board_exit_shadow: Any = field(default_factory=_default_realtime_board_exit_shadow)
     entry_expectancy_score_shadow: Any = field(default_factory=_default_entry_expectancy_score_counters)
     discord_ux: DiscordUxSessionStats = field(default_factory=DiscordUxSessionStats)
+    position_cap_stats: Any = None
+    peak_observer_open: int = 0
+    observer_tracker: Any = None
+
+
+def _init_position_cap_tracking(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
+    from small_paper.position_cap_mode import make_position_cap_stats
+
+    state.position_cap_stats = make_position_cap_stats(config)
+
+
+def _evaluate_gate_entry(ctx: _PushPipelineContext, trade: Mapping[str, Any]) -> Any:
+    from research.exposure_gate import REJECT_MAX_CONCURRENT
+    from small_paper.position_cap_mode import maybe_track_legacy_vh_shadow, observer_cap_kwargs
+
+    cap_kw: dict[str, Any] = {}
+    if ctx.config.position_cap_mode and ctx.observer is not None:
+        cap_kw = observer_cap_kwargs(ctx.observer, str(trade.get("symbol") or ""))
+    decision = ctx.gate.evaluate_entry(trade, **cap_kw)
+    stats = getattr(ctx.state, "position_cap_stats", None)
+    maybe_track_legacy_vh_shadow(
+        stats,
+        trade,
+        decision_accept=bool(decision.accept),
+        decision_reason=str(decision.reason or ""),
+    )
+    if (
+        ctx.config.position_cap_mode
+        and stats is not None
+        and not decision.accept
+        and decision.reason == REJECT_MAX_CONCURRENT
+    ):
+        stats.record_cap_reject()
+    return decision
+
+
+def _active_cap_count(ctx: _PushPipelineContext) -> int:
+    from small_paper.position_cap_mode import active_cap_positions
+
+    return active_cap_positions(
+        ctx.config,
+        observer=ctx.observer,
+        gate_open_slots=len(ctx.gate.state.open_slots),
+    )
+
+
+def _record_observer_open_peak(ctx: _PushPipelineContext) -> None:
+    if ctx.observer is None:
+        return
+    c = int(ctx.observer.open_count())
+    ctx.state.peak_observer_open = max(getattr(ctx.state, "peak_observer_open", 0), c)
+    stats = getattr(ctx.state, "position_cap_stats", None)
+    if stats is not None:
+        stats.record_observer_open(c)
 
 
 def _quality_distribution(scores: Sequence[float]) -> dict[str, int]:
@@ -770,6 +824,14 @@ def _log_and_dispatch_observer_events(
                     score_counters.record_exit(row)
             if writer is not None:
                 writer.append_event(row)
+            if state is not None and ev.kind == OBSERVER_EXIT:
+                obs = getattr(state, "observer_tracker", None)
+                if obs is not None:
+                    c = int(obs.open_count())
+                    state.peak_observer_open = max(getattr(state, "peak_observer_open", 0), c)
+                    stats = getattr(state, "position_cap_stats", None)
+                    if stats is not None:
+                        stats.record_observer_open(c)
     _dispatch_observer_events(events, discord=discord)
 
 
@@ -958,6 +1020,68 @@ class _PushPipelineContext:
 
 
 REJECT_OUTSIDE_REFRESH_UNIVERSE = "outside_refresh_universe"
+REJECT_SAME_SYMBOL_OPEN_OVERLAP = "REJECT_SAME_SYMBOL_OPEN_OVERLAP"
+
+
+def _same_symbol_open_policy(config: Any) -> str:
+    return str(getattr(config, "same_symbol_open_policy", "replace") or "replace").strip().lower()
+
+
+def _maybe_reject_same_symbol_open_overlap(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: Mapping[str, Any],
+    decision: Any,
+    payload: Mapping[str, Any],
+    msg_i: int,
+) -> bool:
+    """
+    Apply same_symbol_open_policy=no_overlap_replace.
+
+    If observer has an open position for sym, reject this ENTRY and do not call close_for_overlap().
+    Returns True if rejected (caller must stop processing).
+    """
+    if ctx.observer is None:
+        return False
+    if _same_symbol_open_policy(ctx.config) != "no_overlap_replace":
+        return False
+    try:
+        entry_px = float(payload.get("CurrentPrice") or 0)
+    except (TypeError, ValueError):
+        entry_px = 0.0
+    if entry_px <= 0:
+        return False
+    if not ctx.observer.has_open(sym):
+        return False
+
+    from research.exposure_gate import GateDecision
+
+    rej_row = dict(trade)
+    rej_row["reject_reason"] = REJECT_SAME_SYMBOL_OPEN_OVERLAP
+    rej_row["gate_reject_reason"] = REJECT_SAME_SYMBOL_OPEN_OVERLAP
+    ctx.state.reject_rows.append(rej_row)
+
+    rej_decision = GateDecision(
+        accept=False,
+        reason=REJECT_SAME_SYMBOL_OPEN_OVERLAP,
+        continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
+        quality_tier=getattr(decision, "quality_tier", "") or "",
+    )
+    rej = _event_from_gate(
+        event_type="rejected",
+        trade=trade,
+        decision=rej_decision,
+        source=ctx.source,
+        message_index=msg_i,
+        current_price=payload.get("CurrentPrice"),
+    )
+    rej["reject_reason"] = REJECT_SAME_SYMBOL_OPEN_OVERLAP
+    rej["same_symbol_open_policy"] = _same_symbol_open_policy(ctx.config)
+    ctx.state.events.append(rej)
+    ctx.writer.append_event(rej)
+    _record_bucket(ctx.state, "rejected")
+    return True
 
 
 def _load_symbol_universe_meta_for_day(
@@ -1091,6 +1215,15 @@ def _execute_accepted_entry(
         gate=ctx.gate,
         current_price=payload.get("CurrentPrice"),
     )
+    if _maybe_reject_same_symbol_open_overlap(
+        ctx,
+        sym=sym,
+        trade=trade,
+        decision=decision,
+        payload=payload,
+        msg_i=msg_i,
+    ):
+        return
     mom_sample = _as_float(trade.get("momentum_continuation_score"))
     if mom_sample is not None:
         ctx.state.session_momentum_samples.append(float(mom_sample))
@@ -1164,10 +1297,13 @@ def _execute_accepted_entry(
     trade.update(score_fields)
     ctx.state.entry_expectancy_score_shadow.record_accept(score_fields)
 
-    slot_before = len(ctx.gate.state.open_slots)
+    slot_before = _active_cap_count(ctx)
     ctx.gate.record_accepted(trade)
-    slot_after = len(ctx.gate.state.open_slots)
-    ctx.state.peak_open_slots = max(ctx.state.peak_open_slots, slot_after)
+    if not ctx.config.position_cap_mode:
+        slot_after = len(ctx.gate.state.open_slots)
+        ctx.state.peak_open_slots = max(ctx.state.peak_open_slots, slot_after)
+    else:
+        slot_after = slot_before
     acc = _event_from_gate(
         event_type="accepted",
         trade=trade,
@@ -1180,19 +1316,13 @@ def _execute_accepted_entry(
         acc.update({k: v for k, v in dict(scan_meta).items() if v is not None})
     acc["position_slot_before"] = slot_before
     acc["position_slot_after"] = slot_after
+    if ctx.config.position_cap_mode:
+        acc["position_cap_mode"] = True
+        acc["max_concurrent_positions"] = ctx.config.max_concurrent_positions
     ctx.state.events.append(acc)
     ctx.writer.append_event(acc)
     ctx.state.accepted_rows.append(dict(trade))
     _record_bucket(ctx.state, "accepted")
-    ctx.writer.append_position_row(
-        {
-            "symbol": trade.get("symbol"),
-            "entry_time": trade.get("entry_time"),
-            "exit_time": trade.get("exit_time"),
-            "open_slots_after": slot_after,
-        },
-        fields=ctx.pos_fields,
-    )
     if ctx.observer:
         try:
             entry_px = float(payload.get("CurrentPrice") or 0)
@@ -1222,6 +1352,19 @@ def _execute_accepted_entry(
                 quality_tier=str(decision.quality_tier or ""),
                 entry_price=entry_px,
             )
+        _record_observer_open_peak(ctx)
+        if ctx.config.position_cap_mode:
+            slot_after = _active_cap_count(ctx)
+            acc["position_slot_after"] = slot_after
+    ctx.writer.append_position_row(
+        {
+            "symbol": trade.get("symbol"),
+            "entry_time": trade.get("entry_time"),
+            "exit_time": trade.get("exit_time"),
+            "open_slots_after": slot_after,
+        },
+        fields=ctx.pos_fields,
+    )
     if ctx.discord and ctx.discord.active:
         import time
 
@@ -1357,6 +1500,7 @@ def _process_push_payload(
         symbol=sym,
         profile=ctx.config.profile,
         feature_snapshot=snapshot,
+        virtual_hold_sec=float(ctx.config.entry_cooldown_sec),
     )
     # Phase168: ensure gate sees live price fields.
     # Guard expects one of ("current_price", "CurrentPrice", "entry_price", "close_price").
@@ -1476,7 +1620,7 @@ def _process_push_payload(
             )
         else:
             _enrich_trade_for_pullback_guard(ctx, sym=sym, trade=trade, payload=payload)
-            decision = ctx.gate.evaluate_entry(trade)
+            decision = _evaluate_gate_entry(ctx, trade)
     ctx.state.gate_evaluations += 1
 
     cand = _event_from_gate(
@@ -1737,7 +1881,7 @@ def _process_push_payload(
                     event=rej,
                     payload=enriched,
                     trade_data={**trade, **shadow},
-                    open_slots=len(ctx.gate.state.open_slots),
+                    open_slots=_active_cap_count(ctx),
                     score5_candidate_ordinal=score5_ord,
                     ux_stats=ctx.state.discord_ux,
                 )
@@ -1745,7 +1889,7 @@ def _process_push_payload(
                 ctx.discord.notify_rejected(
                     event=rej,
                     payload=enriched,
-                    open_slots=len(ctx.gate.state.open_slots),
+                    open_slots=_active_cap_count(ctx),
                     session_bucket=session_bucket(),
                 )
 
@@ -2009,6 +2153,14 @@ def _build_push_replay_summary(
     base.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     base.update(_entry_expectancy_score_summary_fields(state))
     base.update(_observer_exit_pnl_summary_fields(state.events))
+    base.update(
+        _position_cap_summary_for_session(
+            config=config,
+            state=state,
+            gate=gate,
+            events=state.events,
+        )
+    )
     _attach_canonical_summary_fields(base, state.events, config=config)
     return base
 
@@ -2121,6 +2273,7 @@ def run_push_replay_dry_run(
     output_dir.mkdir(parents=True, exist_ok=True)
     writer = LiveSessionWriter(output_dir, incremental=True, event_fields=EVENT_FIELDS)
     state = _LiveRunState(started_mono=time.monotonic())
+    _init_position_cap_tracking(replay_config, state)
     if enable_board_failure_forensic_shadow:
         from small_paper.board_failure_forensic_pack import BoardFailureForensicPack
 
@@ -2190,6 +2343,7 @@ def run_push_replay_dry_run(
     discord: Optional[SmallPaperDiscordNotifier] = None
     if replay_config.discord_observer_only:
         observer = _make_observer_tracker(replay_config, state)
+        state.observer_tracker = observer
         if replay_config.discord_enabled:
 
             def _discord_error_logger(op: str, msg: str, extra: Mapping[str, Any]) -> None:
@@ -2312,6 +2466,12 @@ def run_push_replay_dry_run(
         pos_fields=pos_fields,
     )
     _write_quality_top_debug(output_dir, state.events)
+    _write_phase396_artifacts_safe(
+        root,
+        config=replay_config,
+        state=state,
+        summary=summary,
+    )
     board_shadow = getattr(state, "realtime_board_exit_shadow", None)
     if write_board_shadow_reports:
         _write_phase335_lite_board_shadow_reports(state, repo_root=root)
@@ -2463,6 +2623,20 @@ def _run_live_config_forward_shadow_auto(
         }
 
 
+def _organize_daily_artifacts_safe(repo_root: Path, day: str) -> None:
+    """Phase393: copy same-day report artifacts; never fails paper session."""
+    try:
+        from storage.daily_artifact_organizer import organize_daily_artifacts
+
+        organize_daily_artifacts(repo_root, day)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[daily_artifact_organizer] unexpected error day=%s: %s", day, exc
+        )
+
+
 def _run_sector_heat_forward_shadow_auto(
     *,
     repo_root: Path,
@@ -2494,6 +2668,37 @@ def _run_sector_heat_forward_shadow_auto(
         }
 
 
+def _run_boundary_forward_shadow_auto(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    summary: dict[str, Any],
+    config: SmallPaperPilotConfig,
+    poll_interval_sec: Optional[float],
+) -> None:
+    """Phase409: research-only Phase405 corrected boundary forward shadow."""
+    from small_paper.boundary_forward_shadow_auto import run_boundary_forward_shadow_auto
+
+    try:
+        summary["boundary_forward_shadow"] = run_boundary_forward_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            config=config,
+            poll_interval_sec=poll_interval_sec,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[boundary_forward_shadow] unexpected error: %s", exc
+        )
+        summary["boundary_forward_shadow"] = {
+            "day": output_dir.parent.name if output_dir.parent else "",
+            "status": "warning",
+            "warning": str(exc),
+        }
+
+
 def _build_live_summary(
     *,
     config: SmallPaperPilotConfig,
@@ -2505,6 +2710,15 @@ def _build_live_summary(
 ) -> dict[str, Any]:
     reject_events = [e for e in state.events if e.get("event_type") == "rejected"]
     is_retrial = config.policy_trial and config.policy_label == "q070_cap3_trial"
+    same_symbol_open_policy = _same_symbol_open_policy(config)
+    same_symbol_overlap_reject_count = sum(
+        1
+        for r in state.reject_rows
+        if str(r.get("gate_reject_reason") or r.get("reject_reason") or "") == REJECT_SAME_SYMBOL_OPEN_OVERLAP
+    )
+    overlap_replaced_review_count = sum(
+        1 for t in state.accepted_rows if str(t.get("exit_reason") or "") == "overlap_replaced_review"
+    )
     summary = {
         "phase": 55 if is_retrial else (51 if config.policy_trial else 47),
         "mode": "small_paper_pilot_live_observer_retrial"
@@ -2542,6 +2756,10 @@ def _build_live_summary(
         "accepted_count": len(state.accepted_rows),
         "rejected_count": len(reject_events),
         "reject_reason_counts": _count_reasons(state.reject_rows),
+        "same_symbol_open_policy": same_symbol_open_policy,
+        "rejected_by_same_symbol_open_overlap": same_symbol_overlap_reject_count > 0,
+        "same_symbol_overlap_reject_count": same_symbol_overlap_reject_count,
+        "overlap_replaced_review_count": overlap_replaced_review_count,
         "max_concurrent_positions": config.max_concurrent_positions,
         "peak_open_slots": state.peak_open_slots,
         "quality_distribution": _quality_distribution(state.quality_scores),
@@ -2551,7 +2769,11 @@ def _build_live_summary(
         "open_slots_end": len(gate.state.open_slots),
         "config_sha256": session_cfg.get("config_sha256"),
         "stop_reason": state.stop_reason or "completed",
-        "note": "Virtual hold on PUSH for concurrent cap; no orders placed.",
+        "note": (
+            "Position-CAP mode: observer open count until structural EXIT; no orders placed."
+            if config.position_cap_mode
+            else "Virtual hold on PUSH for concurrent cap; no orders placed."
+        ),
         "pilot_continue_review": {
             "data_received_ok": state.push_messages > 0,
             "gate_active_ok": state.gate_evaluations > 0,
@@ -2582,8 +2804,52 @@ def _build_live_summary(
     summary.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     summary.update(_entry_expectancy_score_summary_fields(state))
     summary.update(_observer_exit_pnl_summary_fields(state.events))
+    summary.update(
+        _position_cap_summary_for_session(
+            config=config,
+            state=state,
+            gate=gate,
+            events=state.events,
+        )
+    )
     _attach_canonical_summary_fields(summary, state.events, config=config)
     return summary
+
+
+def _position_cap_summary_for_session(
+    *,
+    config: SmallPaperPilotConfig,
+    state: _LiveRunState,
+    gate: ExposureGate,
+    events: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    from small_paper.position_cap_mode import position_cap_summary_fields
+
+    return position_cap_summary_fields(config, state, gate, events=events)
+
+
+def _write_phase396_artifacts_safe(
+    repo_root: Path,
+    *,
+    config: SmallPaperPilotConfig,
+    state: _LiveRunState,
+    summary: Mapping[str, Any],
+) -> None:
+    if not config.position_cap_mode:
+        return
+    try:
+        from small_paper.position_cap_mode import write_phase396_artifacts
+
+        reports = repo_root / "results" / "reports"
+        write_phase396_artifacts(
+            reports,
+            stats=getattr(state, "position_cap_stats", None),
+            summary=dict(summary),
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("phase396 artifact write failed: %s", exc)
 
 
 def _early_session_summary(
@@ -2776,6 +3042,7 @@ def run_live_dry_run(
     incremental = full_session
     writer = LiveSessionWriter(output_dir, incremental=incremental, event_fields=EVENT_FIELDS)
     state = _LiveRunState(started_mono=time.monotonic())
+    _init_position_cap_tracking(config, state)
     pos_fields = ["symbol", "entry_time", "exit_time", "open_slots_after"]
     gap_threshold_sec = max(stale_tick_sec * 2, poll_interval_sec * 3)
     pipeline_ctx: Optional[_PushPipelineContext] = None
@@ -2784,6 +3051,7 @@ def run_live_dry_run(
     observer: Optional[ObserverPositionTracker] = None
     if config.discord_observer_only and not config.order_enabled:
         observer = _make_observer_tracker(config, state, am_pm_policy=am_pm_policy)
+        state.observer_tracker = observer
         if config.discord_enabled:
 
             def _discord_error_logger(op: str, msg: str, extra: Mapping[str, Any]) -> None:
@@ -3400,6 +3668,13 @@ def run_live_dry_run(
         config=config,
         poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
     )
+    _run_boundary_forward_shadow_auto(
+        repo_root=repo_root,
+        output_dir=output_dir,
+        summary=summary,
+        config=config,
+        poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
+    )
     notify_discord_session_end(
         discord,
         events=state.events,
@@ -3419,8 +3694,15 @@ def run_live_dry_run(
         pos_fields=pos_fields,
     )
     _write_quality_top_debug(output_dir, state.events)
+    _write_phase396_artifacts_safe(
+        repo_root,
+        config=config,
+        state=state,
+        summary=summary,
+    )
     day_stamp = datetime.now(JST).strftime("%Y%m%d")
     _write_phase335_lite_board_shadow_reports(state, repo_root=repo_root, day_stamp=day_stamp)
+    _organize_daily_artifacts_safe(repo_root, day_stamp)
     return PilotRunResult(
         output_dir=output_dir,
         summary=summary,
@@ -3488,6 +3770,7 @@ def _live_session_cfg(
         "order_enabled": False,
         "paper_only": True,
         "dry_run": True,
+        "same_symbol_open_policy": str(getattr(config, "same_symbol_open_policy", "replace") or "replace"),
         "source": "live",
         "full_session": full_session,
         "duration_sec": duration_sec,

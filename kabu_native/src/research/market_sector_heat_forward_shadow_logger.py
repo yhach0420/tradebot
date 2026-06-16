@@ -731,4 +731,13 @@ class MarketSectorHeatForwardShadowLogger:
             encoding="utf-8",
         )
         paths["report"].write_text(build_report_markdown(payload), encoding="utf-8")
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from storage.results_paths import dual_write_output_paths, infer_day_from_result
+
+        day = infer_day_from_result(result) or datetime.now(ZoneInfo("Asia/Tokyo")).strftime(
+            "%Y%m%d"
+        )
+        dual_write_output_paths(self.repo_root, day, paths)
         return paths

@@ -28,6 +28,14 @@ class SmallPaperPilotConfig:
     entry_profile: str = FROZEN_ENTRY_PROFILE
     min_continuation_quality: float = 0.55
     max_concurrent_positions: int = 3
+    position_cap_mode: bool = False
+    # Same-symbol open behavior:
+    # - replace (default, legacy): close_for_overlap() then register_entry()
+    # - no_overlap_replace: reject ENTRY while same symbol is open (keep existing position)
+    same_symbol_open_policy: str = "replace"
+    position_cap_release: str = "structural_exit"
+    virtual_hold_sec: float = 300.0
+    entry_cooldown_sec: float = 300.0
     reject_below_quality: bool = True
     entry_score_v2_min: int = 0
     order_enabled: bool = False
@@ -168,6 +176,11 @@ class SmallPaperPilotConfig:
         if self.entry_score_v2_min > 0:
             out["entry_score_v2_min"] = self.entry_score_v2_min
             out["reject_below_quality"] = self.reject_below_quality
+        if self.position_cap_mode:
+            out["position_cap_mode"] = True
+            out["position_cap_release"] = self.position_cap_release
+            out["virtual_hold_sec"] = self.virtual_hold_sec
+            out["entry_cooldown_sec"] = self.entry_cooldown_sec
         return out
 
     def exposure_gate_config(self) -> ExposureGateConfig:
@@ -175,6 +188,7 @@ class SmallPaperPilotConfig:
             profile=self.profile,
             min_continuation_quality=self.min_continuation_quality,
             max_concurrent_positions=self.max_concurrent_positions,
+            position_cap_mode=self.position_cap_mode,
             reject_below_quality=self.reject_below_quality,
             entry_score_v2_min=self.entry_score_v2_min,
             order_enabled=False,
@@ -254,6 +268,11 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         entry_profile=str(raw.get("entry_profile", FROZEN_ENTRY_PROFILE)),
         min_continuation_quality=float(raw.get("min_continuation_quality", 0.55)),
         max_concurrent_positions=int(raw.get("max_concurrent_positions", 3)),
+        position_cap_mode=bool(raw.get("position_cap_mode", False)),
+        same_symbol_open_policy=str(raw.get("same_symbol_open_policy", "replace") or "replace"),
+        position_cap_release=str(raw.get("position_cap_release", "structural_exit")),
+        virtual_hold_sec=float(raw.get("virtual_hold_sec", raw.get("entry_cooldown_sec", 300.0))),
+        entry_cooldown_sec=float(raw.get("entry_cooldown_sec", raw.get("virtual_hold_sec", 300.0))),
         reject_below_quality=bool(raw.get("reject_below_quality", True)),
         entry_score_v2_min=int(raw.get("entry_score_v2_min", 0) or 0),
         order_enabled=bool(raw.get("order_enabled", False)),

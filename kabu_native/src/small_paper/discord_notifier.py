@@ -65,6 +65,7 @@ class SmallPaperDiscordConfig:
     send_universe_refresh: bool = True
     send_daily_summary: bool = True
     max_concurrent_positions: int = 3
+    position_cap_mode: bool = False
     heartbeat_min: float = 30.0
     webhook_env: str = _LEGACY_WEBHOOK_ENV
     trade_notify_webhook_env: str = _TRADE_NOTIFY_WEBHOOK_ENV
@@ -580,6 +581,10 @@ class SmallPaperDiscordNotifier:
                 "board_dynamic_trailing_giveback_frac"
             ),
         )
+        if self.cfg.position_cap_mode:
+            detail += "\nExit source: structural_observer"
+            if context.get("session_close"):
+                detail += "\nSession close: position-cap slot released"
         fields = [
             {
                 "name": "観測のみ",
@@ -1015,6 +1020,7 @@ def discord_config_from_pilot(config: Any) -> SmallPaperDiscordConfig:
         send_universe_refresh=bool(getattr(config, "discord_send_universe_refresh", True)),
         send_daily_summary=bool(getattr(config, "discord_send_daily_summary", True)),
         max_concurrent_positions=int(getattr(config, "max_concurrent_positions", 3)),
+        position_cap_mode=bool(getattr(config, "position_cap_mode", False)),
         heartbeat_min=float(config.discord_heartbeat_min),
         webhook_env=str(config.discord_webhook_env),
         trade_notify_webhook_env=str(

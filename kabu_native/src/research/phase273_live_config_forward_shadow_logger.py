@@ -410,4 +410,13 @@ class LiveConfigForwardShadowLogger:
         payload = {k: v for k, v in result.items() if not k.startswith("_")}
         paths["summary"].write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         paths["report"].write_text(build_report_markdown(result), encoding="utf-8")
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from storage.results_paths import dual_write_output_paths, infer_day_from_result
+
+        day = infer_day_from_result(result) or datetime.now(ZoneInfo("Asia/Tokyo")).strftime(
+            "%Y%m%d"
+        )
+        dual_write_output_paths(self.repo_root, day, paths)
         return paths

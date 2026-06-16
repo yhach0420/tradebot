@@ -810,4 +810,9 @@ def write_phase335_lite_outputs(
         return None
     stamp = day_stamp or datetime.now(JST).strftime("%Y%m%d")
     reports_dir = repo_root / "kabu_native" / "results" / "reports"
-    return logger.write_outputs(reports_dir, day_stamp=stamp)
+    out = logger.write_outputs(reports_dir, day_stamp=stamp)
+    if out:
+        from storage.results_paths import dual_write_output_paths
+
+        dual_write_output_paths(repo_root, stamp, {k: Path(v) for k, v in out.items()})
+    return out

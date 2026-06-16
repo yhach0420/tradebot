@@ -327,6 +327,14 @@ def build_entry_detail(
             format_entry_reason_block(data),
         ]
     )
+    if data.get("position_cap_mode"):
+        lines.extend(
+            [
+                "Gate model: position_cap_until_exit",
+                "Position model: observer_structural",
+                f"CAP note: max {data.get('max_concurrent_positions', '—')} open positions until structural EXIT",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -666,6 +674,27 @@ def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> li
         status = live_trans.get("status")
         if status:
             lines.append(f"status={status}")
+
+    boundary = summary.get("boundary_forward_shadow")
+    if isinstance(boundary, Mapping):
+        lines.append("Boundary Shadow:")
+        if boundary.get("day_count") is not None:
+            lines.append(f"days={boundary.get('day_count')}")
+        if boundary.get("baseline_total_pnl_yen_100") is not None:
+            lines.append(f"baseline={boundary.get('baseline_total_pnl_yen_100')}")
+        if boundary.get("shadow_total_pnl_yen_100") is not None:
+            lines.append(f"shadow={boundary.get('shadow_total_pnl_yen_100')}")
+        if boundary.get("delta_pnl_yen_100") is not None:
+            lines.append(f"delta={boundary.get('delta_pnl_yen_100')}")
+        if boundary.get("shadow_pf") is not None:
+            lines.append(f"pf={boundary.get('shadow_pf')}")
+        if boundary.get("shadow_maxdd_yen_100") is not None:
+            lines.append(f"dd={boundary.get('shadow_maxdd_yen_100')}")
+        if boundary.get("verdict") is not None:
+            lines.append(f"verdict={boundary.get('verdict')}")
+        status = boundary.get("status")
+        if status:
+            lines.append(f"status={status}")
     return lines
 
 
@@ -690,6 +719,17 @@ def format_discord_summary_lines(metrics: Mapping[str, Any]) -> list[str]:
         f"監視銘柄数: {watch_s}",
         f"取引銘柄数: {traded_n}",
     ]
+    if metrics.get("position_cap_mode"):
+        lines.extend(
+            [
+                "position_cap_mode: true",
+                f"position_cap_max_open: {metrics.get('position_cap_max_open', 0)}",
+                f"observer_open_max_positions: {metrics.get('observer_open_max_positions', 0)}",
+                f"gate_virtual_hold_max_slots: {metrics.get('gate_virtual_hold_max_slots', 0)}",
+                f"session_close_exit_burst_count: {metrics.get('session_close_exit_burst_count', 0)}",
+            ]
+        )
+    return lines
 
 
 def _iter_score5_max_concurrent_rejects(
