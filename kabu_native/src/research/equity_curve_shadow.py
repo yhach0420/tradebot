@@ -189,6 +189,95 @@ def load_period_trades(
     return deduped, meta
 
 
+CANONICAL_BASELINE_END = "20260616"
+
+
+def load_canonical_live_config_trades(
+    repo_root: Path,
+    *,
+    period_start: str = PERIOD_START,
+    baseline_end: str = CANONICAL_BASELINE_END,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """
+    Trade stream aligned with Phase423 canonical runtime baseline:
+    - Historical (period_start..baseline_end): Phase413/416 no_overlap_replace collapse + entry_price enrich
+    - Forward (day > baseline_end): per-day structural trades collapsed + entry_price enrich
+    """
+    from research.equity_dynamic_stop_shadow import enrich_trades_with_entry_price
+    from research.phase413_no_overlap_replace_backfill import collapse_overlap_replace_chains
+    from research.phase416_post_no_overlap_shadow_rebaseline import (
+        load_baseline_a_trades,
+        load_baseline_b_trades,
+    )
+    from research.structural_trade_normalize import resolve_kabu_root
+
+    kabu_root = resolve_kabu_root(repo_root)
+    historical_raw = load_baseline_b_trades(load_baseline_a_trades(kabu_root))
+    historical, hist_enrich_meta = enrich_trades_with_entry_price(
+        [dict(t) for t in historical_raw],
+        repo_root=kabu_root,
+    )
+    hist_days = sorted({str(t.get("day") or "") for t in historical if t.get("day")})
+
+    raw_by_day = load_trades_by_day(repo_root)
+    forward_raw: list[dict[str, Any]] = []
+    forward_days: list[str] = []
+    forward_collapse_reduction: dict[str, int] = {}
+
+    for day in sorted(raw_by_day.keys()):
+        if day <= baseline_end or day < period_start:
+            continue
+        forward_days.append(day)
+        day_rows = [normalize_structural_trade(dict(r)) for r in (raw_by_day.get(day) or [])]
+        day_rows.sort(
+            key=lambda t: (
+                _parse_ts(str(t.get("entry_time") or "")) or datetime.min.replace(tzinfo=JST),
+                str(t.get("symbol") or ""),
+            )
+        )
+        before = len(day_rows)
+        collapsed, _ = collapse_overlap_replace_chains(day_rows)
+        forward_collapse_reduction[day] = before - len(collapsed)
+        forward_raw.extend(dict(t) for t in collapsed)
+
+    forward, fwd_enrich_meta = enrich_trades_with_entry_price(forward_raw, repo_root=kabu_root)
+
+    all_rows: list[dict[str, Any]] = []
+    for trade in historical + forward:
+        if _parse_ts(trade.get("entry_time")) is None or _parse_ts(trade.get("exit_time")) is None:
+            continue
+        if (_float(trade.get("entry_price")) or 0.0) <= 0:
+            continue
+        all_rows.append(trade)
+
+    deduped, removed = dedupe_trades(all_rows)
+    deduped.sort(
+        key=lambda t: (
+            _parse_ts(t.get("entry_time")) or datetime.min.replace(tzinfo=JST),
+            str(t.get("symbol") or ""),
+        )
+    )
+    period_days = sorted(set(hist_days) | set(forward_days))
+
+    meta = {
+        "trade_source": "phase423_canonical_baseline_plus_forward_collapsed",
+        "canonical_baseline_end": baseline_end,
+        "period_start": period_start,
+        "period_days": period_days,
+        "period_day_count": len(period_days),
+        "historical_trade_count": len(historical),
+        "forward_trade_count_raw": len(forward_raw),
+        "forward_collapse_reduction_by_day": forward_collapse_reduction,
+        "input_trade_count_raw": len(all_rows),
+        "duplicate_trades_removed": removed,
+        "input_trade_count": len(deduped),
+        "entry_price_enrichment_historical": hist_enrich_meta,
+        "entry_price_enrichment_forward": fwd_enrich_meta,
+        "legacy_loader": "load_period_trades (raw structural; no overlap collapse)",
+    }
+    return deduped, meta
+
+
 @dataclass
 class EquityCurveCapState(CapScenarioState):
     pnl_resolver: Callable[..., float] = pnl_for_actual_fixed_stop

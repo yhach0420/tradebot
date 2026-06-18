@@ -73,6 +73,7 @@ class ObserverTrackerConfig:
     structural_exit_policy: str = POLICY_STRUCTURAL_OBSERVER_V1
     price_momentum_fade_ratio: float = 0.85
     live_session_end: str = "15:30"
+    no_progress_exit_enabled: bool = False
 
     def uses_combined_structural_exit(self) -> bool:
         return self.structural_exit_policy in (
@@ -566,6 +567,7 @@ class ObserverPositionTracker:
                         pos.entry_price,
                         sig_cfg,
                         entry_imbalance_percentile=imb_pct,
+                        entry_ts_epoch=pos.entry_time.timestamp(),
                     )
                     trigger = ("exit", sig[0], sig[2], sig[1]) if sig else None
                 if trigger:
@@ -593,6 +595,20 @@ class ObserverPositionTracker:
                         )
                         return events
                     ctx = {**base_ctx, "unrealized_pnl_pct": round(exit_pnl, 4), "current_price": close_px}
+                    if reason == "no_progress_exit":
+                        from small_paper.no_progress_exit import (
+                            PHASE442_POLICY_KEY,
+                            required_mfe_threshold_pct,
+                        )
+
+                        req_mfe = required_mfe_threshold_pct(hold_sec)
+                        ctx = {
+                            **ctx,
+                            "no_progress_exit_triggered": True,
+                            "no_progress_exit_policy_key": PHASE442_POLICY_KEY,
+                            "no_progress_required_mfe_pct": req_mfe,
+                            "no_progress_hold_sec": round(hold_sec, 1),
+                        }
                     if (
                         self.cfg.structural_exit_policy
                         == POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW
@@ -798,6 +814,7 @@ class ObserverPositionTracker:
                 or ctx.get("trailing_mfe_exit_triggered")
             ),
             "trailing_mfe_exit": reason == "trailing_mfe_exit",
+            "no_progress_exit": reason == "no_progress_exit",
         }
         pnl_pct = float(full.get("realized_pnl_pct") or ctx.get("unrealized_pnl_pct") or 0.0)
         full["pnl_pct"] = round(pnl_pct, 4)

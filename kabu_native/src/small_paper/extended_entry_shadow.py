@@ -27,6 +27,7 @@ SHADOW_FIELD_KEYS = (
     "extended_entry_shadow_reasons",
     "entry_rise_5min_pct",
     "entry_rise_10min_pct",
+    "entry_rise_15min_pct",
     "entry_vwap_dev_pct",
     "entry_near_day_high_pct",
     "entry_high_break_recent",
@@ -140,6 +141,7 @@ def compute_entry_shadow_fields(
 
     rise_5 = _rise_pct(entry_px, _price_before(price_ring, entry_ts, 300))
     rise_10 = _rise_pct(entry_px, _price_before(price_ring, entry_ts, 600))
+    rise_15 = _rise_pct(entry_px, _price_before(price_ring, entry_ts, 900))
 
     near_high: Optional[float] = None
     if board_high and board_high > 0 and entry_px > 0:
@@ -191,6 +193,7 @@ def compute_entry_shadow_fields(
         "extended_entry_shadow_reasons": ";".join(reasons) if reasons else "",
         "entry_rise_5min_pct": rise_5,
         "entry_rise_10min_pct": rise_10,
+        "entry_rise_15min_pct": rise_15,
         "entry_vwap_dev_pct": vwap_dev,
         "entry_near_day_high_pct": near_high,
         "entry_high_break_recent": bool(hb_recent),
@@ -241,6 +244,7 @@ def enrich_exit_shadow_fields(
         "extended_entry_shadow_reasons",
         "entry_rise_5min_pct",
         "entry_rise_10min_pct",
+        "entry_rise_15min_pct",
         "entry_vwap_dev_pct",
         "entry_near_day_high_pct",
         "entry_high_break_recent",

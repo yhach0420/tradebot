@@ -61,3 +61,22 @@ def format_symbol_label(symbol: str, name_map: Optional[Mapping[str, str]] = Non
     if name:
         return f"{code} {name}"
     return code
+
+
+def format_symbol_display(
+    symbol: str,
+    name: Optional[str] = None,
+    *,
+    name_map: Optional[Mapping[str, str]] = None,
+) -> str:
+    """Discord ENTRY/EXIT header: code with .T suffix and optional Japanese name."""
+    sym = _norm_symbol(symbol)
+    if not sym:
+        return "—"
+    resolved = (name or "").strip()
+    if not resolved:
+        names = name_map if name_map is not None else get_cached_symbol_name_map()
+        resolved = (names.get(sym) or "").strip()
+    if resolved:
+        return f"{sym} {resolved}"
+    return sym

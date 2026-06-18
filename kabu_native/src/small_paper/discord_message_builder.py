@@ -5,7 +5,9 @@ Phase276–277: Operator-readable Discord message text (no trading logic).
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime
 from typing import Any, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from replay.pnl_yen import (
     enrich_trade_pnl_yen,
@@ -18,8 +20,10 @@ from replay.pnl_yen import (
     summarize_pnl_yen_100,
 )
 from research.exposure_gate import REJECT_MAX_CONCURRENT
-from small_paper.discord_symbol_names import format_symbol_label
+from small_paper.discord_symbol_names import format_symbol_display, format_symbol_label
 from small_paper.entry_expectancy_score_shadow import SCORE_POINTS_V2, _feature_token
+
+JST = ZoneInfo("Asia/Tokyo")
 
 ENTRY_DEFERRED_MIN_SCORE_V2 = 5
 
@@ -42,6 +46,7 @@ SCORE_TOKEN_JA: dict[str, str] = {
 EXIT_REASON_JA: dict[str, str] = {
     "stop_hit": "損切りライン到達",
     "trailing_mfe_exit": "利益確定条件到達",
+    "no_progress_exit": "停滞ポジション整理",
     "momentum_fade_exit": "上昇継続条件消失",
     "price_momentum_fade_exit": "上昇継続条件消失",
     "favorable_fade_exit": "上昇継続条件消失",
@@ -91,6 +96,28 @@ def format_slot_usage(open_slots: int, max_slots: int) -> str:
 def _symbol_short(sym: str) -> str:
     s = str(sym or "").strip().upper()
     return s.replace(".T", "") if s else "—"
+
+
+def format_time_hms_jst(ts: Any) -> str:
+    """Format ISO timestamp to JST HH:MM:SS for Discord notifications."""
+    s = str(ts or "").strip()
+    if not s:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=JST)
+        else:
+            dt = dt.astimezone(JST)
+        return dt.strftime("%H:%M:%S")
+    except ValueError:
+        if "T" in s:
+            tail = s.split("T", 1)[1]
+            for sep in ("+", "-"):
+                if sep in tail:
+                    tail = tail.split(sep, 1)[0]
+            return tail[:8] if len(tail) >= 8 else tail
+        return s[:8] if len(s) >= 8 else s
 
 
 def humanize_exit_reason(reason: str) -> str:
@@ -295,14 +322,23 @@ def build_entry_detail(
     entry_score_v2: Optional[int],
     data: Mapping[str, Any],
     score5_candidate_ordinal: Optional[int] = None,
+    name_map: Optional[Mapping[str, str]] = None,
+    entry_time: Optional[str] = None,
 ) -> str:
+    display = format_symbol_display(symbol, name_map=name_map)
     lines = [
-        f"銘柄: {symbol}",
+        f"銘柄: {display}",
+    ]
+    if entry_time:
+        lines.append(f"時刻: {format_time_hms_jst(entry_time)}")
+    lines.extend(
+        [
         f"ENTRY価格: {_fmt_num(entry_price)}",
         f"損切り価格: {_fmt_num(stop_price)}",
         f"保有枠: {slot_usage}",
         f"entry_score_v2: {entry_score_v2 if entry_score_v2 is not None else '—'}",
-    ]
+        ]
+    )
     if score5_candidate_ordinal is not None and entry_score_v2 is not None and entry_score_v2 >= 5:
         lines.append(f"本日score5候補: {score5_candidate_ordinal}件目")
     scan_id = data.get("scan_id")
@@ -345,12 +381,14 @@ def build_entry_cap_blocked_detail(
     data: Mapping[str, Any],
     active_positions: int,
     position_cap: int,
+    name_map: Optional[Mapping[str, str]] = None,
 ) -> str:
     bullets = build_entry_reason_bullets(data)
     reason_block = "\n".join(f"・{b}" for b in bullets) if bullets else "・（なし）"
+    display = format_symbol_display(symbol, name_map=name_map)
     return "\n".join(
         [
-            symbol,
+            display,
             "",
             "ENTRY条件成立",
             f"active_positions: {active_positions}",
@@ -376,9 +414,11 @@ def build_entry_deferred_detail(
     data: Mapping[str, Any],
     open_positions: Sequence[Mapping[str, Any]],
     score5_candidate_ordinal: Optional[int] = None,
+    name_map: Optional[Mapping[str, str]] = None,
 ) -> str:
+    display = format_symbol_display(symbol, name_map=name_map)
     lines = [
-        f"銘柄: {symbol}",
+        f"銘柄: {display}",
         f"現在価格: {_fmt_num(current_price)}",
         f"entry_score_v2: {entry_score_v2}",
         f"保有枠: {slot_usage}",
@@ -413,6 +453,8 @@ def build_exit_detail(
     board_dynamic_trailing_tier: Optional[str] = None,
     board_dynamic_trailing_activate_pct: Optional[float] = None,
     board_dynamic_trailing_giveback_frac: Optional[float] = None,
+    exit_time: Optional[str] = None,
+    name_map: Optional[Mapping[str, str]] = None,
 ) -> str:
     yen = resolve_pnl_yen_100(
         entry_price=entry_price,
@@ -420,8 +462,14 @@ def build_exit_detail(
         side=side,
         pnl_yen_100=pnl_yen_100,
     )
+    display = format_symbol_display(symbol, name_map=name_map)
     lines = [
-        f"銘柄: {symbol}",
+        f"銘柄: {display}",
+    ]
+    if exit_time:
+        lines.append(f"EXIT時刻: {format_time_hms_jst(exit_time)}")
+    lines.extend(
+        [
         f"ENTRY価格: {_fmt_num(entry_price)}",
         f"EXIT価格: {_fmt_num(exit_price)}",
         format_exit_pnl_line(pnl_pct, yen),
@@ -429,7 +477,8 @@ def build_exit_detail(
         f"最大逆行 MAE: {_fmt_num(mae_pct)}%",
         f"保有時間: {int(round(hold_minutes))}分",
         f"EXIT理由: {humanize_exit_reason(exit_reason)}",
-    ]
+        ]
+    )
     if (
         "trailing_mfe" in str(exit_reason or "")
         and board_dynamic_trailing_tier
@@ -659,6 +708,22 @@ def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> li
             lines.append(f"status={status}")
 
     live_trans = summary.get("live_config_transition_shadow")
+    if summary.get("high_drift_pullback_guard_enabled"):
+        lines.append(
+            "HighDriftPullback Guard: "
+            f"reject={summary.get('high_drift_pullback_reject_count', 0)}"
+        )
+    if summary.get("no_progress_exit_enabled"):
+        lines.append(
+            "NoProgress Exit: "
+            f"count={summary.get('no_progress_exit_count', 0)}"
+        )
+    if summary.get("pullback_misread_dynamic40_guard_enabled"):
+        lines.append(
+            "VWAPPullback Guard: "
+            f"reject={summary.get('pullback_misread_dynamic40_reject_count', 0)}"
+        )
+
     if isinstance(live_trans, Mapping):
         lines.append("LiveConfig Transition Shadow:")
         if live_trans.get("current_equity") is not None:

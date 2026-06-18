@@ -25,6 +25,7 @@ AM_REFRESH_TIME = "10:00"
 PM_REFRESH_TIME = "14:30"
 FOCUS_EXCLUDE_SYMBOL = "5856.T"
 MAX_OPEN_SYMBOLS_CAP3 = 3
+MAX_CONCURRENT_FOR_INTRADAY_REFRESH = 5
 
 REFRESH_CSV_FIELDS = (
     "symbol",
@@ -338,12 +339,33 @@ def check_intraday_refresh_policy(
     open_symbols_count: int,
     price_risk_mode: bool,
     entry_guard_enabled: bool,
+    position_cap_mode: bool = False,
+    same_symbol_open_policy: str = "",
+    paper_only: bool = True,
+    order_enabled: bool = False,
 ) -> dict[str, Any]:
     issues: list[str] = []
+    runtime_guard = {
+        "max_concurrent_positions": int(max_concurrent_positions),
+        "position_cap_mode": bool(position_cap_mode),
+        "same_symbol_open_policy": str(same_symbol_open_policy or ""),
+        "paper_only": bool(paper_only),
+        "order_enabled": bool(order_enabled),
+        "max_concurrent_limit": MAX_CONCURRENT_FOR_INTRADAY_REFRESH,
+    }
     if not refresh_enabled:
-        return {"ok": True, "skipped": True, "issues": []}
-    if max_concurrent_positions > 3:
-        issues.append("refresh_requires_max_concurrent_lte_3")
+        return {"ok": True, "skipped": True, "issues": [], "runtime_guard": runtime_guard}
+    if max_concurrent_positions > MAX_CONCURRENT_FOR_INTRADAY_REFRESH:
+        issues.append("refresh_requires_max_concurrent_lte_5")
+    if not position_cap_mode:
+        issues.append("refresh_requires_position_cap_mode")
+    policy = str(same_symbol_open_policy or "").strip().lower()
+    if policy != "no_overlap_replace":
+        issues.append("refresh_requires_no_overlap_replace_policy")
+    if not paper_only:
+        issues.append("refresh_requires_paper_only")
+    if order_enabled:
+        issues.append("refresh_requires_order_disabled")
     if open_symbols_count > max_concurrent_positions:
         issues.append("open_symbols_exceed_cap")
     if register_count > TOTAL_SLOTS:
@@ -352,4 +374,4 @@ def check_intraday_refresh_policy(
         issues.append("refresh_requires_price_risk_universe_mode")
     if not entry_guard_enabled:
         issues.append("refresh_requires_entry_price_risk_guard")
-    return {"ok": len(issues) == 0, "issues": issues}
+    return {"ok": len(issues) == 0, "issues": issues, "runtime_guard": runtime_guard}

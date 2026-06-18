@@ -20,7 +20,7 @@ from research.equity_curve_shadow import (
     EquityCurveCapState,
     build_daily_equity_rows,
     compute_scenario_metrics,
-    load_period_trades,
+    load_canonical_live_config_trades,
     pnl_for_actual_fixed_stop,
     pnl_for_dynamic_stop_risk_1p0,
 )
@@ -80,7 +80,7 @@ def resolve_policy_band(current_equity: float) -> dict[str, Any]:
     if current_equity < TRANSITION_EQUITY:
         return {
             "active_policy_band": "1500k",
-            "cap": 3,
+            "cap": 5,
             "stop_policy": "fixed_stop_1p2",
         }
     return {
@@ -265,7 +265,7 @@ def simulate_auto_transition(
     spec = {**FIXED_SPEC, "leverage_limit": leverage, "sizing": "fixed_100_only"}
     state = TransitionEquityCurveCapState(
         scenario_id=SCENARIO_ID,
-        max_concurrent_positions=3,
+        max_concurrent_positions=5,
         spec=spec,
         initial_equity=float(starting_equity),
         equity_floor=float(starting_equity) * 0.5,
@@ -353,7 +353,7 @@ def run_transition_shadow(
     day: Optional[str] = None,
 ) -> dict[str, Any]:
     day = day or datetime.now(JST).strftime("%Y%m%d")
-    trades, pop_meta = load_period_trades(repo_root, period_start=PERIOD_START)
+    trades, pop_meta = load_canonical_live_config_trades(repo_root, period_start=PERIOD_START)
     period_days = list(pop_meta.get("period_days") or [])
     last_run: dict[str, Any] = {"day": day}
 
@@ -398,7 +398,7 @@ def run_transition_shadow(
 
     note = (
         "Forward shadow logging only; Runtime/Universe/Entry/Exit/YAML unchanged. "
-        "Auto-transition policy: equity<2M → CAP3/fixed_stop; equity>=2M → CAP5/dynamic_stop."
+        "Auto-transition policy: equity<2M → CAP5/fixed_stop; equity>=2M → CAP5/dynamic_stop."
     )
 
     paths = LiveConfigAutoTransitionShadow(repo_root=repo_root, reports_dir=reports_dir).paths()
@@ -416,7 +416,7 @@ def run_transition_shadow(
             "leverage": LEVERAGE,
             "shares": SHARES,
             "transition_equity_threshold": TRANSITION_EQUITY,
-            "band_1500k": {"cap": 3, "stop_policy": "fixed_stop_1p2"},
+            "band_1500k": {"cap": 5, "stop_policy": "fixed_stop_1p2"},
             "band_2000k_plus": {"cap": 5, "stop_policy": "dynamic_stop_risk_1p0"},
         },
         "population": pop_meta,

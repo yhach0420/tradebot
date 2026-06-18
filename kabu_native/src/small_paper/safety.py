@@ -133,12 +133,12 @@ def check_quality_threshold(config: SmallPaperPilotConfig) -> SafetyCheck:
 
 
 def check_max_concurrent(config: SmallPaperPilotConfig) -> SafetyCheck:
-    ok = config.max_concurrent_positions <= 3
+    ok = config.max_concurrent_positions <= 5
     return SafetyCheck(
         "max_concurrent_positions",
         ok,
         f"max_concurrent_positions={config.max_concurrent_positions}",
-        {"max": config.max_concurrent_positions, "required_max": 3},
+        {"max": config.max_concurrent_positions, "required_max": 5},
     )
 
 
@@ -568,7 +568,7 @@ def check_fade_hybrid_shadow_trial_config(config: SmallPaperPilotConfig) -> Safe
             {"structural_exit_policy": policy},
         )
     trial_ok = config.policy_trial and (config.policy_label or "").endswith("_trial")
-    cap_ok = int(config.max_concurrent_positions) == 3
+    cap_ok = int(config.max_concurrent_positions) == 5
     order_ok = not config.order_enabled
     paper_ok = config.paper_only
     shadow_ok = bool(getattr(config, "shadow_only", False))
@@ -578,7 +578,7 @@ def check_fade_hybrid_shadow_trial_config(config: SmallPaperPilotConfig) -> Safe
     if not trial_ok:
         msgs.append("policy_trial=true and policy_label *_trial required")
     if not cap_ok:
-        msgs.append("max_concurrent_positions must be 3")
+        msgs.append("max_concurrent_positions must be 5")
     if not order_ok:
         msgs.append("order_enabled must be false")
     if not paper_ok:

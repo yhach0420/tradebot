@@ -35,8 +35,9 @@ from small_paper.discord_message_builder import (
     build_universe_screening_overview,
     split_watch_symbols_discord_fields,
     format_slot_usage,
+    format_time_hms_jst,
 )
-from small_paper.discord_symbol_names import get_cached_symbol_name_map
+from small_paper.discord_symbol_names import format_symbol_display, get_cached_symbol_name_map
 from small_paper.discord_ux_session import DiscordUxSessionStats
 
 log = logging.getLogger("kabu_native.small_paper.discord")
@@ -64,7 +65,7 @@ class SmallPaperDiscordConfig:
     entry_deferred_daily_max: int = 50
     send_universe_refresh: bool = True
     send_daily_summary: bool = True
-    max_concurrent_positions: int = 3
+    max_concurrent_positions: int = 5
     position_cap_mode: bool = False
     heartbeat_min: float = 30.0
     webhook_env: str = _LEGACY_WEBHOOK_ENV
@@ -323,6 +324,9 @@ class SmallPaperDiscordNotifier:
         except (TypeError, ValueError):
             v2 = None
         slot = format_slot_usage(open_slots, self._max_slots())
+        name_map = get_cached_symbol_name_map()
+        display = format_symbol_display(sym, name_map=name_map)
+        event_time = str(event.get("event_time") or "")
         detail = build_entry_detail(
             symbol=sym,
             entry_price=entry_f,
@@ -331,14 +335,16 @@ class SmallPaperDiscordNotifier:
             entry_score_v2=v2,
             data=merged,
             score5_candidate_ordinal=score5_candidate_ordinal,
+            name_map=name_map,
+            entry_time=event_time,
         )
         ok = self._post(
             event_tag="ENTRY",
-            title_line=f"【ENTRY】 {sym}",
+            title_line=f"【ENTRY】 {display}",
             fields=[
                 {"name": "詳細", "value": detail[:1020], "inline": False},
                 {"name": "session", "value": session_bucket, "inline": True},
-                {"name": "時刻", "value": str(event.get("event_time", ""))[:40], "inline": True},
+                {"name": "時刻", "value": format_time_hms_jst(event_time), "inline": True},
             ],
             color=0x2F855A,
             dedupe_key=f"entry|{sym}|{event.get('message_index')}",
@@ -378,20 +384,23 @@ class SmallPaperDiscordNotifier:
         if score5_candidate_ordinal is not None:
             merged["score5_candidate_ordinal"] = score5_candidate_ordinal
         cap = self._max_slots()
+        name_map = get_cached_symbol_name_map()
+        display = format_symbol_display(sym, name_map=name_map)
         detail = build_entry_cap_blocked_detail(
             symbol=sym,
             entry_score_v2=v2,
             data=merged,
             active_positions=int(open_slots),
             position_cap=cap,
+            name_map=name_map,
         )
-        event_time = str(event.get("event_time") or "")[:40]
+        event_time = str(event.get("event_time") or "")
         ok = self._post(
             event_tag="CAP BLOCKED",
-            title_line=sym,
+            title_line=display,
             fields=[
                 {"name": "詳細", "value": detail[:1020], "inline": False},
-                {"name": "時刻", "value": event_time or "—", "inline": True},
+                {"name": "時刻", "value": format_time_hms_jst(event_time), "inline": True},
             ],
             color=0xDD6B20,
             dedupe_key=f"cap_blocked|{sym}",
@@ -559,6 +568,11 @@ class SmallPaperDiscordNotifier:
             pnl_yen_100 = float(yen_raw) if yen_raw is not None else None
         except (TypeError, ValueError):
             pnl_yen_100 = None
+        name_map = get_cached_symbol_name_map()
+        display = format_symbol_display(sym, name_map=name_map)
+        exit_time = str(
+            context.get("exit_time") or context.get("event_time") or context.get("timestamp") or ""
+        )
         detail = build_exit_detail(
             symbol=sym,
             entry_price=entry_px,
@@ -580,6 +594,8 @@ class SmallPaperDiscordNotifier:
             board_dynamic_trailing_giveback_frac=context.get(
                 "board_dynamic_trailing_giveback_frac"
             ),
+            exit_time=exit_time,
+            name_map=name_map,
         )
         if self.cfg.position_cap_mode:
             detail += "\nExit source: structural_observer"
@@ -595,7 +611,7 @@ class SmallPaperDiscordNotifier:
         ]
         return self._post(
             event_tag="EXIT",
-            title_line=f"【EXIT】 {sym}",
+            title_line=f"【EXIT】 {display}",
             fields=fields,
             color=0xC05621,
             dedupe_key=f"exit|{sym}|{reason}|{context.get('exit_time', '')}",
@@ -975,6 +991,7 @@ def build_session_summary_extras(
                 ),
                 "official_exit_count": observer_stats.get("official_exit_count", 0),
                 "session_end_exit_count": observer_stats.get("session_end_exit_count", 0),
+                "no_progress_exit_count": observer_stats.get("no_progress_exit_count", 0),
             }
         )
     return out
@@ -1057,4 +1074,5 @@ def observer_tracker_config_from_pilot(config: Any) -> Any:
         structural_exit_policy=policy,
         price_momentum_fade_ratio=float(getattr(config, "price_momentum_fade_ratio", 0.85) or 0.85),
         live_session_end=str(getattr(config, "live_session_end", "15:30")),
+        no_progress_exit_enabled=bool(getattr(config, "no_progress_exit_enabled", False)),
     )

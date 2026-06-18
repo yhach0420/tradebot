@@ -71,9 +71,13 @@ def _compute_pnl_yen_100(row: Mapping[str, Any]) -> float:
 
 def resolve_kabu_root(repo_root: Path) -> Path:
     repo_root = repo_root.resolve()
+    nested = repo_root / "kabu_native"
+    if nested.is_dir() and (nested / "results").is_dir():
+        # Monorepo layout: tradebotfile/ may also have a legacy results/ tree.
+        if (nested / "results" / "reports").is_dir() or (nested / "results" / "small_paper").is_dir():
+            return nested
     if (repo_root / "results").is_dir():
         return repo_root
-    nested = repo_root / "kabu_native"
     if nested.is_dir() and (nested / "results").is_dir():
         return nested
     return nested if nested.is_dir() else repo_root

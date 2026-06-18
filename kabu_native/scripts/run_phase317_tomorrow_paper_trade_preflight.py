@@ -377,6 +377,10 @@ def _check_am_pm_refresh(config_path: Path, day_stamp: str) -> PreflightCheck:
         open_symbols_count=0,
         price_risk_mode=True,
         entry_guard_enabled=bool(getattr(cfg, "entry_price_risk_guard_enabled", False)),
+        position_cap_mode=bool(getattr(cfg, "position_cap_mode", False)),
+        same_symbol_open_policy=str(getattr(cfg, "same_symbol_open_policy", "") or ""),
+        paper_only=bool(cfg.paper_only),
+        order_enabled=bool(cfg.order_enabled),
     )
 
     state = make_state(
@@ -419,6 +423,11 @@ def _check_am_pm_refresh(config_path: Path, day_stamp: str) -> PreflightCheck:
         else "AM/PM refresh may block runner",
         {
             "refresh_policy": pol,
+            "max_concurrent_positions": int(cfg.max_concurrent_positions),
+            "position_cap_mode": bool(getattr(cfg, "position_cap_mode", False)),
+            "same_symbol_open_policy": str(getattr(cfg, "same_symbol_open_policy", "") or ""),
+            "order_enabled": bool(cfg.order_enabled),
+            "paper_only": bool(cfg.paper_only),
             "config_safety_ok": cfg_check.get("ok"),
             "config_safety_issues": cfg_check.get("issues"),
             "intraday_refresh_issue": refresh_issue,

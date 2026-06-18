@@ -76,6 +76,7 @@ STRUCTURE_EXIT_REASONS = frozenset(
         "vwap_break_exit",
         "mfe_giveback_exit",
         "trailing_mfe_exit",
+        "no_progress_exit",
         *_FADE_WATCH_EXIT_REASONS,
         *_FADE_HYBRID_EXIT_REASONS,
     }
@@ -87,6 +88,7 @@ OFFICIAL_STRUCTURAL_EXIT_REASONS = frozenset(
         "take_exit",
         "session_end",
         "overlap_replaced_review",
+        "no_progress_exit",
         *STRUCTURE_EXIT_REASONS,
         "morning_session_close",
         "afternoon_session_close",
@@ -206,6 +208,7 @@ def simulate_structural_policy(
     *,
     allow_session_end: bool = True,
     entry_imbalance_percentile: Optional[float] = None,
+    entry_ts_epoch: Optional[float] = None,
 ) -> Optional[tuple[float, str]]:
     """Return (pnl_pct, exit_reason) when policy fires; None if still open and session_end disallowed."""
     if not ticks:
@@ -231,6 +234,10 @@ def simulate_structural_policy(
 
         if px <= stop:
             return pnl, "stop_hit"
+
+        elapsed = 0.0
+        if entry_ts_epoch is not None:
+            elapsed = max(0.0, float(t.get("ts_epoch") or 0) - float(entry_ts_epoch))
 
         if policy == POLICY_STRUCTURAL_OBSERVER_V1:
             continue
@@ -261,6 +268,11 @@ def simulate_structural_policy(
             if peak_pnl > 0 and pnl <= peak_pnl - TRAILING_GIVEBACK_PCT:
                 return pnl, "mfe_giveback_exit"
         if policy == POLICY_COMBINED_STRUCTURAL_EXIT_V1_TRAILING_MFE_SHADOW:
+            if bool(getattr(cfg, "no_progress_exit_enabled", False)):
+                from small_paper.no_progress_exit import no_progress_exit_triggered
+
+                if no_progress_exit_triggered(elapsed, peak_pnl, pnl):
+                    return pnl, "no_progress_exit"
             # Phase332: board-dynamic trailing (stop_hit handled above; no fade exits).
             if trailing_mfe_exit_triggered(
                 peak_pnl=peak_pnl,
@@ -292,6 +304,7 @@ def combined_exit_signal_on_latest_tick(
     cfg: Any,
     *,
     entry_imbalance_percentile: Optional[float] = None,
+    entry_ts_epoch: Optional[float] = None,
 ) -> Optional[tuple[float, str, float]]:
     """Incremental combined check; does not treat hold as session_end."""
     policy = str(
@@ -304,6 +317,7 @@ def combined_exit_signal_on_latest_tick(
         cfg,
         allow_session_end=False,
         entry_imbalance_percentile=entry_imbalance_percentile,
+        entry_ts_epoch=entry_ts_epoch,
     )
     if result is None:
         return None

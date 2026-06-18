@@ -106,6 +106,8 @@ class SmallPaperPilotConfig:
     entry_price_risk_guard_max_tick_ratio_pct: float = 5.0
     entry_price_risk_guard_apply_mode: str = "reject_entry"
     enable_pullback_misread_dynamic40_guard: bool = True
+    high_drift_guard_enabled: bool = False
+    no_progress_exit_enabled: bool = False
     enable_near_day_high_low_momentum_dynamic40_guard: bool = True
     low_liquidity_shadow_enabled: bool = False
     low_liquidity_shadow_trading_value_min: float = 1e8
@@ -163,6 +165,12 @@ class SmallPaperPilotConfig:
             )
         if self.enable_pullback_misread_dynamic40_guard:
             out["enable_pullback_misread_dynamic40_guard"] = True
+        if self.high_drift_guard_enabled:
+            out["high_drift_guard_enabled"] = True
+        if self.no_progress_exit_enabled:
+            out["no_progress_exit_enabled"] = True
+        if not self.enable_pullback_misread_dynamic40_guard:
+            out["legacy_vwap_pullback_guard_enabled"] = False
         if self.enable_near_day_high_low_momentum_dynamic40_guard:
             out["enable_near_day_high_low_momentum_dynamic40_guard"] = True
         if self.low_liquidity_shadow_enabled:
@@ -212,6 +220,7 @@ class SmallPaperPilotConfig:
         suitability = None
         price_guard = None
         pullback_guard = None
+        high_drift_guard = None
         near_day_momentum_guard = None
         if self.entry_price_risk_guard_enabled:
             from small_paper.entry_price_risk_guard import build_entry_price_risk_guard_state
@@ -223,6 +232,12 @@ class SmallPaperPilotConfig:
             )
 
             pullback_guard = build_pullback_misread_dynamic40_guard_state(self)
+        if self.high_drift_guard_enabled:
+            from small_paper.high_drift_pullback_entry_guard import (
+                build_high_drift_pullback_guard_state,
+            )
+
+            high_drift_guard = build_high_drift_pullback_guard_state(self)
         if self.enable_near_day_high_low_momentum_dynamic40_guard:
             from small_paper.near_day_high_low_momentum_dynamic40_entry_guard import (
                 build_near_day_high_low_momentum_dynamic40_guard_state,
@@ -255,6 +270,7 @@ class SmallPaperPilotConfig:
             daytrade_suitability=suitability,
             entry_price_risk_guard=price_guard,
             pullback_misread_dynamic40_guard=pullback_guard,
+            high_drift_pullback_guard=high_drift_guard,
             near_day_high_low_momentum_dynamic40_guard=near_day_momentum_guard,
         )
 
@@ -381,8 +397,13 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
             raw.get("entry_price_risk_guard_apply_mode", "reject_entry")
         ),
         enable_pullback_misread_dynamic40_guard=bool(
-            raw.get("enable_pullback_misread_dynamic40_guard", True)
+            raw.get(
+                "legacy_vwap_pullback_guard_enabled",
+                raw.get("enable_pullback_misread_dynamic40_guard", True),
+            )
         ),
+        high_drift_guard_enabled=bool(raw.get("high_drift_guard_enabled", False)),
+        no_progress_exit_enabled=bool(raw.get("no_progress_exit_enabled", False)),
         enable_near_day_high_low_momentum_dynamic40_guard=bool(
             raw.get("enable_near_day_high_low_momentum_dynamic40_guard", True)
         ),

@@ -23,6 +23,7 @@ from research.market_sector_heat import (
 )
 from research.phase374_dynamic40_universe_quality_review import resolve_pnl_yen_100
 from research.position_exposure_audit import _percentile, _win_rate
+from research.structural_trade_normalize import normalize_structural_trade_row, resolve_kabu_root
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -186,32 +187,261 @@ def shadow_pnl_yen(
     return round(entry_price * shares * pct / 100.0, 2)
 
 
+def _extract_day_from_entry_time(entry_time: str) -> Optional[str]:
+    text = str(entry_time or "").strip()
+    if len(text) < 10:
+        return None
+    compact = text[:10].replace("-", "")
+    return compact if len(compact) == 8 and compact.isdigit() else None
+
+
+def normalize_trade_row_for_period_entry(
+    row: Mapping[str, Any],
+    *,
+    day: str,
+) -> dict[str, Any]:
+    trade = dict(row)
+    entry_time = (
+        str(trade.get("entry_time") or "").strip()
+        or str(trade.get("open_time") or "").strip()
+        or str(trade.get("timestamp") or "").strip()
+    )
+    exit_time = (
+        str(trade.get("exit_time") or "").strip()
+        or str(trade.get("close_time") or "").strip()
+    )
+    resolved_day = str(trade.get("day") or day or "").strip() or (_extract_day_from_entry_time(entry_time) or "")
+    sym = _norm_symbol(
+        trade.get("symbol")
+        or trade.get("Symbol")
+        or trade.get("code")
+        or ""
+    )
+    trade["day"] = resolved_day
+    trade["symbol"] = sym
+    if entry_time:
+        trade["entry_time"] = entry_time
+    if exit_time:
+        trade["exit_time"] = exit_time
+    return trade
+
+
+def build_structural_entry_price_index(repo_root: Path) -> dict[tuple[str, str, str], float]:
+    """Map (day, symbol, entry_time) -> entry_price from session structural_trades.csv."""
+    import json as _json
+
+    kabu = resolve_kabu_root(repo_root)
+    roots = [
+        kabu / "results" / "small_paper",
+        kabu / "results" / "paper_trade",
+    ]
+    index: dict[tuple[str, str, str], float] = {}
+    seen_paths: set[str] = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for csv_path in sorted(root.rglob("structural_trades.csv")):
+            key = str(csv_path.resolve())
+            if key in seen_paths:
+                continue
+            seen_paths.add(key)
+            sess_dir = csv_path.parent
+            trade_day = sess_dir.parent.name
+            if not (trade_day.isdigit() and len(trade_day) == 8):
+                continue
+            summary_path = sess_dir / "small_paper_summary.json"
+            if summary_path.is_file():
+                try:
+                    summary = _json.loads(summary_path.read_text(encoding="utf-8"))
+                except (OSError, _json.JSONDecodeError):
+                    summary = {}
+                if str(summary.get("source") or "") == "push-replay":
+                    continue
+            session = sess_dir.name
+            try:
+                with csv_path.open(encoding="utf-8", newline="") as f:
+                    import csv
+
+                    for row in csv.DictReader(f):
+                        norm = normalize_structural_trade_row(row, day=trade_day, session=session)
+                        if norm is None:
+                            continue
+                        ep = _float(norm.get("entry_price"))
+                        if ep is None or ep <= 0:
+                            continue
+                        lookup_key = (
+                            trade_day,
+                            _norm_symbol(str(norm.get("symbol") or "")),
+                            str(norm.get("entry_time") or "").strip(),
+                        )
+                        index.setdefault(lookup_key, ep)
+            except OSError:
+                continue
+    return index
+
+
+def resolve_entry_price(
+    row: Mapping[str, Any],
+    *,
+    day: str,
+    price_index: Optional[Mapping[tuple[str, str, str], float]] = None,
+) -> Optional[float]:
+    direct = _float(row.get("entry_price")) or _float(row.get("open_price"))
+    if direct is not None and direct > 0:
+        return direct
+
+    close_px = _float(row.get("close_price")) or _float(row.get("exit_price"))
+    pnl_yen_100 = resolve_pnl_yen_100(dict(row))
+    pnl_pct = _float(row.get("realized_pnl_pct")) or _float(row.get("pnl_pct"))
+
+    if close_px is not None and close_px > 0 and pnl_yen_100 is not None:
+        derived = close_px - pnl_yen_100 / 100.0
+        if derived > 0:
+            return derived
+
+    if close_px is not None and close_px > 0 and pnl_pct is not None and abs(pnl_pct) > 1e-9:
+        derived = close_px / (1.0 + pnl_pct / 100.0)
+        if derived > 0:
+            return derived
+
+    if pnl_yen_100 is not None and pnl_pct is not None and abs(pnl_pct) > 1e-9:
+        derived = pnl_yen_100 / pnl_pct
+        if derived > 0:
+            return derived
+
+    if pnl_yen_100 is not None and abs(pnl_yen_100) < 1e-9 and close_px is not None and close_px > 0:
+        return close_px
+
+    if price_index is not None:
+        sym = _norm_symbol(str(row.get("symbol") or ""))
+        entry_time = str(row.get("entry_time") or "").strip()
+        if sym and entry_time:
+            looked = price_index.get((day, sym, entry_time))
+            if looked is not None and looked > 0:
+                return looked
+
+    return None
+
+
+def enrich_trades_with_entry_price(
+    trades: Sequence[Mapping[str, Any]],
+    *,
+    repo_root: Optional[Path] = None,
+    entry_price_index: Optional[Mapping[tuple[str, str, str], float]] = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Normalize trade rows and fill missing entry_price for capital simulations."""
+    price_index = entry_price_index
+    if price_index is None and repo_root is not None:
+        price_index = build_structural_entry_price_index(repo_root)
+
+    enriched: list[dict[str, Any]] = []
+    missing_entry_price = 0
+    for raw in trades:
+        row = normalize_trade_row_for_period_entry(raw, day=str(raw.get("day") or ""))
+        resolved_day = str(row.get("day") or "")
+        entry_price = resolve_entry_price(row, day=resolved_day, price_index=price_index)
+        if entry_price is not None and entry_price > 0:
+            row["entry_price"] = round(entry_price, 4)
+        else:
+            missing_entry_price += 1
+        if row.get("pnl_yen_100") is None:
+            row["pnl_yen_100"] = resolve_pnl_yen_100(row)
+        enriched.append(row)
+
+    return enriched, {
+        "missing_entry_price_count": missing_entry_price,
+        "structural_price_index_size": len(price_index or {}),
+        "enriched_trade_count": len(enriched),
+    }
+
+
+def audit_load_period_entries(
+    trades_by_day: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    period_days: Sequence[str],
+    repo_root: Optional[Path] = None,
+    entry_price_index: Optional[Mapping[tuple[str, str, str], float]] = None,
+) -> dict[str, Any]:
+    price_index = entry_price_index
+    if price_index is None and repo_root is not None:
+        price_index = build_structural_entry_price_index(repo_root)
+
+    trade_counts: dict[str, int] = {}
+    accepted_counts: dict[str, int] = {}
+    drop_reasons: dict[str, int] = {}
+    for day in period_days:
+        rows = trades_by_day.get(day) or []
+        trade_counts[day] = len(rows)
+        accepted = 0
+        for raw in rows:
+            row = normalize_trade_row_for_period_entry(raw, day=day)
+            resolved_day = str(row.get("day") or day)
+            entry_price = resolve_entry_price(row, day=resolved_day, price_index=price_index)
+            if entry_price is None or entry_price <= 0:
+                drop_reasons["missing_entry_price"] = drop_reasons.get("missing_entry_price", 0) + 1
+                continue
+            pnl_yen_100 = _float(row.get("pnl_yen_100"))
+            if pnl_yen_100 is None:
+                pnl_yen_100 = resolve_pnl_yen_100(row)
+            if pnl_yen_100 is None:
+                drop_reasons["missing_pnl_yen_100"] = drop_reasons.get("missing_pnl_yen_100", 0) + 1
+                continue
+            accepted += 1
+        accepted_counts[day] = accepted
+
+    entries = load_period_entries(
+        trades_by_day,
+        period_days=period_days,
+        repo_root=repo_root,
+        entry_price_index=price_index,
+    )
+    return {
+        "period_days": list(period_days),
+        "period_day_count": len(period_days),
+        "trade_counts_by_day": trade_counts,
+        "accepted_counts_by_day": accepted_counts,
+        "drop_reasons": drop_reasons,
+        "base_entry_count": len(entries),
+        "structural_price_index_size": len(price_index or {}),
+    }
+
+
 def load_period_entries(
     trades_by_day: Mapping[str, Sequence[Mapping[str, Any]]],
     *,
     period_days: Sequence[str],
+    repo_root: Optional[Path] = None,
+    entry_price_index: Optional[Mapping[tuple[str, str, str], float]] = None,
 ) -> list[dict[str, Any]]:
+    price_index = entry_price_index
+    if price_index is None and repo_root is not None:
+        price_index = build_structural_entry_price_index(repo_root)
+
     entries: list[dict[str, Any]] = []
     for day in period_days:
-        for row in trades_by_day.get(day) or []:
-            entry_price = _float(row.get("entry_price"))
+        for raw in trades_by_day.get(day) or []:
+            row = normalize_trade_row_for_period_entry(raw, day=day)
+            resolved_day = str(row.get("day") or day)
+            entry_price = resolve_entry_price(row, day=resolved_day, price_index=price_index)
             if entry_price is None or entry_price <= 0:
                 continue
             pnl_yen_100 = _float(row.get("pnl_yen_100"))
             if pnl_yen_100 is None:
-                pnl_yen_100 = resolve_pnl_yen_100(dict(row))
-            actual_pnl_pct = _float(row.get("realized_pnl_pct"))
+                pnl_yen_100 = resolve_pnl_yen_100(row)
+            if pnl_yen_100 is None:
+                continue
+            actual_pnl_pct = _float(row.get("realized_pnl_pct")) or _float(row.get("pnl_pct"))
             if actual_pnl_pct is None:
                 actual_pnl_pct = pnl_yen_100 / (entry_price * SHARES) * 100.0
             entries.append(
                 {
-                    "day": day,
+                    "day": resolved_day,
                     "symbol": _norm_symbol(str(row.get("symbol") or "")),
                     "entry_price": round(entry_price, 4),
                     "shares": SHARES,
                     "pnl_yen_100_original": round(pnl_yen_100, 2),
                     "actual_pnl_pct": round(actual_pnl_pct, 6),
-                    "mae_pct": _float(row.get("mae_pct")),
+                    "mae_pct": _float(row.get("mae_pct")) or _float(row.get("max_adverse_excursion_pct")),
                 }
             )
     return entries
@@ -548,7 +778,7 @@ def run_equity_dynamic_stop_shadow(
         trades_by_day[day] = norm_rows
 
     period_days = resolve_period_days(trades_by_day)
-    base_entries = load_period_entries(trades_by_day, period_days=period_days)
+    base_entries = load_period_entries(trades_by_day, period_days=period_days, repo_root=repo_root)
     entry_rows = build_entry_level_rows(base_entries)
     summary_rows = aggregate_summary_rows(entry_rows, base_entries)
     verdict = build_verdict(

@@ -553,11 +553,13 @@ def _intraday_refresh_preflight(state: DailyRunnerState, cfg_check: dict[str, An
         open_symbols_count=0,
         price_risk_mode=True,
         entry_guard_enabled=bool(getattr(cfg, "entry_price_risk_guard_enabled", False)),
+        position_cap_mode=bool(getattr(cfg, "position_cap_mode", False)),
+        same_symbol_open_policy=str(getattr(cfg, "same_symbol_open_policy", "") or ""),
+        paper_only=bool(cfg.paper_only),
+        order_enabled=bool(cfg.order_enabled),
     )
     if not pol.get("ok"):
         return "; ".join(pol.get("issues") or [])
-    if int(cfg.max_concurrent_positions) > 3:
-        return "intraday_refresh_requires_cap3"
     return None
 
 

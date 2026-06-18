@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
-from research.equity_curve_shadow import PERIOD_START, load_period_trades
+from research.equity_curve_shadow import PERIOD_START, load_canonical_live_config_trades
 from research.market_sector_heat import _write_csv
 from research.phase269_portfolio_configuration_optimization import (
     SHARES,
@@ -35,7 +35,7 @@ LIVE_CONFIG_CANDIDATES: tuple[dict[str, Any], ...] = (
         "starting_equity": 1_500_000,
         "leverage": 2.0,
         "shares": 100,
-        "cap": 3,
+        "cap": 5,
         "stop_policy": "fixed_stop_1p2",
     },
     {
@@ -304,7 +304,7 @@ def run_forward_shadow_logger(
     day = day or datetime.now(JST).strftime("%Y%m%d")
     paths = LiveConfigForwardShadowLogger(repo_root=repo_root, reports_dir=reports_dir).paths()
 
-    trades, pop_meta = load_period_trades(repo_root, period_start=PERIOD_START)
+    trades, pop_meta = load_canonical_live_config_trades(repo_root, period_start=PERIOD_START)
     period_days = list(pop_meta.get("period_days") or [])
 
     last_run: dict[str, Any] = {"day": day}

@@ -25,6 +25,7 @@ REJECT_SYMBOL_COOLDOWN = "symbol_cooloff"
 REJECT_DAYTRADE_SUITABILITY = "daytrade_suitability"
 REJECT_ENTRY_PRICE_RISK_GUARD = "entry_price_risk_guard"
 REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD = "pullback_misread_dynamic40_guard"
+REJECT_HIGH_DRIFT_PULLBACK = "high_drift_pullback"
 REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD = (
     "near_day_high_low_momentum_dynamic40_guard"
 )
@@ -120,6 +121,12 @@ class GateDecision:
     pullback_misread_dynamic40_entry_vwap_dev_pct: Optional[float] = None
     pullback_misread_dynamic40_universe_slot: str = ""
     pullback_misread_dynamic40_universe_bucket: str = ""
+    high_drift_pullback_entry_rise_5min_pct: Optional[float] = None
+    high_drift_pullback_entry_rise_10min_pct: Optional[float] = None
+    high_drift_pullback_entry_rise_15min_pct: Optional[float] = None
+    high_drift_pullback_day_high_distance_pct: Optional[float] = None
+    high_drift_pullback_universe_slot: str = ""
+    high_drift_pullback_universe_bucket: str = ""
     near_day_high_low_momentum_dynamic40_day_high_distance_pct: Optional[float] = None
     near_day_high_low_momentum_dynamic40_entry_momentum_score: Optional[float] = None
     near_day_high_low_momentum_dynamic40_universe_slot: str = ""
@@ -160,6 +167,7 @@ class ExposureGate:
         daytrade_suitability: Optional[Any] = None,
         entry_price_risk_guard: Optional[Any] = None,
         pullback_misread_dynamic40_guard: Optional[Any] = None,
+        high_drift_pullback_guard: Optional[Any] = None,
         near_day_high_low_momentum_dynamic40_guard: Optional[Any] = None,
     ) -> None:
         self.config = config
@@ -169,6 +177,7 @@ class ExposureGate:
         self.daytrade_suitability = daytrade_suitability
         self.entry_price_risk_guard = entry_price_risk_guard
         self.pullback_misread_dynamic40_guard = pullback_misread_dynamic40_guard
+        self.high_drift_pullback_guard = high_drift_pullback_guard
         self.near_day_high_low_momentum_dynamic40_guard = (
             near_day_high_low_momentum_dynamic40_guard
         )
@@ -277,6 +286,31 @@ class ExposureGate:
                     pullback_misread_dynamic40_entry_vwap_dev_pct=pb.entry_vwap_dev_pct,
                     pullback_misread_dynamic40_universe_slot=pb.universe_slot,
                     pullback_misread_dynamic40_universe_bucket=pb.universe_bucket,
+                )
+
+        if self.high_drift_pullback_guard is not None:
+            hd = self.high_drift_pullback_guard.check(trade)
+            if hd.blocked:
+                self.high_drift_pullback_guard.reject_count += 1
+                sym = str(trade.get("symbol") or "")
+                if sym:
+                    self.high_drift_pullback_guard.rejected_symbols.add(sym)
+                q_pre = continuation_quality_score(trade)
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_HIGH_DRIFT_PULLBACK,
+                    continuation_quality_score=q_pre,
+                    quality_tier=quality_tier(
+                        q_pre,
+                        min_top=self.config.min_continuation_quality,
+                        min_above=self.config.min_above_median_quality,
+                    ),
+                    high_drift_pullback_entry_rise_5min_pct=hd.entry_rise_5min_pct,
+                    high_drift_pullback_entry_rise_10min_pct=hd.entry_rise_10min_pct,
+                    high_drift_pullback_entry_rise_15min_pct=hd.entry_rise_15min_pct,
+                    high_drift_pullback_day_high_distance_pct=hd.day_high_distance_pct,
+                    high_drift_pullback_universe_slot=hd.universe_slot,
+                    high_drift_pullback_universe_bucket=hd.universe_bucket,
                 )
 
         if self.near_day_high_low_momentum_dynamic40_guard is not None:

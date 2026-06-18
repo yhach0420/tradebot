@@ -115,6 +115,7 @@ EVENT_FIELDS = (
     "vwap_shadow_reject_candidate",
     "vwap_shadow_reject_reason",
     "trailing_mfe_exit",
+    "no_progress_exit",
     "shadow_quality_score",
     "shadow_quality_rank",
     "current_quality_rank",
@@ -152,6 +153,9 @@ EVENT_FIELDS = (
     "entry_momentum_score",
     "near_day_high_low_momentum_dynamic40_guard_blocked",
     "near_day_high_low_momentum_dynamic40_guard_candidate",
+    "high_drift_pullback_guard_blocked",
+    "high_drift_pullback_guard_candidate",
+    "entry_rise_15min_pct",
     "pullback_misread_guard_shadow_blocked",
     "pullback_misread_shadow_pnl_yen_100",
     "pullback_misread_shadow_delta_yen",
@@ -546,6 +550,8 @@ class _LiveRunState:
     near_day_high_low_momentum_dynamic40_reject_symbols: set[str] = field(
         default_factory=set
     )
+    high_drift_pullback_reject_count: int = 0
+    high_drift_pullback_reject_symbols: set[str] = field(default_factory=set)
     low_liquidity_shadow_reject_count: int = 0
     intraday_refresh_done: bool = False
     intraday_refresh_count: int = 0
@@ -931,6 +937,23 @@ def _near_day_high_low_momentum_dynamic40_guard_summary_fields(
     return out
 
 
+def _high_drift_pullback_guard_summary_fields(
+    gate: ExposureGate,
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    guard = getattr(gate, "high_drift_pullback_guard", None)
+    if guard is None:
+        return {
+            "high_drift_pullback_guard_enabled": False,
+            "high_drift_pullback_reject_count": 0,
+            "high_drift_pullback_reject_symbols": [],
+        }
+    out = guard.summary_fields()
+    out["high_drift_pullback_reject_count"] = state.high_drift_pullback_reject_count
+    out["high_drift_pullback_reject_symbols"] = sorted(state.high_drift_pullback_reject_symbols)
+    return out
+
+
 def _pullback_misread_entry_guard_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
     counters = getattr(state, "pullback_misread_entry_guard_shadow", None)
     if counters is None:
@@ -1122,7 +1145,8 @@ def _enrich_trade_for_entry_guards(
         attach_universe_fields(trade, meta)
     pullback_guard = getattr(ctx.gate, "pullback_misread_dynamic40_guard", None)
     near_day_guard = getattr(ctx.gate, "near_day_high_low_momentum_dynamic40_guard", None)
-    if pullback_guard is None and near_day_guard is None:
+    high_drift_guard = getattr(ctx.gate, "high_drift_pullback_guard", None)
+    if pullback_guard is None and near_day_guard is None and high_drift_guard is None:
         return
     from small_paper.extended_entry_shadow import compute_entry_shadow_fields, tick_ts_from_payload
 
@@ -1133,7 +1157,12 @@ def _enrich_trade_for_entry_guards(
         entry_ts=tick_ts_from_payload(payload),
         session_momentum_samples=ctx.state.session_momentum_samples,
     )
-    for key in ("entry_rise_5min_pct", "entry_vwap_dev_pct"):
+    for key in (
+        "entry_rise_5min_pct",
+        "entry_rise_10min_pct",
+        "entry_rise_15min_pct",
+        "entry_vwap_dev_pct",
+    ):
         if shadow.get(key) is not None:
             trade[key] = shadow[key]
     if shadow.get("entry_near_day_high_pct") is not None:
@@ -1277,6 +1306,10 @@ def _execute_accepted_entry(
 
     nd_shadow = compute_near_day_high_low_momentum_guard_fields(trade)
     trade.update(nd_shadow)
+    from small_paper.high_drift_pullback_entry_guard import compute_high_drift_pullback_guard_fields
+
+    hd_shadow = compute_high_drift_pullback_guard_fields(trade)
+    trade.update(hd_shadow)
     from small_paper.board_imbalance_shadow import compute_board_imbalance_shadow_fields
 
     imb_shadow = compute_board_imbalance_shadow_fields(
@@ -1842,6 +1875,44 @@ def _process_push_payload(
                     "reject_reason": REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD,
                 }
             )
+        if decision.reason == "high_drift_pullback":
+            from small_paper.high_drift_pullback_entry_guard import (
+                LOG_EVENT_KIND as HD_LOG_EVENT_KIND,
+                REJECT_HIGH_DRIFT_PULLBACK,
+                compute_high_drift_pullback_guard_fields,
+            )
+
+            ctx.state.high_drift_pullback_reject_count += 1
+            ctx.state.high_drift_pullback_reject_symbols.add(sym)
+            hd_fields = compute_high_drift_pullback_guard_fields(trade)
+            trade.update(hd_fields)
+            rej_row.update(hd_fields)
+            rej_row["reject_reason"] = REJECT_HIGH_DRIFT_PULLBACK
+            ctx.writer.append_error(
+                {
+                    "event_kind": HD_LOG_EVENT_KIND,
+                    "symbol": sym,
+                    "entry_rise_5min_pct": getattr(
+                        decision, "high_drift_pullback_entry_rise_5min_pct", None
+                    ),
+                    "entry_rise_10min_pct": getattr(
+                        decision, "high_drift_pullback_entry_rise_10min_pct", None
+                    ),
+                    "entry_rise_15min_pct": getattr(
+                        decision, "high_drift_pullback_entry_rise_15min_pct", None
+                    ),
+                    "day_high_distance_pct": getattr(
+                        decision, "high_drift_pullback_day_high_distance_pct", None
+                    ),
+                    "universe_slot": getattr(
+                        decision, "high_drift_pullback_universe_slot", ""
+                    ),
+                    "universe_bucket": getattr(
+                        decision, "high_drift_pullback_universe_bucket", ""
+                    ),
+                    "reject_reason": REJECT_HIGH_DRIFT_PULLBACK,
+                }
+            )
         ctx.state.reject_rows.append(rej_row)
         rej = _event_from_gate(
             event_type="rejected",
@@ -2150,6 +2221,7 @@ def _build_push_replay_summary(
     base.update(_limit_up_proximity_entry_guard_shadow_summary_fields(state))
     base.update(_pullback_misread_dynamic40_guard_summary_fields(gate, state))
     base.update(_near_day_high_low_momentum_dynamic40_guard_summary_fields(gate, state))
+    base.update(_high_drift_pullback_guard_summary_fields(gate, state))
     base.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     base.update(_entry_expectancy_score_summary_fields(state))
     base.update(_observer_exit_pnl_summary_fields(state.events))
@@ -2801,6 +2873,7 @@ def _build_live_summary(
     summary.update(_limit_up_proximity_entry_guard_shadow_summary_fields(state))
     summary.update(_pullback_misread_dynamic40_guard_summary_fields(gate, state))
     summary.update(_near_day_high_low_momentum_dynamic40_guard_summary_fields(gate, state))
+    summary.update(_high_drift_pullback_guard_summary_fields(gate, state))
     summary.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     summary.update(_entry_expectancy_score_summary_fields(state))
     summary.update(_observer_exit_pnl_summary_fields(state.events))
@@ -3731,6 +3804,7 @@ def _observer_stats_dict(observer: Optional[ObserverPositionTracker]) -> Optiona
             "price_momentum_fade_exit", 0
         ),
         "momentum_fade_exit_count": s.structural_exit_reason_counts.get("momentum_fade_exit", 0),
+        "no_progress_exit_count": int(s.structural_exit_reason_counts.get("no_progress_exit", 0)),
         "price_momentum_fade_ratio": cfg.price_momentum_fade_ratio,
         "virtual_hold_expired_ignored_count": s.virtual_hold_expired_ignored_count,
         "official_exit_count": s.official_exit_count,
