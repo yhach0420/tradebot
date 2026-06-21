@@ -156,6 +156,15 @@ EVENT_FIELDS = (
     "high_drift_pullback_guard_blocked",
     "high_drift_pullback_guard_candidate",
     "entry_rise_15min_pct",
+    "entry_rise_30min_pct",
+    "weak_shape_reject_guard_blocked",
+    "weak_shape_reject_guard_candidate",
+    "weak_shape_class",
+    "late_chase_guard_blocked",
+    "late_chase_guard_candidate",
+    "day_high_minutes_from_open",
+    "minutes_since_day_high_update",
+    "high_to_now_drawdown_pct",
     "pullback_misread_guard_shadow_blocked",
     "pullback_misread_shadow_pnl_yen_100",
     "pullback_misread_shadow_delta_yen",
@@ -552,6 +561,12 @@ class _LiveRunState:
     )
     high_drift_pullback_reject_count: int = 0
     high_drift_pullback_reject_symbols: set[str] = field(default_factory=set)
+    weak_shape_reject_count: int = 0
+    weak_shape_reject_symbols: set[str] = field(default_factory=set)
+    late_chase_reject_count: int = 0
+    late_chase_reject_symbols: set[str] = field(default_factory=set)
+    board_mid_entry_count: int = 0
+    board_high_entry_count: int = 0
     low_liquidity_shadow_reject_count: int = 0
     intraday_refresh_done: bool = False
     intraday_refresh_count: int = 0
@@ -937,6 +952,47 @@ def _near_day_high_low_momentum_dynamic40_guard_summary_fields(
     return out
 
 
+def _weak_shape_reject_guard_summary_fields(
+    gate: ExposureGate,
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    guard = getattr(gate, "weak_shape_reject_guard", None)
+    if guard is None:
+        return {
+            "weak_shape_reject_enabled": False,
+            "weak_shape_reject_count": 0,
+            "weak_shape_reject_symbols": [],
+        }
+    out = guard.summary_fields()
+    out["weak_shape_reject_count"] = state.weak_shape_reject_count
+    out["weak_shape_reject_symbols"] = sorted(state.weak_shape_reject_symbols)
+    return out
+
+
+def _board_entry_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    return {
+        "board_mid_entry_count": state.board_mid_entry_count,
+        "board_high_entry_count": state.board_high_entry_count,
+    }
+
+
+def _late_chase_guard_summary_fields(
+    gate: ExposureGate,
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    guard = getattr(gate, "late_chase_guard", None)
+    if guard is None:
+        return {
+            "late_chase_guard_enabled": False,
+            "late_chase_reject_count": 0,
+            "late_chase_reject_symbols": [],
+        }
+    out = guard.summary_fields()
+    out["late_chase_reject_count"] = state.late_chase_reject_count
+    out["late_chase_reject_symbols"] = sorted(state.late_chase_reject_symbols)
+    return out
+
+
 def _high_drift_pullback_guard_summary_fields(
     gate: ExposureGate,
     state: _LiveRunState,
@@ -1146,21 +1202,31 @@ def _enrich_trade_for_entry_guards(
     pullback_guard = getattr(ctx.gate, "pullback_misread_dynamic40_guard", None)
     near_day_guard = getattr(ctx.gate, "near_day_high_low_momentum_dynamic40_guard", None)
     high_drift_guard = getattr(ctx.gate, "high_drift_pullback_guard", None)
-    if pullback_guard is None and near_day_guard is None and high_drift_guard is None:
+    weak_shape_guard = getattr(ctx.gate, "weak_shape_reject_guard", None)
+    late_chase_guard = getattr(ctx.gate, "late_chase_guard", None)
+    if (
+        pullback_guard is None
+        and near_day_guard is None
+        and high_drift_guard is None
+        and weak_shape_guard is None
+        and late_chase_guard is None
+    ):
         return
     from small_paper.extended_entry_shadow import compute_entry_shadow_fields, tick_ts_from_payload
 
+    entry_ts = tick_ts_from_payload(payload)
     shadow = compute_entry_shadow_fields(
         trade=trade,
         payload=payload,
         price_ring=ctx.symbol_price_ring.get(sym, []),
-        entry_ts=tick_ts_from_payload(payload),
+        entry_ts=entry_ts,
         session_momentum_samples=ctx.state.session_momentum_samples,
     )
     for key in (
         "entry_rise_5min_pct",
         "entry_rise_10min_pct",
         "entry_rise_15min_pct",
+        "entry_rise_30min_pct",
         "entry_vwap_dev_pct",
     ):
         if shadow.get(key) is not None:
@@ -1175,6 +1241,21 @@ def _enrich_trade_for_entry_guards(
         trade["entry_momentum_score"] = shadow["entry_momentum_continuation_score"]
     elif trade.get("momentum_continuation_score") is not None:
         trade["entry_momentum_score"] = trade.get("momentum_continuation_score")
+    if weak_shape_guard is not None:
+        from small_paper.weak_shape_reject_entry_guard import compute_day_high_timing_fields
+
+        try:
+            entry_px = float(payload.get("CurrentPrice") or trade.get("current_price") or 0)
+        except (TypeError, ValueError):
+            entry_px = 0.0
+        board_high = _as_float(payload.get("HighPrice"))
+        timing = compute_day_high_timing_fields(
+            price_ring=ctx.symbol_price_ring.get(sym, []),
+            entry_ts=entry_ts,
+            entry_px=entry_px,
+            board_high=board_high,
+        )
+        trade.update(timing)
 
 
 def _enrich_trade_for_pullback_guard(
@@ -1329,6 +1410,19 @@ def _execute_accepted_entry(
     score_fields = compute_entry_expectancy_score_fields(trade=trade)
     trade.update(score_fields)
     ctx.state.entry_expectancy_score_shadow.record_accept(score_fields)
+    from small_paper.entry_expectancy_score_shadow import _feature_token
+
+    board_tok = _feature_token("Board", trade)
+    if board_tok == "Board:mid":
+        ctx.state.board_mid_entry_count += 1
+    elif board_tok == "Board:high":
+        ctx.state.board_high_entry_count += 1
+    from small_paper.weak_shape_reject_entry_guard import compute_weak_shape_reject_guard_fields
+
+    trade.update(compute_weak_shape_reject_guard_fields(trade))
+    from small_paper.late_chase_entry_guard import compute_late_chase_guard_fields
+
+    trade.update(compute_late_chase_guard_fields(trade))
 
     slot_before = _active_cap_count(ctx)
     ctx.gate.record_accepted(trade)
@@ -1913,6 +2007,62 @@ def _process_push_payload(
                     "reject_reason": REJECT_HIGH_DRIFT_PULLBACK,
                 }
             )
+        if decision.reason == "weak_shape_reject":
+            from small_paper.weak_shape_reject_entry_guard import (
+                LOG_EVENT_KIND as WS_LOG_EVENT_KIND,
+                REJECT_WEAK_SHAPE,
+                compute_weak_shape_reject_guard_fields,
+            )
+
+            ctx.state.weak_shape_reject_count += 1
+            ctx.state.weak_shape_reject_symbols.add(sym)
+            ws_fields = compute_weak_shape_reject_guard_fields(trade)
+            trade.update(ws_fields)
+            rej_row.update(ws_fields)
+            rej_row["reject_reason"] = REJECT_WEAK_SHAPE
+            ctx.writer.append_error(
+                {
+                    "event_kind": WS_LOG_EVENT_KIND,
+                    "symbol": sym,
+                    "weak_shape_class": getattr(decision, "weak_shape_class", ""),
+                    "day_high_minutes_from_open": getattr(
+                        decision, "weak_shape_day_high_minutes_from_open", None
+                    ),
+                    "minutes_since_day_high_update": getattr(
+                        decision, "weak_shape_minutes_since_day_high_update", None
+                    ),
+                    "day_high_distance_pct": getattr(
+                        decision, "weak_shape_day_high_distance_pct", None
+                    ),
+                    "reject_reason": REJECT_WEAK_SHAPE,
+                }
+            )
+        if decision.reason == "late_chase_guard":
+            from small_paper.late_chase_entry_guard import (
+                LOG_EVENT_KIND as LC_LOG_EVENT_KIND,
+                REJECT_LATE_CHASE_GUARD,
+                compute_late_chase_guard_fields,
+            )
+
+            ctx.state.late_chase_reject_count += 1
+            ctx.state.late_chase_reject_symbols.add(sym)
+            lc_fields = compute_late_chase_guard_fields(trade)
+            trade.update(lc_fields)
+            rej_row.update(lc_fields)
+            rej_row["reject_reason"] = REJECT_LATE_CHASE_GUARD
+            ctx.writer.append_error(
+                {
+                    "event_kind": LC_LOG_EVENT_KIND,
+                    "symbol": sym,
+                    "entry_rise_10min_pct": getattr(
+                        decision, "late_chase_entry_rise_10min_pct", None
+                    ),
+                    "day_high_distance_pct": getattr(
+                        decision, "late_chase_day_high_distance_pct", None
+                    ),
+                    "reject_reason": REJECT_LATE_CHASE_GUARD,
+                }
+            )
         ctx.state.reject_rows.append(rej_row)
         rej = _event_from_gate(
             event_type="rejected",
@@ -2222,6 +2372,9 @@ def _build_push_replay_summary(
     base.update(_pullback_misread_dynamic40_guard_summary_fields(gate, state))
     base.update(_near_day_high_low_momentum_dynamic40_guard_summary_fields(gate, state))
     base.update(_high_drift_pullback_guard_summary_fields(gate, state))
+    base.update(_weak_shape_reject_guard_summary_fields(gate, state))
+    base.update(_late_chase_guard_summary_fields(gate, state))
+    base.update(_board_entry_summary_fields(state))
     base.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     base.update(_entry_expectancy_score_summary_fields(state))
     base.update(_observer_exit_pnl_summary_fields(state.events))
@@ -2874,6 +3027,9 @@ def _build_live_summary(
     summary.update(_pullback_misread_dynamic40_guard_summary_fields(gate, state))
     summary.update(_near_day_high_low_momentum_dynamic40_guard_summary_fields(gate, state))
     summary.update(_high_drift_pullback_guard_summary_fields(gate, state))
+    summary.update(_weak_shape_reject_guard_summary_fields(gate, state))
+    summary.update(_late_chase_guard_summary_fields(gate, state))
+    summary.update(_board_entry_summary_fields(state))
     summary.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     summary.update(_entry_expectancy_score_summary_fields(state))
     summary.update(_observer_exit_pnl_summary_fields(state.events))

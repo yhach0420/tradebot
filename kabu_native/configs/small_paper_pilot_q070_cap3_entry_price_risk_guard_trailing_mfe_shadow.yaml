@@ -46,6 +46,13 @@ high_drift_guard_enabled: true
 # Phase442: No Progress Exit (production structural EXIT)
 no_progress_exit_enabled: true
 
+# Phase452: Weak Shape Reject (opening_peak / slow_opening_peak at ENTRY)
+weak_shape_reject_enabled: true
+
+# Phase472: PBv2 — explicit momentum score cutoff + Late Chase Guard
+momentum_score_cutoff_max: 0.2546
+late_chase_guard_enabled: true
+
 # Phase364: production ENTRY guard — Dynamic40 near day high + low momentum
 enable_near_day_high_low_momentum_dynamic40_guard: true
 
@@ -59,11 +66,17 @@ daytrade_suitability_lookback_sessions: prior_only
 daytrade_suitability_apply_mode: reject_entry
 
 comparison_note: >
-  Phase442 production: No Progress Exit (linmfe_t900_i0p6_s0p05_c0p8_p0p3) on structural
-  EXIT — hold>=900s, required MFE 0.6+0.05/5m cap 0.8, pnl<0.3%. Rollback:
-  no_progress_exit_enabled=false. Phase439: High Drift pullback guard replaces VWAP
-  pullback (Phase355). dynamic40 AND ((day_high>=1.2% AND r10<-0.15% AND r5>r10) OR
-  (day_high>=1.5% AND (r15<-0.5% OR r5<-0.5%))). Rollback: high_drift_guard_enabled=false;
+  Phase472 PBv2 production: explicit momentum_continuation_score<=0.2546 (replaces
+  Momentum:low token; Phase471 equivalent) + Board:mid/high + High Drift + Weak Shape
+  + Late Chase Guard (r10<0.3719 AND day_high_distance<1.1872). Rollback:
+  late_chase_guard_enabled=false. Phase452 production: Weak Shape Reject blocks
+  opening_peak/slow_opening_peak at ENTRY (forward-safe, no EOD close). Rollback:
+  weak_shape_reject_enabled=false. Phase442 production: No Progress Exit
+  (linmfe_t900_i0p6_s0p05_c0p8_p0p3) on structural EXIT — hold>=900s, required MFE
+  0.6+0.05/5m cap 0.8, pnl<0.3%. Rollback: no_progress_exit_enabled=false.
+  Phase439: High Drift pullback guard replaces VWAP pullback (Phase355). dynamic40
+  AND ((day_high>=1.2% AND r10<-0.15% AND r5>r10) OR (day_high>=1.5% AND (r15<-0.5%
+  OR r5<-0.5%))). Rollback: high_drift_guard_enabled=false;
   legacy_vwap_pullback_guard_enabled=true. Phase332 board-dynamic trailing_mfe via
   structural_exit_policy=combined_structural_exit_v1_trailing_mfe_shadow. Stop/session_close/
   overlap preserved; no momentum_fade/quality_decay exits. board_high

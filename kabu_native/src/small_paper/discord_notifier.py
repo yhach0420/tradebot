@@ -23,13 +23,14 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from research.exposure_gate import REJECT_MAX_CONCURRENT
+from small_paper.reject_reasons import REJECT_MAX_CONCURRENT
 from small_paper.discord_message_builder import (
     build_daily_summary_detail,
     build_entry_cap_blocked_detail,
     build_entry_deferred_detail,
     build_entry_detail,
     build_exit_detail,
+    format_heartbeat_runtime_health_fields,
     summary_notification_labels,
     build_universe_refresh_overview,
     build_universe_screening_overview,
@@ -727,17 +728,11 @@ class SmallPaperDiscordNotifier:
             return None
         detail = build_daily_summary_detail(canonical, name_map=get_cached_symbol_name_map())
         fields: list[dict[str, Any]] = []
-        from small_paper.discord_message_builder import format_research_shadow_daily_summary_lines
+        from small_paper.discord_message_builder import (
+            build_observability_embed_fields,
+            format_research_shadow_daily_summary_lines,
+        )
 
-        research_shadow = format_research_shadow_daily_summary_lines(summary)
-        if research_shadow:
-            fields.append(
-                {
-                    "name": "Research Shadow",
-                    "value": "\n".join(research_shadow)[:1020],
-                    "inline": False,
-                }
-            )
         chunk = detail
         idx = 1
         while chunk:
@@ -750,6 +745,22 @@ class SmallPaperDiscordNotifier:
             )
             chunk = chunk[1020:]
             idx += 1
+        fields.extend(
+            build_observability_embed_fields(
+                events=events,
+                summary=summary,
+                name_map=get_cached_symbol_name_map(),
+            )
+        )
+        research_shadow = format_research_shadow_daily_summary_lines(summary)
+        if research_shadow:
+            fields.append(
+                {
+                    "name": "Research Shadow",
+                    "value": "\n".join(research_shadow)[:1020],
+                    "inline": False,
+                }
+            )
         return fields
 
     def notify_daily_summary(
@@ -848,6 +859,7 @@ class SmallPaperDiscordNotifier:
             {"name": "open_positions", "value": str(summary.get("observer_holding_count", 0)), "inline": True},
             {"name": "api_errors", "value": str(summary.get("api_error_count", 0)), "inline": True},
             {"name": "stale_ticks", "value": str(summary.get("stale_tick_count", 0)), "inline": True},
+            *format_heartbeat_runtime_health_fields(summary),
             {"name": "top_symbols", "value": str(summary.get("top_symbols") or "—"), "inline": False},
             {
                 "name": "quality_distribution",

@@ -107,8 +107,11 @@ class SmallPaperPilotConfig:
     entry_price_risk_guard_apply_mode: str = "reject_entry"
     enable_pullback_misread_dynamic40_guard: bool = True
     high_drift_guard_enabled: bool = False
+    weak_shape_reject_enabled: bool = False
     no_progress_exit_enabled: bool = False
     enable_near_day_high_low_momentum_dynamic40_guard: bool = True
+    late_chase_guard_enabled: bool = False
+    momentum_score_cutoff_max: float = 0.2546
     low_liquidity_shadow_enabled: bool = False
     low_liquidity_shadow_trading_value_min: float = 1e8
     low_liquidity_shadow_turnover_proxy_min: float = 0.002
@@ -167,12 +170,17 @@ class SmallPaperPilotConfig:
             out["enable_pullback_misread_dynamic40_guard"] = True
         if self.high_drift_guard_enabled:
             out["high_drift_guard_enabled"] = True
+        if self.weak_shape_reject_enabled:
+            out["weak_shape_reject_enabled"] = True
         if self.no_progress_exit_enabled:
             out["no_progress_exit_enabled"] = True
         if not self.enable_pullback_misread_dynamic40_guard:
             out["legacy_vwap_pullback_guard_enabled"] = False
         if self.enable_near_day_high_low_momentum_dynamic40_guard:
             out["enable_near_day_high_low_momentum_dynamic40_guard"] = True
+        if self.late_chase_guard_enabled:
+            out["late_chase_guard_enabled"] = True
+            out["momentum_score_cutoff_max"] = self.momentum_score_cutoff_max
         if self.low_liquidity_shadow_enabled:
             out["low_liquidity_shadow_enabled"] = True
             out["low_liquidity_shadow_trading_value_min"] = self.low_liquidity_shadow_trading_value_min
@@ -199,6 +207,7 @@ class SmallPaperPilotConfig:
             position_cap_mode=self.position_cap_mode,
             reject_below_quality=self.reject_below_quality,
             entry_score_v2_min=self.entry_score_v2_min,
+            momentum_score_cutoff_max=self.momentum_score_cutoff_max,
             order_enabled=False,
             discord_enabled=self.discord_enabled,
             daily_loss_guard_pct=self.daily_loss_guard_pct,
@@ -221,7 +230,9 @@ class SmallPaperPilotConfig:
         price_guard = None
         pullback_guard = None
         high_drift_guard = None
+        weak_shape_guard = None
         near_day_momentum_guard = None
+        late_chase_guard = None
         if self.entry_price_risk_guard_enabled:
             from small_paper.entry_price_risk_guard import build_entry_price_risk_guard_state
 
@@ -238,6 +249,10 @@ class SmallPaperPilotConfig:
             )
 
             high_drift_guard = build_high_drift_pullback_guard_state(self)
+        if self.weak_shape_reject_enabled:
+            from small_paper.weak_shape_reject_entry_guard import build_weak_shape_reject_guard_state
+
+            weak_shape_guard = build_weak_shape_reject_guard_state(self)
         if self.enable_near_day_high_low_momentum_dynamic40_guard:
             from small_paper.near_day_high_low_momentum_dynamic40_entry_guard import (
                 build_near_day_high_low_momentum_dynamic40_guard_state,
@@ -246,6 +261,10 @@ class SmallPaperPilotConfig:
             near_day_momentum_guard = build_near_day_high_low_momentum_dynamic40_guard_state(
                 self
             )
+        if self.late_chase_guard_enabled:
+            from small_paper.late_chase_entry_guard import build_late_chase_guard_state
+
+            late_chase_guard = build_late_chase_guard_state(self)
         if repo_root is not None and run_session_key:
             if self.symbol_cooloff_enabled:
                 from small_paper.symbol_cooloff import build_symbol_cooloff_state
@@ -271,7 +290,9 @@ class SmallPaperPilotConfig:
             entry_price_risk_guard=price_guard,
             pullback_misread_dynamic40_guard=pullback_guard,
             high_drift_pullback_guard=high_drift_guard,
+            weak_shape_reject_guard=weak_shape_guard,
             near_day_high_low_momentum_dynamic40_guard=near_day_momentum_guard,
+            late_chase_guard=late_chase_guard,
         )
 
 
@@ -403,10 +424,13 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
             )
         ),
         high_drift_guard_enabled=bool(raw.get("high_drift_guard_enabled", False)),
+        weak_shape_reject_enabled=bool(raw.get("weak_shape_reject_enabled", False)),
         no_progress_exit_enabled=bool(raw.get("no_progress_exit_enabled", False)),
         enable_near_day_high_low_momentum_dynamic40_guard=bool(
             raw.get("enable_near_day_high_low_momentum_dynamic40_guard", True)
         ),
+        late_chase_guard_enabled=bool(raw.get("late_chase_guard_enabled", False)),
+        momentum_score_cutoff_max=float(raw.get("momentum_score_cutoff_max", 0.2546)),
         low_liquidity_shadow_enabled=bool(raw.get("low_liquidity_shadow_enabled", False)),
         low_liquidity_shadow_trading_value_min=float(
             raw.get("low_liquidity_shadow_trading_value_min", 1e8)

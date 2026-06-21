@@ -26,9 +26,11 @@ REJECT_DAYTRADE_SUITABILITY = "daytrade_suitability"
 REJECT_ENTRY_PRICE_RISK_GUARD = "entry_price_risk_guard"
 REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD = "pullback_misread_dynamic40_guard"
 REJECT_HIGH_DRIFT_PULLBACK = "high_drift_pullback"
+REJECT_WEAK_SHAPE = "weak_shape_reject"
 REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD = (
     "near_day_high_low_momentum_dynamic40_guard"
 )
+REJECT_LATE_CHASE_GUARD = "late_chase_guard"
 
 QUALITY_TIER_TOP = "top_quartile"
 QUALITY_TIER_ABOVE = "above_median"
@@ -65,6 +67,7 @@ class ExposureGateConfig:
     min_above_median_quality: float = 0.42
     allowed_trading_windows: tuple[tuple[str, str], ...] = ()
     entry_score_v2_min: int = 0
+    momentum_score_cutoff_max: float = 0.2546
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "ExposureGateConfig":
@@ -76,6 +79,7 @@ class ExposureGateConfig:
             position_cap_mode=bool(data.get("position_cap_mode", False)),
             reject_below_quality=bool(data.get("reject_below_quality", True)),
             entry_score_v2_min=int(data.get("entry_score_v2_min", 0) or 0),
+            momentum_score_cutoff_max=float(data.get("momentum_score_cutoff_max", 0.2546)),
             low_quality_log_only=bool(data.get("low_quality_log_only", True)),
             order_enabled=bool(data.get("order_enabled", False)),
             discord_enabled=bool(data.get("discord_enabled", False)),
@@ -127,10 +131,16 @@ class GateDecision:
     high_drift_pullback_day_high_distance_pct: Optional[float] = None
     high_drift_pullback_universe_slot: str = ""
     high_drift_pullback_universe_bucket: str = ""
+    weak_shape_class: str = ""
+    weak_shape_day_high_minutes_from_open: Optional[float] = None
+    weak_shape_minutes_since_day_high_update: Optional[float] = None
+    weak_shape_day_high_distance_pct: Optional[float] = None
     near_day_high_low_momentum_dynamic40_day_high_distance_pct: Optional[float] = None
     near_day_high_low_momentum_dynamic40_entry_momentum_score: Optional[float] = None
     near_day_high_low_momentum_dynamic40_universe_slot: str = ""
     near_day_high_low_momentum_dynamic40_universe_bucket: str = ""
+    late_chase_entry_rise_10min_pct: Optional[float] = None
+    late_chase_day_high_distance_pct: Optional[float] = None
     entry_expectancy_score_v2: Optional[int] = None
     entry_score_v2_threshold: Optional[int] = None
     entry_score_v2_gate_pass: Optional[bool] = None
@@ -168,7 +178,9 @@ class ExposureGate:
         entry_price_risk_guard: Optional[Any] = None,
         pullback_misread_dynamic40_guard: Optional[Any] = None,
         high_drift_pullback_guard: Optional[Any] = None,
+        weak_shape_reject_guard: Optional[Any] = None,
         near_day_high_low_momentum_dynamic40_guard: Optional[Any] = None,
+        late_chase_guard: Optional[Any] = None,
     ) -> None:
         self.config = config
         self.state = ExposureGateState()
@@ -178,9 +190,11 @@ class ExposureGate:
         self.entry_price_risk_guard = entry_price_risk_guard
         self.pullback_misread_dynamic40_guard = pullback_misread_dynamic40_guard
         self.high_drift_pullback_guard = high_drift_pullback_guard
+        self.weak_shape_reject_guard = weak_shape_reject_guard
         self.near_day_high_low_momentum_dynamic40_guard = (
             near_day_high_low_momentum_dynamic40_guard
         )
+        self.late_chase_guard = late_chase_guard
 
     def evaluate_entry(
         self,
@@ -313,6 +327,29 @@ class ExposureGate:
                     high_drift_pullback_universe_bucket=hd.universe_bucket,
                 )
 
+        if self.weak_shape_reject_guard is not None:
+            ws = self.weak_shape_reject_guard.check(trade)
+            if ws.blocked:
+                self.weak_shape_reject_guard.reject_count += 1
+                sym = str(trade.get("symbol") or "")
+                if sym:
+                    self.weak_shape_reject_guard.rejected_symbols.add(sym)
+                q_pre = continuation_quality_score(trade)
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_WEAK_SHAPE,
+                    continuation_quality_score=q_pre,
+                    quality_tier=quality_tier(
+                        q_pre,
+                        min_top=self.config.min_continuation_quality,
+                        min_above=self.config.min_above_median_quality,
+                    ),
+                    weak_shape_class=ws.shape_class,
+                    weak_shape_day_high_minutes_from_open=ws.day_high_minutes_from_open,
+                    weak_shape_minutes_since_day_high_update=ws.minutes_since_day_high_update,
+                    weak_shape_day_high_distance_pct=ws.day_high_distance_pct,
+                )
+
         if self.near_day_high_low_momentum_dynamic40_guard is not None:
             nd = self.near_day_high_low_momentum_dynamic40_guard.check(trade)
             if nd.blocked:
@@ -377,12 +414,25 @@ class ExposureGate:
         }
 
         if v2_threshold > 0:
-            from small_paper.entry_expectancy_score_shadow import momentum_low_required_for_v2
+            from small_paper.entry_expectancy_score_shadow import (
+                board_mid_or_high_required_for_v2,
+                momentum_score_cutoff_pass,
+            )
 
-            if not momentum_low_required_for_v2(trade):
+            if not momentum_score_cutoff_pass(
+                trade, cutoff=self.config.momentum_score_cutoff_max
+            ):
                 return GateDecision(
                     accept=False,
                     reason=REJECT_MOMENTUM_LOW_REQUIRED,
+                    continuation_quality_score=q,
+                    quality_tier=tier,
+                    **v2_ctx,
+                )
+            if not board_mid_or_high_required_for_v2(trade):
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_ENTRY_SCORE_V2_BELOW,
                     continuation_quality_score=q,
                     quality_tier=tier,
                     **v2_ctx,
@@ -395,6 +445,23 @@ class ExposureGate:
                     quality_tier=tier,
                     **v2_ctx,
                 )
+
+            if self.late_chase_guard is not None:
+                lc = self.late_chase_guard.check(trade)
+                if lc.blocked:
+                    self.late_chase_guard.reject_count += 1
+                    sym = str(trade.get("symbol") or "")
+                    if sym:
+                        self.late_chase_guard.rejected_symbols.add(sym)
+                    return GateDecision(
+                        accept=False,
+                        reason=REJECT_LATE_CHASE_GUARD,
+                        continuation_quality_score=q,
+                        quality_tier=tier,
+                        late_chase_entry_rise_10min_pct=lc.entry_rise_10min_pct,
+                        late_chase_day_high_distance_pct=lc.day_high_distance_pct,
+                        **v2_ctx,
+                    )
         elif self.config.reject_below_quality and q < self.config.min_continuation_quality:
             return GateDecision(
                 accept=False,

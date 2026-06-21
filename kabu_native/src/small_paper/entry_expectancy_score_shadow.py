@@ -69,9 +69,11 @@ SCORE_POINTS: dict[str, int] = {
 }
 
 # Phase314: Momentum + Board only (HBRecent/TV/Duration/Price removed from v2).
+# Phase452: Board:high scores same as Board:mid (Momentum:low + Board mid|high => 3).
 SCORE_POINTS_V2: dict[str, int] = {
     "Momentum:low": 2,
     "Board:mid": 1,
+    "Board:high": 1,
 }
 
 REQUIRED_V2_TOKENS: frozenset[str] = frozenset({"Momentum:low"})
@@ -141,6 +143,26 @@ def active_score_tokens_v2(trade: Mapping[str, Any]) -> list[str]:
 
 def momentum_low_required_for_v2(trade: Mapping[str, Any]) -> bool:
     return "Momentum:low" in active_score_tokens_v2(trade)
+
+
+MOMENTUM_SCORE_CUTOFF_P33 = TERTILE_CUTOFFS["Momentum"]["p33"]
+
+
+def momentum_score_cutoff_pass(
+    trade: Mapping[str, Any],
+    *,
+    cutoff: Optional[float] = None,
+) -> bool:
+    """PBv2 explicit low-momentum filter (Phase471: equivalent to Momentum:low token)."""
+    v = _float(trade.get("momentum_continuation_score"))
+    if v is None:
+        return False
+    return v <= float(cutoff if cutoff is not None else MOMENTUM_SCORE_CUTOFF_P33)
+
+
+def board_mid_or_high_required_for_v2(trade: Mapping[str, Any]) -> bool:
+    board = _feature_token("Board", trade)
+    return board in ("Board:mid", "Board:high")
 
 
 def _score_fields_from_points(

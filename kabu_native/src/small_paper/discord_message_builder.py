@@ -19,7 +19,7 @@ from replay.pnl_yen import (
     resolve_pnl_yen_100,
     summarize_pnl_yen_100,
 )
-from research.exposure_gate import REJECT_MAX_CONCURRENT
+from small_paper.reject_reasons import REJECT_MAX_CONCURRENT
 from small_paper.discord_symbol_names import format_symbol_display, format_symbol_label
 from small_paper.entry_expectancy_score_shadow import SCORE_POINTS_V2, _feature_token
 
@@ -479,6 +479,8 @@ def build_exit_detail(
         f"EXIT理由: {humanize_exit_reason(exit_reason)}",
         ]
     )
+    if is_stop_low_mfe_exit(exit_reason, mfe_pct):
+        lines.append(f"⚠ stop_low_mfe: MFE<{STOP_LOW_MFE_THRESHOLD_PCT:.1f}% at stop")
     if (
         "trailing_mfe" in str(exit_reason or "")
         and board_dynamic_trailing_tier
@@ -638,6 +640,274 @@ def _canonical_trade_display(metrics: Mapping[str, Any], key: str) -> str:
     return str(trade or "—")
 
 
+STOP_LOW_MFE_THRESHOLD_PCT = 0.5
+OBSERVABILITY_SYMBOL_TOP_N = 5
+OBSERVABILITY_REJECT_FUNNEL_TOP_N = 5
+FOCUS_SYMBOL_SHORTS = frozenset({"6976", "4062"})
+FOCUS_SYMBOL_SHARE_WARN_PCT = 30.0
+
+EXIT_BUCKET_LABELS: dict[str, str] = {
+    "stop_hit": "stop_hit",
+    "no_progress": "no_progress",
+    "trailing_mfe": "trailing_mfe",
+    "session_close": "session_close",
+    "other": "other",
+}
+
+
+def _trade_mfe_pct(row: Mapping[str, Any]) -> Optional[float]:
+    for key in ("mfe_pct", "peak_mfe_pct", "max_favorable", "peak_pnl_pct"):
+        v = row.get(key)
+        if v is None or v == "":
+            continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def is_stop_low_mfe_trade(row: Mapping[str, Any]) -> bool:
+    from small_paper.canonical_summary import is_stop_exit
+
+    if not is_stop_exit(row):
+        return False
+    mfe = _trade_mfe_pct(row)
+    return mfe is not None and mfe < STOP_LOW_MFE_THRESHOLD_PCT
+
+
+def is_stop_low_mfe_exit(exit_reason: str, mfe_pct: Optional[float]) -> bool:
+    return is_stop_low_mfe_trade({"exit_reason": exit_reason, "mfe_pct": mfe_pct})
+
+
+def count_stop_low_mfe(events: Sequence[Mapping[str, Any]]) -> int:
+    from small_paper.canonical_summary import collect_canonical_trades
+
+    return sum(1 for t in collect_canonical_trades(events) if is_stop_low_mfe_trade(t))
+
+
+def _resolved_exit_reason_key(row: Mapping[str, Any]) -> str:
+    reason = str(row.get("exit_reason") or "").strip()
+    structural = str(row.get("structural_exit_reason") or "").strip()
+    if reason == "overlap_replaced_review":
+        return structural.lower()
+    return (structural or reason).lower()
+
+
+def classify_exit_bucket(row: Mapping[str, Any]) -> str:
+    from small_paper.canonical_summary import is_stop_exit
+
+    if is_stop_exit(row):
+        return "stop_hit"
+    reason = _resolved_exit_reason_key(row)
+    if "no_progress" in reason:
+        return "no_progress"
+    if "trailing_mfe" in reason or "mfe_giveback" in reason:
+        return "trailing_mfe"
+    if any(
+        token in reason
+        for token in (
+            "session_close",
+            "session_end",
+            "morning_session",
+            "afternoon_session",
+        )
+    ):
+        return "session_close"
+    return "other"
+
+
+def _compute_symbol_pnl_by_short(events: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    from small_paper.canonical_summary import collect_canonical_trades
+
+    out: dict[str, dict[str, Any]] = {}
+    for trade in collect_canonical_trades(events):
+        sym_short = _symbol_short(str(trade.get("symbol") or ""))
+        if not sym_short or sym_short == "—":
+            continue
+        bucket = out.setdefault(sym_short, {"pnl_yen_100": 0.0, "trade_count": 0})
+        bucket["pnl_yen_100"] = round(bucket["pnl_yen_100"] + float(trade["pnl_yen_100"]), 2)
+        bucket["trade_count"] += 1
+    return out
+
+
+def _top_symbol_share_pct(rows: Sequence[Mapping[str, Any]], total_pnl: float) -> Optional[float]:
+    if not rows or total_pnl == 0:
+        return None
+    top3 = sum(float(r["pnl_yen_100"]) for r in rows[:3])
+    return round(100.0 * top3 / total_pnl, 1)
+
+
+def format_symbol_attribution_lines(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    name_map: Optional[Mapping[str, str]] = None,
+    top_n: int = OBSERVABILITY_SYMBOL_TOP_N,
+) -> list[str]:
+    by_sym = _compute_symbol_pnl_by_short(events)
+    if not by_sym:
+        return ["（本日取引なし）"]
+    total_pnl = round(sum(float(v["pnl_yen_100"]) for v in by_sym.values()), 2)
+    ranked = sorted(
+        (
+            {
+                "symbol_short": sym,
+                "pnl_yen_100": float(data["pnl_yen_100"]),
+                "trade_count": int(data["trade_count"]),
+            }
+            for sym, data in by_sym.items()
+        ),
+        key=lambda r: abs(float(r["pnl_yen_100"])),
+        reverse=True,
+    )[: max(1, int(top_n))]
+    lines: list[str] = []
+    for row in ranked:
+        sym_short = str(row["symbol_short"])
+        sym_full = f"{sym_short}.T"
+        label = format_symbol_label(sym_full, name_map) if name_map else sym_short
+        yen = format_pnl_yen_100_display(float(row["pnl_yen_100"]))
+        share = (
+            round(100.0 * float(row["pnl_yen_100"]) / total_pnl, 1)
+            if total_pnl != 0
+            else None
+        )
+        share_s = f", {share:.0f}% of day" if share is not None else ""
+        warn = ""
+        if sym_short in FOCUS_SYMBOL_SHORTS and share is not None and abs(share) >= FOCUS_SYMBOL_SHARE_WARN_PCT:
+            warn = " ⚠"
+        lines.append(f"{label}: {yen} ({int(row['trade_count'])}T{share_s}){warn}")
+    top3_share = _top_symbol_share_pct(ranked, total_pnl)
+    if top3_share is not None:
+        lines.append(f"top3_share: {top3_share:.0f}%")
+    return lines
+
+
+def compute_exit_breakdown(events: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    from small_paper.canonical_summary import collect_canonical_trades
+
+    buckets: dict[str, dict[str, Any]] = {
+        key: {"count": 0, "pnl_yen_100": 0.0} for key in EXIT_BUCKET_LABELS
+    }
+    for trade in collect_canonical_trades(events):
+        bucket = classify_exit_bucket(trade)
+        if bucket not in buckets:
+            bucket = "other"
+        buckets[bucket]["count"] += 1
+        buckets[bucket]["pnl_yen_100"] = round(
+            buckets[bucket]["pnl_yen_100"] + float(trade["pnl_yen_100"]),
+            2,
+        )
+    return buckets
+
+
+def format_exit_breakdown_lines(events: Sequence[Mapping[str, Any]]) -> list[str]:
+    from small_paper.canonical_summary import collect_canonical_trades
+
+    trades = collect_canonical_trades(events)
+    if not trades:
+        return ["（本日取引なし）"]
+    buckets = compute_exit_breakdown(events)
+    order = ("stop_hit", "no_progress", "trailing_mfe", "session_close", "other")
+    lines: list[str] = []
+    for key in order:
+        stat = buckets.get(key) or {}
+        count = int(stat.get("count") or 0)
+        if count <= 0:
+            continue
+        pnl = float(stat.get("pnl_yen_100") or 0.0)
+        lines.append(f"{EXIT_BUCKET_LABELS[key]}: {count} ({format_pnl_yen_100_display(pnl)})")
+    stop_low = count_stop_low_mfe(events)
+    if stop_low > 0:
+        low_pnl = round(
+            sum(
+                float(t["pnl_yen_100"])
+                for t in trades
+                if is_stop_low_mfe_trade(t)
+            ),
+            2,
+        )
+        lines.append(f"stop_low_mfe: {stop_low} ({format_pnl_yen_100_display(low_pnl)})")
+    return lines
+
+
+def _config_sha_tail(summary: Mapping[str, Any]) -> str:
+    sha = str(summary.get("config_sha256") or "").strip()
+    if len(sha) >= 8:
+        return f"…{sha[-4:]}"
+    return sha or "—"
+
+
+def format_runtime_health_lines(summary: Mapping[str, Any]) -> list[str]:
+    peak = int(summary.get("peak_open_slots") or summary.get("max_concurrent") or 0)
+    cap = int(summary.get("max_concurrent_positions") or summary.get("max_concurrent_cap") or 3)
+    feat = summary.get("live_feature_complete_rate_pct")
+    feat_s = f"{_fmt_num(feat, digits=1)}%" if feat is not None else "—"
+    return [
+        f"api_errors: {int(summary.get('api_error_count') or 0)}",
+        f"stale_ticks: {int(summary.get('stale_tick_count') or 0)}",
+        f"data_gaps: {int(summary.get('data_gap_count') or 0)}",
+        f"feature_complete: {feat_s}",
+        f"config: {_config_sha_tail(summary)}",
+        f"peak_slots: {peak}/{cap}",
+    ]
+
+
+def format_reject_funnel_lines(
+    summary: Mapping[str, Any],
+    *,
+    top_n: int = OBSERVABILITY_REJECT_FUNNEL_TOP_N,
+) -> list[str]:
+    counts = summary.get("reject_reason_counts")
+    if not isinstance(counts, Mapping) or not counts:
+        return ["（拒否なし）"]
+    ranked = sorted(
+        ((str(reason), int(count)) for reason, count in counts.items() if int(count or 0) > 0),
+        key=lambda item: item[1],
+        reverse=True,
+    )[: max(1, int(top_n))]
+    if not ranked:
+        return ["（拒否なし）"]
+    return [f"{reason}: {count}" for reason, count in ranked]
+
+
+def build_observability_embed_fields(
+    *,
+    events: Sequence[Mapping[str, Any]],
+    summary: Mapping[str, Any],
+    name_map: Optional[Mapping[str, str]] = None,
+) -> list[dict[str, Any]]:
+    """Phase490: Discord embed fields for observability blocks (no gate/runtime changes)."""
+    sections = [
+        ("Symbol Attribution", format_symbol_attribution_lines(events, name_map=name_map)),
+        ("Exit Breakdown", format_exit_breakdown_lines(events)),
+        ("Runtime Health", format_runtime_health_lines(summary)),
+        ("Reject Funnel", format_reject_funnel_lines(summary)),
+    ]
+    fields: list[dict[str, Any]] = []
+    for name, lines in sections:
+        if not lines:
+            continue
+        fields.append({"name": name, "value": "\n".join(lines)[:1020], "inline": False})
+    return fields
+
+
+def format_heartbeat_runtime_health_fields(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Extra HEARTBEAT inline fields (Phase490 C03)."""
+    peak = int(summary.get("peak_open_slots") or 0)
+    cap = int(summary.get("max_concurrent_positions") or 3)
+    feat = summary.get("live_feature_complete_rate_pct")
+    return [
+        {"name": "data_gaps", "value": str(int(summary.get("data_gap_count") or 0)), "inline": True},
+        {
+            "name": "feature_complete",
+            "value": f"{_fmt_num(feat, digits=1)}%" if feat is not None else "—",
+            "inline": True,
+        },
+        {"name": "config", "value": _config_sha_tail(summary), "inline": True},
+        {"name": "peak_slots", "value": f"{peak}/{cap}", "inline": True},
+    ]
+
+
 def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> list[str]:
     """Research-only shadow blocks appended to Daily / AM / PM Summary."""
     lines: list[str] = []
@@ -717,6 +987,21 @@ def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> li
         lines.append(
             "NoProgress Exit: "
             f"count={summary.get('no_progress_exit_count', 0)}"
+        )
+    if summary.get("weak_shape_reject_enabled"):
+        lines.append(
+            "WeakShape Reject: "
+            f"count={summary.get('weak_shape_reject_count', 0)}"
+        )
+    if summary.get("late_chase_guard_enabled"):
+        lines.append(
+            "LateChase Guard: "
+            f"reject={summary.get('late_chase_reject_count', 0)}"
+        )
+    if summary.get("board_high_entry_count") is not None:
+        lines.append(
+            "BoardHigh ENTRY: "
+            f"count={summary.get('board_high_entry_count', 0)}"
         )
     if summary.get("pullback_misread_dynamic40_guard_enabled"):
         lines.append(
