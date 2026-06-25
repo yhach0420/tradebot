@@ -357,6 +357,15 @@ def build_entry_detail(
         lines.append(f"same_scan_rank: {data.get('same_scan_rank')}")
     if data.get("same_scan_candidates") is not None:
         lines.append(f"same_scan_candidates: {data.get('same_scan_candidates')}")
+    entry_type = data.get("entry_type")
+    if entry_type:
+        lines.append(f"ENTRY_TYPE: {entry_type}")
+    cluster_guard = data.get("cluster_guard_status")
+    if cluster_guard and str(entry_type or "PBV2").strip().upper() == "PBV2":
+        lines.append(f"ClusterGuard: {cluster_guard}")
+    or_reason = data.get("or_reason")
+    if or_reason and str(entry_type or "").upper() == "OR_OVERLAY":
+        lines.append(f"OR_REASON: {or_reason}")
     lines.extend(
         [
             "ENTRY理由:",
@@ -998,6 +1007,26 @@ def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> li
             "LateChase Guard: "
             f"reject={summary.get('late_chase_reject_count', 0)}"
         )
+    if summary.get("classic_late_chase_rsi_guard_enabled"):
+        lines.append(
+            "ClassicLateChaseRSI Guard: "
+            f"classic_late_chase_rsi_over80={summary.get('classic_late_chase_rsi_over80', 0)}"
+        )
+    if summary.get("entry_quality_guard_enabled"):
+        lines.append(
+            "EntryQuality Guard: "
+            f"reject={summary.get('entry_quality_guard_reject_count', 0)} "
+            f"(spread={summary.get('entry_quality_guard_spread_reject_count', 0)}, "
+            f"update={summary.get('entry_quality_guard_update_reject_count', 0)})"
+        )
+    if summary.get("entry_cluster_guard_enabled"):
+        lines.append(
+            "ClusterGuard: "
+            f"reject={summary.get('cluster_guard_reject_count', 0)} "
+            f"exception={summary.get('cluster_guard_exception_count', 0)} "
+            f"exc_pnl={summary.get('cluster_guard_exception_pnl', 0)} "
+            f"exc_pf={summary.get('cluster_guard_exception_pf', 0)}"
+        )
     if summary.get("board_high_entry_count") is not None:
         lines.append(
             "BoardHigh ENTRY: "
@@ -1045,6 +1074,33 @@ def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> li
         status = boundary.get("status")
         if status:
             lines.append(f"status={status}")
+
+    post_entry = summary.get("post_entry_forward_shadow")
+    if isinstance(post_entry, Mapping):
+        lines.append("PostEntry Shadow:")
+        ge3 = post_entry.get("score_ge3_count")
+        ge3_pnl = post_entry.get("score_ge3_pnl")
+        ge4 = post_entry.get("score_ge4_count")
+        ge4_pnl = post_entry.get("score_ge4_pnl")
+        if ge3 is not None:
+            lines.append(f"score>=3: count={ge3} pnl={ge3_pnl}")
+        if ge4 is not None:
+            lines.append(f"score>=4: count={ge4} pnl={ge4_pnl}")
+        if post_entry.get("forward_days_collected") is not None:
+            lines.append(f"days={post_entry.get('forward_days_collected')}")
+        status = post_entry.get("status")
+        if status:
+            lines.append(f"status={status}")
+    elif summary.get("post_entry_shadow_score_ge3_count") is not None:
+        lines.append("PostEntry Shadow:")
+        lines.append(
+            f"score>=3: count={summary.get('post_entry_shadow_score_ge3_count')} "
+            f"pnl={summary.get('post_entry_shadow_score_ge3_pnl')}"
+        )
+        lines.append(
+            f"score>=4: count={summary.get('post_entry_shadow_score_ge4_count')} "
+            f"pnl={summary.get('post_entry_shadow_score_ge4_pnl')}"
+        )
     return lines
 
 

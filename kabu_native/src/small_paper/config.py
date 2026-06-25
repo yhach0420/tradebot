@@ -111,6 +111,16 @@ class SmallPaperPilotConfig:
     no_progress_exit_enabled: bool = False
     enable_near_day_high_low_momentum_dynamic40_guard: bool = True
     late_chase_guard_enabled: bool = False
+    classic_late_chase_rsi_guard_enabled: bool = False
+    classic_late_chase_rsi_threshold: float = 80.0
+    reentry_rsi_guard_enabled: bool = False
+    reentry_rsi_guard_threshold: float = 60.0
+    entry_quality_guard_enabled: bool = False
+    entry_quality_max_spread_bps: float = 50.0
+    entry_quality_max_update_count: int = 5
+    entry_cluster_guard_enabled: bool = False
+    entry_cluster_guard_exception_enabled: bool = True
+    entry_cluster_guard_liquidity_burst_threshold: float = 0.052267
     momentum_score_cutoff_max: float = 0.2546
     low_liquidity_shadow_enabled: bool = False
     low_liquidity_shadow_trading_value_min: float = 1e8
@@ -122,6 +132,12 @@ class SmallPaperPilotConfig:
     entry_scan_window_sec: float = 2.0
     entry_freshness_guard_enabled: bool = True
     entry_scan_batch_enabled: bool = True
+    or_overlay_enabled: bool = False
+    cap_pbv2: int = 4
+    cap_or: int = 1
+    or_max_update_count: int = 8
+    or_open_strength_rank_max: int = 10
+    or_open_strength_mins_max: float = 90.0
     raw: dict[str, Any] = field(default_factory=dict)
 
     def feature_bridge_config(self) -> Any:
@@ -181,6 +197,26 @@ class SmallPaperPilotConfig:
         if self.late_chase_guard_enabled:
             out["late_chase_guard_enabled"] = True
             out["momentum_score_cutoff_max"] = self.momentum_score_cutoff_max
+        if self.classic_late_chase_rsi_guard_enabled:
+            out["classic_late_chase_rsi_guard_enabled"] = True
+            out["classic_late_chase_rsi_threshold"] = self.classic_late_chase_rsi_threshold
+        if self.reentry_rsi_guard_enabled:
+            out["reentry_rsi_guard_enabled"] = True
+            out["reentry_rsi_guard_threshold"] = self.reentry_rsi_guard_threshold
+        if self.entry_quality_guard_enabled:
+            out["entry_quality_guard_enabled"] = True
+            out["entry_quality_max_spread_bps"] = self.entry_quality_max_spread_bps
+            out["entry_quality_max_update_count"] = self.entry_quality_max_update_count
+        if self.entry_cluster_guard_enabled:
+            out["entry_cluster_guard_enabled"] = True
+            out["entry_cluster_guard_exception_enabled"] = self.entry_cluster_guard_exception_enabled
+            out["entry_cluster_guard_liquidity_burst_threshold"] = (
+                self.entry_cluster_guard_liquidity_burst_threshold
+            )
+            reject_clusters = self.raw.get("entry_cluster_guard_reject_clusters", [5])
+            reject_csubs = self.raw.get("entry_cluster_guard_reject_csubs", [0, 2, 3, 5])
+            out["entry_cluster_guard_reject_clusters"] = list(reject_clusters)
+            out["entry_cluster_guard_reject_csubs"] = list(reject_csubs)
         if self.low_liquidity_shadow_enabled:
             out["low_liquidity_shadow_enabled"] = True
             out["low_liquidity_shadow_trading_value_min"] = self.low_liquidity_shadow_trading_value_min
@@ -192,6 +228,11 @@ class SmallPaperPilotConfig:
         if self.entry_score_v2_min > 0:
             out["entry_score_v2_min"] = self.entry_score_v2_min
             out["reject_below_quality"] = self.reject_below_quality
+        if self.or_overlay_enabled:
+            out["or_overlay_enabled"] = True
+            out["cap_pbv2"] = self.cap_pbv2
+            out["cap_or"] = self.cap_or
+            out["or_max_update_count"] = self.or_max_update_count
         if self.position_cap_mode:
             out["position_cap_mode"] = True
             out["position_cap_release"] = self.position_cap_release
@@ -233,6 +274,10 @@ class SmallPaperPilotConfig:
         weak_shape_guard = None
         near_day_momentum_guard = None
         late_chase_guard = None
+        classic_late_chase_rsi_guard = None
+        reentry_rsi_guard = None
+        entry_quality_guard = None
+        entry_cluster_guard = None
         if self.entry_price_risk_guard_enabled:
             from small_paper.entry_price_risk_guard import build_entry_price_risk_guard_state
 
@@ -265,6 +310,24 @@ class SmallPaperPilotConfig:
             from small_paper.late_chase_entry_guard import build_late_chase_guard_state
 
             late_chase_guard = build_late_chase_guard_state(self)
+        if self.classic_late_chase_rsi_guard_enabled:
+            from small_paper.classic_late_chase_rsi_guard import (
+                build_classic_late_chase_rsi_guard_state,
+            )
+
+            classic_late_chase_rsi_guard = build_classic_late_chase_rsi_guard_state(self)
+        if self.reentry_rsi_guard_enabled:
+            from small_paper.reentry_rsi_guard import build_reentry_rsi_guard_state
+
+            reentry_rsi_guard = build_reentry_rsi_guard_state(self)
+        if self.entry_quality_guard_enabled:
+            from small_paper.entry_quality_guard import build_entry_quality_guard_state
+
+            entry_quality_guard = build_entry_quality_guard_state(self)
+        if self.entry_cluster_guard_enabled and repo_root is not None:
+            from small_paper.entry_cluster_guard import build_entry_cluster_guard_state
+
+            entry_cluster_guard = build_entry_cluster_guard_state(self, repo_root=repo_root)
         if repo_root is not None and run_session_key:
             if self.symbol_cooloff_enabled:
                 from small_paper.symbol_cooloff import build_symbol_cooloff_state
@@ -293,6 +356,10 @@ class SmallPaperPilotConfig:
             weak_shape_reject_guard=weak_shape_guard,
             near_day_high_low_momentum_dynamic40_guard=near_day_momentum_guard,
             late_chase_guard=late_chase_guard,
+            classic_late_chase_rsi_guard=classic_late_chase_rsi_guard,
+            reentry_rsi_guard=reentry_rsi_guard,
+            entry_quality_guard=entry_quality_guard,
+            entry_cluster_guard=entry_cluster_guard,
         )
 
 
@@ -430,6 +497,24 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
             raw.get("enable_near_day_high_low_momentum_dynamic40_guard", True)
         ),
         late_chase_guard_enabled=bool(raw.get("late_chase_guard_enabled", False)),
+        classic_late_chase_rsi_guard_enabled=bool(
+            raw.get("classic_late_chase_rsi_guard_enabled", False)
+        ),
+        classic_late_chase_rsi_threshold=float(
+            raw.get("classic_late_chase_rsi_threshold", 80.0)
+        ),
+        reentry_rsi_guard_enabled=bool(raw.get("reentry_rsi_guard_enabled", False)),
+        reentry_rsi_guard_threshold=float(raw.get("reentry_rsi_guard_threshold", 60.0)),
+        entry_quality_guard_enabled=bool(raw.get("entry_quality_guard_enabled", False)),
+        entry_quality_max_spread_bps=float(raw.get("entry_quality_max_spread_bps", 50.0)),
+        entry_quality_max_update_count=int(raw.get("entry_quality_max_update_count", 5)),
+        entry_cluster_guard_enabled=bool(raw.get("entry_cluster_guard_enabled", False)),
+        entry_cluster_guard_exception_enabled=bool(
+            raw.get("entry_cluster_guard_exception_enabled", True)
+        ),
+        entry_cluster_guard_liquidity_burst_threshold=float(
+            raw.get("entry_cluster_guard_liquidity_burst_threshold", 0.052267)
+        ),
         momentum_score_cutoff_max=float(raw.get("momentum_score_cutoff_max", 0.2546)),
         low_liquidity_shadow_enabled=bool(raw.get("low_liquidity_shadow_enabled", False)),
         low_liquidity_shadow_trading_value_min=float(
@@ -445,6 +530,12 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         entry_scan_window_sec=float(raw.get("entry_scan_window_sec", 2.0)),
         entry_freshness_guard_enabled=bool(raw.get("entry_freshness_guard_enabled", True)),
         entry_scan_batch_enabled=bool(raw.get("entry_scan_batch_enabled", True)),
+        or_overlay_enabled=bool(raw.get("or_overlay_enabled", False)),
+        cap_pbv2=int(raw.get("cap_pbv2", 4) or 4),
+        cap_or=int(raw.get("cap_or", 1) or 1),
+        or_max_update_count=int(raw.get("or_max_update_count", 8) or 8),
+        or_open_strength_rank_max=int(raw.get("or_open_strength_rank_max", 10) or 10),
+        or_open_strength_mins_max=float(raw.get("or_open_strength_mins_max", 90.0) or 90.0),
         raw=raw,
     )
 

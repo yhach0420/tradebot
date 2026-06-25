@@ -53,6 +53,26 @@ weak_shape_reject_enabled: true
 momentum_score_cutoff_max: 0.2546
 late_chase_guard_enabled: true
 
+# Phase503: Classic late_chase AND RSI14>=80 ENTRY reject (Phase502 guard C)
+classic_late_chase_rsi_guard_enabled: true
+classic_late_chase_rsi_threshold: 80
+
+# Phase525: Re-entry after stop_hit requires RSI14>60 (Phase524 E_rsi_gt_60)
+reentry_rsi_guard_enabled: true
+reentry_rsi_guard_threshold: 60.0
+
+# Phase528: Entry quality guard G9 — spread<=50bps AND update_count<=5 (Phase527)
+entry_quality_guard_enabled: true
+entry_quality_max_spread_bps: 50.0
+entry_quality_max_update_count: 5
+
+# Phase549: PBv2 cluster guard V6 Balanced Reject + E4 Liquidity Burst exception
+entry_cluster_guard_enabled: true
+entry_cluster_guard_exception_enabled: true
+entry_cluster_guard_liquidity_burst_threshold: 0.052267
+entry_cluster_guard_reject_clusters: [5]
+entry_cluster_guard_reject_csubs: [0, 2, 3, 5]
+
 # Phase364: production ENTRY guard — Dynamic40 near day high + low momentum
 enable_near_day_high_low_momentum_dynamic40_guard: true
 
@@ -69,7 +89,18 @@ comparison_note: >
   Phase472 PBv2 production: explicit momentum_continuation_score<=0.2546 (replaces
   Momentum:low token; Phase471 equivalent) + Board:mid/high + High Drift + Weak Shape
   + Late Chase Guard (r10<0.3719 AND day_high_distance<1.1872). Rollback:
-  late_chase_guard_enabled=false. Phase452 production: Weak Shape Reject blocks
+  late_chase_guard_enabled=false. Phase503: Classic late_chase_cluster AND RSI14>=80
+  ENTRY reject (Phase502 guard C). Rollback: classic_late_chase_rsi_guard_enabled=false.
+  Phase525: Re-entry after stop_hit requires RSI14>60 (Phase524 E_rsi_gt_60).
+  Rollback: reentry_rsi_guard_enabled=false.
+  Phase528: Entry quality guard G9 spread<=50bps AND update_count<=5 (Phase527).
+  Rollback: entry_quality_guard_enabled=false.
+  Phase549: PBv2 cluster guard V6 (reject cluster5 + csub 0/2/3/5) + E4 liquidity_burst>=0.052267
+  exception. OR overlay unchanged. Rollback: entry_cluster_guard_enabled=false;
+  exception-only rollback: entry_cluster_guard_exception_enabled=false.
+  Phase538: OR Open Strength Overlay on mainline ENTRY (O_R003_OR + OS9, CAP_SPLIT_4_1:
+  PBv2=4 OR=1 total=5). Rollback: or_overlay_enabled=false.
+  Phase452 production: Weak Shape Reject blocks
   opening_peak/slow_opening_peak at ENTRY (forward-safe, no EOD close). Rollback:
   weak_shape_reject_enabled=false. Phase442 production: No Progress Exit
   (linmfe_t900_i0p6_s0p05_c0p8_p0p3) on structural EXIT — hold>=900s, required MFE
@@ -109,6 +140,12 @@ max_entries_per_scan: 1
 entry_scan_window_sec: 2.0
 entry_freshness_guard_enabled: true
 entry_scan_batch_enabled: true
+
+# Phase538: OR Open Strength Overlay (CAP_SPLIT_4_1). Rollback: or_overlay_enabled=false
+or_overlay_enabled: true
+cap_pbv2: 4
+cap_or: 1
+or_max_update_count: 8
 
 live:
   session_start: "09:00"

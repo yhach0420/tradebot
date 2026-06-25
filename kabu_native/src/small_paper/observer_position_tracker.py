@@ -174,6 +174,42 @@ class ObserverPositionTracker:
     def open_symbols(self) -> list[str]:
         return sorted(sym for sym, p in self._positions.items() if not p.closed)
 
+    def open_count_by_entry_type(self) -> tuple[int, int]:
+        """Return (pbv2_open, or_overlay_open)."""
+        from small_paper.or_overlay_cap import ENTRY_TYPE_OR
+
+        pbv2 = or_open = 0
+        for pos in self._positions.values():
+            if pos.closed:
+                continue
+            et = str((pos.entry_shadow or {}).get("entry_type") or "PBV2").strip().upper()
+            if et == ENTRY_TYPE_OR:
+                or_open += 1
+            else:
+                pbv2 += 1
+        return pbv2, or_open
+
+    def open_positions(self) -> list[dict[str, Any]]:
+        """Open positions with entry_type and unrealized PnL."""
+        now = datetime.now(JST)
+        out: list[dict[str, Any]] = []
+        for sym, pos in self._positions.items():
+            if pos.closed or pos.entry_price <= 0:
+                continue
+            px = pos.last_price if pos.last_price > 0 else pos.entry_price
+            pnl = (px - pos.entry_price) / pos.entry_price * 100.0
+            shadow = pos.entry_shadow or {}
+            out.append(
+                {
+                    "symbol": sym,
+                    "entry_type": shadow.get("entry_type", "PBV2"),
+                    "or_reason": shadow.get("or_reason"),
+                    "unrealized_pnl_pct": round(pnl, 4),
+                    "hold_minutes": round(max(0.0, (now - pos.entry_time).total_seconds()) / 60.0, 1),
+                }
+            )
+        return out
+
     def snapshot_open_holdings(self) -> list[dict[str, Any]]:
         """Read-only unrealized PnL for open virtual positions (Discord UX)."""
         now = datetime.now(JST)
@@ -342,6 +378,11 @@ class ObserverPositionTracker:
                     "universe_slot",
                     "universe_bucket",
                     "source_bucket",
+                    "entry_type",
+                    "or_reason",
+                    "day_return_rank",
+                    "minutes_from_open",
+                    "or_o_r003_pass",
                 )
                 if k in trade
             },
@@ -819,6 +860,10 @@ class ObserverPositionTracker:
         pnl_pct = float(full.get("realized_pnl_pct") or ctx.get("unrealized_pnl_pct") or 0.0)
         full["pnl_pct"] = round(pnl_pct, 4)
         if pos.entry_shadow:
+            full["entry_type"] = pos.entry_shadow.get("entry_type", "PBV2")
+            if pos.entry_shadow.get("or_reason"):
+                full["or_reason"] = pos.entry_shadow.get("or_reason")
+        if pos.entry_shadow:
             from small_paper.extended_entry_shadow import enrich_exit_shadow_fields
             from small_paper.vwap_shadow_reject import enrich_exit_vwap_shadow_fields
 
@@ -895,6 +940,14 @@ class ObserverPositionTracker:
                 actual_pnl_pct=pnl_pct,
             )
             full.update(board_dynamic_shadow)
+        from small_paper.post_entry_forward_shadow import enrich_exit_post_entry_shadow_fields
+
+        post_entry_shadow = enrich_exit_post_entry_shadow_fields(
+            rich_ticks=pos.rich_ticks,
+            entry_price=pos.entry_price,
+            entry_ts=pos.entry_time.timestamp(),
+        )
+        full.update(post_entry_shadow)
         if self.board_exit_shadow is not None:
             actual_exit_price = float(
                 ctx.get("current_price") or pos.last_price or pos.entry_price

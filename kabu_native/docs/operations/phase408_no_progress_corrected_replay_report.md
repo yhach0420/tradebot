@@ -1,6 +1,6 @@
 # Phase408 — No Progress Exit Corrected Replay
 
-Generated: 2026-06-16T01:17:51+09:00
+Generated: 2026-06-25T07:17:47+09:00
 Verdict: **adopt_candidate**
 
 Phase408 corrected: hold=900.0s mfe<0.8% pnl<0.2% delta=¥68371.76 ADOPT audit_PASS

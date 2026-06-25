@@ -31,6 +31,11 @@ REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD = (
     "near_day_high_low_momentum_dynamic40_guard"
 )
 REJECT_LATE_CHASE_GUARD = "late_chase_guard"
+REJECT_CLASSIC_LATE_CHASE_RSI_OVER80 = "classic_late_chase_rsi_over80"
+REJECT_REENTRY_RSI_GUARD_BELOW60 = "reentry_rsi_guard_below60"
+REJECT_ENTRY_QUALITY_GUARD_SPREAD = "entry_quality_guard_spread"
+REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT = "entry_quality_guard_update_count"
+REJECT_ENTRY_CLUSTER_GUARD = "entry_cluster_guard"
 
 QUALITY_TIER_TOP = "top_quartile"
 QUALITY_TIER_ABOVE = "above_median"
@@ -141,6 +146,17 @@ class GateDecision:
     near_day_high_low_momentum_dynamic40_universe_bucket: str = ""
     late_chase_entry_rise_10min_pct: Optional[float] = None
     late_chase_day_high_distance_pct: Optional[float] = None
+    classic_late_chase_rsi_rsi14: Optional[float] = None
+    classic_late_chase_rsi_late_chase_flag: bool = False
+    reentry_rsi_rsi14: Optional[float] = None
+    reentry_rsi_after_stop: bool = False
+    entry_quality_spread_bps: Optional[float] = None
+    entry_quality_update_count: Optional[int] = None
+    cluster_guard_status: str = ""
+    cluster_id: int = -1
+    new_subcluster_id: int = -1
+    liquidity_burst: Optional[float] = None
+    entry_cluster_guard_via_exception: bool = False
     entry_expectancy_score_v2: Optional[int] = None
     entry_score_v2_threshold: Optional[int] = None
     entry_score_v2_gate_pass: Optional[bool] = None
@@ -181,6 +197,10 @@ class ExposureGate:
         weak_shape_reject_guard: Optional[Any] = None,
         near_day_high_low_momentum_dynamic40_guard: Optional[Any] = None,
         late_chase_guard: Optional[Any] = None,
+        classic_late_chase_rsi_guard: Optional[Any] = None,
+        reentry_rsi_guard: Optional[Any] = None,
+        entry_quality_guard: Optional[Any] = None,
+        entry_cluster_guard: Optional[Any] = None,
     ) -> None:
         self.config = config
         self.state = ExposureGateState()
@@ -195,6 +215,10 @@ class ExposureGate:
             near_day_high_low_momentum_dynamic40_guard
         )
         self.late_chase_guard = late_chase_guard
+        self.classic_late_chase_rsi_guard = classic_late_chase_rsi_guard
+        self.reentry_rsi_guard = reentry_rsi_guard
+        self.entry_quality_guard = entry_quality_guard
+        self.entry_cluster_guard = entry_cluster_guard
 
     def evaluate_entry(
         self,
@@ -202,6 +226,7 @@ class ExposureGate:
         *,
         observer_open_count: Optional[int] = None,
         observer_symbol_open: bool = False,
+        max_concurrent_positions: Optional[int] = None,
     ) -> GateDecision:
         profile = str(trade.get("profile", ""))
         if profile != self.config.profile:
@@ -462,6 +487,88 @@ class ExposureGate:
                         late_chase_day_high_distance_pct=lc.day_high_distance_pct,
                         **v2_ctx,
                     )
+
+            if self.classic_late_chase_rsi_guard is not None:
+                cr = self.classic_late_chase_rsi_guard.check(trade)
+                if cr.blocked:
+                    self.classic_late_chase_rsi_guard.reject_count += 1
+                    sym = str(trade.get("symbol") or "")
+                    if sym:
+                        self.classic_late_chase_rsi_guard.rejected_symbols.add(sym)
+                    return GateDecision(
+                        accept=False,
+                        reason=REJECT_CLASSIC_LATE_CHASE_RSI_OVER80,
+                        continuation_quality_score=q,
+                        quality_tier=tier,
+                        classic_late_chase_rsi_rsi14=cr.rsi14,
+                        classic_late_chase_rsi_late_chase_flag=cr.late_chase_flag,
+                        **v2_ctx,
+                    )
+
+            if self.reentry_rsi_guard is not None:
+                rr = self.reentry_rsi_guard.check(trade)
+                if rr.blocked:
+                    self.reentry_rsi_guard.reject_count += 1
+                    sym = str(trade.get("symbol") or "")
+                    if sym:
+                        self.reentry_rsi_guard.rejected_symbols.add(sym)
+                    return GateDecision(
+                        accept=False,
+                        reason=REJECT_REENTRY_RSI_GUARD_BELOW60,
+                        continuation_quality_score=q,
+                        quality_tier=tier,
+                        reentry_rsi_rsi14=rr.rsi14,
+                        reentry_rsi_after_stop=rr.is_reentry_after_stop,
+                        **v2_ctx,
+                    )
+
+            if self.entry_quality_guard is not None:
+                eq = self.entry_quality_guard.check(trade)
+                if eq.blocked:
+                    self.entry_quality_guard.reject_count += 1
+                    sym = str(trade.get("symbol") or "")
+                    if sym:
+                        self.entry_quality_guard.rejected_symbols.add(sym)
+                    if eq.reject_reason == REJECT_ENTRY_QUALITY_GUARD_SPREAD:
+                        self.entry_quality_guard.spread_reject_count += 1
+                    elif eq.reject_reason == REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT:
+                        self.entry_quality_guard.update_reject_count += 1
+                    return GateDecision(
+                        accept=False,
+                        reason=eq.reject_reason,
+                        continuation_quality_score=q,
+                        quality_tier=tier,
+                        entry_quality_spread_bps=eq.spread_bps,
+                        entry_quality_update_count=eq.update_count_before_entry,
+                        **v2_ctx,
+                    )
+
+            if self.entry_cluster_guard is not None:
+                cg = self.entry_cluster_guard.check(trade)
+                if cg.blocked:
+                    self.entry_cluster_guard.record_reject(trade, cg)
+                    return GateDecision(
+                        accept=False,
+                        reason=REJECT_ENTRY_CLUSTER_GUARD,
+                        continuation_quality_score=q,
+                        quality_tier=tier,
+                        cluster_guard_status=cg.cluster_guard_status,
+                        cluster_id=cg.cluster_id,
+                        new_subcluster_id=cg.new_subcluster_id,
+                        liquidity_burst=cg.liquidity_burst,
+                        entry_cluster_guard_via_exception=False,
+                        **v2_ctx,
+                    )
+                trade_dict = dict(trade) if not isinstance(trade, dict) else trade
+                self.entry_cluster_guard.record_accept(trade_dict, cg)
+                v2_ctx = {
+                    **v2_ctx,
+                    "cluster_guard_status": cg.cluster_guard_status,
+                    "cluster_id": cg.cluster_id,
+                    "new_subcluster_id": cg.new_subcluster_id,
+                    "liquidity_burst": cg.liquidity_burst,
+                    "entry_cluster_guard_via_exception": cg.via_exception,
+                }
         elif self.config.reject_below_quality and q < self.config.min_continuation_quality:
             return GateDecision(
                 accept=False,
@@ -489,9 +596,14 @@ class ExposureGate:
             )
 
         if self.config.position_cap_mode and observer_open_count is not None:
+            cap = (
+                int(max_concurrent_positions)
+                if max_concurrent_positions is not None
+                else self.config.max_concurrent_positions
+            )
             if (
                 not observer_symbol_open
-                and observer_open_count >= self.config.max_concurrent_positions
+                and observer_open_count >= cap
             ):
                 return GateDecision(
                     accept=False,
@@ -506,7 +618,11 @@ class ExposureGate:
             self.state.open_slots = [
                 (a, b, sym) for a, b, sym in self.state.open_slots if b >= ent
             ]
-            if len(self.state.open_slots) >= self.config.max_concurrent_positions:
+            if len(self.state.open_slots) >= (
+                int(max_concurrent_positions)
+                if max_concurrent_positions is not None
+                else self.config.max_concurrent_positions
+            ):
                 return GateDecision(
                     accept=False,
                     reason=REJECT_MAX_CONCURRENT,

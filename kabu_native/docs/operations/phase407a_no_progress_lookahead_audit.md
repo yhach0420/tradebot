@@ -1,6 +1,6 @@
 # Phase407A — No Progress Exit Lookahead / Logic Audit
 
-Generated: 2026-06-16T01:05:46+09:00
+Generated: 2026-06-25T07:17:00+09:00
 Period: 20260529 – 20260615
 Trades audited: 755 (position_cap_accepted)
 Verdict: **WARN**

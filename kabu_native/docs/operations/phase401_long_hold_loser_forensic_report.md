@@ -1,6 +1,6 @@
 # Phase401 — Long Hold Loser Forensic Audit
 
-Generated: 2026-06-15T23:41:56+09:00
+Generated: 2026-06-25T07:12:43+09:00
 
 ## 長時間負け27件は、途中で崩れた・戻された（dead_from_start=9/27、MFE<0.2%=9件）が主因。
 

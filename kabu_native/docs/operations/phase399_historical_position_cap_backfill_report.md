@@ -1,6 +1,6 @@
 # Phase399 — Historical Position-CAP Backfill
 
-Generated: 2026-06-15T23:08:56+09:00
+Generated: 2026-06-25T07:12:14+09:00
 
 ## Verdict: **historical_backfill_ready**
 
@@ -24,17 +24,17 @@ Generated: 2026-06-15T23:08:56+09:00
 - 本履歴: モデル B/C の session 集計を forward 比較のベースラインとする
 - 150万円資産曲線: `capital_shadow_*` 列（モデル C）
 
-### Period: `20260529` – `20260615`
+### Period: `20260615` – `20260615`
 
 ### 集計サマリー
 
-- legacy_total_trades: 1694
-- position_cap_total_trades: 752
-- capital_shadow_total_trades: 752
-- legacy_total_pnl_yen_100: ¥289265.74
-- position_cap_total_pnl_yen_100: ¥125670.0
-- capital_shadow_final_equity: ¥1625670.0
-- max_drawdown_pct: 4.042%
+- legacy_total_trades: 165
+- position_cap_total_trades: 64
+- capital_shadow_total_trades: 64
+- legacy_total_pnl_yen_100: ¥49903.82
+- position_cap_total_pnl_yen_100: ¥700.0
+- capital_shadow_final_equity: ¥1500700.0
+- max_drawdown_pct: 0.0%
 - days_below_50pct: 0
 
 ### 20260615 PM 一致確認 (`live_session_122531`)
@@ -49,7 +49,7 @@ Generated: 2026-06-15T23:08:56+09:00
 
 ### Run stats
 
-- processed_sessions: 21
+- processed_sessions: 2
 - structural_backfilled: 0
 - skipped_push_replay: 0
 - skipped_debug: 0
@@ -59,15 +59,6 @@ Generated: 2026-06-15T23:08:56+09:00
 
 | day | sessions | legacy | position_cap | capital_shadow | position_cap PnL | capital_shadow PnL |
 |-----|----------|--------|--------------|----------------|------------------|------------------|
-| 20260529 | 2 | 168 | 83 | 83 | ¥-1620.0 | ¥-1620.0 |
-| 20260601 | 2 | 174 | 99 | 99 | ¥-16160.0 | ¥-16160.0 |
-| 20260602 | 2 | 168 | 94 | 94 | ¥-42850.0 | ¥-42850.0 |
-| 20260603 | 3 | 147 | 76 | 76 | ¥3600.0 | ¥3600.0 |
-| 20260608 | 2 | 169 | 62 | 62 | ¥50200.0 | ¥50200.0 |
-| 20260609 | 2 | 174 | 80 | 80 | ¥29000.0 | ¥29000.0 |
-| 20260610 | 2 | 178 | 81 | 81 | ¥8400.0 | ¥8400.0 |
-| 20260611 | 2 | 175 | 55 | 55 | ¥84700.0 | ¥84700.0 |
-| 20260612 | 2 | 176 | 58 | 58 | ¥9700.0 | ¥9700.0 |
 | 20260615 | 2 | 165 | 64 | 64 | ¥700.0 | ¥700.0 |
 
 ### Artifacts

@@ -162,6 +162,22 @@ EVENT_FIELDS = (
     "weak_shape_class",
     "late_chase_guard_blocked",
     "late_chase_guard_candidate",
+    "rsi14",
+    "rsi_over80",
+    "late_chase_flag",
+    "classic_late_chase_rsi_guard_pass",
+    "classic_late_chase_rsi_guard_blocked",
+    "classic_late_chase_rsi_guard_candidate",
+    "reentry_rsi_guard_pass",
+    "reentry_rsi_guard_blocked",
+    "reentry_rsi_guard_candidate",
+    "reentry_rsi_guard_after_stop",
+    "spread_bps",
+    "update_count_before_entry",
+    "entry_quality_guard_pass",
+    "entry_quality_guard_blocked",
+    "entry_quality_guard_candidate",
+    "entry_quality_guard_reject_reason",
     "day_high_minutes_from_open",
     "minutes_since_day_high_update",
     "high_to_now_drawdown_pct",
@@ -434,6 +450,19 @@ def _event_from_gate(
     gp = getattr(decision, "entry_score_v2_gate_pass", None)
     if gp is not None:
         base["entry_score_v2_gate_pass"] = gp
+    if decision.accept:
+        for key in (
+            "cluster_guard_status",
+            "cluster_id",
+            "new_subcluster_id",
+            "liquidity_burst",
+            "entry_type",
+        ):
+            val = trade.get(key)
+            if val in (None, "") and hasattr(decision, key):
+                val = getattr(decision, key, None)
+            if val not in (None, ""):
+                base[key] = val
     return base
 
 
@@ -455,6 +484,18 @@ def verify_kabu_connection(repo_root: Path, *, symbol_key: str = "9984@1") -> di
         "current_price": board.get("CurrentPrice"),
         "current_price_time": board.get("CurrentPriceTime"),
     }
+
+
+def _default_post_entry_forward_shadow_session() -> Any:
+    from small_paper.post_entry_forward_shadow import PostEntryForwardShadowSession
+
+    return PostEntryForwardShadowSession()
+
+
+def _default_classic_momentum_forward_shadow_session() -> Any:
+    from small_paper.classic_momentum_forward_shadow import ClassicMomentumForwardShadowSession
+
+    return ClassicMomentumForwardShadowSession()
 
 
 def _default_extended_shadow_counters() -> Any:
@@ -565,6 +606,16 @@ class _LiveRunState:
     weak_shape_reject_symbols: set[str] = field(default_factory=set)
     late_chase_reject_count: int = 0
     late_chase_reject_symbols: set[str] = field(default_factory=set)
+    classic_late_chase_rsi_reject_count: int = 0
+    classic_late_chase_rsi_reject_symbols: set[str] = field(default_factory=set)
+    reentry_rsi_guard_reject_count: int = 0
+    reentry_rsi_guard_reject_symbols: set[str] = field(default_factory=set)
+    entry_quality_guard_reject_count: int = 0
+    entry_quality_guard_spread_reject_count: int = 0
+    entry_quality_guard_update_reject_count: int = 0
+    entry_quality_guard_reject_symbols: set[str] = field(default_factory=set)
+    cluster_guard_reject_count: int = 0
+    cluster_guard_reject_symbols: set[str] = field(default_factory=set)
     board_mid_entry_count: int = 0
     board_high_entry_count: int = 0
     low_liquidity_shadow_reject_count: int = 0
@@ -582,6 +633,10 @@ class _LiveRunState:
     session_momentum_samples: list[float] = field(default_factory=list)
     session_order_book_imbalance_samples: list[float] = field(default_factory=list)
     extended_entry_shadow: Any = field(default_factory=_default_extended_shadow_counters)
+    post_entry_forward_shadow: Any = field(default_factory=_default_post_entry_forward_shadow_session)
+    classic_momentum_forward_shadow: Any = field(
+        default_factory=_default_classic_momentum_forward_shadow_session
+    )
     vwap_shadow_reject: Any = field(default_factory=_default_vwap_shadow_counters)
     board_imbalance_shadow: Any = field(default_factory=_default_board_imbalance_shadow_counters)
     board_dynamic_trailing_shadow: Any = field(
@@ -599,6 +654,7 @@ class _LiveRunState:
     position_cap_stats: Any = None
     peak_observer_open: int = 0
     observer_tracker: Any = None
+    or_overlay: Any = None
 
 
 def _init_position_cap_tracking(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
@@ -607,14 +663,42 @@ def _init_position_cap_tracking(config: SmallPaperPilotConfig, state: _LiveRunSt
     state.position_cap_stats = make_position_cap_stats(config)
 
 
-def _evaluate_gate_entry(ctx: _PushPipelineContext, trade: Mapping[str, Any]) -> Any:
+def _init_or_overlay_tracking(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
+    from small_paper.or_overlay_entry import build_or_overlay_state
+
+    state.or_overlay = build_or_overlay_state(config)
+
+
+def _evaluate_gate_entry(
+    ctx: _PushPipelineContext,
+    trade: Mapping[str, Any],
+    *,
+    entry_pool: str = "PBV2",
+) -> Any:
     from research.exposure_gate import REJECT_MAX_CONCURRENT
-    from small_paper.position_cap_mode import maybe_track_legacy_vh_shadow, observer_cap_kwargs
+    from small_paper.or_overlay_cap import ENTRY_TYPE_OR, cap_reject_reason_for_pool
+    from small_paper.or_overlay_entry import pbv2_cap_kwargs
+    from small_paper.position_cap_mode import maybe_track_legacy_vh_shadow
 
     cap_kw: dict[str, Any] = {}
     if ctx.config.position_cap_mode and ctx.observer is not None:
-        cap_kw = observer_cap_kwargs(ctx.observer, str(trade.get("symbol") or ""))
-    decision = ctx.gate.evaluate_entry(trade, **cap_kw)
+        cap_kw = pbv2_cap_kwargs(ctx.config, ctx.observer, str(trade.get("symbol") or ""))
+        if str(entry_pool).strip().upper() == ENTRY_TYPE_OR:
+            from small_paper.or_overlay_cap import observer_cap_kwargs_for_pool
+
+            cap_kw = observer_cap_kwargs_for_pool(
+                ctx.observer,
+                str(trade.get("symbol") or ""),
+                entry_pool=ENTRY_TYPE_OR,
+                cap_pbv2=int(getattr(ctx.config, "cap_pbv2", 4) or 4),
+                cap_or=int(getattr(ctx.config, "cap_or", 1) or 1),
+            )
+    max_cap = cap_kw.pop("max_concurrent_positions", None)
+    decision = ctx.gate.evaluate_entry(
+        trade,
+        **cap_kw,
+        max_concurrent_positions=max_cap,
+    )
     stats = getattr(ctx.state, "position_cap_stats", None)
     maybe_track_legacy_vh_shadow(
         stats,
@@ -629,7 +713,46 @@ def _evaluate_gate_entry(ctx: _PushPipelineContext, trade: Mapping[str, Any]) ->
         and decision.reason == REJECT_MAX_CONCURRENT
     ):
         stats.record_cap_reject()
+    if (
+        not decision.accept
+        and decision.reason == REJECT_MAX_CONCURRENT
+        and getattr(ctx.config, "or_overlay_enabled", False)
+    ):
+        from dataclasses import replace
+
+        mapped = cap_reject_reason_for_pool(entry_pool)
+        if mapped != REJECT_MAX_CONCURRENT:
+            decision = replace(decision, reason=mapped)
     return decision
+
+
+def _maybe_try_or_overlay_entry(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: dict[str, Any],
+    payload: Mapping[str, Any],
+    pbv2_decision: Any,
+) -> Any:
+    from small_paper.extended_entry_shadow import tick_ts_from_payload
+    from small_paper.or_overlay_entry import evaluate_or_overlay_entry
+
+    or_st = getattr(ctx.state, "or_overlay", None)
+    if or_st is None or pbv2_decision.accept:
+        return pbv2_decision
+    if ctx.observer and ctx.observer.has_open(sym):
+        return pbv2_decision
+    universe = sorted(ctx.entry_eligible_symbols) if ctx.entry_eligible_symbols else None
+    return evaluate_or_overlay_entry(
+        gate=ctx.gate,
+        trade=trade,
+        payload=payload,
+        price_ring=ctx.symbol_price_ring.get(sym, []),
+        entry_ts=tick_ts_from_payload(payload),
+        observer=ctx.observer,
+        or_state=or_st,
+        universe_symbols=universe,
+    )
 
 
 def _active_cap_count(ctx: _PushPipelineContext) -> int:
@@ -808,6 +931,7 @@ def _log_and_dispatch_observer_events(
     discord: Optional[SmallPaperDiscordNotifier],
     writer: Optional[LiveSessionWriter] = None,
     state: Optional["_LiveRunState"] = None,
+    gate: Optional[ExposureGate] = None,
     source: str = "",
     message_index: int = 0,
     profile: str = "",
@@ -843,6 +967,18 @@ def _log_and_dispatch_observer_events(
                 score_counters = getattr(state, "entry_expectancy_score_shadow", None)
                 if score_counters is not None:
                     score_counters.record_exit(row)
+                post_entry = getattr(state, "post_entry_forward_shadow", None)
+                if post_entry is not None:
+                    post_entry.record_exit(row)
+                reentry_guard = getattr(gate, "reentry_rsi_guard", None) if gate else None
+                if reentry_guard is not None:
+                    reentry_guard.record_exit(row)
+                cluster_guard = getattr(gate, "entry_cluster_guard", None) if gate else None
+                if cluster_guard is not None:
+                    cluster_guard.record_exit(row)
+                or_st = getattr(state, "or_overlay", None)
+                if or_st is not None:
+                    or_st.record_exit(row)
             if writer is not None:
                 writer.append_event(row)
             if state is not None and ev.kind == OBSERVER_EXIT:
@@ -882,6 +1018,50 @@ def _extended_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
     if counters is None:
         return {}
     return counters.summary_fields()
+
+
+def _post_entry_forward_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    session = getattr(state, "post_entry_forward_shadow", None)
+    if session is None:
+        return {}
+    return session.summary_fields()
+
+
+def _classic_momentum_forward_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    session = getattr(state, "classic_momentum_forward_shadow", None)
+    if session is None:
+        return {}
+    return session.summary_fields()
+
+
+def _apply_classic_momentum_forward_shadow_finalize(
+    state: _LiveRunState,
+    summary: dict[str, Any],
+    *,
+    output_dir: Optional[Path] = None,
+) -> None:
+    session = getattr(state, "classic_momentum_forward_shadow", None)
+    if session is None:
+        return
+    day = datetime.now(JST).strftime("%Y%m%d")
+    session.finalize_session_end(ts=datetime.now(JST).timestamp(), day=day)
+    summary.update(session.summary_fields())
+    if output_dir is not None:
+        session.write_session_csv(output_dir)
+
+
+def _apply_post_entry_forward_shadow_finalize(
+    state: _LiveRunState,
+    summary: dict[str, Any],
+    *,
+    output_dir: Optional[Path] = None,
+) -> None:
+    session = getattr(state, "post_entry_forward_shadow", None)
+    if session is None:
+        return
+    summary.update(session.summary_fields())
+    if output_dir is not None:
+        session.write_session_csv(output_dir)
 
 
 def _vwap_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
@@ -990,6 +1170,91 @@ def _late_chase_guard_summary_fields(
     out = guard.summary_fields()
     out["late_chase_reject_count"] = state.late_chase_reject_count
     out["late_chase_reject_symbols"] = sorted(state.late_chase_reject_symbols)
+    return out
+
+
+def _classic_late_chase_rsi_guard_summary_fields(
+    gate: ExposureGate,
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    guard = getattr(gate, "classic_late_chase_rsi_guard", None)
+    if guard is None:
+        return {
+            "classic_late_chase_rsi_guard_enabled": False,
+            "classic_late_chase_rsi_over80": 0,
+            "classic_late_chase_rsi_reject_count": 0,
+            "classic_late_chase_rsi_reject_symbols": [],
+        }
+    out = guard.summary_fields()
+    out["classic_late_chase_rsi_over80"] = state.classic_late_chase_rsi_reject_count
+    out["classic_late_chase_rsi_reject_count"] = state.classic_late_chase_rsi_reject_count
+    out["classic_late_chase_rsi_reject_symbols"] = sorted(
+        state.classic_late_chase_rsi_reject_symbols
+    )
+    return out
+
+
+def _reentry_rsi_guard_summary_fields(
+    gate: ExposureGate,
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    guard = getattr(gate, "reentry_rsi_guard", None)
+    if guard is None:
+        return {
+            "reentry_rsi_guard_enabled": False,
+            "reentry_rsi_guard_reject_count": 0,
+            "reentry_rsi_guard_reject_symbols": [],
+        }
+    out = guard.summary_fields()
+    out["reentry_rsi_guard_reject_count"] = state.reentry_rsi_guard_reject_count
+    out["reentry_rsi_guard_reject_symbols"] = sorted(state.reentry_rsi_guard_reject_symbols)
+    return out
+
+
+def _entry_quality_guard_summary_fields(
+    gate: ExposureGate,
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    guard = getattr(gate, "entry_quality_guard", None)
+    if guard is None:
+        return {
+            "entry_quality_guard_enabled": False,
+            "entry_quality_guard_reject_count": 0,
+            "entry_quality_guard_spread_reject_count": 0,
+            "entry_quality_guard_update_reject_count": 0,
+            "entry_quality_guard_reject_symbols": [],
+        }
+    out = guard.summary_fields()
+    out["entry_quality_guard_reject_count"] = state.entry_quality_guard_reject_count
+    out["entry_quality_guard_spread_reject_count"] = state.entry_quality_guard_spread_reject_count
+    out["entry_quality_guard_update_reject_count"] = state.entry_quality_guard_update_reject_count
+    out["entry_quality_guard_reject_symbols"] = sorted(state.entry_quality_guard_reject_symbols)
+    return out
+
+
+def _entry_cluster_guard_summary_fields(
+    gate: ExposureGate,
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    guard = getattr(gate, "entry_cluster_guard", None)
+    if guard is None:
+        return {
+            "entry_cluster_guard_enabled": False,
+            "cluster_guard_reject_count": 0,
+            "cluster_guard_exception_count": 0,
+            "cluster_guard_rejected_pnl": 0.0,
+            "cluster_guard_exception_pnl": 0.0,
+            "cluster_guard_exception_win_rate": 0.0,
+            "cluster_guard_exception_pf": 0.0,
+            "cluster_guard_exception_big_winner": 0,
+            "cluster_guard_exception_mfe0": 0,
+            "cluster_guard_blocked_cluster_counts": {},
+        }
+    out = guard.summary_fields()
+    out["cluster_guard_reject_count"] = max(state.cluster_guard_reject_count, guard.reject_count)
+    out["cluster_guard_reject_symbols"] = sorted(
+        state.cluster_guard_reject_symbols or guard.rejected_symbols
+    )
     return out
 
 
@@ -1204,12 +1469,20 @@ def _enrich_trade_for_entry_guards(
     high_drift_guard = getattr(ctx.gate, "high_drift_pullback_guard", None)
     weak_shape_guard = getattr(ctx.gate, "weak_shape_reject_guard", None)
     late_chase_guard = getattr(ctx.gate, "late_chase_guard", None)
+    classic_late_chase_rsi_guard = getattr(ctx.gate, "classic_late_chase_rsi_guard", None)
+    reentry_rsi_guard = getattr(ctx.gate, "reentry_rsi_guard", None)
+    entry_quality_guard = getattr(ctx.gate, "entry_quality_guard", None)
+    entry_cluster_guard = getattr(ctx.gate, "entry_cluster_guard", None)
     if (
         pullback_guard is None
         and near_day_guard is None
         and high_drift_guard is None
         and weak_shape_guard is None
         and late_chase_guard is None
+        and classic_late_chase_rsi_guard is None
+        and reentry_rsi_guard is None
+        and entry_quality_guard is None
+        and entry_cluster_guard is None
     ):
         return
     from small_paper.extended_entry_shadow import compute_entry_shadow_fields, tick_ts_from_payload
@@ -1256,6 +1529,50 @@ def _enrich_trade_for_entry_guards(
             board_high=board_high,
         )
         trade.update(timing)
+    if classic_late_chase_rsi_guard is not None:
+        from small_paper.classic_late_chase_rsi_guard import (
+            compute_classic_late_chase_rsi_guard_fields,
+        )
+
+        cr_fields = compute_classic_late_chase_rsi_guard_fields(
+            trade,
+            price_ring=ctx.symbol_price_ring.get(sym, []),
+            entry_ts=entry_ts,
+            threshold=classic_late_chase_rsi_guard.config.rsi_threshold,
+            enabled=classic_late_chase_rsi_guard.config.enabled,
+        )
+        trade.update(cr_fields)
+    if reentry_rsi_guard is not None:
+        from small_paper.reentry_rsi_guard import compute_reentry_rsi_guard_fields
+
+        rr_fields = compute_reentry_rsi_guard_fields(
+            trade,
+            price_ring=ctx.symbol_price_ring.get(sym, []),
+            entry_ts=entry_ts,
+            threshold=reentry_rsi_guard.config.rsi_threshold,
+            enabled=reentry_rsi_guard.config.enabled,
+            reentry_after_stop=reentry_rsi_guard.is_reentry_after_stop(sym),
+        )
+        trade.update(rr_fields)
+    if entry_quality_guard is not None:
+        from small_paper.entry_quality_guard import compute_entry_quality_guard_fields
+
+        eq_fields = compute_entry_quality_guard_fields(
+            trade,
+            payload=payload,
+            price_ring=ctx.symbol_price_ring.get(sym, []),
+            entry_ts=entry_ts,
+            max_spread_bps=entry_quality_guard.config.max_spread_bps,
+            max_update_count=entry_quality_guard.config.max_update_count,
+            enabled=entry_quality_guard.config.enabled,
+        )
+        trade.update(eq_fields)
+    if entry_cluster_guard is not None:
+        from small_paper.entry_cluster_guard import compute_entry_cluster_guard_fields
+
+        trade.update(
+            compute_entry_cluster_guard_fields(trade, model=entry_cluster_guard.model)
+        )
 
 
 def _enrich_trade_for_pullback_guard(
@@ -1424,6 +1741,23 @@ def _execute_accepted_entry(
 
     trade.update(compute_late_chase_guard_fields(trade))
 
+    for key in (
+        "cluster_guard_status",
+        "cluster_id",
+        "new_subcluster_id",
+        "liquidity_burst",
+        "entry_cluster_guard_via_exception",
+    ):
+        val = getattr(decision, key, None)
+        if val not in (None, ""):
+            trade[key] = val
+
+    if "entry_type" not in trade:
+        trade["entry_type"] = "PBV2"
+    or_st = getattr(ctx.state, "or_overlay", None)
+    if or_st is not None:
+        or_st.record_entry(trade)
+
     slot_before = _active_cap_count(ctx)
     ctx.gate.record_accepted(trade)
     if not ctx.config.position_cap_mode:
@@ -1468,6 +1802,7 @@ def _execute_accepted_entry(
                 discord=ctx.discord,
                 writer=ctx.writer,
                 state=ctx.state,
+                gate=ctx.gate,
                 source=ctx.source,
                 message_index=msg_i,
                 profile=ctx.config.profile,
@@ -1619,6 +1954,22 @@ def _process_push_payload(
     if px_tick > 0:
         ring = ctx.symbol_price_ring.setdefault(sym, [])
         append_price_tick(ring, ts=tick_ts_from_payload(payload), px=px_tick)
+        cm_shadow = getattr(ctx.state, "classic_momentum_forward_shadow", None)
+        if cm_shadow is not None:
+            cm_shadow.on_price_tick(
+                symbol=sym,
+                price_ring=ring,
+                ts=tick_ts_from_payload(payload),
+                px=px_tick,
+                day=datetime.now(JST).strftime("%Y%m%d"),
+            )
+        or_st = getattr(ctx.state, "or_overlay", None)
+        if or_st is not None:
+            or_st.record_day_tick(
+                sym,
+                current_price=px_tick,
+                prev_close=_as_float(payload.get("PreviousClose")),
+            )
 
     snapshot = ctx.feature_bridge.update(sym, payload)
     enriched = ctx.feature_bridge.enrich_payload(payload, snapshot)
@@ -1681,6 +2032,7 @@ def _process_push_payload(
             discord=ctx.discord,
             writer=ctx.writer,
             state=ctx.state,
+            gate=ctx.gate,
             source=ctx.source,
             message_index=msg_i,
             profile=ctx.config.profile,
@@ -1747,7 +2099,14 @@ def _process_push_payload(
             )
         else:
             _enrich_trade_for_pullback_guard(ctx, sym=sym, trade=trade, payload=payload)
-            decision = _evaluate_gate_entry(ctx, trade)
+            decision = _evaluate_gate_entry(ctx, trade, entry_pool="PBV2")
+            decision = _maybe_try_or_overlay_entry(
+                ctx,
+                sym=sym,
+                trade=trade,
+                payload=payload,
+                pbv2_decision=decision,
+            )
     ctx.state.gate_evaluations += 1
 
     cand = _event_from_gate(
@@ -2063,6 +2422,139 @@ def _process_push_payload(
                     "reject_reason": REJECT_LATE_CHASE_GUARD,
                 }
             )
+        if decision.reason == "classic_late_chase_rsi_over80":
+            from small_paper.classic_late_chase_rsi_guard import (
+                LOG_EVENT_KIND as CR_LOG_EVENT_KIND,
+                REJECT_CLASSIC_LATE_CHASE_RSI_OVER80,
+            )
+
+            ctx.state.classic_late_chase_rsi_reject_count += 1
+            ctx.state.classic_late_chase_rsi_reject_symbols.add(sym)
+            rej_row["time"] = trade.get("entry_time")
+            rej_row["rsi14"] = getattr(decision, "classic_late_chase_rsi_rsi14", trade.get("rsi14"))
+            rej_row["late_chase_flag"] = getattr(
+                decision, "classic_late_chase_rsi_late_chase_flag", trade.get("late_chase_flag")
+            )
+            rej_row["reject_reason"] = REJECT_CLASSIC_LATE_CHASE_RSI_OVER80
+            ctx.writer.append_error(
+                {
+                    "event_kind": CR_LOG_EVENT_KIND,
+                    "symbol": sym,
+                    "time": trade.get("entry_time"),
+                    "rsi14": rej_row["rsi14"],
+                    "late_chase_flag": rej_row["late_chase_flag"],
+                    "reject_reason": REJECT_CLASSIC_LATE_CHASE_RSI_OVER80,
+                }
+            )
+        if decision.reason == "reentry_rsi_guard_below60":
+            from small_paper.reentry_rsi_guard import (
+                LOG_EVENT_KIND as RR_LOG_EVENT_KIND,
+                REJECT_REENTRY_RSI_GUARD_BELOW60,
+            )
+
+            ctx.state.reentry_rsi_guard_reject_count += 1
+            ctx.state.reentry_rsi_guard_reject_symbols.add(sym)
+            rej_row["time"] = trade.get("entry_time")
+            rej_row["rsi14"] = getattr(decision, "reentry_rsi_rsi14", trade.get("rsi14"))
+            rej_row["reentry_rsi_guard_after_stop"] = getattr(
+                decision, "reentry_rsi_after_stop", trade.get("reentry_rsi_guard_after_stop")
+            )
+            rej_row["reject_reason"] = REJECT_REENTRY_RSI_GUARD_BELOW60
+            ctx.writer.append_error(
+                {
+                    "event_kind": RR_LOG_EVENT_KIND,
+                    "symbol": sym,
+                    "time": trade.get("entry_time"),
+                    "rsi14": rej_row["rsi14"],
+                    "reentry_after_stop": rej_row["reentry_rsi_guard_after_stop"],
+                    "reject_reason": REJECT_REENTRY_RSI_GUARD_BELOW60,
+                }
+            )
+        if decision.reason == "entry_quality_guard_spread":
+            from small_paper.entry_quality_guard import (
+                LOG_EVENT_KIND_SPREAD,
+                REJECT_ENTRY_QUALITY_GUARD_SPREAD,
+            )
+
+            ctx.state.entry_quality_guard_reject_count += 1
+            ctx.state.entry_quality_guard_spread_reject_count += 1
+            ctx.state.entry_quality_guard_reject_symbols.add(sym)
+            rej_row["time"] = trade.get("entry_time")
+            rej_row["spread_bps"] = getattr(
+                decision, "entry_quality_spread_bps", trade.get("spread_bps")
+            )
+            rej_row["update_count_before_entry"] = getattr(
+                decision, "entry_quality_update_count", trade.get("update_count_before_entry")
+            )
+            rej_row["reject_reason"] = REJECT_ENTRY_QUALITY_GUARD_SPREAD
+            ctx.writer.append_error(
+                {
+                    "event_kind": LOG_EVENT_KIND_SPREAD,
+                    "symbol": sym,
+                    "time": trade.get("entry_time"),
+                    "spread_bps": rej_row["spread_bps"],
+                    "update_count_before_entry": rej_row["update_count_before_entry"],
+                    "reject_reason": REJECT_ENTRY_QUALITY_GUARD_SPREAD,
+                }
+            )
+        if decision.reason == "entry_quality_guard_update_count":
+            from small_paper.entry_quality_guard import (
+                LOG_EVENT_KIND_UPDATE,
+                REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT,
+            )
+
+            ctx.state.entry_quality_guard_reject_count += 1
+            ctx.state.entry_quality_guard_update_reject_count += 1
+            ctx.state.entry_quality_guard_reject_symbols.add(sym)
+            rej_row["time"] = trade.get("entry_time")
+            rej_row["spread_bps"] = getattr(
+                decision, "entry_quality_spread_bps", trade.get("spread_bps")
+            )
+            rej_row["update_count_before_entry"] = getattr(
+                decision, "entry_quality_update_count", trade.get("update_count_before_entry")
+            )
+            rej_row["reject_reason"] = REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT
+            ctx.writer.append_error(
+                {
+                    "event_kind": LOG_EVENT_KIND_UPDATE,
+                    "symbol": sym,
+                    "time": trade.get("entry_time"),
+                    "spread_bps": rej_row["spread_bps"],
+                    "update_count_before_entry": rej_row["update_count_before_entry"],
+                    "reject_reason": REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT,
+                }
+            )
+        if decision.reason == "entry_cluster_guard":
+            from small_paper.entry_cluster_guard import (
+                LOG_EVENT_KIND as CG_LOG_EVENT_KIND,
+                REJECT_ENTRY_CLUSTER_GUARD,
+            )
+
+            ctx.state.cluster_guard_reject_count += 1
+            ctx.state.cluster_guard_reject_symbols.add(sym)
+            rej_row["cluster_id"] = getattr(decision, "cluster_id", trade.get("cluster_id"))
+            rej_row["new_subcluster_id"] = getattr(
+                decision, "new_subcluster_id", trade.get("new_subcluster_id")
+            )
+            rej_row["liquidity_burst"] = getattr(
+                decision, "liquidity_burst", trade.get("liquidity_burst")
+            )
+            rej_row["cluster_guard_status"] = getattr(
+                decision, "cluster_guard_status", "REJECTED"
+            )
+            rej_row["reject_reason"] = REJECT_ENTRY_CLUSTER_GUARD
+            ctx.writer.append_error(
+                {
+                    "event_kind": CG_LOG_EVENT_KIND,
+                    "symbol": sym,
+                    "time": trade.get("entry_time"),
+                    "cluster_id": rej_row["cluster_id"],
+                    "new_subcluster_id": rej_row["new_subcluster_id"],
+                    "liquidity_burst": rej_row["liquidity_burst"],
+                    "cluster_guard_status": rej_row["cluster_guard_status"],
+                    "reject_reason": REJECT_ENTRY_CLUSTER_GUARD,
+                }
+            )
         ctx.state.reject_rows.append(rej_row)
         rej = _event_from_gate(
             event_type="rejected",
@@ -2365,6 +2857,8 @@ def _build_push_replay_summary(
     if getattr(config, "low_liquidity_shadow_enabled", False):
         base["low_liquidity_shadow_reject_count"] = state.low_liquidity_shadow_reject_count
     base.update(_extended_shadow_summary_fields(state))
+    base.update(_post_entry_forward_shadow_summary_fields(state))
+    base.update(_classic_momentum_forward_shadow_summary_fields(state))
     base.update(_vwap_shadow_summary_fields(state))
     base.update(_board_imbalance_shadow_summary_fields(state))
     base.update(_board_dynamic_trailing_shadow_summary_fields(state))
@@ -2374,9 +2868,14 @@ def _build_push_replay_summary(
     base.update(_high_drift_pullback_guard_summary_fields(gate, state))
     base.update(_weak_shape_reject_guard_summary_fields(gate, state))
     base.update(_late_chase_guard_summary_fields(gate, state))
+    base.update(_classic_late_chase_rsi_guard_summary_fields(gate, state))
+    base.update(_reentry_rsi_guard_summary_fields(gate, state))
+    base.update(_entry_quality_guard_summary_fields(gate, state))
+    base.update(_entry_cluster_guard_summary_fields(gate, state))
     base.update(_board_entry_summary_fields(state))
     base.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     base.update(_entry_expectancy_score_summary_fields(state))
+    base.update(_or_overlay_summary_fields(config, state))
     base.update(_observer_exit_pnl_summary_fields(state.events))
     base.update(
         _position_cap_summary_for_session(
@@ -2499,6 +2998,7 @@ def run_push_replay_dry_run(
     writer = LiveSessionWriter(output_dir, incremental=True, event_fields=EVENT_FIELDS)
     state = _LiveRunState(started_mono=time.monotonic())
     _init_position_cap_tracking(replay_config, state)
+    _init_or_overlay_tracking(replay_config, state)
     if enable_board_failure_forensic_shadow:
         from small_paper.board_failure_forensic_pack import BoardFailureForensicPack
 
@@ -2639,6 +3139,7 @@ def run_push_replay_dry_run(
             discord=discord,
             writer=writer,
             state=state,
+            gate=gate,
             source="push-replay",
             message_index=msg_i,
             profile=replay_config.profile,
@@ -2684,6 +3185,8 @@ def run_push_replay_dry_run(
     _apply_trading_value_shadow_finalize(state, summary)
     _apply_board_imbalance_shadow_finalize(state, summary)
     _apply_entry_expectancy_score_shadow_finalize(state, summary)
+    _apply_post_entry_forward_shadow_finalize(state, summary, output_dir=output_dir)
+    _apply_classic_momentum_forward_shadow_finalize(state, summary, output_dir=output_dir)
     writer.finalize_batch(
         events=state.events,
         positions=positions,
@@ -2924,6 +3427,59 @@ def _run_boundary_forward_shadow_auto(
         }
 
 
+def _run_classic_momentum_forward_shadow_auto(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    summary: dict[str, Any],
+) -> None:
+    from small_paper.classic_momentum_forward_shadow_auto import run_classic_momentum_forward_shadow_auto
+
+    try:
+        summary["classic_momentum_forward_shadow"] = run_classic_momentum_forward_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[classic_momentum_forward_shadow] unexpected error: %s", exc
+        )
+        summary["classic_momentum_forward_shadow"] = {
+            "day": output_dir.parent.name if output_dir.parent else "",
+            "status": "warning",
+            "warning": str(exc),
+        }
+
+
+def _run_post_entry_forward_shadow_auto(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    summary: dict[str, Any],
+) -> None:
+    """Phase500: research-only post-entry forward shadow review."""
+    from small_paper.post_entry_forward_shadow_auto import run_post_entry_forward_shadow_auto
+
+    try:
+        summary["post_entry_forward_shadow"] = run_post_entry_forward_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "[post_entry_forward_shadow] unexpected error: %s", exc
+        )
+        summary["post_entry_forward_shadow"] = {
+            "day": output_dir.parent.name if output_dir.parent else "",
+            "status": "warning",
+            "warning": str(exc),
+        }
+
+
 def _build_live_summary(
     *,
     config: SmallPaperPilotConfig,
@@ -3020,6 +3576,8 @@ def _build_live_summary(
         summary["low_liquidity_shadow_reject_count"] = state.low_liquidity_shadow_reject_count
     summary.update(_intraday_refresh_summary_fields(state))
     summary.update(_extended_shadow_summary_fields(state))
+    summary.update(_post_entry_forward_shadow_summary_fields(state))
+    summary.update(_classic_momentum_forward_shadow_summary_fields(state))
     summary.update(_vwap_shadow_summary_fields(state))
     summary.update(_board_imbalance_shadow_summary_fields(state))
     summary.update(_board_dynamic_trailing_shadow_summary_fields(state))
@@ -3029,9 +3587,14 @@ def _build_live_summary(
     summary.update(_high_drift_pullback_guard_summary_fields(gate, state))
     summary.update(_weak_shape_reject_guard_summary_fields(gate, state))
     summary.update(_late_chase_guard_summary_fields(gate, state))
+    summary.update(_classic_late_chase_rsi_guard_summary_fields(gate, state))
+    summary.update(_reentry_rsi_guard_summary_fields(gate, state))
+    summary.update(_entry_quality_guard_summary_fields(gate, state))
+    summary.update(_entry_cluster_guard_summary_fields(gate, state))
     summary.update(_board_entry_summary_fields(state))
     summary.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     summary.update(_entry_expectancy_score_summary_fields(state))
+    summary.update(_or_overlay_summary_fields(config, state))
     summary.update(_observer_exit_pnl_summary_fields(state.events))
     summary.update(
         _position_cap_summary_for_session(
@@ -3043,6 +3606,14 @@ def _build_live_summary(
     )
     _attach_canonical_summary_fields(summary, state.events, config=config)
     return summary
+
+
+def _or_overlay_summary_fields(config: SmallPaperPilotConfig, state: _LiveRunState) -> dict[str, Any]:
+    or_st = getattr(state, "or_overlay", None)
+    if or_st is None:
+        return {"or_overlay_enabled": False}
+    observer = getattr(state, "observer_tracker", None)
+    return or_st.summary_fields(events=state.events, observer=observer)
 
 
 def _position_cap_summary_for_session(
@@ -3272,6 +3843,7 @@ def run_live_dry_run(
     writer = LiveSessionWriter(output_dir, incremental=incremental, event_fields=EVENT_FIELDS)
     state = _LiveRunState(started_mono=time.monotonic())
     _init_position_cap_tracking(config, state)
+    _init_or_overlay_tracking(config, state)
     pos_fields = ["symbol", "entry_time", "exit_time", "open_slots_after"]
     gap_threshold_sec = max(stale_tick_sec * 2, poll_interval_sec * 3)
     pipeline_ctx: Optional[_PushPipelineContext] = None
@@ -3837,6 +4409,7 @@ def run_live_dry_run(
             discord=discord,
             writer=writer,
             state=state,
+            gate=gate,
             source="live",
             message_index=state.push_messages,
             profile=config.profile,
@@ -3903,6 +4476,18 @@ def run_live_dry_run(
         summary=summary,
         config=config,
         poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
+    )
+    _apply_post_entry_forward_shadow_finalize(state, summary, output_dir=output_dir)
+    _apply_classic_momentum_forward_shadow_finalize(state, summary, output_dir=output_dir)
+    _run_post_entry_forward_shadow_auto(
+        repo_root=repo_root,
+        output_dir=output_dir,
+        summary=summary,
+    )
+    _run_classic_momentum_forward_shadow_auto(
+        repo_root=repo_root,
+        output_dir=output_dir,
+        summary=summary,
     )
     notify_discord_session_end(
         discord,
