@@ -103,11 +103,56 @@ def main() -> int:
         help="Shadow-only exit policy overlay (e.g. fade-hybrid).",
     )
     parser.add_argument(
+        "--startup-smoke-test",
+        action="store_true",
+        help="Phase552: production startup smoke test only (no AM/PM runner)",
+    )
+    parser.add_argument(
         "--low-liquidity-shadow",
         action="store_true",
         help="Phase179d: use trailing_mfe low-liquidity SHADOW logging YAML (non-prod).",
     )
     args = parser.parse_args()
+
+    if args.startup_smoke_test:
+        from small_paper.production_startup_smoke_test import run_production_startup_smoke_test
+
+        config_rel = (
+            SHADOW_PILOT_YAML
+            if args.universe_mode == UNIVERSE_MODE_LEGACY
+            else ENTRY_GUARD_SHADOW_YAML
+        )
+        if args.exit_policy_shadow == "fade-hybrid":
+            from runner.am_pm_daily_runner import FADE_HYBRID_SHADOW_YAML
+
+            config_rel = FADE_HYBRID_SHADOW_YAML
+        if args.exit_policy_shadow == "fade-breakdown":
+            from runner.am_pm_daily_runner import FADE_BREAKDOWN_SHADOW_YAML
+
+            config_rel = FADE_BREAKDOWN_SHADOW_YAML
+        if args.exit_policy_shadow == "trailing-mfe":
+            from runner.am_pm_daily_runner import (
+                TRAILING_MFE_LOW_LIQ_SHADOW_YAML,
+                TRAILING_MFE_SHADOW_YAML,
+            )
+
+            config_rel = (
+                TRAILING_MFE_LOW_LIQ_SHADOW_YAML
+                if args.low_liquidity_shadow
+                else TRAILING_MFE_SHADOW_YAML
+            )
+        if args.config:
+            cfg = args.config if args.config.is_absolute() else repo_root / args.config
+            try:
+                config_rel = str(cfg.relative_to(repo_root)).replace("\\", "/")
+            except ValueError:
+                config_rel = str(cfg)
+        report = run_production_startup_smoke_test(
+            repo_root=repo_root,
+            config_rel=config_rel,
+        )
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        return 0 if report.ready else 2
 
     day_stamp = (
         normalize_day_stamp(args.day_stamp)

@@ -55,6 +55,55 @@ class LiveSessionWriter:
         with self._errors_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
 
+    def append_volume_shadow_eval(self, record: Mapping[str, Any]) -> None:
+        if not self.incremental:
+            return
+        path = self.output_dir / "volume_gate_shadow_eval.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
+    def append_live_order_intent(self, record: Mapping[str, Any]) -> None:
+        if not self.incremental:
+            return
+        path = self.output_dir / "live_order_intent.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
+    def append_live_order_state(self, record: Mapping[str, Any]) -> None:
+        if not self.incremental:
+            return
+        path = self.output_dir / "live_order_state.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
+    def append_live_position_reconcile(self, record: Mapping[str, Any]) -> None:
+        if not self.incremental:
+            return
+        path = self.output_dir / "live_position_reconcile.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
+    def append_live_order_latency(self, record: Mapping[str, Any]) -> None:
+        if not self.incremental:
+            return
+        path = self.output_dir / "live_order_latency.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
+    def append_live_order_would_send(self, record: Mapping[str, Any]) -> None:
+        if not self.incremental:
+            return
+        path = self.output_dir / "live_order_would_send.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
+    def append_live_capital_check(self, record: Mapping[str, Any]) -> None:
+        if not self.incremental:
+            return
+        path = self.output_dir / "live_capital_check.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
     def append_entry_scan_audit(self, record: Mapping[str, Any]) -> None:
         path = self.output_dir / "entry_scan_audit.jsonl"
         with path.open("a", encoding="utf-8") as f:

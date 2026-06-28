@@ -20,9 +20,13 @@ for p in (KABU, SRC, REPO):
 from small_paper.config import load_pilot_config  # noqa: E402
 from small_paper.entry_cluster_guard import (  # noqa: E402
     PHASE549_RUNTIME_VERDICT,
+    PHASE552_SMOKE_VERDICT,
     build_entry_cluster_guard_state,
     config_from_pilot,
+    validate_entry_cluster_guard_model,
 )
+from small_paper.entry_cluster_classifier import resolve_entry_cluster_guard_model_path  # noqa: E402
+from small_paper.production_startup_smoke_test import run_production_startup_smoke_test  # noqa: E402
 from small_paper.live_pipeline_preflight import default_config_path  # noqa: E402
 
 
@@ -44,6 +48,7 @@ def main() -> int:
             TestEntryClusterGuardOrNonImpact,
             TestEntryClusterGuardSummaryAndDiscord,
             TestPhase549Verdict,
+            TestPhase552ModelPathResolution,
         )
 
         suite = unittest.TestSuite(
@@ -55,6 +60,7 @@ def main() -> int:
                     TestEntryClusterGuardSummaryAndDiscord
                 ),
                 unittest.defaultTestLoader.loadTestsFromTestCase(TestEntryClusterGuardOrNonImpact),
+                unittest.defaultTestLoader.loadTestsFromTestCase(TestPhase552ModelPathResolution),
                 unittest.defaultTestLoader.loadTestsFromTestCase(TestPhase549Verdict),
             ]
         )
@@ -86,15 +92,34 @@ def main() -> int:
 
     guard = build_entry_cluster_guard_state(config, repo_root=KABU)
     if guard is None:
-        errors.append("build_entry_cluster_guard_state returned None")
+        errors.append("build_entry_cluster_guard_state returned None (kabu_native repo_root)")
 
-    model_path = KABU / "configs" / "entry_cluster_guard_model.json"
+    prod_guard, prod_errors = validate_entry_cluster_guard_model(config, repo_root=REPO)
+    errors.extend(prod_errors)
+    if prod_guard is None and guard_cfg.enabled:
+        errors.append("validate_entry_cluster_guard_model failed for production repo_root")
+
+    smoke = run_production_startup_smoke_test(repo_root=REPO)
+    if not smoke.ready:
+        errors.extend([f"startup_smoke_test: {e}" for e in smoke.errors])
+    elif smoke.verdict != PHASE552_SMOKE_VERDICT:
+        errors.append(f"unexpected smoke verdict: {smoke.verdict}")
+
+    try:
+        model_path = resolve_entry_cluster_guard_model_path(repo_root=REPO)
+    except FileNotFoundError as exc:
+        errors.append(str(exc))
+        model_path = KABU / "configs" / "entry_cluster_guard_model.json"
     if not model_path.is_file():
         errors.append(f"missing model: {model_path}")
 
-    gate = config.make_exposure_gate(repo_root=KABU)
+    gate = config.make_exposure_gate(repo_root=REPO)
     if getattr(gate, "entry_cluster_guard", None) is None:
-        errors.append("ExposureGate.entry_cluster_guard is None")
+        errors.append("ExposureGate.entry_cluster_guard is None (production repo_root)")
+
+    gate_kabu = config.make_exposure_gate(repo_root=KABU)
+    if getattr(gate_kabu, "entry_cluster_guard", None) is None:
+        errors.append("ExposureGate.entry_cluster_guard is None (kabu_native repo_root)")
 
     if guard is not None:
         summary = guard.summary_fields()
@@ -113,15 +138,18 @@ def main() -> int:
                 errors.append(f"summary missing key: {key}")
 
     if config.or_overlay_enabled:
-        or_gate = config.make_exposure_gate(repo_root=KABU)
+        or_gate = config.make_exposure_gate(repo_root=REPO)
         if getattr(or_gate, "entry_cluster_guard", None) is None:
             errors.append("OR config path lost cluster guard on gate (unexpected)")
 
-    verdict = PHASE549_RUNTIME_VERDICT if not errors else "phase549_runtime_ready_failed"
+    verdict = PHASE552_SMOKE_VERDICT if not errors else "phase549_runtime_ready_failed"
     out = {
         "verdict": verdict,
         "ready": not errors,
         "config_path": str(cfg_path),
+        "model_path": str(model_path) if model_path.is_file() else None,
+        "production_repo_root": str(REPO),
+        "startup_smoke_test": smoke.to_dict(),
         "errors": errors,
         "cluster_guard_config": {
             "enabled": guard_cfg.enabled,

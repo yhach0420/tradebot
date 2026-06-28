@@ -21,7 +21,11 @@ from research.exposure_gate import (  # noqa: E402
 )
 from small_paper.config import SmallPaperPilotConfig, load_pilot_config  # noqa: E402
 from small_paper.discord_message_builder import build_entry_detail  # noqa: E402
-from small_paper.entry_cluster_classifier import EntryClusterModel, load_default_model  # noqa: E402
+from small_paper.entry_cluster_classifier import (  # noqa: E402
+    EntryClusterModel,
+    load_default_model,
+    resolve_entry_cluster_guard_model_path,
+)
 from small_paper.entry_cluster_guard import (  # noqa: E402
     CLUSTER_GUARD_EXCEPTION,
     CLUSTER_GUARD_PASSED,
@@ -30,8 +34,10 @@ from small_paper.entry_cluster_guard import (  # noqa: E402
     EntryClusterGuardConfig,
     EntryClusterGuardState,
     PHASE549_RUNTIME_VERDICT,
+    PHASE552_SMOKE_VERDICT,
     build_entry_cluster_guard_state,
     config_from_pilot,
+    validate_entry_cluster_guard_model,
 )
 from small_paper.or_overlay_entry import (  # noqa: E402
     OrOverlayConfig,
@@ -308,6 +314,10 @@ class TestEntryClusterGuardConfig(unittest.TestCase):
         )
         self.assertEqual(config.raw.get("entry_cluster_guard_reject_clusters"), [5])
         self.assertEqual(config.raw.get("entry_cluster_guard_reject_csubs"), [0, 2, 3, 5])
+        self.assertEqual(
+            config.raw.get("entry_cluster_guard_model_path"),
+            "kabu_native/configs/entry_cluster_guard_model.json",
+        )
 
     def test_make_exposure_gate_attaches_cluster_guard(self) -> None:
         cfg_path = (
@@ -318,6 +328,8 @@ class TestEntryClusterGuardConfig(unittest.TestCase):
         config = load_pilot_config(cfg_path)
         gate = config.make_exposure_gate(repo_root=KABU)
         self.assertIsNotNone(getattr(gate, "entry_cluster_guard", None))
+        gate_prod = config.make_exposure_gate(repo_root=REPO)
+        self.assertIsNotNone(getattr(gate_prod, "entry_cluster_guard", None))
 
     def test_rollback_enabled_false(self) -> None:
         config = SmallPaperPilotConfig(
@@ -417,9 +429,61 @@ class TestEntryClusterGuardOrNonImpact(unittest.TestCase):
         self.assertEqual(guard.reject_count, 0)
 
 
+class TestPhase552ModelPathResolution(unittest.TestCase):
+    def test_resolve_from_tradebotfile_repo_root(self) -> None:
+        path = resolve_entry_cluster_guard_model_path(repo_root=REPO)
+        self.assertTrue(path.is_file())
+        self.assertEqual(path.parent.parent.name, "kabu_native")
+
+    def test_resolve_from_kabu_repo_root_with_yaml_path(self) -> None:
+        path = resolve_entry_cluster_guard_model_path(
+            repo_root=KABU,
+            yaml_path="kabu_native/configs/entry_cluster_guard_model.json",
+        )
+        self.assertTrue(path.is_file())
+        self.assertEqual(path.parent.name, "configs")
+
+    def test_load_default_model_from_tradebotfile_repo_root(self) -> None:
+        model = load_default_model(repo_root=REPO)
+        self.assertTrue(model.cluster_features)
+
+    def test_build_guard_state_from_tradebotfile_repo_root(self) -> None:
+        cfg_path = (
+            KABU
+            / "configs"
+            / "small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml"
+        )
+        config = load_pilot_config(cfg_path)
+        state = build_entry_cluster_guard_state(config, repo_root=REPO)
+        self.assertIsNotNone(state)
+
+    def test_validate_entry_cluster_guard_model(self) -> None:
+        cfg_path = (
+            KABU
+            / "configs"
+            / "small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml"
+        )
+        config = load_pilot_config(cfg_path)
+        state, errors = validate_entry_cluster_guard_model(config, repo_root=REPO)
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(state)
+
+    def test_missing_model_raises(self) -> None:
+        with self.assertRaises(FileNotFoundError):
+            resolve_entry_cluster_guard_model_path(repo_root=Path("/nonexistent/repo"))
+
+
 class TestPhase549Verdict(unittest.TestCase):
     def test_verdict_constant(self) -> None:
         self.assertEqual(PHASE549_RUNTIME_VERDICT, "phase549_runtime_v6_e4_adopted")
+
+    def test_phase552_verdict_constant(self) -> None:
+        from small_paper.entry_cluster_guard import PHASE552_SMOKE_VERDICT
+
+        self.assertEqual(
+            PHASE552_SMOKE_VERDICT,
+            "phase552_production_startup_smoke_test_and_model_path_fix_done",
+        )
 
 
 if __name__ == "__main__":

@@ -1087,4 +1087,7 @@ def observer_tracker_config_from_pilot(config: Any) -> Any:
         price_momentum_fade_ratio=float(getattr(config, "price_momentum_fade_ratio", 0.85) or 0.85),
         live_session_end=str(getattr(config, "live_session_end", "15:30")),
         no_progress_exit_enabled=bool(getattr(config, "no_progress_exit_enabled", False)),
+        exit_shadow_monitor_enabled=bool(getattr(config, "exit_shadow_monitor_enabled", False)),
+        exit_shadow_monitor_t2_enabled=bool(getattr(config, "exit_shadow_monitor_t2_enabled", True)),
+        exit_shadow_monitor_t3_enabled=bool(getattr(config, "exit_shadow_monitor_t3_enabled", True)),
     )

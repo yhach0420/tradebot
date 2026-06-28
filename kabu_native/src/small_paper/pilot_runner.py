@@ -569,6 +569,20 @@ def _default_entry_expectancy_score_counters() -> Any:
     return EntryExpectancyScoreCounters()
 
 
+def _default_volume_gate_shadow_state() -> Any:
+    from small_paper.volume_gate_relaxation_shadow import VolumeGateRelaxationShadowState
+
+    return VolumeGateRelaxationShadowState()
+
+
+def _default_live_order_dry_run_session(config: Any) -> Any:
+    from small_paper.live_order_dry_run_adapter import LiveOrderDryRunSession
+
+    cap = int(getattr(config, "max_concurrent_positions", 5) or 5)
+    timeout = float(getattr(config, "live_order_entry_timeout_sec", 4.0) or 4.0)
+    return LiveOrderDryRunSession(position_cap=cap, entry_timeout_sec=timeout)
+
+
 @dataclass
 class _LiveRunState:
     started_mono: float
@@ -616,9 +630,17 @@ class _LiveRunState:
     entry_quality_guard_reject_symbols: set[str] = field(default_factory=set)
     cluster_guard_reject_count: int = 0
     cluster_guard_reject_symbols: set[str] = field(default_factory=set)
+    stop_low_mfe_guard_reject_count: int = 0
+    stop_low_mfe_guard_reject_symbols: set[str] = field(default_factory=set)
     board_mid_entry_count: int = 0
     board_high_entry_count: int = 0
     low_liquidity_shadow_reject_count: int = 0
+    volume_gate_shadow: Any = field(default_factory=_default_volume_gate_shadow_state)
+    live_order_dry_run: Any = None
+    live_order_wiring: Any = None
+    live_capital_manager: Any = None
+    live_capital_read_client: Any = None
+    live_capital_api_token: str = ""
     intraday_refresh_done: bool = False
     intraday_refresh_count: int = 0
     intraday_refresh_triggered_count: int = 0
@@ -661,6 +683,32 @@ def _init_position_cap_tracking(config: SmallPaperPilotConfig, state: _LiveRunSt
     from small_paper.position_cap_mode import make_position_cap_stats
 
     state.position_cap_stats = make_position_cap_stats(config)
+
+
+def _init_live_order_dry_run(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
+    from small_paper.live_order_dry_run_adapter import dry_run_adapter_enabled
+
+    if dry_run_adapter_enabled(config):
+        state.live_order_dry_run = _default_live_order_dry_run_session(config)
+
+
+def _init_live_order_api_wiring(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
+    from small_paper.live_order_api_wiring import LiveOrderWiringSession, wiring_enabled
+
+    if wiring_enabled(config):
+        state.live_order_wiring = LiveOrderWiringSession()
+
+
+def _init_live_capital_manager(config: SmallPaperPilotConfig, state: _LiveRunState, *, repo_root: Path) -> None:
+    from research.structural_trade_normalize import resolve_kabu_root
+    from small_paper.live_capital_manager import LiveCapitalManagerSession, capital_manager_enabled
+
+    if capital_manager_enabled(config):
+        kabu = resolve_kabu_root(repo_root)
+        state.live_capital_manager = LiveCapitalManagerSession(
+            position_cap=int(config.max_concurrent_positions),
+            kill_switch_path=kabu / "configs" / "live_trading_kill_switch.flag",
+        )
 
 
 def _init_or_overlay_tracking(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
@@ -826,6 +874,9 @@ def _execution_audit_fields(
         "low_liquidity_shadow": bool(getattr(config, "low_liquidity_shadow_enabled", False)),
         "exit_policy_shadow": _infer_exit_policy_shadow(config),
         "intraday_refresh_enabled": False,
+        "live_trading_enabled": bool(getattr(config, "live_trading_enabled", False)),
+        "live_order_dry_run_enabled": bool(getattr(config, "live_order_dry_run_enabled", False)),
+        "dry_run_required": bool(getattr(config, "dry_run_required", True)),
     }
     if session_cfg:
         out["config_path"] = session_cfg.get("config_path", "")
@@ -935,6 +986,7 @@ def _log_and_dispatch_observer_events(
     source: str = "",
     message_index: int = 0,
     profile: str = "",
+    config: Optional[SmallPaperPilotConfig] = None,
 ) -> None:
     for ev in events:
         if ev.kind == OBSERVER_EXIT:
@@ -979,6 +1031,14 @@ def _log_and_dispatch_observer_events(
                 or_st = getattr(state, "or_overlay", None)
                 if or_st is not None:
                     or_st.record_exit(row)
+                if config is not None and ev.context.get("is_structural_exit"):
+                    _maybe_record_live_order_exit(
+                        config=config,
+                        state=state,
+                        writer=writer,
+                        symbol=ev.symbol,
+                        context=ev.context,
+                    )
             if writer is not None:
                 writer.append_event(row)
             if state is not None and ev.kind == OBSERVER_EXIT:
@@ -1258,6 +1318,32 @@ def _entry_cluster_guard_summary_fields(
     return out
 
 
+def _stop_low_mfe_guard_summary_fields(
+    gate: ExposureGate,
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    guard = getattr(gate, "stop_low_mfe_guard", None)
+    if guard is None:
+        return {
+            "stop_low_mfe_guard_enabled": False,
+            "stop_low_mfe_guard_reject_count": 0,
+            "stop_low_mfe_guard_missing_count": 0,
+            "stop_low_mfe_guard_blocked_loss": 0.0,
+            "stop_low_mfe_guard_blocked_winner": 0.0,
+            "stop_low_mfe_guard_blocked_big_winner": 0,
+            "stop_low_mfe_guard_net_shadow": 0.0,
+            "stop_low_mfe_guard_volume_accel_threshold": 0.009,
+        }
+    out = guard.summary_fields()
+    out["stop_low_mfe_guard_reject_count"] = max(
+        state.stop_low_mfe_guard_reject_count, guard.reject_count
+    )
+    out["stop_low_mfe_guard_reject_symbols"] = sorted(
+        state.stop_low_mfe_guard_reject_symbols or guard.rejected_symbols
+    )
+    return out
+
+
 def _high_drift_pullback_guard_summary_fields(
     gate: ExposureGate,
     state: _LiveRunState,
@@ -1287,6 +1373,25 @@ def _entry_expectancy_score_summary_fields(state: _LiveRunState) -> dict[str, An
     if counters is None:
         return {}
     return counters.summary_fields()
+
+
+def _apply_exit_shadow_monitor_finalize(
+    state: _LiveRunState,
+    summary: dict[str, Any],
+    *,
+    config: SmallPaperPilotConfig,
+) -> None:
+    from small_paper.exit_shadow_monitor import (
+        config_from_pilot,
+        finalize_session_exit_shadow_monitor_safe,
+    )
+
+    summary.update(
+        finalize_session_exit_shadow_monitor_safe(
+            state.events,
+            monitor=config_from_pilot(config),
+        )
+    )
 
 
 def _apply_entry_expectancy_score_shadow_finalize(
@@ -1473,6 +1578,7 @@ def _enrich_trade_for_entry_guards(
     reentry_rsi_guard = getattr(ctx.gate, "reentry_rsi_guard", None)
     entry_quality_guard = getattr(ctx.gate, "entry_quality_guard", None)
     entry_cluster_guard = getattr(ctx.gate, "entry_cluster_guard", None)
+    stop_low_mfe_guard = getattr(ctx.gate, "stop_low_mfe_guard", None)
     if (
         pullback_guard is None
         and near_day_guard is None
@@ -1483,6 +1589,7 @@ def _enrich_trade_for_entry_guards(
         and reentry_rsi_guard is None
         and entry_quality_guard is None
         and entry_cluster_guard is None
+        and stop_low_mfe_guard is None
     ):
         return
     from small_paper.extended_entry_shadow import compute_entry_shadow_fields, tick_ts_from_payload
@@ -1572,6 +1679,12 @@ def _enrich_trade_for_entry_guards(
 
         trade.update(
             compute_entry_cluster_guard_fields(trade, model=entry_cluster_guard.model)
+        )
+    if stop_low_mfe_guard is not None:
+        from small_paper.stop_low_mfe_guard import compute_stop_low_mfe_guard_fields
+
+        trade.update(
+            compute_stop_low_mfe_guard_fields(trade, guard=stop_low_mfe_guard)
         )
 
 
@@ -1806,6 +1919,7 @@ def _execute_accepted_entry(
                 source=ctx.source,
                 message_index=msg_i,
                 profile=ctx.config.profile,
+                config=ctx.config,
             )
         if entry_px > 0 and not ctx.observer.has_open(sym):
             ctx.observer.register_entry(
@@ -1842,6 +1956,11 @@ def _execute_accepted_entry(
             entry_signal_mono=signal_mono,
             notify_mono=notify_mono,
         )
+    _maybe_record_live_capital_check_entry(ctx, sym=sym, trade=trade, payload=payload, acc=acc)
+    _maybe_record_live_order_entry(ctx, sym=sym, trade=trade, payload=payload, acc=acc)
+    _maybe_record_live_order_wiring_entry(
+        ctx, sym=sym, trade=trade, payload=payload, acc=acc, scan_meta=scan_meta
+    )
 
 
 def _process_scan_flush(ctx: _PushPipelineContext, flush: Any) -> None:
@@ -1972,6 +2091,9 @@ def _process_push_payload(
             )
 
     snapshot = ctx.feature_bridge.update(sym, payload)
+    slm_guard = getattr(ctx.gate, "stop_low_mfe_guard", None)
+    if slm_guard is not None:
+        slm_guard.ingest_push(sym, payload)
     enriched = ctx.feature_bridge.enrich_payload(payload, snapshot)
     trade = _candidate_trade_from_push(
         enriched,
@@ -2036,6 +2158,7 @@ def _process_push_payload(
             source=ctx.source,
             message_index=msg_i,
             profile=ctx.config.profile,
+            config=ctx.config,
         )
     from small_paper.am_pm_session_policy import AmPmSessionPolicy
 
@@ -2141,6 +2264,13 @@ def _process_push_payload(
             eval_start_ts=eval_start_ts,
             eval_end_ts=eval_end_ts,
             eval_latency_ms=eval_latency_ms,
+        )
+        _maybe_record_volume_gate_shadow(
+            ctx,
+            sym=sym,
+            trade=trade,
+            decision=decision,
+            timestamp=eval_end_ts,
         )
 
     if decision.accept:
@@ -2555,6 +2685,35 @@ def _process_push_payload(
                     "reject_reason": REJECT_ENTRY_CLUSTER_GUARD,
                 }
             )
+        if decision.reason == "stop_low_mfe_guard":
+            from small_paper.stop_low_mfe_guard import (
+                LOG_EVENT_KIND as SLM_LOG_EVENT_KIND,
+                REJECT_STOP_LOW_MFE_GUARD,
+            )
+
+            ctx.state.stop_low_mfe_guard_reject_count += 1
+            ctx.state.stop_low_mfe_guard_reject_symbols.add(sym)
+            rej_row["volume_acceleration_5m"] = getattr(
+                decision, "volume_acceleration_5m", trade.get("volume_acceleration_5m")
+            )
+            rej_row["stop_low_mfe_guard_volume_accel_threshold"] = getattr(
+                decision,
+                "stop_low_mfe_guard_volume_accel_threshold",
+                trade.get("stop_low_mfe_guard_volume_accel_threshold"),
+            )
+            rej_row["reject_reason"] = REJECT_STOP_LOW_MFE_GUARD
+            ctx.writer.append_error(
+                {
+                    "event_kind": SLM_LOG_EVENT_KIND,
+                    "symbol": sym,
+                    "time": trade.get("entry_time"),
+                    "volume_acceleration_5m": rej_row["volume_acceleration_5m"],
+                    "stop_low_mfe_guard_volume_accel_threshold": rej_row[
+                        "stop_low_mfe_guard_volume_accel_threshold"
+                    ],
+                    "reject_reason": REJECT_STOP_LOW_MFE_GUARD,
+                }
+            )
         ctx.state.reject_rows.append(rej_row)
         rej = _event_from_gate(
             event_type="rejected",
@@ -2872,6 +3031,7 @@ def _build_push_replay_summary(
     base.update(_reentry_rsi_guard_summary_fields(gate, state))
     base.update(_entry_quality_guard_summary_fields(gate, state))
     base.update(_entry_cluster_guard_summary_fields(gate, state))
+    base.update(_stop_low_mfe_guard_summary_fields(gate, state))
     base.update(_board_entry_summary_fields(state))
     base.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     base.update(_entry_expectancy_score_summary_fields(state))
@@ -2886,6 +3046,7 @@ def _build_push_replay_summary(
         )
     )
     _attach_canonical_summary_fields(base, state.events, config=config)
+    _apply_exit_shadow_monitor_finalize(state, base, config=config)
     return base
 
 
@@ -2904,7 +3065,255 @@ def _daytrade_suitability_summary_fields(gate: ExposureGate, state: _LiveRunStat
         return {}
     out = suit.summary_fields()
     out["rejected_by_daytrade_suitability"] = state.daytrade_suitability_reject_count
+    from small_paper.vol_liq_startup_cache import vol_liq_cache_summary_fields
+
+    run_key = str(getattr(suit, "run_session_key", "") or "")
+    out.update(vol_liq_cache_summary_fields(run_key or None))
+    from small_paper.volume_gate_relaxation_shadow import volume_shadow_summary_fields
+
+    out.update(volume_shadow_summary_fields(getattr(state, "volume_gate_shadow", None)))
     return out
+
+
+def _maybe_record_live_capital_check_entry(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    acc: Mapping[str, Any],
+) -> None:
+    try:
+        from small_paper.live_capital_manager import capital_manager_enabled, check_entry_capital_on_paper_accept
+        from small_paper.live_order_dry_run_adapter import _paper_trade_id
+
+        session = getattr(ctx.state, "live_capital_manager", None)
+        if session is None or not capital_manager_enabled(ctx.config):
+            return
+        client = getattr(ctx.state, "live_capital_read_client", None)
+        token = getattr(ctx.state, "live_capital_api_token", None)
+        if client is None or not token:
+            return
+        day = str(trade.get("day") or "")[:8]
+        day_pnl = None
+        if day and hasattr(ctx.gate, "state") and hasattr(ctx.gate.state, "day_pnl"):
+            day_pnl = float(ctx.gate.state.day_pnl.get(day, 0.0))
+        check_entry_capital_on_paper_accept(
+            session,
+            symbol=sym,
+            trade=trade,
+            payload=payload,
+            writer=ctx.writer,
+            config=ctx.config,
+            client=client,
+            token=str(token),
+            repo_root=None,
+            day_pnl_pct=day_pnl,
+            linked_paper_trade_id=_paper_trade_id(trade, sym),
+        )
+    except Exception as exc:
+        try:
+            ctx.writer.append_error(
+                {
+                    "event_time": _now_iso(),
+                    "component": "live_capital_manager",
+                    "symbol": sym,
+                    "error": str(exc),
+                }
+            )
+        except Exception:
+            pass
+
+
+def _maybe_record_live_order_entry(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    acc: Mapping[str, Any],
+) -> None:
+    try:
+        from small_paper.live_order_dry_run_adapter import dry_run_adapter_enabled, on_paper_entry_accepted
+
+        session = getattr(ctx.state, "live_order_dry_run", None)
+        if session is None or not dry_run_adapter_enabled(ctx.config):
+            return
+        on_paper_entry_accepted(
+            session,
+            symbol=sym,
+            trade=trade,
+            payload=payload,
+            timestamp=str(acc.get("entry_time") or _now_iso()),
+            writer=ctx.writer,
+            config=ctx.config,
+        )
+    except Exception as exc:
+        try:
+            ctx.writer.append_error(
+                {
+                    "event_time": _now_iso(),
+                    "component": "live_order_dry_run_adapter",
+                    "symbol": sym,
+                    "error": str(exc),
+                }
+            )
+        except Exception:
+            pass
+
+
+def _maybe_record_live_order_wiring_entry(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    acc: Mapping[str, Any],
+    scan_meta: Optional[Mapping[str, Any]] = None,
+) -> None:
+    try:
+        from small_paper.live_order_api_wiring import process_entry_wiring, wiring_enabled
+
+        wiring = getattr(ctx.state, "live_order_wiring", None)
+        if wiring is None or not wiring_enabled(ctx.config):
+            return
+        signal_ts = str((scan_meta or {}).get("entry_signal_ts") or acc.get("entry_time") or "")
+        process_entry_wiring(
+            wiring,
+            symbol=sym,
+            trade=trade,
+            payload=payload,
+            writer=ctx.writer,
+            config=ctx.config,
+            entry_signal_ts=signal_ts or None,
+        )
+    except Exception as exc:
+        try:
+            ctx.writer.append_error(
+                {
+                    "event_time": _now_iso(),
+                    "component": "live_order_api_wiring",
+                    "symbol": sym,
+                    "error": str(exc),
+                }
+            )
+        except Exception:
+            pass
+
+
+def _maybe_record_live_order_exit(
+    *,
+    config: SmallPaperPilotConfig,
+    state: _LiveRunState,
+    writer: Optional[LiveSessionWriter],
+    symbol: str,
+    context: Mapping[str, Any],
+) -> None:
+    try:
+        from small_paper.live_order_dry_run_adapter import dry_run_adapter_enabled, on_paper_exit_signal
+
+        session = getattr(state, "live_order_dry_run", None)
+        if session is None or writer is None or not dry_run_adapter_enabled(config):
+            pass
+        elif context.get("is_structural_exit"):
+            on_paper_exit_signal(
+                session,
+                symbol=symbol,
+                context=context,
+                timestamp=str(context.get("exit_time") or _now_iso()),
+                writer=writer,
+                config=config,
+            )
+        _maybe_record_live_order_wiring_exit(
+            config=config,
+            state=state,
+            writer=writer,
+            symbol=symbol,
+            context=context,
+        )
+    except Exception as exc:
+        if writer is not None:
+            try:
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "component": "live_order_exit_hooks",
+                        "symbol": symbol,
+                        "error": str(exc),
+                    }
+                )
+            except Exception:
+                pass
+
+
+def _maybe_record_live_order_wiring_exit(
+    *,
+    config: SmallPaperPilotConfig,
+    state: _LiveRunState,
+    writer: Optional[LiveSessionWriter],
+    symbol: str,
+    context: Mapping[str, Any],
+) -> None:
+    try:
+        from small_paper.live_order_api_wiring import process_exit_wiring, wiring_enabled
+
+        wiring = getattr(state, "live_order_wiring", None)
+        if wiring is None or writer is None or not wiring_enabled(config):
+            return
+        if not context.get("is_structural_exit"):
+            return
+        process_exit_wiring(
+            wiring,
+            symbol=symbol,
+            context=context,
+            writer=writer,
+            config=config,
+        )
+    except Exception as exc:
+        if writer is not None:
+            try:
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "component": "live_order_api_wiring_exit",
+                        "symbol": symbol,
+                        "error": str(exc),
+                    }
+                )
+            except Exception:
+                pass
+
+
+def _maybe_record_volume_gate_shadow(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: Mapping[str, Any],
+    decision: Any,
+    timestamp: str,
+) -> None:
+    from small_paper.volume_gate_relaxation_shadow import (
+        record_volume_gate_shadow_eval,
+        shadow_enabled,
+    )
+
+    if not shadow_enabled(ctx.config):
+        return
+    suit = getattr(ctx.gate, "daytrade_suitability", None)
+    if suit is None:
+        return
+    chk = suit.check(trade)
+    threshold = chk.threshold
+    row = record_volume_gate_shadow_eval(
+        ctx.state.volume_gate_shadow,
+        trade=trade,
+        threshold=threshold,
+        symbol=sym,
+        timestamp=timestamp,
+        reject_reason="" if decision.accept else str(decision.reason or ""),
+    )
+    if row is not None:
+        ctx.writer.append_volume_shadow_eval(row)
 
 
 def _entry_price_risk_guard_summary_fields(gate: ExposureGate, state: _LiveRunState) -> dict[str, Any]:
@@ -2998,6 +3407,8 @@ def run_push_replay_dry_run(
     writer = LiveSessionWriter(output_dir, incremental=True, event_fields=EVENT_FIELDS)
     state = _LiveRunState(started_mono=time.monotonic())
     _init_position_cap_tracking(replay_config, state)
+    _init_live_order_dry_run(replay_config, state)
+    _init_live_order_api_wiring(replay_config, state)
     _init_or_overlay_tracking(replay_config, state)
     if enable_board_failure_forensic_shadow:
         from small_paper.board_failure_forensic_pack import BoardFailureForensicPack
@@ -3143,6 +3554,7 @@ def run_push_replay_dry_run(
             source="push-replay",
             message_index=msg_i,
             profile=replay_config.profile,
+            config=replay_config,
         )
 
     runtime_sec = time.monotonic() - state.started_mono
@@ -3591,6 +4003,7 @@ def _build_live_summary(
     summary.update(_reentry_rsi_guard_summary_fields(gate, state))
     summary.update(_entry_quality_guard_summary_fields(gate, state))
     summary.update(_entry_cluster_guard_summary_fields(gate, state))
+    summary.update(_stop_low_mfe_guard_summary_fields(gate, state))
     summary.update(_board_entry_summary_fields(state))
     summary.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     summary.update(_entry_expectancy_score_summary_fields(state))
@@ -3605,6 +4018,16 @@ def _build_live_summary(
         )
     )
     _attach_canonical_summary_fields(summary, state.events, config=config)
+    _apply_exit_shadow_monitor_finalize(state, summary, config=config)
+    from small_paper.live_order_dry_run_adapter import dry_run_summary_fields
+
+    summary.update(dry_run_summary_fields(getattr(state, "live_order_dry_run", None)))
+    from small_paper.live_order_api_wiring import wiring_summary_fields
+
+    summary.update(wiring_summary_fields(getattr(state, "live_order_wiring", None)))
+    from small_paper.live_capital_manager import capital_summary_fields
+
+    summary.update(capital_summary_fields(getattr(state, "live_capital_manager", None)))
     return summary
 
 
@@ -3801,6 +4224,9 @@ def run_live_dry_run(
     conn = verify_kabu_connection(repo_root)
     rest = KabuNativeRestClient(default_base_url())
     token = rest.issue_token_from_env()
+    from api.order_read_client import KabuOrderReadClient
+
+    capital_read_client = KabuOrderReadClient(default_base_url())
     push = KabuNativePushClient(rest, token)
 
     from small_paper.symbol_cooloff import session_key_from_output_dir
@@ -3843,6 +4269,11 @@ def run_live_dry_run(
     writer = LiveSessionWriter(output_dir, incremental=incremental, event_fields=EVENT_FIELDS)
     state = _LiveRunState(started_mono=time.monotonic())
     _init_position_cap_tracking(config, state)
+    _init_live_order_dry_run(config, state)
+    _init_live_order_api_wiring(config, state)
+    _init_live_capital_manager(config, state, repo_root=repo_root)
+    state.live_capital_read_client = capital_read_client
+    state.live_capital_api_token = token
     _init_or_overlay_tracking(config, state)
     pos_fields = ["symbol", "entry_time", "exit_time", "open_slots_after"]
     gap_threshold_sec = max(stale_tick_sec * 2, poll_interval_sec * 3)
@@ -4105,6 +4536,9 @@ def run_live_dry_run(
             state.intraday_refresh_done = True
             state.intraday_refresh_count += 1
             state.intraday_refresh_completed_count += 1
+            slm_guard = getattr(pipeline_ctx.gate, "stop_low_mfe_guard", None)
+            if slm_guard is not None:
+                slm_guard.reset_session()
             try:
                 state.intraday_refresh_last_register_count = int(reg_meta.get("register_count") or 0)
             except (TypeError, ValueError):
@@ -4403,6 +4837,18 @@ def run_live_dry_run(
         final_reason = state.stop_reason or "session_end"
         if am_pm_policy and not state.session_force_close_done and am_pm_policy.force_close_due():
             final_reason = am_pm_policy.force_close_reason
+        dry_session = getattr(state, "live_order_dry_run", None)
+        if dry_session is not None:
+            from small_paper.live_order_dry_run_adapter import reconcile_session_positions
+
+            open_syms = {str(p.get("symbol") or "") for p in observer.open_positions()} if observer else set()
+            open_syms.discard("")
+            reconcile_session_positions(
+                dry_session,
+                timestamp=_now_iso(),
+                writer=writer,
+                open_symbols=open_syms,
+            )
         exit_events = observer.close_all(reason=final_reason)
         _log_and_dispatch_observer_events(
             exit_events,
@@ -4413,6 +4859,7 @@ def run_live_dry_run(
             source="live",
             message_index=state.push_messages,
             profile=config.profile,
+            config=config,
         )
         gate.state.open_slots = []
     summary.update(

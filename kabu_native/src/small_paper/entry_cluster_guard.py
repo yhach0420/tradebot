@@ -6,6 +6,7 @@ PBv2 only. OR overlay unaffected.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -14,6 +15,7 @@ from small_paper.entry_cluster_classifier import (
     EntryClusterModel,
     compute_entry_cluster_feature_fields,
     load_default_model,
+    resolve_entry_cluster_guard_model_path,
 )
 
 REJECT_ENTRY_CLUSTER_GUARD = "entry_cluster_guard"
@@ -232,6 +234,43 @@ def config_from_pilot(pilot_config: Any, *, repo_root: Optional[Path] = None) ->
     )
 
 
+def validate_entry_cluster_guard_model(
+    pilot_config: Any,
+    *,
+    repo_root: Path,
+) -> tuple[Optional[EntryClusterGuardState], list[str]]:
+    """Preflight: model exists, JSON parses, classifier loads, guard state builds."""
+    cfg = config_from_pilot(pilot_config, repo_root=repo_root)
+    if not cfg.enabled:
+        return None, []
+    errors: list[str] = []
+    try:
+        path = resolve_entry_cluster_guard_model_path(
+            repo_root=repo_root,
+            yaml_path=cfg.model_path,
+        )
+    except FileNotFoundError as exc:
+        return None, [str(exc)]
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return None, [f"entry_cluster_guard model JSON parse error ({path}): {exc}"]
+    try:
+        model = EntryClusterModel.load(path)
+    except Exception as exc:  # noqa: BLE001 — surface load failures in preflight
+        return None, [f"entry_cluster_guard classifier load failed ({path}): {exc}"]
+    try:
+        state = build_entry_cluster_guard_state(pilot_config, repo_root=repo_root)
+    except Exception as exc:  # noqa: BLE001
+        return None, [f"build_entry_cluster_guard_state failed: {exc}"]
+    if state is None:
+        errors.append("build_entry_cluster_guard_state returned None while guard enabled")
+        return None, errors
+    if state.model.cluster_features != model.cluster_features:
+        errors.append("classifier model mismatch after build_entry_cluster_guard_state")
+    return state, errors
+
+
 def build_entry_cluster_guard_state(
     pilot_config: Any,
     *,
@@ -240,7 +279,10 @@ def build_entry_cluster_guard_state(
     cfg = config_from_pilot(pilot_config, repo_root=repo_root)
     if not cfg.enabled:
         return None
-    path = cfg.model_path or (repo_root / "configs" / "entry_cluster_guard_model.json")
+    path = resolve_entry_cluster_guard_model_path(
+        repo_root=repo_root,
+        yaml_path=cfg.model_path,
+    )
     model = EntryClusterModel.load(path)
     return EntryClusterGuardState(config=cfg, model=model)
 
@@ -261,3 +303,5 @@ def compute_entry_cluster_guard_fields(
 
 
 PHASE549_RUNTIME_VERDICT = "phase549_runtime_v6_e4_adopted"
+PHASE552_MODEL_PATH_VERDICT = "phase552_entry_cluster_guard_model_path_fix_done"
+PHASE552_SMOKE_VERDICT = "phase552_production_startup_smoke_test_and_model_path_fix_done"

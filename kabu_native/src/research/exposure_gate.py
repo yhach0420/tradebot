@@ -36,6 +36,7 @@ REJECT_REENTRY_RSI_GUARD_BELOW60 = "reentry_rsi_guard_below60"
 REJECT_ENTRY_QUALITY_GUARD_SPREAD = "entry_quality_guard_spread"
 REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT = "entry_quality_guard_update_count"
 REJECT_ENTRY_CLUSTER_GUARD = "entry_cluster_guard"
+REJECT_STOP_LOW_MFE_GUARD = "stop_low_mfe_guard"
 
 QUALITY_TIER_TOP = "top_quartile"
 QUALITY_TIER_ABOVE = "above_median"
@@ -157,6 +158,8 @@ class GateDecision:
     new_subcluster_id: int = -1
     liquidity_burst: Optional[float] = None
     entry_cluster_guard_via_exception: bool = False
+    volume_acceleration_5m: Optional[float] = None
+    stop_low_mfe_guard_volume_accel_threshold: Optional[float] = None
     entry_expectancy_score_v2: Optional[int] = None
     entry_score_v2_threshold: Optional[int] = None
     entry_score_v2_gate_pass: Optional[bool] = None
@@ -201,6 +204,7 @@ class ExposureGate:
         reentry_rsi_guard: Optional[Any] = None,
         entry_quality_guard: Optional[Any] = None,
         entry_cluster_guard: Optional[Any] = None,
+        stop_low_mfe_guard: Optional[Any] = None,
     ) -> None:
         self.config = config
         self.state = ExposureGateState()
@@ -219,6 +223,7 @@ class ExposureGate:
         self.reentry_rsi_guard = reentry_rsi_guard
         self.entry_quality_guard = entry_quality_guard
         self.entry_cluster_guard = entry_cluster_guard
+        self.stop_low_mfe_guard = stop_low_mfe_guard
 
     def evaluate_entry(
         self,
@@ -569,6 +574,29 @@ class ExposureGate:
                     "liquidity_burst": cg.liquidity_burst,
                     "entry_cluster_guard_via_exception": cg.via_exception,
                 }
+
+            if self.stop_low_mfe_guard is not None:
+                slm = self.stop_low_mfe_guard.check(trade)
+                if slm.blocked:
+                    self.stop_low_mfe_guard.reject_count += 1
+                    sym = str(trade.get("symbol") or "")
+                    if sym:
+                        self.stop_low_mfe_guard.rejected_symbols.add(sym)
+                    return GateDecision(
+                        accept=False,
+                        reason=REJECT_STOP_LOW_MFE_GUARD,
+                        continuation_quality_score=q,
+                        quality_tier=tier,
+                        volume_acceleration_5m=slm.volume_acceleration_5m,
+                        stop_low_mfe_guard_volume_accel_threshold=slm.threshold,
+                        **v2_ctx,
+                    )
+                if slm.volume_acceleration_5m is not None:
+                    v2_ctx = {
+                        **v2_ctx,
+                        "volume_acceleration_5m": slm.volume_acceleration_5m,
+                        "stop_low_mfe_guard_volume_accel_threshold": slm.threshold,
+                    }
         elif self.config.reject_below_quality and q < self.config.min_continuation_quality:
             return GateDecision(
                 accept=False,

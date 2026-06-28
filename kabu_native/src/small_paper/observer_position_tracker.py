@@ -74,6 +74,9 @@ class ObserverTrackerConfig:
     price_momentum_fade_ratio: float = 0.85
     live_session_end: str = "15:30"
     no_progress_exit_enabled: bool = False
+    exit_shadow_monitor_enabled: bool = False
+    exit_shadow_monitor_t2_enabled: bool = True
+    exit_shadow_monitor_t3_enabled: bool = True
 
     def uses_combined_structural_exit(self) -> bool:
         return self.structural_exit_policy in (
@@ -940,6 +943,29 @@ class ObserverPositionTracker:
                 actual_pnl_pct=pnl_pct,
             )
             full.update(board_dynamic_shadow)
+            from small_paper.exit_shadow_monitor import (
+                ExitShadowMonitorConfig,
+                enrich_exit_shadow_monitor_fields,
+            )
+
+            monitor_cfg = ExitShadowMonitorConfig(
+                enabled=bool(getattr(self.cfg, "exit_shadow_monitor_enabled", False)),
+                t2_enabled=bool(getattr(self.cfg, "exit_shadow_monitor_t2_enabled", True)),
+                t3_enabled=bool(getattr(self.cfg, "exit_shadow_monitor_t3_enabled", True)),
+            )
+            exit_shadow = enrich_exit_shadow_monitor_fields(
+                rich_ticks=pos.rich_ticks,
+                entry_price=pos.entry_price,
+                hard_stop_pct=self.cfg.hard_stop_pct,
+                entry_imbalance_percentile=_as_float(
+                    (pos.entry_shadow or {}).get("entry_imbalance_percentile")
+                ),
+                actual_exit_time=now.timestamp(),
+                actual_exit_price=actual_exit_price,
+                actual_pnl_pct=pnl_pct,
+                monitor=monitor_cfg,
+            )
+            full.update(exit_shadow)
         from small_paper.post_entry_forward_shadow import enrich_exit_post_entry_shadow_fields
 
         post_entry_shadow = enrich_exit_post_entry_shadow_fields(

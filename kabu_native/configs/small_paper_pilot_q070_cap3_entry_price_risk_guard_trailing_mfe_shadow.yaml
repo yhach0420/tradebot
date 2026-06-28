@@ -70,8 +70,21 @@ entry_quality_max_update_count: 5
 entry_cluster_guard_enabled: true
 entry_cluster_guard_exception_enabled: true
 entry_cluster_guard_liquidity_burst_threshold: 0.052267
+entry_cluster_guard_model_path: kabu_native/configs/entry_cluster_guard_model.json
 entry_cluster_guard_reject_clusters: [5]
 entry_cluster_guard_reject_csubs: [0, 2, 3, 5]
+
+# Phase557: PBv2 stop_low_mfe guard G554_022 — volume_acceleration_5m > 0.009 reject
+stop_low_mfe_guard_enabled: true
+stop_low_mfe_guard_threshold: 0.009
+stop_low_mfe_guard_missing_policy: pass
+stop_low_mfe_guard_pbv2_only: true
+
+# Phase563: EXIT shadow monitor (T3 board_high loosen primary, T2 faster trailing watch).
+# Observer-only; actual EXIT policy unchanged. Rollback: exit_shadow_monitor_enabled=false.
+exit_shadow_monitor_enabled: true
+exit_shadow_monitor_t2_enabled: true
+exit_shadow_monitor_t3_enabled: true
 
 # Phase364: production ENTRY guard — Dynamic40 near day high + low momentum
 enable_near_day_high_low_momentum_dynamic40_guard: true
@@ -84,6 +97,22 @@ daytrade_suitability_enabled: true
 daytrade_suitability_rule: volatility_liquidity_top50
 daytrade_suitability_lookback_sessions: prior_only
 daytrade_suitability_apply_mode: reject_entry
+
+# Phase590: V90/V80 volume gate shadow (production remains V100)
+volume_gate_relaxation_shadow_enabled: true
+
+# Phase591: live order dry-run adapter (no real orders; trading_enabled=false)
+live_order_dry_run_enabled: true
+live_order_api_wiring_enabled: true
+live_capital_check_enabled: true
+live_trading_enabled: false
+live_order_entry_timeout_sec: 4.0
+
+# Phase575: vol/liq startup cache (rollback: vol_liq_startup_cache_enabled=false)
+vol_liq_startup_cache_enabled: true
+vol_liq_startup_cache_dir: kabu_native/results/cache/vol_liq_startup
+vol_liq_startup_cache_fallback_on_error: true
+vol_liq_startup_cache_write_after_fallback: true
 
 comparison_note: >
   Phase472 PBv2 production: explicit momentum_continuation_score<=0.2546 (replaces
@@ -98,6 +127,8 @@ comparison_note: >
   Phase549: PBv2 cluster guard V6 (reject cluster5 + csub 0/2/3/5) + E4 liquidity_burst>=0.052267
   exception. OR overlay unchanged. Rollback: entry_cluster_guard_enabled=false;
   exception-only rollback: entry_cluster_guard_exception_enabled=false.
+  Phase557: PBv2 stop_low_mfe guard G554_022 (volume_acceleration_5m>0.009, missing→pass).
+  Runs after ClusterGuard on PBv2 only; OR exempt. Rollback: stop_low_mfe_guard_enabled=false.
   Phase538: OR Open Strength Overlay on mainline ENTRY (O_R003_OR + OS9, CAP_SPLIT_4_1:
   PBv2=4 OR=1 total=5). Rollback: or_overlay_enabled=false.
   Phase452 production: Weak Shape Reject blocks

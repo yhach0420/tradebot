@@ -132,8 +132,82 @@ class EntryClusterModel:
         }
 
 
+MODEL_FILENAME = "entry_cluster_guard_model.json"
+
+
+def _model_path_candidates(*, repo_root: Path, raw: Path) -> list[Path]:
+    root = repo_root.resolve()
+    rel = raw.as_posix().replace("\\", "/").lstrip("/")
+    candidates: list[Path] = []
+    if raw.is_absolute():
+        return [raw]
+    candidates.append(root / rel)
+    if rel.startswith("kabu_native/"):
+        candidates.append(root / rel)
+        if root.name == "kabu_native":
+            candidates.append(root / rel[len("kabu_native/") :])
+    else:
+        candidates.append(root / "kabu_native" / rel)
+    seen: set[str] = set()
+    out: list[Path] = []
+    for cand in candidates:
+        key = str(cand.resolve()) if cand.exists() or cand.is_absolute() else str(cand)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cand)
+    return out
+
+
+def resolve_entry_cluster_guard_model_path(
+    *,
+    repo_root: Path,
+    yaml_path: Optional[str | Path] = None,
+) -> Path:
+    """Resolve frozen cluster model path (production repo_root is usually tradebotfile/)."""
+    root = repo_root.resolve()
+    if yaml_path not in (None, ""):
+        raw = Path(yaml_path)
+        if raw.is_absolute():
+            if raw.is_file():
+                return raw
+            raise FileNotFoundError(f"entry_cluster_guard model not found: {raw}")
+        tried: list[str] = []
+        for cand in _model_path_candidates(repo_root=root, raw=raw):
+            resolved = cand.resolve()
+            key = str(resolved)
+            if key in tried:
+                continue
+            tried.append(key)
+            if resolved.is_file():
+                return resolved
+        raise FileNotFoundError(
+            f"entry_cluster_guard model not found: {raw} (repo_root={root}); searched: {tried}"
+        )
+
+    candidates = [
+        root / "kabu_native" / "configs" / MODEL_FILENAME,
+        root / "configs" / MODEL_FILENAME,
+    ]
+    if root.name == "kabu_native":
+        candidates.insert(0, root / "configs" / MODEL_FILENAME)
+
+    tried = []
+    for cand in candidates:
+        resolved = cand.resolve()
+        key = str(resolved)
+        if key in tried:
+            continue
+        tried.append(key)
+        if resolved.is_file():
+            return resolved
+    raise FileNotFoundError(
+        "entry_cluster_guard model not found; searched: " + ", ".join(tried)
+    )
+
+
 def default_model_path(*, repo_root: Path) -> Path:
-    return repo_root / "configs" / "entry_cluster_guard_model.json"
+    return resolve_entry_cluster_guard_model_path(repo_root=repo_root)
 
 
 def load_default_model(*, repo_root: Path) -> EntryClusterModel:

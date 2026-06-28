@@ -300,41 +300,15 @@ def build_vol_liq_threshold(
     repo_root: Path,
     run_session_key: str,
 ) -> Optional[DaytradeSuitabilityState]:
-    enabled = bool(getattr(pilot_config, "daytrade_suitability_enabled", False))
-    if not enabled:
+    if not bool(getattr(pilot_config, "daytrade_suitability_enabled", False)):
         return None
 
-    cfg = DaytradeSuitabilityConfig(
-        enabled=True,
-        rule=str(
-            getattr(pilot_config, "daytrade_suitability_rule", RULE_VOLATILITY_LIQUIDITY_TOP50)
-        ),
-        lookback_sessions=str(
-            getattr(pilot_config, "daytrade_suitability_lookback_sessions", LOOKBACK_PRIOR_ONLY)
-        ),
-        apply_mode=str(getattr(pilot_config, "daytrade_suitability_apply_mode", "reject_entry")),
-    )
+    from small_paper.vol_liq_startup_cache import build_vol_liq_threshold_with_startup_cache
 
-    base = repo_root / "kabu_native" / "results" / "small_paper"
-    sources = discover_sessions_for_suitability_prior(base, before_session_key=run_session_key)
-    if cfg.lookback_sessions != "all_available":
-        try:
-            n = int(cfg.lookback_sessions)
-            sources = sources[-n:]
-        except ValueError:
-            pass
-
-    scores, used = prior_vol_liq_scores(sources, repo_root=repo_root)
-    threshold: Optional[float] = None
-    if scores and cfg.rule == RULE_VOLATILITY_LIQUIDITY_TOP50:
-        threshold = percentile_value(scores, 0.50)
-
-    return DaytradeSuitabilityState(
-        config=cfg,
+    return build_vol_liq_threshold_with_startup_cache(
+        pilot_config,
+        repo_root=repo_root,
         run_session_key=run_session_key,
-        source_sessions=used,
-        vol_liq_threshold=round(threshold, 6) if threshold is not None else None,
-        prior_quality_trade_count=len(scores),
     )
 
 

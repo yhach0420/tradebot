@@ -126,6 +126,10 @@ class PushMinuteBarBuilder:
             slot["close"] = price
             slot["volume"] = float(slot["volume"]) + vol_delta
 
+    def snapshot_minute_volumes(self) -> list[float]:
+        """Ordered minute volumes (causal snapshot, does not clear state)."""
+        return [max(0.0, float(b["volume"])) for _, b in sorted(self._bars.items())]
+
     def finalize(self) -> list[MinuteBar]:
         out: list[MinuteBar] = []
         for minute in sorted(self._bars.keys()):

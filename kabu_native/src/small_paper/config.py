@@ -100,6 +100,16 @@ class SmallPaperPilotConfig:
     daytrade_suitability_rule: str = "volatility_liquidity_top50"
     daytrade_suitability_lookback_sessions: str = "prior_only"
     daytrade_suitability_apply_mode: str = "reject_entry"
+    volume_gate_relaxation_shadow_enabled: bool = True
+    live_order_dry_run_enabled: bool = True
+    live_order_api_wiring_enabled: bool = True
+    live_capital_check_enabled: bool = True
+    live_trading_enabled: bool = False
+    live_order_entry_timeout_sec: float = 4.0
+    vol_liq_startup_cache_enabled: bool = False
+    vol_liq_startup_cache_dir: str = "kabu_native/results/cache/vol_liq_startup"
+    vol_liq_startup_cache_fallback_on_error: bool = True
+    vol_liq_startup_cache_write_after_fallback: bool = True
     entry_price_risk_guard_enabled: bool = False
     entry_price_risk_guard_shadow: bool = False
     entry_price_risk_guard_min_entry_price: float = 50.0
@@ -121,6 +131,13 @@ class SmallPaperPilotConfig:
     entry_cluster_guard_enabled: bool = False
     entry_cluster_guard_exception_enabled: bool = True
     entry_cluster_guard_liquidity_burst_threshold: float = 0.052267
+    stop_low_mfe_guard_enabled: bool = False
+    stop_low_mfe_guard_threshold: float = 0.009
+    stop_low_mfe_guard_missing_policy: str = "pass"
+    stop_low_mfe_guard_pbv2_only: bool = True
+    exit_shadow_monitor_enabled: bool = False
+    exit_shadow_monitor_t2_enabled: bool = True
+    exit_shadow_monitor_t3_enabled: bool = True
     momentum_score_cutoff_max: float = 0.2546
     low_liquidity_shadow_enabled: bool = False
     low_liquidity_shadow_trading_value_min: float = 1e8
@@ -175,6 +192,18 @@ class SmallPaperPilotConfig:
             out["daytrade_suitability_enabled"] = True
             out["daytrade_suitability_rule"] = self.daytrade_suitability_rule
             out["daytrade_suitability_apply_mode"] = self.daytrade_suitability_apply_mode
+            if self.volume_gate_relaxation_shadow_enabled:
+                out["volume_gate_relaxation_shadow_enabled"] = True
+        if self.live_order_dry_run_enabled:
+            out["live_order_dry_run_enabled"] = True
+            out["live_trading_enabled"] = self.live_trading_enabled
+        if self.live_order_api_wiring_enabled:
+            out["live_order_api_wiring_enabled"] = True
+        if self.live_capital_check_enabled:
+            out["live_capital_check_enabled"] = True
+        if self.vol_liq_startup_cache_enabled:
+            out["vol_liq_startup_cache_enabled"] = True
+            out["vol_liq_startup_cache_dir"] = self.vol_liq_startup_cache_dir
         if self.entry_price_risk_guard_enabled:
             out["entry_price_risk_guard_enabled"] = True
             out["entry_price_risk_guard_shadow"] = self.entry_price_risk_guard_shadow
@@ -217,6 +246,15 @@ class SmallPaperPilotConfig:
             reject_csubs = self.raw.get("entry_cluster_guard_reject_csubs", [0, 2, 3, 5])
             out["entry_cluster_guard_reject_clusters"] = list(reject_clusters)
             out["entry_cluster_guard_reject_csubs"] = list(reject_csubs)
+        if self.stop_low_mfe_guard_enabled:
+            out["stop_low_mfe_guard_enabled"] = True
+            out["stop_low_mfe_guard_threshold"] = self.stop_low_mfe_guard_threshold
+            out["stop_low_mfe_guard_missing_policy"] = self.stop_low_mfe_guard_missing_policy
+            out["stop_low_mfe_guard_pbv2_only"] = self.stop_low_mfe_guard_pbv2_only
+        if self.exit_shadow_monitor_enabled:
+            out["exit_shadow_monitor_enabled"] = True
+            out["exit_shadow_monitor_t2_enabled"] = self.exit_shadow_monitor_t2_enabled
+            out["exit_shadow_monitor_t3_enabled"] = self.exit_shadow_monitor_t3_enabled
         if self.low_liquidity_shadow_enabled:
             out["low_liquidity_shadow_enabled"] = True
             out["low_liquidity_shadow_trading_value_min"] = self.low_liquidity_shadow_trading_value_min
@@ -278,6 +316,7 @@ class SmallPaperPilotConfig:
         reentry_rsi_guard = None
         entry_quality_guard = None
         entry_cluster_guard = None
+        stop_low_mfe_guard = None
         if self.entry_price_risk_guard_enabled:
             from small_paper.entry_price_risk_guard import build_entry_price_risk_guard_state
 
@@ -328,6 +367,10 @@ class SmallPaperPilotConfig:
             from small_paper.entry_cluster_guard import build_entry_cluster_guard_state
 
             entry_cluster_guard = build_entry_cluster_guard_state(self, repo_root=repo_root)
+        if self.stop_low_mfe_guard_enabled:
+            from small_paper.stop_low_mfe_guard import build_stop_low_mfe_guard_state
+
+            stop_low_mfe_guard = build_stop_low_mfe_guard_state(self)
         if repo_root is not None and run_session_key:
             if self.symbol_cooloff_enabled:
                 from small_paper.symbol_cooloff import build_symbol_cooloff_state
@@ -360,6 +403,7 @@ class SmallPaperPilotConfig:
             reentry_rsi_guard=reentry_rsi_guard,
             entry_quality_guard=entry_quality_guard,
             entry_cluster_guard=entry_cluster_guard,
+            stop_low_mfe_guard=stop_low_mfe_guard,
         )
 
 
@@ -473,6 +517,27 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         daytrade_suitability_apply_mode=str(
             raw.get("daytrade_suitability_apply_mode", "reject_entry")
         ),
+        volume_gate_relaxation_shadow_enabled=bool(
+            raw.get("volume_gate_relaxation_shadow_enabled", True)
+        ),
+        live_order_dry_run_enabled=bool(raw.get("live_order_dry_run_enabled", True)),
+        live_order_api_wiring_enabled=bool(raw.get("live_order_api_wiring_enabled", True)),
+        live_capital_check_enabled=bool(raw.get("live_capital_check_enabled", True)),
+        live_trading_enabled=bool(raw.get("live_trading_enabled", False)),
+        live_order_entry_timeout_sec=float(raw.get("live_order_entry_timeout_sec", 4.0)),
+        vol_liq_startup_cache_enabled=bool(raw.get("vol_liq_startup_cache_enabled", False)),
+        vol_liq_startup_cache_dir=str(
+            raw.get(
+                "vol_liq_startup_cache_dir",
+                "kabu_native/results/cache/vol_liq_startup",
+            )
+        ),
+        vol_liq_startup_cache_fallback_on_error=bool(
+            raw.get("vol_liq_startup_cache_fallback_on_error", True)
+        ),
+        vol_liq_startup_cache_write_after_fallback=bool(
+            raw.get("vol_liq_startup_cache_write_after_fallback", True)
+        ),
         entry_price_risk_guard_enabled=bool(raw.get("entry_price_risk_guard_enabled", False)),
         entry_price_risk_guard_shadow=bool(raw.get("entry_price_risk_guard_shadow", False)),
         entry_price_risk_guard_min_entry_price=float(
@@ -515,6 +580,13 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         entry_cluster_guard_liquidity_burst_threshold=float(
             raw.get("entry_cluster_guard_liquidity_burst_threshold", 0.052267)
         ),
+        stop_low_mfe_guard_enabled=bool(raw.get("stop_low_mfe_guard_enabled", False)),
+        stop_low_mfe_guard_threshold=float(raw.get("stop_low_mfe_guard_threshold", 0.009)),
+        stop_low_mfe_guard_missing_policy=str(raw.get("stop_low_mfe_guard_missing_policy", "pass") or "pass"),
+        stop_low_mfe_guard_pbv2_only=bool(raw.get("stop_low_mfe_guard_pbv2_only", True)),
+        exit_shadow_monitor_enabled=bool(raw.get("exit_shadow_monitor_enabled", False)),
+        exit_shadow_monitor_t2_enabled=bool(raw.get("exit_shadow_monitor_t2_enabled", True)),
+        exit_shadow_monitor_t3_enabled=bool(raw.get("exit_shadow_monitor_t3_enabled", True)),
         momentum_score_cutoff_max=float(raw.get("momentum_score_cutoff_max", 0.2546)),
         low_liquidity_shadow_enabled=bool(raw.get("low_liquidity_shadow_enabled", False)),
         low_liquidity_shadow_trading_value_min=float(

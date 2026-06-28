@@ -245,8 +245,9 @@ def _make_pipeline_context(
     isolate_reentry_guard: bool = False,
     entry_quality_guard_enabled: Optional[bool] = None,
     isolate_entry_quality_guard: bool = False,
+    repo_root: Optional[Path] = None,
 ) -> _PushPipelineContext:
-    gate = config.make_exposure_gate()
+    gate = config.make_exposure_gate(repo_root=repo_root)
     classic = getattr(gate, "classic_late_chase_rsi_guard", None)
     if classic is not None:
         classic.config.enabled = bool(classic_guard_enabled)
@@ -317,6 +318,7 @@ def run_live_pipeline_case(
     isolate_entry_quality_guard: bool = False,
     output_dir: Optional[Path] = None,
     near_day_distance_pct: float = 2.5,
+    repo_root: Optional[Path] = None,
 ) -> PreflightCaseResult:
     """Run one live-shaped ENTRY evaluation; return structured result."""
     result = PreflightCaseResult(
@@ -352,6 +354,7 @@ def run_live_pipeline_case(
             isolate_reentry_guard=isolate_reentry_guard,
             entry_quality_guard_enabled=entry_quality_guard_enabled,
             isolate_entry_quality_guard=isolate_entry_quality_guard,
+            repo_root=repo_root,
         )
         ctx.entry_eligible_symbols = {sym}
         ctx.code_to_symbol = {str(payload.get("Symbol") or ""): sym}
@@ -572,6 +575,31 @@ def run_live_pipeline_preflight(
     if repo_root and not cfg_path.is_absolute():
         cfg_path = repo_root / cfg_path
     config = load_pilot_config(cfg_path)
+    report = PreflightReport(config_path=str(cfg_path))
+
+    if getattr(config, "entry_cluster_guard_enabled", False):
+        from small_paper.entry_cluster_guard import validate_entry_cluster_guard_model
+
+        if repo_root is None:
+            report.errors.append("entry_cluster_guard_enabled but repo_root missing for model load")
+        else:
+            _, cg_errors = validate_entry_cluster_guard_model(config, repo_root=repo_root)
+            report.errors.extend(cg_errors)
+
+    if getattr(config, "stop_low_mfe_guard_enabled", False):
+        gate = config.make_exposure_gate(repo_root=repo_root)
+        if getattr(gate, "stop_low_mfe_guard", None) is None:
+            report.errors.append("stop_low_mfe_guard_enabled but ExposureGate.stop_low_mfe_guard is None")
+
+    if getattr(config, "exit_shadow_monitor_enabled", False):
+        from small_paper.exit_shadow_monitor import SUMMARY_FIELD_KEYS, finalize_session_exit_shadow_monitor_safe
+        from small_paper.exit_shadow_monitor import config_from_pilot
+
+        sample = finalize_session_exit_shadow_monitor_safe([], monitor=config_from_pilot(config))
+        missing = [k for k in SUMMARY_FIELD_KEYS if k not in sample]
+        if missing:
+            report.errors.append(f"exit_shadow_monitor summary missing keys: {missing}")
+
     entry_ts = _now_epoch()
     sym = "6976.T"
 
@@ -591,7 +619,6 @@ def run_live_pipeline_preflight(
         ("late_chase_guard_disabled", chase_ring, chase_px, False),
     ]
 
-    report = PreflightReport(config_path=str(cfg_path))
     for case_id, ring, px, guard_on in specs:
         payload = build_live_mock_push_payload(symbol=sym, price=px, entry_ts=entry_ts)
         result = run_live_pipeline_case(
@@ -601,6 +628,7 @@ def run_live_pipeline_preflight(
             price_ring=ring,
             payload=payload,
             classic_guard_enabled=guard_on,
+            repo_root=repo_root,
         )
         case_errs = _case_expectations(case_id, result)
         if case_errs:

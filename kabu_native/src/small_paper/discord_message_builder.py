@@ -1027,6 +1027,13 @@ def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> li
             f"exc_pnl={summary.get('cluster_guard_exception_pnl', 0)} "
             f"exc_pf={summary.get('cluster_guard_exception_pf', 0)}"
         )
+    if summary.get("stop_low_mfe_guard_enabled"):
+        lines.append(
+            "StopLowMFEGuard: "
+            f"reject={summary.get('stop_low_mfe_guard_reject_count', 0)} "
+            f"missing={summary.get('stop_low_mfe_guard_missing_count', 0)} "
+            f"net_shadow={summary.get('stop_low_mfe_guard_net_shadow', 0)}"
+        )
     if summary.get("board_high_entry_count") is not None:
         lines.append(
             "BoardHigh ENTRY: "
@@ -1037,6 +1044,10 @@ def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> li
             "VWAPPullback Guard: "
             f"reject={summary.get('pullback_misread_dynamic40_reject_count', 0)}"
         )
+
+    from small_paper.exit_shadow_monitor import format_exit_shadow_monitor_discord_lines
+
+    lines.extend(format_exit_shadow_monitor_discord_lines(summary))
 
     if isinstance(live_trans, Mapping):
         lines.append("LiveConfig Transition Shadow:")
