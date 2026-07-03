@@ -25,8 +25,8 @@ from research.exposure_gate import (
 from small_paper.config import SmallPaperPilotConfig, load_pilot_config
 from small_paper.entry_expectancy_score_shadow import compute_entry_expectancy_score_fields
 from small_paper.entry_scan_controller import (
-    check_entry_data_freshness,
     compute_entry_freshness,
+    evaluate_entry_data_freshness,
 )
 from small_paper.board_imbalance_shadow import compute_entry_order_book_imbalance_field
 from small_paper.extended_entry_shadow import (
@@ -83,6 +83,7 @@ class PreflightReport:
     verdict: str = ""
     ready: bool = False
     config_path: str = ""
+    config_sha256: str = ""
     cases: list[PreflightCaseResult] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -394,6 +395,9 @@ def run_live_pipeline_case(
 
         snapshot = ctx.feature_bridge.update(sym, payload)
         enriched = ctx.feature_bridge.enrich_payload(payload, snapshot)
+        push_received_at = _iso_now()
+        if not enriched.get("recorded_at"):
+            enriched["recorded_at"] = push_received_at
         trade = _candidate_trade_from_push(
             enriched,
             symbol=sym,
@@ -419,12 +423,23 @@ def run_live_pipeline_case(
         freshness = compute_entry_freshness(enriched, pipeline_source=ctx.source)
         stale_reason = None
         if ctx.entry_scan is not None:
-            stale_reason = check_entry_data_freshness(
+            ref_now = datetime.now(JST)
+            fresh_decision = evaluate_entry_data_freshness(
                 freshness,
+                enriched,
                 max_price_age_sec=ctx.entry_scan.max_price_age_sec,
                 max_board_age_sec=ctx.entry_scan.max_board_age_sec,
                 guard_enabled=ctx.entry_scan.freshness_guard_enabled,
+                board_fallback_enabled=ctx.entry_scan.board_fallback_enabled,
+                max_fallback_spread_bps=ctx.entry_scan.board_fallback_max_spread_bps,
+                reference_now=ref_now,
+                freshness_semantics_v2_enabled=ctx.entry_scan.freshness_semantics_v2_enabled,
+                event_stale_threshold_sec=ctx.entry_scan.event_stale_threshold_sec,
+                board_stale_threshold_sec=ctx.entry_scan.board_stale_threshold_sec,
+                trade_stale_threshold_sec=ctx.entry_scan.trade_stale_threshold_sec,
+                trade_stale_mode=ctx.entry_scan.trade_stale_mode,
             )
+            stale_reason = fresh_decision.reject_reason
         if stale_reason:
             result.error = f"freshness blocked preflight: {stale_reason}"
             result.notes = "board/price freshness must pass for pipeline preflight"
@@ -570,12 +585,31 @@ def run_live_pipeline_preflight(
     *,
     config_path: Path,
     repo_root: Optional[Path] = None,
+    expected_config_sha256: Optional[str] = None,
 ) -> PreflightReport:
     cfg_path = config_path
     if repo_root and not cfg_path.is_absolute():
         cfg_path = repo_root / cfg_path
     config = load_pilot_config(cfg_path)
     report = PreflightReport(config_path=str(cfg_path))
+
+    from small_paper.config import config_file_sha256
+
+    actual_sha = config_file_sha256(cfg_path)
+    report.config_sha256 = actual_sha
+    pin_path = cfg_path.parent / "production_config_sha256.pin"
+    pin_sha = pin_path.read_text(encoding="utf-8").strip() if pin_path.exists() else ""
+    expect = (expected_config_sha256 or pin_sha or "").strip()
+    if expect and expect != actual_sha:
+        report.errors.append(
+            f"config SHA mismatch: disk={actual_sha[:16]}... expected={expect[:16]}... — abort session start"
+        )
+
+    from small_paper.live_order_adapter import phase594_preflight_check
+
+    p594_ok, p594_msg = phase594_preflight_check(config)
+    if not p594_ok:
+        report.errors.append(p594_msg)
 
     if getattr(config, "entry_cluster_guard_enabled", False):
         from small_paper.entry_cluster_guard import validate_entry_cluster_guard_model
@@ -590,6 +624,10 @@ def run_live_pipeline_preflight(
         gate = config.make_exposure_gate(repo_root=repo_root)
         if getattr(gate, "stop_low_mfe_guard", None) is None:
             report.errors.append("stop_low_mfe_guard_enabled but ExposureGate.stop_low_mfe_guard is None")
+
+    from small_paper.phase627_preflight import phase627_preflight_checks
+
+    report.errors.extend(phase627_preflight_checks(config, repo_root=repo_root))
 
     if getattr(config, "exit_shadow_monitor_enabled", False):
         from small_paper.exit_shadow_monitor import SUMMARY_FIELD_KEYS, finalize_session_exit_shadow_monitor_safe

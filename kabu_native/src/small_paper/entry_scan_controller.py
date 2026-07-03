@@ -18,6 +18,7 @@ log = logging.getLogger("kabu_native.small_paper.entry_scan")
 
 REJECT_DATA_STALE_PRICE = "data_stale_price"
 REJECT_DATA_STALE_BOARD = "data_stale_board"
+REJECT_EVENT_STALE_PRICE = "event_stale_price"
 REJECT_MAX_ENTRIES_PER_SCAN = "max_entries_per_scan"
 
 DATA_SOURCE_KABU_PUSH = "kabu_push"
@@ -34,6 +35,27 @@ class EntryFreshnessSnapshot:
     last_board_update_ts: Optional[str]
     price_age_sec: Optional[float]
     board_age_sec: Optional[float]
+
+
+PRICE_FRESHNESS_CURRENT = "current_price_time"
+PRICE_FRESHNESS_BOARD_FALLBACK = "board_fallback"
+PRICE_FRESHNESS_STALE_REJECT = "stale_reject"
+PRICE_FRESHNESS_LIQUIDITY_STALE_TRADE = "liquidity_stale_trade"
+
+DEFAULT_BOARD_FALLBACK_MAX_SPREAD_BPS = 50.0
+
+
+@dataclass(frozen=True)
+class EntryFreshnessDecision:
+    reject_reason: Optional[str]
+    price_freshness_source: str
+    spread_bps: Optional[float]
+    fallback_used: bool
+    fallback_reject_reason: Optional[str]
+    snapshot: EntryFreshnessSnapshot
+    event_stale: bool = False
+    board_stale: bool = False
+    trade_stale: bool = False
 
 
 @dataclass
@@ -72,11 +94,16 @@ def _now_iso() -> str:
     return datetime.now(JST).isoformat(timespec="milliseconds")
 
 
-def _field_age_sec(payload: Mapping[str, Any], field: str) -> tuple[Optional[str], Optional[float]]:
+def _field_age_sec(
+    payload: Mapping[str, Any],
+    field: str,
+    *,
+    reference_now: Optional[datetime] = None,
+) -> tuple[Optional[str], Optional[float]]:
     raw = payload.get(field)
     if raw is None or str(raw).strip() == "":
         return None, None
-    now = datetime.now(JST)
+    now = reference_now if reference_now is not None else datetime.now(JST)
     tick = parse_kabu_time(raw, fallback=now)
     ts = tick.isoformat(timespec="milliseconds")
     age = max(0.0, (now - tick).total_seconds())
@@ -101,10 +128,13 @@ def compute_entry_freshness(
     payload: Mapping[str, Any],
     *,
     pipeline_source: str,
+    reference_now: Optional[datetime] = None,
 ) -> EntryFreshnessSnapshot:
-    price_ts, price_age = _field_age_sec(payload, "CurrentPriceTime")
-    bid_ts, bid_age = _field_age_sec(payload, "BidTime")
-    ask_ts, ask_age = _field_age_sec(payload, "AskTime")
+    price_ts, price_age = _field_age_sec(
+        payload, "CurrentPriceTime", reference_now=reference_now
+    )
+    bid_ts, bid_age = _field_age_sec(payload, "BidTime", reference_now=reference_now)
+    ask_ts, ask_age = _field_age_sec(payload, "AskTime", reference_now=reference_now)
     board_candidates = [(bid_ts, bid_age), (ask_ts, ask_age)]
     board_ts = None
     board_age = None
@@ -123,24 +153,315 @@ def compute_entry_freshness(
     )
 
 
+def _spread_bps_from_payload(payload: Mapping[str, Any]) -> Optional[float]:
+    from universe.filters import calc_spread_bps
+
+    return calc_spread_bps(payload)
+
+
+def _price_ts_fresh(snap: EntryFreshnessSnapshot, *, max_price_age_sec: float) -> bool:
+    return (
+        snap.last_price_update_ts is not None
+        and snap.price_age_sec is not None
+        and snap.price_age_sec <= float(max_price_age_sec)
+    )
+
+
+def _board_fallback_eligible(
+    payload: Mapping[str, Any],
+    snap: EntryFreshnessSnapshot,
+    *,
+    max_board_age_sec: float,
+    max_spread_bps: float,
+) -> tuple[bool, Optional[str]]:
+    reasons: list[str] = []
+    if snap.board_age_sec is None or snap.board_age_sec > float(max_board_age_sec):
+        reasons.append("board_stale")
+    calc = payload.get("CalcPrice")
+    if calc is None or (isinstance(calc, str) and not str(calc).strip()):
+        reasons.append("missing_calc_price")
+    bid = payload.get("BidPrice")
+    ask = payload.get("AskPrice")
+    if bid is None or ask is None:
+        reasons.append("missing_bid_ask_price")
+    spread = _spread_bps_from_payload(payload)
+    if spread is None:
+        reasons.append("missing_spread")
+    elif spread > float(max_spread_bps):
+        reasons.append("spread_above_max")
+    if reasons:
+        return False, ";".join(reasons)
+    return True, None
+
+
+def _board_stale(snap: EntryFreshnessSnapshot, *, max_board_age_sec: float) -> bool:
+    return (
+        snap.last_board_update_ts is None
+        or snap.board_age_sec is None
+        or snap.board_age_sec > float(max_board_age_sec)
+    )
+
+
+def _event_age_sec(
+    payload: Mapping[str, Any],
+    *,
+    reference_now: Optional[datetime] = None,
+) -> Optional[float]:
+    now = reference_now if reference_now is not None else datetime.now(JST)
+    raw = payload.get("recorded_at")
+    if raw is None or str(raw).strip() == "":
+        return None
+    rec_dt = parse_kabu_time(raw, fallback=now)
+    return max(0.0, (now - rec_dt).total_seconds())
+
+
+def _event_stale(
+    payload: Mapping[str, Any],
+    *,
+    reference_now: Optional[datetime],
+    threshold_sec: float,
+) -> bool:
+    age = _event_age_sec(payload, reference_now=reference_now)
+    return age is None or age > float(threshold_sec)
+
+
+def _trade_stale(snap: EntryFreshnessSnapshot, *, threshold_sec: float) -> bool:
+    if snap.last_price_update_ts is None or snap.price_age_sec is None:
+        return True
+    return snap.price_age_sec > float(threshold_sec)
+
+
+def _evaluate_freshness_semantics_v2(
+    snap: EntryFreshnessSnapshot,
+    payload: Mapping[str, Any],
+    *,
+    event_stale_threshold_sec: float,
+    board_stale_threshold_sec: float,
+    trade_stale_threshold_sec: float,
+    trade_stale_mode: str,
+    guard_enabled: bool = True,
+    reference_now: Optional[datetime] = None,
+) -> EntryFreshnessDecision:
+    spread_bps = _spread_bps_from_payload(payload)
+    if not guard_enabled:
+        return EntryFreshnessDecision(
+            reject_reason=None,
+            price_freshness_source=PRICE_FRESHNESS_CURRENT,
+            spread_bps=spread_bps,
+            fallback_used=False,
+            fallback_reject_reason=None,
+            snapshot=snap,
+        )
+
+    event_st = _event_stale(
+        payload,
+        reference_now=reference_now,
+        threshold_sec=event_stale_threshold_sec,
+    )
+    board_st = _board_stale(snap, max_board_age_sec=board_stale_threshold_sec)
+    trade_st = _trade_stale(snap, threshold_sec=trade_stale_threshold_sec)
+
+    if event_st:
+        return EntryFreshnessDecision(
+            reject_reason=REJECT_EVENT_STALE_PRICE,
+            price_freshness_source=PRICE_FRESHNESS_STALE_REJECT,
+            spread_bps=spread_bps,
+            fallback_used=False,
+            fallback_reject_reason=None,
+            snapshot=snap,
+            event_stale=True,
+            board_stale=board_st,
+            trade_stale=trade_st,
+        )
+
+    if board_st:
+        return EntryFreshnessDecision(
+            reject_reason=REJECT_DATA_STALE_BOARD,
+            price_freshness_source=PRICE_FRESHNESS_CURRENT,
+            spread_bps=spread_bps,
+            fallback_used=False,
+            fallback_reject_reason=None,
+            snapshot=snap,
+            event_stale=False,
+            board_stale=True,
+            trade_stale=trade_st,
+        )
+
+    mode = str(trade_stale_mode or "tag_only").strip().lower()
+    if trade_st and mode == "tag_only":
+        return EntryFreshnessDecision(
+            reject_reason=None,
+            price_freshness_source=PRICE_FRESHNESS_LIQUIDITY_STALE_TRADE,
+            spread_bps=spread_bps,
+            fallback_used=False,
+            fallback_reject_reason=None,
+            snapshot=snap,
+            event_stale=False,
+            board_stale=False,
+            trade_stale=True,
+        )
+
+    return EntryFreshnessDecision(
+        reject_reason=None,
+        price_freshness_source=PRICE_FRESHNESS_CURRENT,
+        spread_bps=spread_bps,
+        fallback_used=False,
+        fallback_reject_reason=None,
+        snapshot=snap,
+        event_stale=False,
+        board_stale=False,
+        trade_stale=trade_st,
+    )
+
+
+def evaluate_entry_data_freshness(
+    snap: EntryFreshnessSnapshot,
+    payload: Mapping[str, Any],
+    *,
+    max_price_age_sec: float,
+    max_board_age_sec: float,
+    guard_enabled: bool = True,
+    board_fallback_enabled: bool = True,
+    max_fallback_spread_bps: float = DEFAULT_BOARD_FALLBACK_MAX_SPREAD_BPS,
+    reference_now: Optional[datetime] = None,
+    freshness_semantics_v2_enabled: bool = False,
+    event_stale_threshold_sec: float = 3.0,
+    board_stale_threshold_sec: float = 3.0,
+    trade_stale_threshold_sec: float = 10.0,
+    trade_stale_mode: str = "tag_only",
+) -> EntryFreshnessDecision:
+    if freshness_semantics_v2_enabled:
+        return _evaluate_freshness_semantics_v2(
+            snap,
+            payload,
+            event_stale_threshold_sec=event_stale_threshold_sec,
+            board_stale_threshold_sec=board_stale_threshold_sec,
+            trade_stale_threshold_sec=trade_stale_threshold_sec,
+            trade_stale_mode=trade_stale_mode,
+            guard_enabled=guard_enabled,
+            reference_now=reference_now,
+        )
+
+    spread_bps = _spread_bps_from_payload(payload)
+
+    if not guard_enabled:
+        return EntryFreshnessDecision(
+            reject_reason=None,
+            price_freshness_source=PRICE_FRESHNESS_CURRENT,
+            spread_bps=spread_bps,
+            fallback_used=False,
+            fallback_reject_reason=None,
+            snapshot=snap,
+        )
+
+    if _price_ts_fresh(snap, max_price_age_sec=max_price_age_sec):
+        if snap.last_board_update_ts is None:
+            return EntryFreshnessDecision(
+                reject_reason=REJECT_DATA_STALE_BOARD,
+                price_freshness_source=PRICE_FRESHNESS_CURRENT,
+                spread_bps=spread_bps,
+                fallback_used=False,
+                fallback_reject_reason=None,
+                snapshot=snap,
+            )
+        if snap.board_age_sec is None or snap.board_age_sec > float(max_board_age_sec):
+            return EntryFreshnessDecision(
+                reject_reason=REJECT_DATA_STALE_BOARD,
+                price_freshness_source=PRICE_FRESHNESS_CURRENT,
+                spread_bps=spread_bps,
+                fallback_used=False,
+                fallback_reject_reason=None,
+                snapshot=snap,
+            )
+        return EntryFreshnessDecision(
+            reject_reason=None,
+            price_freshness_source=PRICE_FRESHNESS_CURRENT,
+            spread_bps=spread_bps,
+            fallback_used=False,
+            fallback_reject_reason=None,
+            snapshot=snap,
+        )
+
+    if board_fallback_enabled:
+        ok, fb_reason = _board_fallback_eligible(
+            payload,
+            snap,
+            max_board_age_sec=max_board_age_sec,
+            max_spread_bps=max_fallback_spread_bps,
+        )
+        if ok:
+            return EntryFreshnessDecision(
+                reject_reason=None,
+                price_freshness_source=PRICE_FRESHNESS_BOARD_FALLBACK,
+                spread_bps=spread_bps,
+                fallback_used=True,
+                fallback_reject_reason=None,
+                snapshot=snap,
+            )
+        return EntryFreshnessDecision(
+            reject_reason=REJECT_DATA_STALE_PRICE,
+            price_freshness_source=PRICE_FRESHNESS_STALE_REJECT,
+            spread_bps=spread_bps,
+            fallback_used=False,
+            fallback_reject_reason=fb_reason,
+            snapshot=snap,
+        )
+
+    return EntryFreshnessDecision(
+        reject_reason=REJECT_DATA_STALE_PRICE,
+        price_freshness_source=PRICE_FRESHNESS_STALE_REJECT,
+        spread_bps=spread_bps,
+        fallback_used=False,
+        fallback_reject_reason="board_fallback_disabled",
+        snapshot=snap,
+    )
+
+
 def check_entry_data_freshness(
     snap: EntryFreshnessSnapshot,
     *,
     max_price_age_sec: float,
     max_board_age_sec: float,
     guard_enabled: bool = True,
+    payload: Optional[Mapping[str, Any]] = None,
+    board_fallback_enabled: bool = True,
+    max_fallback_spread_bps: float = DEFAULT_BOARD_FALLBACK_MAX_SPREAD_BPS,
+    reference_now: Optional[datetime] = None,
+    freshness_semantics_v2_enabled: bool = False,
+    event_stale_threshold_sec: float = 3.0,
+    board_stale_threshold_sec: float = 3.0,
+    trade_stale_threshold_sec: float = 10.0,
+    trade_stale_mode: str = "tag_only",
 ) -> Optional[str]:
-    if not guard_enabled:
+    if payload is None:
+        if freshness_semantics_v2_enabled:
+            return None
+        if not guard_enabled:
+            return None
+        if snap.last_price_update_ts is None:
+            return REJECT_DATA_STALE_PRICE
+        if snap.price_age_sec is None or snap.price_age_sec > float(max_price_age_sec):
+            return REJECT_DATA_STALE_PRICE
+        if snap.last_board_update_ts is None:
+            return REJECT_DATA_STALE_BOARD
+        if snap.board_age_sec is None or snap.board_age_sec > float(max_board_age_sec):
+            return REJECT_DATA_STALE_BOARD
         return None
-    if snap.last_price_update_ts is None:
-        return REJECT_DATA_STALE_PRICE
-    if snap.price_age_sec is None or snap.price_age_sec > float(max_price_age_sec):
-        return REJECT_DATA_STALE_PRICE
-    if snap.last_board_update_ts is None:
-        return REJECT_DATA_STALE_BOARD
-    if snap.board_age_sec is None or snap.board_age_sec > float(max_board_age_sec):
-        return REJECT_DATA_STALE_BOARD
-    return None
+    return evaluate_entry_data_freshness(
+        snap,
+        payload,
+        max_price_age_sec=max_price_age_sec,
+        max_board_age_sec=max_board_age_sec,
+        guard_enabled=guard_enabled,
+        board_fallback_enabled=board_fallback_enabled,
+        max_fallback_spread_bps=max_fallback_spread_bps,
+        reference_now=reference_now,
+        freshness_semantics_v2_enabled=freshness_semantics_v2_enabled,
+        event_stale_threshold_sec=event_stale_threshold_sec,
+        board_stale_threshold_sec=board_stale_threshold_sec,
+        trade_stale_threshold_sec=trade_stale_threshold_sec,
+        trade_stale_mode=trade_stale_mode,
+    ).reject_reason
 
 
 def candidate_rank_score(trade: Mapping[str, Any], freshness: EntryFreshnessSnapshot) -> float:
@@ -200,6 +521,13 @@ class EntryScanController:
         max_entries_per_scan: int = 1,
         scan_window_sec: float = 2.0,
         freshness_guard_enabled: bool = True,
+        board_fallback_enabled: bool = True,
+        board_fallback_max_spread_bps: float = DEFAULT_BOARD_FALLBACK_MAX_SPREAD_BPS,
+        freshness_semantics_v2_enabled: bool = False,
+        event_stale_threshold_sec: float = 3.0,
+        board_stale_threshold_sec: float = 3.0,
+        trade_stale_threshold_sec: float = 10.0,
+        trade_stale_mode: str = "tag_only",
         batch_enabled: bool = True,
         pipeline_source: str = "live",
         audit_writer: Optional[Callable[[Mapping[str, Any]], None]] = None,
@@ -209,6 +537,13 @@ class EntryScanController:
         self.max_entries_per_scan = max(1, int(max_entries_per_scan))
         self.scan_window_sec = float(scan_window_sec)
         self.freshness_guard_enabled = bool(freshness_guard_enabled)
+        self.board_fallback_enabled = bool(board_fallback_enabled)
+        self.board_fallback_max_spread_bps = float(board_fallback_max_spread_bps)
+        self.freshness_semantics_v2_enabled = bool(freshness_semantics_v2_enabled)
+        self.event_stale_threshold_sec = float(event_stale_threshold_sec)
+        self.board_stale_threshold_sec = float(board_stale_threshold_sec)
+        self.trade_stale_threshold_sec = float(trade_stale_threshold_sec)
+        self.trade_stale_mode = str(trade_stale_mode or "tag_only")
         self.batch_enabled = bool(batch_enabled)
         self.pipeline_source = pipeline_source
         self._audit_writer = audit_writer
@@ -262,6 +597,13 @@ class EntryScanController:
         eval_start_ts: str = "",
         eval_end_ts: str = "",
         eval_latency_ms: float = 0.0,
+        price_freshness_source: str = "",
+        spread_bps: Optional[float] = None,
+        fallback_used: bool = False,
+        fallback_reject_reason: str = "",
+        event_stale: bool = False,
+        board_stale: bool = False,
+        trade_stale: bool = False,
     ) -> None:
         if self._scan is not None:
             self._scan.evaluated_symbols.add(symbol)
@@ -287,6 +629,14 @@ class EntryScanController:
             "entry_reasons": ";".join(r for r in reasons if r),
             "entry_decision": entry_decision,
             "reject_reason": reject_reason,
+            "price_freshness_source": price_freshness_source,
+            "current_price_age_sec": freshness.price_age_sec,
+            "spread_bps": spread_bps,
+            "fallback_used": fallback_used,
+            "fallback_reject_reason": fallback_reject_reason,
+            "event_stale": event_stale,
+            "board_stale": board_stale,
+            "trade_stale": trade_stale,
         }
         self._write_audit(row)
 
@@ -395,6 +745,16 @@ def entry_scan_controller_from_config(
         max_entries_per_scan=int(getattr(config, "max_entries_per_scan", 1) or 1),
         scan_window_sec=float(getattr(config, "entry_scan_window_sec", 2.0) or 2.0),
         freshness_guard_enabled=bool(getattr(config, "entry_freshness_guard_enabled", True)),
+        board_fallback_enabled=bool(getattr(config, "entry_freshness_board_fallback_enabled", False)),
+        board_fallback_max_spread_bps=float(
+            getattr(config, "entry_freshness_board_fallback_max_spread_bps", DEFAULT_BOARD_FALLBACK_MAX_SPREAD_BPS)
+            or DEFAULT_BOARD_FALLBACK_MAX_SPREAD_BPS
+        ),
+        freshness_semantics_v2_enabled=bool(getattr(config, "freshness_semantics_v2_enabled", False)),
+        event_stale_threshold_sec=float(getattr(config, "event_stale_threshold_sec", 3.0) or 3.0),
+        board_stale_threshold_sec=float(getattr(config, "board_stale_threshold_sec", 3.0) or 3.0),
+        trade_stale_threshold_sec=float(getattr(config, "trade_stale_threshold_sec", 10.0) or 10.0),
+        trade_stale_mode=str(getattr(config, "trade_stale_mode", "tag_only") or "tag_only"),
         batch_enabled=bool(getattr(config, "entry_scan_batch_enabled", True)),
         pipeline_source=pipeline_source,
         audit_writer=audit_writer,
@@ -403,15 +763,23 @@ def entry_scan_controller_from_config(
 
 __all__ = [
     "DATA_SOURCE_KABU_PUSH",
+    "DEFAULT_BOARD_FALLBACK_MAX_SPREAD_BPS",
+    "EntryFreshnessDecision",
     "EntryFreshnessSnapshot",
     "EntryScanController",
+    "PRICE_FRESHNESS_BOARD_FALLBACK",
+    "PRICE_FRESHNESS_CURRENT",
+    "PRICE_FRESHNESS_LIQUIDITY_STALE_TRADE",
+    "PRICE_FRESHNESS_STALE_REJECT",
     "PendingEntryCandidate",
     "REJECT_DATA_STALE_BOARD",
     "REJECT_DATA_STALE_PRICE",
+    "REJECT_EVENT_STALE_PRICE",
     "REJECT_MAX_ENTRIES_PER_SCAN",
     "ScanFlushResult",
     "candidate_rank_score",
     "check_entry_data_freshness",
     "compute_entry_freshness",
     "entry_scan_controller_from_config",
+    "evaluate_entry_data_freshness",
 ]

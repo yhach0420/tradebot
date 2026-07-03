@@ -24,6 +24,11 @@ LOG_EVENT_KIND = "entry_cluster_guard_triggered"
 CLUSTER_GUARD_PASSED = "PASSED"
 CLUSTER_GUARD_EXCEPTION = "EXCEPTION"
 CLUSTER_GUARD_REJECTED = "REJECTED"
+# Phase627: classification based on missing/zero-filled features must never reject.
+CLUSTER_GUARD_FEATURE_INCOMPLETE = "FEATURE_INCOMPLETE"
+TAG_ENTRY_CLUSTER_GUARD_FEATURE_INCOMPLETE = "entry_cluster_guard_feature_incomplete"
+FEATURE_COMPLETENESS_CHECK_ENABLED = True
+LOG_EVENT_KIND_FEATURE_INCOMPLETE = "entry_cluster_guard_feature_incomplete"
 
 DEFAULT_LIQUIDITY_BURST_THRESHOLD = 0.052267
 BIG_WINNER_MFE_PCT = 1.0
@@ -59,6 +64,8 @@ class EntryClusterGuardCheck:
     liquidity_burst_threshold: Optional[float] = None
     reject_reason: str = ""
     via_exception: bool = False
+    feature_complete: bool = True
+    missing_features: tuple[str, ...] = ()
 
     def log_fields(self, *, symbol: str) -> dict[str, Any]:
         return {
@@ -71,6 +78,8 @@ class EntryClusterGuardCheck:
             "liquidity_burst_threshold": self.liquidity_burst_threshold,
             "cluster_guard_status": self.cluster_guard_status,
             "via_exception": self.via_exception,
+            "feature_complete": self.feature_complete,
+            "missing_feature_count": len(self.missing_features),
             "reject_reason": self.reject_reason or REJECT_ENTRY_CLUSTER_GUARD,
         }
 
@@ -88,6 +97,9 @@ class EntryClusterGuardState:
     exception_wins: int = 0
     exception_mfe0: int = 0
     exception_big_winner: int = 0
+    feature_incomplete_count: int = 0
+    feature_incomplete_symbols: set[str] = field(default_factory=set)
+    feature_incomplete_missing_counts: dict[str, int] = field(default_factory=dict)
 
     def summary_fields(self) -> dict[str, Any]:
         exc_n = len(self.exception_pnls)
@@ -113,7 +125,29 @@ class EntryClusterGuardState:
             "cluster_guard_blocked_cluster_counts": dict(self.blocked_cluster_counts),
             "cluster_guard_reject_symbols": sorted(self.rejected_symbols),
             "cluster_guard_exception_symbols": sorted(self.exception_symbols),
+            "cluster_guard_feature_completeness_check_enabled": FEATURE_COMPLETENESS_CHECK_ENABLED,
+            "cluster_guard_feature_incomplete_count": self.feature_incomplete_count,
+            "cluster_guard_feature_incomplete_missing_counts": dict(
+                sorted(
+                    self.feature_incomplete_missing_counts.items(),
+                    key=lambda kv: kv[1],
+                    reverse=True,
+                )[:10]
+            ),
         }
+
+    def _reject_stage_missing_features(
+        self, merged: Mapping[str, Any], cls: Mapping[str, Any]
+    ) -> list[str]:
+        """Raw (pre zero-fill / pre median-fill) presence of the features that drove the reject."""
+        cid = int(cls.get("cluster_id") or -1)
+        csub = int(cls.get("new_subcluster_id") or -1)
+        feats: list[str] = []
+        if cid in self.config.reject_clusters:
+            feats.extend(self.model.cluster_features)
+        if csub in self.config.reject_csubs:
+            feats.extend(self.model.csub_features)
+        return [f for f in dict.fromkeys(feats) if _float(merged.get(f)) is None]
 
     def _is_reject(self, cls: Mapping[str, Any]) -> bool:
         cid = int(cls.get("cluster_id") or -1)
@@ -145,6 +179,32 @@ class EntryClusterGuardState:
                 new_subcluster_id=csub,
                 liquidity_burst=lb,
                 liquidity_burst_threshold=thr,
+            )
+
+        # Phase627: a reject classification computed from missing (zero/median-filled)
+        # features is degenerate (6/29-6/30 collapse: ~100% of live finalists -> c3_s5).
+        # Tag + count only; never reject on incomplete features.
+        missing = self._reject_stage_missing_features(merged, cls)
+        if missing:
+            self.feature_incomplete_count += 1
+            sym = str(trade.get("symbol") or "")
+            if sym:
+                self.feature_incomplete_symbols.add(sym)
+            for f in missing:
+                self.feature_incomplete_missing_counts[f] = (
+                    self.feature_incomplete_missing_counts.get(f, 0) + 1
+                )
+            return EntryClusterGuardCheck(
+                blocked=False,
+                cluster_guard_status=CLUSTER_GUARD_FEATURE_INCOMPLETE,
+                cluster_id=cid,
+                subcluster_id=sid,
+                new_subcluster_id=csub,
+                liquidity_burst=lb,
+                liquidity_burst_threshold=thr,
+                reject_reason=TAG_ENTRY_CLUSTER_GUARD_FEATURE_INCOMPLETE,
+                feature_complete=False,
+                missing_features=tuple(missing),
             )
 
         if self.config.exception_enabled and lb is not None and lb >= thr:

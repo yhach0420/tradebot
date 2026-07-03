@@ -104,12 +104,20 @@ class SmallPaperPilotConfig:
     live_order_dry_run_enabled: bool = True
     live_order_api_wiring_enabled: bool = True
     live_capital_check_enabled: bool = True
+    live_order_adapter_enabled: bool = True
+    live_order_notifier_enabled: bool = True
+    live_order_discord_enabled: bool = False
+    live_order_jsonl_enabled: bool = True
+    dry_run: bool = True
     live_trading_enabled: bool = False
     live_order_entry_timeout_sec: float = 4.0
     vol_liq_startup_cache_enabled: bool = False
     vol_liq_startup_cache_dir: str = "kabu_native/results/cache/vol_liq_startup"
     vol_liq_startup_cache_fallback_on_error: bool = True
     vol_liq_startup_cache_write_after_fallback: bool = True
+    pre625_runtime_structure_mode: bool = False
+    core_runtime_mode: str = ""
+    entry_latency_trace_enabled: bool = False
     entry_price_risk_guard_enabled: bool = False
     entry_price_risk_guard_shadow: bool = False
     entry_price_risk_guard_min_entry_price: float = 50.0
@@ -148,7 +156,14 @@ class SmallPaperPilotConfig:
     max_entries_per_scan: int = 1
     entry_scan_window_sec: float = 2.0
     entry_freshness_guard_enabled: bool = True
+    entry_freshness_board_fallback_enabled: bool = False
+    entry_freshness_board_fallback_max_spread_bps: float = 50.0
     entry_scan_batch_enabled: bool = True
+    freshness_semantics_v2_enabled: bool = False
+    event_stale_threshold_sec: float = 3.0
+    board_stale_threshold_sec: float = 3.0
+    trade_stale_threshold_sec: float = 10.0
+    trade_stale_mode: str = "tag_only"
     or_overlay_enabled: bool = False
     cap_pbv2: int = 4
     cap_or: int = 1
@@ -201,9 +216,22 @@ class SmallPaperPilotConfig:
             out["live_order_api_wiring_enabled"] = True
         if self.live_capital_check_enabled:
             out["live_capital_check_enabled"] = True
+        if self.live_order_adapter_enabled:
+            out["live_order_adapter_enabled"] = True
+        if self.live_order_notifier_enabled:
+            out["live_order_notifier_enabled"] = True
+        if self.live_order_discord_enabled:
+            out["live_order_discord_enabled"] = True
+        if self.live_order_jsonl_enabled:
+            out["live_order_jsonl_enabled"] = True
+        out["dry_run"] = self.dry_run
         if self.vol_liq_startup_cache_enabled:
             out["vol_liq_startup_cache_enabled"] = True
             out["vol_liq_startup_cache_dir"] = self.vol_liq_startup_cache_dir
+        if self.pre625_runtime_structure_mode:
+            out["pre625_runtime_structure_mode"] = True
+        if str(self.core_runtime_mode or "").strip():
+            out["core_runtime_mode"] = str(self.core_runtime_mode).strip()
         if self.entry_price_risk_guard_enabled:
             out["entry_price_risk_guard_enabled"] = True
             out["entry_price_risk_guard_shadow"] = self.entry_price_risk_guard_shadow
@@ -271,6 +299,12 @@ class SmallPaperPilotConfig:
             out["cap_pbv2"] = self.cap_pbv2
             out["cap_or"] = self.cap_or
             out["or_max_update_count"] = self.or_max_update_count
+        if self.freshness_semantics_v2_enabled:
+            out["freshness_semantics_v2_enabled"] = True
+            out["event_stale_threshold_sec"] = self.event_stale_threshold_sec
+            out["board_stale_threshold_sec"] = self.board_stale_threshold_sec
+            out["trade_stale_threshold_sec"] = self.trade_stale_threshold_sec
+            out["trade_stale_mode"] = self.trade_stale_mode
         if self.position_cap_mode:
             out["position_cap_mode"] = True
             out["position_cap_release"] = self.position_cap_release
@@ -523,6 +557,11 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         live_order_dry_run_enabled=bool(raw.get("live_order_dry_run_enabled", True)),
         live_order_api_wiring_enabled=bool(raw.get("live_order_api_wiring_enabled", True)),
         live_capital_check_enabled=bool(raw.get("live_capital_check_enabled", True)),
+        live_order_adapter_enabled=bool(raw.get("live_order_adapter_enabled", True)),
+        live_order_notifier_enabled=bool(raw.get("live_order_notifier_enabled", True)),
+        live_order_discord_enabled=bool(raw.get("live_order_discord_enabled", False)),
+        live_order_jsonl_enabled=bool(raw.get("live_order_jsonl_enabled", True)),
+        dry_run=bool(raw.get("dry_run", True)),
         live_trading_enabled=bool(raw.get("live_trading_enabled", False)),
         live_order_entry_timeout_sec=float(raw.get("live_order_entry_timeout_sec", 4.0)),
         vol_liq_startup_cache_enabled=bool(raw.get("vol_liq_startup_cache_enabled", False)),
@@ -538,6 +577,9 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         vol_liq_startup_cache_write_after_fallback=bool(
             raw.get("vol_liq_startup_cache_write_after_fallback", True)
         ),
+        pre625_runtime_structure_mode=bool(raw.get("pre625_runtime_structure_mode", False)),
+        core_runtime_mode=str(raw.get("core_runtime_mode", "") or ""),
+        entry_latency_trace_enabled=bool(raw.get("entry_latency_trace_enabled", False)),
         entry_price_risk_guard_enabled=bool(raw.get("entry_price_risk_guard_enabled", False)),
         entry_price_risk_guard_shadow=bool(raw.get("entry_price_risk_guard_shadow", False)),
         entry_price_risk_guard_min_entry_price=float(
@@ -601,7 +643,18 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         max_entries_per_scan=int(raw.get("max_entries_per_scan", 1) or 1),
         entry_scan_window_sec=float(raw.get("entry_scan_window_sec", 2.0)),
         entry_freshness_guard_enabled=bool(raw.get("entry_freshness_guard_enabled", True)),
+        entry_freshness_board_fallback_enabled=bool(
+            raw.get("entry_freshness_board_fallback_enabled", False)
+        ),
+        entry_freshness_board_fallback_max_spread_bps=float(
+            raw.get("entry_freshness_board_fallback_max_spread_bps", 50.0)
+        ),
         entry_scan_batch_enabled=bool(raw.get("entry_scan_batch_enabled", True)),
+        freshness_semantics_v2_enabled=bool(raw.get("freshness_semantics_v2_enabled", False)),
+        event_stale_threshold_sec=float(raw.get("event_stale_threshold_sec", 3.0)),
+        board_stale_threshold_sec=float(raw.get("board_stale_threshold_sec", 3.0)),
+        trade_stale_threshold_sec=float(raw.get("trade_stale_threshold_sec", 10.0)),
+        trade_stale_mode=str(raw.get("trade_stale_mode", "tag_only") or "tag_only"),
         or_overlay_enabled=bool(raw.get("or_overlay_enabled", False)),
         cap_pbv2=int(raw.get("cap_pbv2", 4) or 4),
         cap_or=int(raw.get("cap_or", 1) or 1),

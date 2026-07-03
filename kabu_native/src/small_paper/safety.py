@@ -415,6 +415,32 @@ def check_discord_webhook_env(config: SmallPaperPilotConfig) -> SafetyCheck:
     )
 
 
+def check_config_sha_pinned(config_path: Path) -> SafetyCheck:
+    from small_paper.config import config_file_sha256
+
+    pin_path = config_path.parent / "production_config_sha256.pin"
+    actual = config_file_sha256(config_path)
+    if not pin_path.exists():
+        return SafetyCheck(
+            "config_sha_pinned",
+            True,
+            "no production_config_sha256.pin — sha recorded only",
+            {"config_sha256": actual},
+        )
+    expected = pin_path.read_text(encoding="utf-8").strip()
+    ok = expected == actual
+    return SafetyCheck(
+        "config_sha_pinned",
+        ok,
+        (
+            f"config sha256 matches pin ({actual[:16]}...)"
+            if ok
+            else f"config SHA mismatch: disk={actual[:16]}... pin={expected[:16]}..."
+        ),
+        {"config_sha256": actual, "pin_sha256": expected},
+    )
+
+
 def check_config_hash_recorded(config_path: Path) -> SafetyCheck:
     from small_paper.config import config_file_sha256
 
@@ -903,6 +929,7 @@ def run_all_safety_checks(
         )
         if config_path:
             checks.append(check_config_hash_recorded(config_path))
+            checks.append(check_config_sha_pinned(config_path))
         if session_stamp:
             checks.append(
                 check_live_output_writable(

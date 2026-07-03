@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 
 from small_paper.discord_message_builder import build_entry_detail
 from small_paper.entry_scan_controller import (
+    PRICE_FRESHNESS_BOARD_FALLBACK,
+    PRICE_FRESHNESS_CURRENT,
     REJECT_DATA_STALE_BOARD,
     REJECT_DATA_STALE_PRICE,
     REJECT_MAX_ENTRIES_PER_SCAN,
@@ -13,6 +15,7 @@ from small_paper.entry_scan_controller import (
     PendingEntryCandidate,
     check_entry_data_freshness,
     compute_entry_freshness,
+    evaluate_entry_data_freshness,
 )
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -52,6 +55,57 @@ class TestEntryFreshnessGuard(unittest.TestCase):
             check_entry_data_freshness(snap, max_price_age_sec=3.0, max_board_age_sec=3.0)
         )
         self.assertEqual(snap.data_source, "kabu_push")
+
+    def test_board_fallback_rescues_stale_price_ts(self) -> None:
+        now = datetime.now(JST)
+        tick = (now - timedelta(seconds=0.5)).isoformat(timespec="milliseconds")
+        stale_price = (now - timedelta(seconds=120.0)).isoformat(timespec="milliseconds")
+        payload = {
+            "CurrentPriceTime": stale_price,
+            "CurrentPrice": 1000.0,
+            "CalcPrice": 1000.0,
+            "BidPrice": 999.0,
+            "AskPrice": 1001.0,
+            "BidTime": tick,
+            "AskTime": tick,
+            "BidQty": 100.0,
+            "AskQty": 100.0,
+        }
+        snap = compute_entry_freshness(payload, pipeline_source="live")
+        decision = evaluate_entry_data_freshness(
+            snap, payload, max_price_age_sec=3.0, max_board_age_sec=3.0
+        )
+        self.assertIsNone(decision.reject_reason)
+        self.assertEqual(decision.price_freshness_source, PRICE_FRESHNESS_BOARD_FALLBACK)
+        self.assertTrue(decision.fallback_used)
+
+    def test_board_fallback_rejects_wide_spread(self) -> None:
+        now = datetime.now(JST)
+        tick = (now - timedelta(seconds=0.5)).isoformat(timespec="milliseconds")
+        payload = {
+            "CurrentPriceTime": None,
+            "CalcPrice": 1000.0,
+            "BidPrice": 900.0,
+            "AskPrice": 1100.0,
+            "BidTime": tick,
+            "AskTime": tick,
+        }
+        snap = compute_entry_freshness(payload, pipeline_source="live")
+        decision = evaluate_entry_data_freshness(
+            snap, payload, max_price_age_sec=3.0, max_board_age_sec=3.0
+        )
+        self.assertEqual(decision.reject_reason, REJECT_DATA_STALE_PRICE)
+        self.assertIn("spread_above_max", decision.fallback_reject_reason or "")
+
+    def test_current_price_time_fresh_unchanged(self) -> None:
+        payload = _fresh_payload(age_sec=0.5)
+        snap = compute_entry_freshness(payload, pipeline_source="live")
+        decision = evaluate_entry_data_freshness(
+            snap, payload, max_price_age_sec=3.0, max_board_age_sec=3.0
+        )
+        self.assertIsNone(decision.reject_reason)
+        self.assertEqual(decision.price_freshness_source, PRICE_FRESHNESS_CURRENT)
+        self.assertFalse(decision.fallback_used)
 
 
 class TestEntryScanBatching(unittest.TestCase):

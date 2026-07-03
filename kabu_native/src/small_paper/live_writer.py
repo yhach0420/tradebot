@@ -104,6 +104,18 @@ class LiveSessionWriter:
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
 
+    def append_live_order_event(self, record: Mapping[str, Any]) -> None:
+        if not self.incremental:
+            return
+        path = self.output_dir / "live_order_event.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
+    def append_live_order_error(self, record: Mapping[str, Any]) -> None:
+        path = self.output_dir / "live_order_error.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
     def append_entry_scan_audit(self, record: Mapping[str, Any]) -> None:
         path = self.output_dir / "entry_scan_audit.jsonl"
         with path.open("a", encoding="utf-8") as f:

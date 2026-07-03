@@ -94,6 +94,8 @@ class DailyRunnerOptions:
     enable_intraday_refresh: bool = False
     exit_policy_shadow: str = ""
     low_liquidity_shadow: bool = False
+    pre625_runtime_structure_mode: bool = False
+    core_runtime_mode: str = ""
 
 
 @dataclass
@@ -990,6 +992,10 @@ def pilot_command_argv(
                 str(refresh_path),
             ]
         )
+    if state.options.pre625_runtime_structure_mode:
+        argv.append("--pre625-runtime-structure-mode")
+    if str(state.options.core_runtime_mode or "").strip():
+        argv.extend(["--core-runtime-mode", str(state.options.core_runtime_mode).strip()])
     return argv
 
 
@@ -1336,6 +1342,8 @@ def build_summary_payload(state: DailyRunnerState) -> dict[str, Any]:
         "config_sha256": config_file_sha256(cfg_path) if cfg_path.is_file() else "",
         "exit_policy_shadow": state.options.exit_policy_shadow or "",
         "intraday_refresh_enabled": bool(state.options.enable_intraday_refresh),
+        "pre625_runtime_structure_mode": bool(state.options.pre625_runtime_structure_mode),
+        "core_runtime_mode": str(state.options.core_runtime_mode or ""),
         "structural_exit_policy": (
             getattr(pilot_cfg, "structural_exit_policy", "") if pilot_cfg else ""
         ),

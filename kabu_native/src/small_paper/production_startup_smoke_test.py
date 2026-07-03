@@ -254,6 +254,14 @@ def run_production_startup_smoke_test(
         except Exception as exc:  # noqa: BLE001
             errors.append(f"or overlay build failed: {exc}")
 
+    from small_paper.phase627_preflight import phase627_preflight_checks
+
+    p627_errors = phase627_preflight_checks(config, repo_root=root)
+    if p627_errors:
+        errors.extend(p627_errors)
+    else:
+        checks["phase627_cluster_guard_safety"] = True
+
     try:
         from small_paper.discord_message_builder import build_entry_detail
 

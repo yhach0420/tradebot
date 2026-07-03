@@ -846,6 +846,21 @@ def _config_sha_tail(summary: Mapping[str, Any]) -> str:
     return sha or "—"
 
 
+def format_freshness_semantics_v2_lines(summary: Mapping[str, Any]) -> list[str]:
+    if not summary.get("freshness_semantics_v2_enabled"):
+        return []
+    return [
+        f"event_stale rejects: {int(summary.get('event_stale_reject_count') or 0)}",
+        f"board_stale rejects: {int(summary.get('board_stale_reject_count') or 0)}",
+        f"trade_stale tags: {int(summary.get('trade_stale_tag_count') or 0)}",
+        (
+            f"thresholds: event={summary.get('event_stale_threshold_sec')}s "
+            f"board={summary.get('board_stale_threshold_sec')}s "
+            f"trade={summary.get('trade_stale_threshold_sec')}s"
+        ),
+    ]
+
+
 def format_runtime_health_lines(summary: Mapping[str, Any]) -> list[str]:
     peak = int(summary.get("peak_open_slots") or summary.get("max_concurrent") or 0)
     cap = int(summary.get("max_concurrent_positions") or summary.get("max_concurrent_cap") or 3)
@@ -879,6 +894,45 @@ def format_reject_funnel_lines(
     return [f"{reason}: {count}" for reason, count in ranked]
 
 
+def format_pbv2_internal_breakdown_lines(
+    summary: Mapping[str, Any],
+    *,
+    top_n: int = 8,
+) -> list[str]:
+    """Phase627: decompose or_overlay_not_candidate into true PBv2 internal reasons."""
+    counts = summary.get("pbv2_internal_reason_counts")
+    if not isinstance(counts, Mapping) or not counts:
+        return []
+    reject_counts = summary.get("reject_reason_counts")
+    masked = 0
+    if isinstance(reject_counts, Mapping):
+        masked = int(reject_counts.get("or_overlay_not_candidate") or 0)
+    ranked = sorted(
+        ((str(r), int(c)) for r, c in counts.items() if int(c or 0) > 0),
+        key=lambda item: item[1],
+        reverse=True,
+    )[: max(1, int(top_n))]
+    lines = [f"or_overlay_not_candidate: {masked} (PBv2内部理由の内訳)"] if masked else []
+    lines.extend(f"{reason}: {count}" for reason, count in ranked)
+    return lines
+
+
+def format_gate_dominance_alert_lines(summary: Mapping[str, Any]) -> list[str]:
+    """Phase627: single-blocker dominance alert (warning>=80%, critical>=95%)."""
+    level = str(summary.get("gate_dominance_alert_level") or "none")
+    if level == "none":
+        return []
+    reason = str(summary.get("gate_dominance_top_reason") or "")
+    share = summary.get("gate_dominance_top_share_pct")
+    total = int(summary.get("gate_dominance_total_rejects") or 0)
+    marker = "🚨" if level == "critical" else "⚠"
+    return [
+        f"{marker} {level.upper()}: {reason} が reject の {_fmt_num(share, digits=1)}% を占有 "
+        f"(n={total})",
+        "paper trade は継続中 / 設定・特徴量の確認を推奨",
+    ]
+
+
 def build_observability_embed_fields(
     *,
     events: Sequence[Mapping[str, Any]],
@@ -892,6 +946,15 @@ def build_observability_embed_fields(
         ("Runtime Health", format_runtime_health_lines(summary)),
         ("Reject Funnel", format_reject_funnel_lines(summary)),
     ]
+    pbv2_internal_lines = format_pbv2_internal_breakdown_lines(summary)
+    if pbv2_internal_lines:
+        sections.append(("PBv2 Internal Breakdown", pbv2_internal_lines))
+    dominance_lines = format_gate_dominance_alert_lines(summary)
+    if dominance_lines:
+        sections.append(("Gate Dominance Alert", dominance_lines))
+    freshness_lines = format_freshness_semantics_v2_lines(summary)
+    if freshness_lines:
+        sections.insert(3, ("Freshness Semantics v2", freshness_lines))
     fields: list[dict[str, Any]] = []
     for name, lines in sections:
         if not lines:

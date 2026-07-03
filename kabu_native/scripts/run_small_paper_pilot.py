@@ -146,6 +146,17 @@ def main() -> int:
         default=None,
         help="Refresh universe CSV path (required when --enable-intraday-refresh)",
     )
+    parser.add_argument(
+        "--pre625-runtime-structure-mode",
+        action="store_true",
+        help="Phase612A alias for --core-runtime-mode CORE_ONLY",
+    )
+    parser.add_argument(
+        "--core-runtime-mode",
+        choices=("CORE_ONLY", "CORE_PLUS_AUDIT", "FULL_EXTENSION"),
+        default=None,
+        help="Phase616: Core vs Extension runtime mode (default FULL_EXTENSION)",
+    )
     args = parser.parse_args()
 
     if not args.dry_run:
@@ -154,6 +165,13 @@ def main() -> int:
 
     cfg_path = args.config if args.config.is_absolute() else (repo_root / args.config)
     config = load_pilot_config(cfg_path)
+    from small_paper.core_runtime_mode import finalize_core_runtime_config
+
+    config = finalize_core_runtime_config(
+        config,
+        cli_mode=args.core_runtime_mode,
+        cli_pre625=bool(args.pre625_runtime_structure_mode),
+    )
     day_key = args.output_date or datetime.now(JST).strftime("%Y%m%d")
     session_stamp = datetime.now(JST).strftime("%H%M%S")
     source = args.source or config.default_source

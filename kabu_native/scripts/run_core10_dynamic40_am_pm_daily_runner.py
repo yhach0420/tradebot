@@ -112,6 +112,17 @@ def main() -> int:
         action="store_true",
         help="Phase179d: use trailing_mfe low-liquidity SHADOW logging YAML (non-prod).",
     )
+    parser.add_argument(
+        "--pre625-runtime-structure-mode",
+        action="store_true",
+        help="Phase612A alias for --core-runtime-mode CORE_ONLY",
+    )
+    parser.add_argument(
+        "--core-runtime-mode",
+        choices=("CORE_ONLY", "CORE_PLUS_AUDIT", "FULL_EXTENSION"),
+        default=None,
+        help="Phase616: Core vs Extension runtime (default FULL_EXTENSION)",
+    )
     args = parser.parse_args()
 
     if args.startup_smoke_test:
@@ -204,6 +215,8 @@ def main() -> int:
         enable_intraday_refresh=args.enable_intraday_refresh,
         exit_policy_shadow=args.exit_policy_shadow,
         low_liquidity_shadow=bool(args.low_liquidity_shadow),
+        pre625_runtime_structure_mode=bool(args.pre625_runtime_structure_mode),
+        core_runtime_mode=str(args.core_runtime_mode or ""),
     )
     state = make_state(repo_root, native_root, options)
     rc = run_daily_runner(state)
