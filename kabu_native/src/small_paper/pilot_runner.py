@@ -25,10 +25,26 @@ from small_paper.discord_notifier import (
     SmallPaperDiscordNotifier,
     build_session_summary_extras,
     discord_notifier_from_pilot,
+    discord_notify_summary_fields,
     notify_discord_session_end,
     observer_tracker_config_from_pilot,
 )
 from small_paper.discord_ux_session import DiscordUxSessionStats
+from small_paper.reject_reasons import (
+    REJECT_MAX_ENTRIES_PER_SCAN,
+    REJECT_SAME_SYMBOL_OPEN_OVERLAP,
+    is_entry_blocked_discord_notify_reason,
+)
+from small_paper.entry_pipeline_stages import (
+    Stage0NormalizedPayload,
+    Stage1FreshnessResult,
+    Stage2PBv2Result,
+    Stage3ClusterDecision,
+    Stage4FinalEntryDecision,
+    Stage6CandidateRecord,
+    StageTraceLogger,
+    classify_cluster_stage,
+)
 from small_paper.observer_position_tracker import (
     OBSERVER_EXIT,
     OBSERVER_HOLD,
@@ -193,6 +209,28 @@ EVENT_FIELDS = (
     "pullback_misread_guard_shadow_blocked",
     "pullback_misread_shadow_pnl_yen_100",
     "pullback_misread_shadow_delta_yen",
+    "pbv2_rise5_shadow_block",
+    "pbv2_rise5_shadow_reason",
+    "pbv2_rise5_value",
+    "pbv2_rise5_threshold",
+    "pbv2_rise5_shadow_apply_pool",
+    "shadow_blocked_pnl_yen_100",
+    "shadow_blocked_mfe",
+    "shadow_blocked_mae",
+    "pbv2_rise5_shadow_pnl_yen_100",
+    "pbv2_rise5_shadow_delta_yen",
+    "pbv2_flat_band_shadow_block",
+    "pbv2_flat_band_shadow_reason",
+    "pbv2_flat_band_rise5",
+    "pbv2_flat_band_rise10",
+    "pbv2_flat_band_variant",
+    "pbv2_flat_band_shadow_apply_pool",
+    "flat_band_and_rise5_shadow_block",
+    "pbv2_flat_band_shadow_blocked_pnl_yen_100",
+    "pbv2_flat_band_shadow_blocked_mfe",
+    "pbv2_flat_band_shadow_blocked_mae",
+    "pbv2_flat_band_shadow_pnl_yen_100",
+    "pbv2_flat_band_shadow_delta_yen",
     "universe_slot",
     "universe_bucket",
     "source_bucket",
@@ -548,6 +586,18 @@ def _default_pullback_misread_entry_guard_shadow_counters() -> Any:
     return PullbackMisreadEntryGuardShadowCounters()
 
 
+def _default_pbv2_rise5_shadow_counters() -> Any:
+    from small_paper.pbv2_rise5_shadow import PbV2Rise5ShadowCounters
+
+    return PbV2Rise5ShadowCounters()
+
+
+def _default_pbv2_flat_band_shadow_counters() -> Any:
+    from small_paper.pbv2_flat_band_guard_shadow import PbV2FlatBandShadowCounters
+
+    return PbV2FlatBandShadowCounters()
+
+
 def _default_realtime_board_exit_shadow() -> Any:
     from small_paper.realtime_board_exit_shadow import RealtimeBoardExitShadowLogger
 
@@ -596,6 +646,9 @@ def _default_live_order_dry_run_session(config: Any) -> Any:
 @dataclass
 class _LiveRunState:
     started_mono: float
+    session_ready_ts: Optional[str] = None
+    first_gate_eval_ts: Optional[str] = None
+    pre_session_warmup_ring_push_count: int = 0
     session_force_close_done: bool = False
     events: list[dict[str, Any]] = field(default_factory=list)
     accepted_rows: list[dict[str, Any]] = field(default_factory=list)
@@ -650,6 +703,7 @@ class _LiveRunState:
     volume_gate_shadow: Any = field(default_factory=_default_volume_gate_shadow_state)
     live_order_dry_run: Any = None
     live_order_wiring: Any = None
+    order_latency_dryrun: Any = None
     live_capital_manager: Any = None
     live_capital_read_client: Any = None
     live_capital_api_token: str = ""
@@ -665,6 +719,8 @@ class _LiveRunState:
     intraday_refresh_csv: str = ""
     intraday_refresh_scheduled_time: str = ""
     outside_refresh_universe_reject_count: int = 0
+    entry_stop_reject_logging_recovered_count: int = 0
+    logging_error_count: int = 0
     event_stale_reject_count: int = 0
     board_stale_reject_count: int = 0
     trade_stale_tag_count: int = 0
@@ -686,6 +742,8 @@ class _LiveRunState:
     pullback_misread_entry_guard_shadow: Any = field(
         default_factory=_default_pullback_misread_entry_guard_shadow_counters
     )
+    pbv2_rise5_shadow: Any = field(default_factory=_default_pbv2_rise5_shadow_counters)
+    pbv2_flat_band_shadow: Any = field(default_factory=_default_pbv2_flat_band_shadow_counters)
     realtime_board_exit_shadow: Any = field(default_factory=_default_realtime_board_exit_shadow)
     entry_expectancy_score_shadow: Any = field(default_factory=_default_entry_expectancy_score_counters)
     discord_ux: DiscordUxSessionStats = field(default_factory=DiscordUxSessionStats)
@@ -715,6 +773,17 @@ def _init_live_order_api_wiring(config: SmallPaperPilotConfig, state: _LiveRunSt
         state.live_order_wiring = LiveOrderWiringSession()
 
 
+def _init_order_latency_dryrun(config: SmallPaperPilotConfig, state: _LiveRunState, output_dir: Path) -> None:
+    from small_paper.order_latency_dryrun_trace import OrderLatencyDryRunSession, order_latency_dryrun_enabled
+
+    if order_latency_dryrun_enabled(config):
+        state.order_latency_dryrun = OrderLatencyDryRunSession(output_dir)
+
+
+def _order_latency_session(ctx: _PushPipelineContext) -> Any:
+    return getattr(ctx.state, "order_latency_dryrun", None)
+
+
 def _init_live_capital_manager(config: SmallPaperPilotConfig, state: _LiveRunState, *, repo_root: Path) -> None:
     from research.structural_trade_normalize import resolve_kabu_root
     from small_paper.live_capital_manager import LiveCapitalManagerSession, capital_manager_enabled
@@ -734,6 +803,23 @@ def _init_live_order_adapter(config: SmallPaperPilotConfig, state: _LiveRunState
         cap = int(config.max_concurrent_positions)
         timeout = float(getattr(config, "live_order_entry_timeout_sec", 4.0) or 4.0)
         state.live_order_adapter = LiveOrderAdapterSession(position_cap=cap, entry_timeout_sec=timeout)
+
+
+def _init_pbv2_rise5_shadow(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
+    from small_paper.pbv2_rise5_shadow import build_pbv2_rise5_shadow_counters, rise5_shadow_enabled
+
+    if rise5_shadow_enabled(config):
+        state.pbv2_rise5_shadow = build_pbv2_rise5_shadow_counters(config)
+
+
+def _init_pbv2_flat_band_shadow(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
+    from small_paper.pbv2_flat_band_guard_shadow import (
+        build_pbv2_flat_band_shadow_counters,
+        flat_band_shadow_enabled,
+    )
+
+    if flat_band_shadow_enabled(config):
+        state.pbv2_flat_band_shadow = build_pbv2_flat_band_shadow_counters(config)
 
 
 def _init_or_overlay_tracking(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
@@ -1111,6 +1197,12 @@ def _log_and_dispatch_observer_events(
                 pb_counters = getattr(state, "pullback_misread_entry_guard_shadow", None)
                 if pb_counters is not None:
                     pb_counters.record_exit(row)
+                rise5_counters = getattr(state, "pbv2_rise5_shadow", None)
+                if rise5_counters is not None:
+                    rise5_counters.record_exit(row)
+                flat_counters = getattr(state, "pbv2_flat_band_shadow", None)
+                if flat_counters is not None:
+                    flat_counters.record_exit(row)
                 score_counters = getattr(state, "entry_expectancy_score_shadow", None)
                 if score_counters is not None:
                     score_counters.record_exit(row)
@@ -1463,6 +1555,20 @@ def _pullback_misread_entry_guard_shadow_summary_fields(state: _LiveRunState) ->
     return counters.summary_fields()
 
 
+def _pbv2_rise5_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "pbv2_rise5_shadow", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
+def _pbv2_flat_band_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "pbv2_flat_band_shadow", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
 def _entry_expectancy_score_summary_fields(state: _LiveRunState) -> dict[str, Any]:
     counters = getattr(state, "entry_expectancy_score_shadow", None)
     if counters is None:
@@ -1600,7 +1706,91 @@ def _init_extension_stack_for_mode(
 
 
 REJECT_OUTSIDE_REFRESH_UNIVERSE = "outside_refresh_universe"
-REJECT_SAME_SYMBOL_OPEN_OVERLAP = "REJECT_SAME_SYMBOL_OPEN_OVERLAP"
+_ENTRY_STOP_PRE_GATE_REASONS = frozenset({"am_pm_entry_stop", REJECT_OUTSIDE_REFRESH_UNIVERSE})
+
+
+def _is_entry_stop_pre_gate_reason(reason: str) -> bool:
+    return str(reason or "") in _ENTRY_STOP_PRE_GATE_REASONS
+
+
+def _record_pipeline_logging_error(
+    ctx: _PushPipelineContext,
+    *,
+    stage: str,
+    exc: BaseException,
+    symbol: str = "",
+) -> None:
+    ctx.state.logging_error_count += 1
+    try:
+        ctx.writer.append_error(
+            {
+                "event_time": _now_iso(),
+                "error_type": "pipeline_logging_error",
+                "stage": stage,
+                "symbol": symbol,
+                "message": str(exc),
+            }
+        )
+    except Exception:
+        pass
+
+
+def _entry_stop_reject_logging_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    return {
+        "entry_stop_reject_logging_recovered_count": int(
+            getattr(state, "entry_stop_reject_logging_recovered_count", 0) or 0
+        ),
+        "logging_error_count": int(getattr(state, "logging_error_count", 0) or 0),
+    }
+
+
+def _notify_entry_blocked_discord(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: Mapping[str, Any],
+    rej: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    enriched: Mapping[str, Any],
+    block_reason: str,
+    score5_ord: Optional[int] = None,
+) -> None:
+    """trade-cap-blocked webhook only (never trade-notify)."""
+    if not is_entry_blocked_discord_notify_reason(block_reason):
+        return
+    if ctx.discord is None or not ctx.discord.cap_blocked_notify_enabled():
+        return
+    if block_reason == REJECT_MAX_CONCURRENT:
+        try:
+            v2 = int(trade.get("entry_expectancy_score_v2") or 0)
+            if v2 >= 5:
+                ctx.state.discord_ux.record_score5_deferred_reject(
+                    symbol=sym,
+                    entry_score_v2=v2,
+                )
+        except (TypeError, ValueError):
+            pass
+    from small_paper.extended_entry_shadow import (
+        compute_entry_shadow_fields,
+        tick_ts_from_payload,
+    )
+
+    shadow = compute_entry_shadow_fields(
+        trade=trade,
+        payload=payload,
+        price_ring=ctx.symbol_price_ring.get(sym, []),
+        entry_ts=tick_ts_from_payload(payload),
+        session_momentum_samples=ctx.state.session_momentum_samples,
+    )
+    ctx.discord.notify_entry_cap_blocked(
+        event=rej,
+        payload=enriched,
+        trade_data={**dict(trade), **shadow},
+        open_slots=_active_cap_count(ctx),
+        score5_candidate_ordinal=score5_ord,
+        ux_stats=ctx.state.discord_ux,
+        block_reason=block_reason,
+    )
 
 
 def _same_symbol_open_policy(config: Any) -> str:
@@ -1662,6 +1852,15 @@ def _maybe_reject_same_symbol_open_overlap(
     ctx.state.events.append(rej)
     ctx.writer.append_event(rej)
     _record_bucket(ctx.state, "rejected")
+    _notify_entry_blocked_discord(
+        ctx,
+        sym=sym,
+        trade=trade,
+        rej=rej,
+        payload=payload,
+        enriched=dict(payload),
+        block_reason=REJECT_SAME_SYMBOL_OPEN_OVERLAP,
+    )
     return True
 
 
@@ -2004,6 +2203,29 @@ def _execute_accepted_entry(
 
     if "entry_type" not in trade:
         trade["entry_type"] = "PBV2"
+    from small_paper.pbv2_rise5_shadow import compute_pbv2_rise5_shadow_fields, rise5_shadow_enabled
+
+    rise5_shadow_block: Optional[bool] = None
+    if rise5_shadow_enabled(ctx.config):
+        rise5_shadow = compute_pbv2_rise5_shadow_fields(ctx.config, trade)
+        trade.update(rise5_shadow)
+        rise5_shadow_block = bool(rise5_shadow.get("pbv2_rise5_shadow_block"))
+        rise5_counters = getattr(ctx.state, "pbv2_rise5_shadow", None)
+        if rise5_counters is not None:
+            rise5_counters.record_accept(rise5_shadow)
+    from small_paper.pbv2_flat_band_guard_shadow import (
+        compute_pbv2_flat_band_shadow_fields,
+        flat_band_shadow_enabled,
+    )
+
+    if flat_band_shadow_enabled(ctx.config):
+        flat_shadow = compute_pbv2_flat_band_shadow_fields(
+            ctx.config, trade, rise5_shadow_block=rise5_shadow_block
+        )
+        trade.update(flat_shadow)
+        flat_counters = getattr(ctx.state, "pbv2_flat_band_shadow", None)
+        if flat_counters is not None:
+            flat_counters.record_accept(flat_shadow)
     or_st = getattr(ctx.state, "or_overlay", None)
     if or_st is not None:
         or_st.record_entry(trade)
@@ -2105,9 +2327,18 @@ def _execute_accepted_entry(
 
 def _process_scan_flush(ctx: _PushPipelineContext, flush: Any) -> None:
     from research.exposure_gate import GateDecision
-    from small_paper.entry_scan_controller import REJECT_MAX_ENTRIES_PER_SCAN
+    import time as _time
+
+    ol = getattr(ctx.state, "order_latency_dryrun", None)
+    flush_start = _time.monotonic() if ol is not None else 0.0
 
     for cand in flush.accepted:
+        if ol is not None:
+            ol.mark_flush_start(
+                symbol=cand.symbol,
+                entry_signal_mono=float(cand.entry_signal_mono or 0.0),
+                flush_start_mono=flush_start,
+            )
         n_cand = flush.entry_candidates_count
         rank_i = flush.accepted.index(cand) + 1
         scan_meta = {
@@ -2134,6 +2365,11 @@ def _process_scan_flush(ctx: _PushPipelineContext, flush: Any) -> None:
             scan_meta=scan_meta,
         )
     for cand in flush.rejected_max_scan:
+        if ol is not None:
+            ol.finish_max_scan_blocked(
+                symbol=cand.symbol,
+                entry_signal_mono=float(cand.entry_signal_mono or 0.0),
+            )
         rej_row = dict(cand.trade)
         rej_row["gate_reject_reason"] = REJECT_MAX_ENTRIES_PER_SCAN
         rej_row["final_reject_reason"] = REJECT_MAX_ENTRIES_PER_SCAN
@@ -2158,6 +2394,16 @@ def _process_scan_flush(ctx: _PushPipelineContext, flush: Any) -> None:
         ctx.state.events.append(rej)
         ctx.writer.append_event(rej)
         _record_bucket(ctx.state, "rejected")
+        _notify_entry_blocked_discord(
+            ctx,
+            sym=cand.symbol,
+            trade=cand.trade,
+            rej=rej,
+            payload=cand.payload,
+            enriched=cand.enriched,
+            block_reason=REJECT_MAX_ENTRIES_PER_SCAN,
+            score5_ord=cand.score5_ord,
+        )
 
 
 def _record_score5_ordinal(ctx: _PushPipelineContext, trade: Mapping[str, Any]) -> Optional[int]:
@@ -2183,7 +2429,7 @@ def _replay_reference_now(
     return parse_kabu_time(raw, fallback=datetime.now(JST))
 
 
-def _process_push_payload(
+def _stage0_normalize_payload(
     ctx: _PushPipelineContext,
     payload: Mapping[str, Any],
     msg_i: int,
@@ -2191,10 +2437,20 @@ def _process_push_payload(
     symbol: Optional[str] = None,
     t0_push_received_at: Optional[str] = None,
     t0_mono: Optional[float] = None,
-) -> None:
+    eval_mono: Optional[float] = None,
+) -> Optional[Stage0NormalizedPayload]:
+    """Phase629 Stage0: Payload Normalize.
+
+    enrich_payload / candidate generation / price ring (+ scan begin flush,
+    tick counters). Code moved verbatim from _process_push_payload.
+
+    eval_mono: optional deterministic clock for entry-scan batching (push-replay
+    passes recorded_at epoch so flush boundaries do not depend on wall-clock
+    Stage overhead — Phase629A).
+    """
     import time
 
-    eval_start_mono = time.monotonic()
+    eval_start_mono = float(eval_mono) if eval_mono is not None else time.monotonic()
     eval_start_ts = _now_iso()
     scan_id = ""
     if ctx.entry_scan is not None:
@@ -2262,6 +2518,9 @@ def _process_push_payload(
         bus.mark_payload_parsed()
     elif lt is not None:
         lt.mark_payload_parsed()
+    ol = _order_latency_session(ctx)
+    if ol is not None:
+        ol.mark_enrich_end()
     trade = _candidate_trade_from_push(
         enriched,
         symbol=sym,
@@ -2307,6 +2566,34 @@ def _process_push_payload(
     if isinstance(q, (int, float)):
         ctx.state.quality_scores.append(float(q))
     bucket = session_bucket()
+    return Stage0NormalizedPayload(
+        symbol=sym,
+        msg_i=msg_i,
+        payload=payload,
+        enriched=enriched,
+        trade=trade,
+        snapshot=snapshot,
+        bucket=bucket,
+        scan_id=scan_id,
+        eval_start_ts=eval_start_ts,
+        eval_start_mono=eval_start_mono,
+        t0_push_received_at=t0_push_received_at,
+        t0_mono=t0_mono,
+    )
+
+
+def _observer_open_position_tick(ctx: _PushPipelineContext, norm: Stage0NormalizedPayload) -> None:
+    """Held-position tick dispatch (EXIT hot path). Runs between Stage0 and Stage1.
+
+    Not an ENTRY stage; kept as a separate step so the original execution order
+    is preserved exactly (Phase629 moved this code verbatim).
+    """
+    sym = norm.symbol
+    trade = norm.trade
+    payload = norm.payload
+    enriched = norm.enriched
+    msg_i = norm.msg_i
+    bucket = norm.bucket
     if ctx.observer and ctx.observer.has_open(sym):
         price = payload.get("CurrentPrice")
         obs_events = ctx.observer.on_tick(
@@ -2327,6 +2614,25 @@ def _process_push_payload(
             profile=ctx.config.profile,
             config=ctx.config,
         )
+
+
+def _stage1_evaluate_freshness(
+    ctx: _PushPipelineContext, norm: Stage0NormalizedPayload
+) -> Stage1FreshnessResult:
+    """Phase629 Stage1: Freshness (event/board/trade/tag/reject_reason).
+
+    Includes the pre-freshness short-circuits (am_pm_entry_stop /
+    outside_refresh_universe) and the expectancy-score field update, which sat
+    immediately before the freshness computation in the original code.
+    Code moved verbatim from _process_push_payload.
+    """
+    sym = norm.symbol
+    trade = norm.trade
+    enriched = norm.enriched
+    scan_id = norm.scan_id
+    prof = getattr(ctx, "stage_profiler", None)
+    bus = getattr(ctx, "extension_bus", None)
+    lt = _latency_trace(ctx)
     from small_paper.am_pm_session_policy import AmPmSessionPolicy
 
     stale_reason: Optional[str] = None
@@ -2339,6 +2645,13 @@ def _process_push_payload(
             reason="am_pm_entry_stop",
             continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
             quality_tier="",
+        )
+        ref_now = _replay_reference_now(ctx, enriched) or datetime.now(JST)
+        return Stage1FreshnessResult(
+            ref_now=ref_now,
+            stale_reason=stale_reason,
+            pre_gate_reason="am_pm_entry_stop",
+            short_circuit_decision=decision,
         )
     elif (
         ctx.entry_eligible_symbols is not None
@@ -2353,6 +2666,13 @@ def _process_push_payload(
             reason=REJECT_OUTSIDE_REFRESH_UNIVERSE,
             continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
             quality_tier="",
+        )
+        ref_now = _replay_reference_now(ctx, enriched) or datetime.now(JST)
+        return Stage1FreshnessResult(
+            ref_now=ref_now,
+            stale_reason=stale_reason,
+            pre_gate_reason=REJECT_OUTSIDE_REFRESH_UNIVERSE,
+            short_circuit_decision=decision,
         )
     else:
         from small_paper.entry_expectancy_score_shadow import compute_entry_expectancy_score_fields
@@ -2426,35 +2746,149 @@ def _process_push_payload(
                 continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
                 quality_tier="",
             )
-        else:
-            _enrich_trade_for_pullback_guard(ctx, sym=sym, trade=trade, payload=payload)
-            if prof is not None:
-                prof.mark("pbv2_start")
-            if bus is not None:
-                bus.mark_pbv2_start()
-            elif lt is not None:
-                lt.mark_pbv2_start()
-            pbv2_decision = _evaluate_gate_entry(ctx, trade, entry_pool="PBV2")
-            if prof is not None:
-                prof.mark("pbv2_end")
-            if bus is not None:
-                bus.mark_pbv2_end()
-            elif lt is not None:
-                lt.mark_pbv2_end()
-            if not pbv2_decision.accept:
-                _record_pbv2_internal_reject(ctx.state, trade, pbv2_decision)
-            decision = _maybe_try_or_overlay_entry(
-                ctx,
-                sym=sym,
-                trade=trade,
-                payload=payload,
-                pbv2_decision=pbv2_decision,
+            return Stage1FreshnessResult(
+                ref_now=ref_now,
+                freshness=freshness,
+                freshness_decision=freshness_decision,
+                stale_reason=stale_reason,
+                short_circuit_decision=decision,
             )
-            if decision is not pbv2_decision and not decision.accept:
-                trade["or_overlay_reason"] = str(getattr(decision, "reason", "") or "")
+        return Stage1FreshnessResult(
+            ref_now=ref_now,
+            freshness=freshness,
+            freshness_decision=freshness_decision,
+            stale_reason=stale_reason,
+        )
+
+
+def _stage2_evaluate_pbv2(
+    ctx: _PushPipelineContext, norm: Stage0NormalizedPayload
+) -> Stage2PBv2Result:
+    """Phase629 Stage2: PBv2 (GateDecision: accept/reason/audit/score/internal reason).
+
+    The full ExposureGate chain runs here, which INCLUDES the entry cluster
+    guard (Phase549/627) — Stage3 classifies its outcome without re-running it.
+    The returned GateDecision is immutable by convention: no later stage
+    mutates it. Code moved verbatim from _process_push_payload.
+    """
+    sym = norm.symbol
+    trade = norm.trade
+    payload = norm.payload
+    prof = getattr(ctx, "stage_profiler", None)
+    bus = getattr(ctx, "extension_bus", None)
+    lt = _latency_trace(ctx)
+    _enrich_trade_for_pullback_guard(ctx, sym=sym, trade=trade, payload=payload)
+    if prof is not None:
+        prof.mark("pbv2_start")
+    if bus is not None:
+        bus.mark_pbv2_start()
+    elif lt is not None:
+        lt.mark_pbv2_start()
+    pbv2_decision = _evaluate_gate_entry(ctx, trade, entry_pool="PBV2")
+    if prof is not None:
+        prof.mark("pbv2_end")
+    if bus is not None:
+        bus.mark_pbv2_end()
+    elif lt is not None:
+        lt.mark_pbv2_end()
+    if not pbv2_decision.accept:
+        _record_pbv2_internal_reject(ctx.state, trade, pbv2_decision)
+    return Stage2PBv2Result(
+        decision=pbv2_decision,
+        internal_reason=str(trade.get("pbv2_internal_reason", "") or ""),
+        internal_gate=str(trade.get("pbv2_internal_gate", "") or ""),
+    )
+
+
+def _stage3_cluster_decision(
+    norm: Stage0NormalizedPayload, pbv2: Stage2PBv2Result
+) -> Stage3ClusterDecision:
+    """Phase629 Stage3: Cluster Guard decision (FEATURE_INCOMPLETE / REJECT / PASS).
+
+    Read-only classification of the cluster-guard outcome that the ExposureGate
+    chain produced during Stage2. No side effects, no decision changes.
+    """
+    return classify_cluster_stage(pbv2.decision, norm.trade)
+
+
+def _stage4_finalize_decision(
+    ctx: _PushPipelineContext,
+    norm: Stage0NormalizedPayload,
+    fresh: Stage1FreshnessResult,
+    pbv2: Optional[Stage2PBv2Result],
+) -> Stage4FinalEntryDecision:
+    """Phase629 Stage4: OR Overlay -> FinalEntryDecision (PBv2 / OR / Reject).
+
+    The PBv2 internal reason is never modified here (Phase627 guarantee).
+    Code moved verbatim from _process_push_payload.
+    """
+    sym = norm.symbol
+    trade = norm.trade
+    payload = norm.payload
+    or_overlay_reason = ""
+    if pbv2 is None:
+        # Pre-gate or stale short-circuit: OR overlay was never attempted.
+        decision = fresh.short_circuit_decision
+        entry_route = "stale_reject" if fresh.stale_reason else "pre_gate_reject"
+    else:
+        pbv2_decision = pbv2.decision
+        decision = _maybe_try_or_overlay_entry(
+            ctx,
+            sym=sym,
+            trade=trade,
+            payload=payload,
+            pbv2_decision=pbv2_decision,
+        )
+        if decision is not pbv2_decision and not decision.accept:
+            trade["or_overlay_reason"] = str(getattr(decision, "reason", "") or "")
+            or_overlay_reason = trade["or_overlay_reason"]
+        if decision.accept:
+            entry_route = "pbv2" if decision is pbv2_decision else "or"
+        else:
+            entry_route = "reject"
+    final_reject_reason = ""
     if not decision.accept:
         trade["final_reject_reason"] = str(getattr(decision, "reason", "") or "")
+        final_reject_reason = trade["final_reject_reason"]
     ctx.state.gate_evaluations += 1
+    return Stage4FinalEntryDecision(
+        decision=decision,
+        entry_route=entry_route,
+        or_overlay_reason=or_overlay_reason,
+        final_reject_reason=final_reject_reason,
+        stale_reason=fresh.stale_reason,
+    )
+
+
+def _stage6_record_candidate(
+    ctx: _PushPipelineContext,
+    norm: Stage0NormalizedPayload,
+    fresh: Stage1FreshnessResult,
+    final: Stage4FinalEntryDecision,
+) -> Stage6CandidateRecord:
+    """Phase629 Stage6 (part 1): candidate event write / profiler / latency trace /
+    entry_scan audit / ExtensionBus on_post_eval.
+
+    Runs before Stage5 for accepted candidates and before the reject recording,
+    exactly matching the original ordering. Code moved verbatim from
+    _process_push_payload.
+    """
+    import time
+
+    sym = norm.symbol
+    trade = norm.trade
+    payload = norm.payload
+    enriched = norm.enriched
+    msg_i = norm.msg_i
+    scan_id = norm.scan_id
+    eval_start_ts = norm.eval_start_ts
+    eval_start_mono = norm.eval_start_mono
+    decision = final.decision
+    stale_reason = final.stale_reason
+    freshness_decision = fresh.freshness_decision
+    prof = getattr(ctx, "stage_profiler", None)
+    bus = getattr(ctx, "extension_bus", None)
+    lt = _latency_trace(ctx)
 
     cand = _event_from_gate(
         event_type="candidate",
@@ -2506,487 +2940,546 @@ def _process_push_payload(
             compute_entry_freshness,
         )
 
-        fresh_log = compute_entry_freshness(
-            enriched, pipeline_source=ctx.source, reference_now=ref_now
-        )
-        ctx.entry_scan.record_symbol_eval(
-            scan_id=scan_id or "",
-            symbol=sym,
-            freshness=fresh_log,
-            trade=trade,
-            entry_decision=bool(decision.accept),
-            reject_reason="" if decision.accept else str(decision.reason or ""),
-            eval_start_ts=eval_start_ts,
-            eval_end_ts=eval_end_ts,
-            eval_latency_ms=eval_latency_ms,
-            price_freshness_source=str(trade.get("price_freshness_source") or ""),
-            spread_bps=trade.get("spread_bps") if isinstance(trade.get("spread_bps"), (int, float)) else None,
-            fallback_used=bool(trade.get("fallback_used")),
-            fallback_reject_reason=str(trade.get("fallback_reject_reason") or ""),
-            event_stale=bool(getattr(freshness_decision, "event_stale", False)),
-            board_stale=bool(getattr(freshness_decision, "board_stale", False)),
-            trade_stale=bool(getattr(freshness_decision, "trade_stale", False)),
-        )
-        if bus is not None:
-            bus.on_post_eval(
-                ctx,
-                sym=sym,
-                trade=trade,
-                decision=decision,
-                timestamp=eval_end_ts,
+        ref_now = fresh.ref_now or _replay_reference_now(ctx, enriched) or datetime.now(JST)
+        try:
+            fresh_log = compute_entry_freshness(
+                enriched, pipeline_source=ctx.source, reference_now=ref_now
             )
-
-    if decision.accept:
-        if ctx.entry_scan is not None and ctx.entry_scan.batch_enabled:
-            from small_paper.entry_scan_controller import (
-                PendingEntryCandidate,
-                compute_entry_freshness,
-            )
-
-            freshness = compute_entry_freshness(
-                enriched,
-                pipeline_source=ctx.source,
-                reference_now=_replay_reference_now(ctx, enriched),
-            )
-            cand = PendingEntryCandidate(
+            ctx.entry_scan.record_symbol_eval(
+                scan_id=scan_id or "",
                 symbol=sym,
-                trade=dict(trade),
-                decision=decision,
-                payload=dict(payload),
-                enriched=dict(enriched),
-                msg_i=msg_i,
-                freshness=freshness,
+                freshness=fresh_log,
+                trade=trade,
+                entry_decision=bool(decision.accept),
+                reject_reason="" if decision.accept else str(decision.reason or ""),
                 eval_start_ts=eval_start_ts,
                 eval_end_ts=eval_end_ts,
                 eval_latency_ms=eval_latency_ms,
-                entry_signal_ts=eval_end_ts,
-                entry_signal_mono=eval_start_mono,
-                bucket=bucket,
-                score5_ord=score5_ord,
+                price_freshness_source=str(trade.get("price_freshness_source") or ""),
+                spread_bps=trade.get("spread_bps") if isinstance(trade.get("spread_bps"), (int, float)) else None,
+                fallback_used=bool(trade.get("fallback_used")),
+                fallback_reject_reason=str(trade.get("fallback_reject_reason") or ""),
+                event_stale=bool(getattr(freshness_decision, "event_stale", False)),
+                board_stale=bool(getattr(freshness_decision, "board_stale", False)),
+                trade_stale=bool(getattr(freshness_decision, "trade_stale", False)),
             )
-            ctx.entry_scan.queue_accepted_candidate(cand)
-            flush_now = ctx.entry_scan.maybe_flush_after_eval()
-            if flush_now is not None:
-                _process_scan_flush(ctx, flush_now)
-        else:
-            _execute_accepted_entry(
-                ctx,
-                sym=sym,
-                trade=trade,
-                decision=decision,
-                payload=payload,
-                enriched=enriched,
-                msg_i=msg_i,
-                bucket=bucket,
-                score5_ord=score5_ord,
-                scan_meta={
-                    "scan_id": scan_id,
-                    "entry_signal_mono": eval_start_mono,
-                }
-                if scan_id
-                else {"entry_signal_mono": eval_start_mono},
+            if bus is not None:
+                bus.on_post_eval(
+                    ctx,
+                    sym=sym,
+                    trade=trade,
+                    decision=decision,
+                    timestamp=eval_end_ts,
+                )
+        except Exception as exc:
+            _record_pipeline_logging_error(
+                ctx, stage="stage6_record_candidate", exc=exc, symbol=sym
             )
-    else:
-        rej_row = dict(trade)
-        rej_row["gate_reject_reason"] = decision.reason
-        rej_row["pbv2_internal_reason"] = trade.get("pbv2_internal_reason", "")
-        rej_row["pbv2_internal_gate"] = trade.get("pbv2_internal_gate", "")
-        rej_row["or_overlay_reason"] = trade.get("or_overlay_reason", "")
-        rej_row["final_reject_reason"] = trade.get(
-            "final_reject_reason", str(decision.reason or "")
+    return Stage6CandidateRecord(
+        score5_ord=score5_ord,
+        eval_end_ts=eval_end_ts,
+        eval_latency_ms=eval_latency_ms,
+    )
+
+
+def _stage5_execute_entry(
+    ctx: _PushPipelineContext,
+    norm: Stage0NormalizedPayload,
+    final: Stage4FinalEntryDecision,
+    rec: Stage6CandidateRecord,
+) -> None:
+    """Phase629 Stage5: Entry Execute (queue / flush / register_entry / positions /
+    accepted rows). Code moved verbatim from _process_push_payload accept branch.
+    """
+    sym = norm.symbol
+    trade = norm.trade
+    payload = norm.payload
+    enriched = norm.enriched
+    msg_i = norm.msg_i
+    bucket = norm.bucket
+    scan_id = norm.scan_id
+    eval_start_ts = norm.eval_start_ts
+    eval_start_mono = norm.eval_start_mono
+    decision = final.decision
+    score5_ord = rec.score5_ord
+    eval_end_ts = rec.eval_end_ts
+    eval_latency_ms = rec.eval_latency_ms
+    if ctx.entry_scan is not None and ctx.entry_scan.batch_enabled:
+        from small_paper.entry_scan_controller import (
+            PendingEntryCandidate,
+            compute_entry_freshness,
         )
-        if decision.reason == "symbol_cooloff":
-            ctx.state.symbol_cooloff_reject_count += 1
-            rej_row["symbol_cooloff_reason"] = getattr(decision, "symbol_cooloff_reason", "") or ""
-            rej_row["prior_avg_pnl"] = getattr(decision, "prior_avg_pnl", None)
-            rej_row["prior_trades"] = getattr(decision, "prior_trades", 0)
-        if decision.reason == "daytrade_suitability":
-            ctx.state.daytrade_suitability_reject_count += 1
-            rej_row["daytrade_suitability_score"] = getattr(
-                decision, "daytrade_suitability_score", None
-            )
-            rej_row["daytrade_suitability_threshold"] = getattr(
-                decision, "daytrade_suitability_threshold", None
-            )
-            rej_row["atr_pct"] = getattr(decision, "atr_pct", None)
-            rej_row["intraday_range_pct"] = getattr(decision, "intraday_range_pct", None)
-            rej_row["trading_value"] = getattr(decision, "trading_value", None)
-            rej_row["turnover_proxy"] = getattr(decision, "turnover_proxy", None)
-        if decision.reason == "entry_price_risk_guard":
-            from small_paper.entry_price_risk_guard import LOG_EVENT_KIND, REJECT_ENTRY_PRICE_RISK_GUARD
 
-            ctx.state.entry_price_risk_guard_reject_count += 1
-            guard_st = getattr(ctx.gate, "entry_price_risk_guard", None)
-            min_px = float(getattr(guard_st.config, "min_entry_price", 50.0)) if guard_st else 50.0
-            max_tr = float(getattr(guard_st.config, "max_tick_ratio_pct", 5.0)) if guard_st else 5.0
-            tick_sz = getattr(decision, "entry_price_risk_guard_tick_size", None)
-            tick_tr = getattr(decision, "entry_price_risk_guard_tick_ratio_pct", None)
-            trigger = getattr(decision, "entry_price_risk_guard_trigger", "") or ""
-            price_source = getattr(decision, "entry_price_risk_guard_price_source", "") or ""
-            guard_price = getattr(decision, "entry_price_risk_guard_price", None)
-            bypassed = bool(
-                getattr(decision, "entry_price_risk_guard_shadow_missing_price_bypassed", False)
-            )
-            close_used = bool(
-                getattr(decision, "entry_price_risk_guard_universe_close_price_used", False)
-            )
-            rej_row["reject_reason"] = REJECT_ENTRY_PRICE_RISK_GUARD
-            rej_row["tick_size"] = tick_sz
-            rej_row["tick_ratio_pct"] = tick_tr
-            rej_row["min_entry_price"] = min_px
-            rej_row["max_tick_ratio_pct"] = max_tr
-            rej_row["entry_price_risk_guard_trigger"] = trigger
-            rej_row["entry_price_risk_guard_price_source"] = price_source
-            rej_row["entry_price_risk_guard_price"] = guard_price
-            rej_row["entry_price_risk_guard_shadow_missing_price_bypassed"] = bypassed
-            rej_row["entry_price_risk_guard_universe_close_price_used"] = close_used
-            log_rec = {
-                "event_kind": LOG_EVENT_KIND,
-                "symbol": sym,
-                "current_price": payload.get("CurrentPrice"),
-                "tick_size": tick_sz,
-                "tick_ratio_pct": tick_tr,
-                "min_entry_price": min_px,
-                "max_tick_ratio_pct": max_tr,
-                "reject_reason": REJECT_ENTRY_PRICE_RISK_GUARD,
-                "trigger": trigger,
-                "price_source": price_source,
-                "guard_price": guard_price,
-                "shadow_missing_price_bypassed": bypassed,
-                "universe_close_price_used": close_used,
+        freshness = compute_entry_freshness(
+            enriched,
+            pipeline_source=ctx.source,
+            reference_now=_replay_reference_now(ctx, enriched),
+        )
+        cand = PendingEntryCandidate(
+            symbol=sym,
+            trade=dict(trade),
+            decision=decision,
+            payload=dict(payload),
+            enriched=dict(enriched),
+            msg_i=msg_i,
+            freshness=freshness,
+            eval_start_ts=eval_start_ts,
+            eval_end_ts=eval_end_ts,
+            eval_latency_ms=eval_latency_ms,
+            entry_signal_ts=eval_end_ts,
+            entry_signal_mono=eval_start_mono,
+            bucket=bucket,
+            score5_ord=score5_ord,
+        )
+        ctx.entry_scan.queue_accepted_candidate(cand)
+        ol = _order_latency_session(ctx)
+        if ol is not None:
+            ol.mark_queue_enqueue(entry_signal_mono=eval_start_mono, scan_id=scan_id or "")
+        flush_now = ctx.entry_scan.maybe_flush_after_eval()
+        if flush_now is not None:
+            _process_scan_flush(ctx, flush_now)
+    else:
+        ol = _order_latency_session(ctx)
+        if ol is not None:
+            ol.mark_direct_execute(entry_signal_mono=eval_start_mono)
+        _execute_accepted_entry(
+            ctx,
+            sym=sym,
+            trade=trade,
+            decision=decision,
+            payload=payload,
+            enriched=enriched,
+            msg_i=msg_i,
+            bucket=bucket,
+            score5_ord=score5_ord,
+            scan_meta={
+                "scan_id": scan_id,
+                "entry_signal_mono": eval_start_mono,
             }
-            ctx.writer.append_error(log_rec)
-        if decision.reason == "pullback_misread_dynamic40_guard":
-            from small_paper.pullback_misread_dynamic40_entry_guard import (
-                LOG_EVENT_KIND as PB_LOG_EVENT_KIND,
-                REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD,
-                compute_pullback_misread_guard_fields,
-            )
+            if scan_id
+            else {"entry_signal_mono": eval_start_mono},
+        )
 
-            ctx.state.pullback_misread_dynamic40_reject_count += 1
-            ctx.state.pullback_misread_dynamic40_reject_symbols.add(sym)
-            pb_fields = compute_pullback_misread_guard_fields(trade)
-            trade.update(pb_fields)
-            rej_row.update(pb_fields)
-            rej_row["reject_reason"] = REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD
-            pb_counters = getattr(ctx.state, "pullback_misread_entry_guard_shadow", None)
-            if pb_counters is not None:
-                pb_counters.record_reject_candidate(pb_fields)
-            ctx.writer.append_error(
-                {
-                    "event_kind": PB_LOG_EVENT_KIND,
-                    "symbol": sym,
-                    "entry_rise_5min_pct": getattr(
-                        decision, "pullback_misread_dynamic40_entry_rise_5min_pct", None
-                    ),
-                    "entry_vwap_dev_pct": getattr(
-                        decision, "pullback_misread_dynamic40_entry_vwap_dev_pct", None
-                    ),
-                    "universe_slot": getattr(
-                        decision, "pullback_misread_dynamic40_universe_slot", ""
-                    ),
-                    "universe_bucket": getattr(
-                        decision, "pullback_misread_dynamic40_universe_bucket", ""
-                    ),
-                    "reject_reason": REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD,
-                }
-            )
-        if decision.reason == "near_day_high_low_momentum_dynamic40_guard":
-            from small_paper.near_day_high_low_momentum_dynamic40_entry_guard import (
-                LOG_EVENT_KIND as ND_LOG_EVENT_KIND,
-                REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD,
-                compute_near_day_high_low_momentum_guard_fields,
-            )
 
-            ctx.state.near_day_high_low_momentum_dynamic40_reject_count += 1
-            ctx.state.near_day_high_low_momentum_dynamic40_reject_symbols.add(sym)
-            nd_fields = compute_near_day_high_low_momentum_guard_fields(trade)
-            trade.update(nd_fields)
-            rej_row.update(nd_fields)
-            rej_row["reject_reason"] = REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD
-            ctx.writer.append_error(
-                {
-                    "event_kind": ND_LOG_EVENT_KIND,
-                    "symbol": sym,
-                    "day_high_distance_pct": getattr(
-                        decision,
-                        "near_day_high_low_momentum_dynamic40_day_high_distance_pct",
-                        None,
-                    ),
-                    "entry_momentum_score": getattr(
-                        decision,
-                        "near_day_high_low_momentum_dynamic40_entry_momentum_score",
-                        None,
-                    ),
-                    "universe_slot": getattr(
-                        decision,
-                        "near_day_high_low_momentum_dynamic40_universe_slot",
-                        "",
-                    ),
-                    "universe_bucket": getattr(
-                        decision,
-                        "near_day_high_low_momentum_dynamic40_universe_bucket",
-                        "",
-                    ),
-                    "reject_reason": REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD,
-                }
-            )
-        if decision.reason == "high_drift_pullback":
-            from small_paper.high_drift_pullback_entry_guard import (
-                LOG_EVENT_KIND as HD_LOG_EVENT_KIND,
-                REJECT_HIGH_DRIFT_PULLBACK,
-                compute_high_drift_pullback_guard_fields,
-            )
+def _stage6_record_reject(
+    ctx: _PushPipelineContext,
+    norm: Stage0NormalizedPayload,
+    final: Stage4FinalEntryDecision,
+    rec: Stage6CandidateRecord,
+) -> None:
+    """Phase629 Stage6 (part 2): reject row / rejected event / Discord notify.
 
-            ctx.state.high_drift_pullback_reject_count += 1
-            ctx.state.high_drift_pullback_reject_symbols.add(sym)
-            hd_fields = compute_high_drift_pullback_guard_fields(trade)
-            trade.update(hd_fields)
-            rej_row.update(hd_fields)
-            rej_row["reject_reason"] = REJECT_HIGH_DRIFT_PULLBACK
-            ctx.writer.append_error(
-                {
-                    "event_kind": HD_LOG_EVENT_KIND,
-                    "symbol": sym,
-                    "entry_rise_5min_pct": getattr(
-                        decision, "high_drift_pullback_entry_rise_5min_pct", None
-                    ),
-                    "entry_rise_10min_pct": getattr(
-                        decision, "high_drift_pullback_entry_rise_10min_pct", None
-                    ),
-                    "entry_rise_15min_pct": getattr(
-                        decision, "high_drift_pullback_entry_rise_15min_pct", None
-                    ),
-                    "day_high_distance_pct": getattr(
-                        decision, "high_drift_pullback_day_high_distance_pct", None
-                    ),
-                    "universe_slot": getattr(
-                        decision, "high_drift_pullback_universe_slot", ""
-                    ),
-                    "universe_bucket": getattr(
-                        decision, "high_drift_pullback_universe_bucket", ""
-                    ),
-                    "reject_reason": REJECT_HIGH_DRIFT_PULLBACK,
-                }
-            )
-        if decision.reason == "weak_shape_reject":
-            from small_paper.weak_shape_reject_entry_guard import (
-                LOG_EVENT_KIND as WS_LOG_EVENT_KIND,
-                REJECT_WEAK_SHAPE,
-                compute_weak_shape_reject_guard_fields,
-            )
+    Code moved verbatim from the _process_push_payload reject branch.
+    """
+    sym = norm.symbol
+    trade = norm.trade
+    payload = norm.payload
+    enriched = norm.enriched
+    msg_i = norm.msg_i
+    decision = final.decision
+    score5_ord = rec.score5_ord
+    rej_row = dict(trade)
+    rej_row["gate_reject_reason"] = decision.reason
+    rej_row["pbv2_internal_reason"] = trade.get("pbv2_internal_reason", "")
+    rej_row["pbv2_internal_gate"] = trade.get("pbv2_internal_gate", "")
+    rej_row["or_overlay_reason"] = trade.get("or_overlay_reason", "")
+    rej_row["final_reject_reason"] = trade.get(
+        "final_reject_reason", str(decision.reason or "")
+    )
+    if decision.reason == "symbol_cooloff":
+        ctx.state.symbol_cooloff_reject_count += 1
+        rej_row["symbol_cooloff_reason"] = getattr(decision, "symbol_cooloff_reason", "") or ""
+        rej_row["prior_avg_pnl"] = getattr(decision, "prior_avg_pnl", None)
+        rej_row["prior_trades"] = getattr(decision, "prior_trades", 0)
+    if decision.reason == "daytrade_suitability":
+        ctx.state.daytrade_suitability_reject_count += 1
+        rej_row["daytrade_suitability_score"] = getattr(
+            decision, "daytrade_suitability_score", None
+        )
+        rej_row["daytrade_suitability_threshold"] = getattr(
+            decision, "daytrade_suitability_threshold", None
+        )
+        rej_row["atr_pct"] = getattr(decision, "atr_pct", None)
+        rej_row["intraday_range_pct"] = getattr(decision, "intraday_range_pct", None)
+        rej_row["trading_value"] = getattr(decision, "trading_value", None)
+        rej_row["turnover_proxy"] = getattr(decision, "turnover_proxy", None)
+    if decision.reason == "entry_price_risk_guard":
+        from small_paper.entry_price_risk_guard import LOG_EVENT_KIND, REJECT_ENTRY_PRICE_RISK_GUARD
 
-            ctx.state.weak_shape_reject_count += 1
-            ctx.state.weak_shape_reject_symbols.add(sym)
-            ws_fields = compute_weak_shape_reject_guard_fields(trade)
-            trade.update(ws_fields)
-            rej_row.update(ws_fields)
-            rej_row["reject_reason"] = REJECT_WEAK_SHAPE
-            ctx.writer.append_error(
-                {
-                    "event_kind": WS_LOG_EVENT_KIND,
-                    "symbol": sym,
-                    "weak_shape_class": getattr(decision, "weak_shape_class", ""),
-                    "day_high_minutes_from_open": getattr(
-                        decision, "weak_shape_day_high_minutes_from_open", None
-                    ),
-                    "minutes_since_day_high_update": getattr(
-                        decision, "weak_shape_minutes_since_day_high_update", None
-                    ),
-                    "day_high_distance_pct": getattr(
-                        decision, "weak_shape_day_high_distance_pct", None
-                    ),
-                    "reject_reason": REJECT_WEAK_SHAPE,
-                }
-            )
-        if decision.reason == "late_chase_guard":
-            from small_paper.late_chase_entry_guard import (
-                LOG_EVENT_KIND as LC_LOG_EVENT_KIND,
-                REJECT_LATE_CHASE_GUARD,
-                compute_late_chase_guard_fields,
-            )
+        ctx.state.entry_price_risk_guard_reject_count += 1
+        guard_st = getattr(ctx.gate, "entry_price_risk_guard", None)
+        min_px = float(getattr(guard_st.config, "min_entry_price", 50.0)) if guard_st else 50.0
+        max_tr = float(getattr(guard_st.config, "max_tick_ratio_pct", 5.0)) if guard_st else 5.0
+        tick_sz = getattr(decision, "entry_price_risk_guard_tick_size", None)
+        tick_tr = getattr(decision, "entry_price_risk_guard_tick_ratio_pct", None)
+        trigger = getattr(decision, "entry_price_risk_guard_trigger", "") or ""
+        price_source = getattr(decision, "entry_price_risk_guard_price_source", "") or ""
+        guard_price = getattr(decision, "entry_price_risk_guard_price", None)
+        bypassed = bool(
+            getattr(decision, "entry_price_risk_guard_shadow_missing_price_bypassed", False)
+        )
+        close_used = bool(
+            getattr(decision, "entry_price_risk_guard_universe_close_price_used", False)
+        )
+        rej_row["reject_reason"] = REJECT_ENTRY_PRICE_RISK_GUARD
+        rej_row["tick_size"] = tick_sz
+        rej_row["tick_ratio_pct"] = tick_tr
+        rej_row["min_entry_price"] = min_px
+        rej_row["max_tick_ratio_pct"] = max_tr
+        rej_row["entry_price_risk_guard_trigger"] = trigger
+        rej_row["entry_price_risk_guard_price_source"] = price_source
+        rej_row["entry_price_risk_guard_price"] = guard_price
+        rej_row["entry_price_risk_guard_shadow_missing_price_bypassed"] = bypassed
+        rej_row["entry_price_risk_guard_universe_close_price_used"] = close_used
+        log_rec = {
+            "event_kind": LOG_EVENT_KIND,
+            "symbol": sym,
+            "current_price": payload.get("CurrentPrice"),
+            "tick_size": tick_sz,
+            "tick_ratio_pct": tick_tr,
+            "min_entry_price": min_px,
+            "max_tick_ratio_pct": max_tr,
+            "reject_reason": REJECT_ENTRY_PRICE_RISK_GUARD,
+            "trigger": trigger,
+            "price_source": price_source,
+            "guard_price": guard_price,
+            "shadow_missing_price_bypassed": bypassed,
+            "universe_close_price_used": close_used,
+        }
+        ctx.writer.append_error(log_rec)
+    if decision.reason == "pullback_misread_dynamic40_guard":
+        from small_paper.pullback_misread_dynamic40_entry_guard import (
+            LOG_EVENT_KIND as PB_LOG_EVENT_KIND,
+            REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD,
+            compute_pullback_misread_guard_fields,
+        )
 
-            ctx.state.late_chase_reject_count += 1
-            ctx.state.late_chase_reject_symbols.add(sym)
-            lc_fields = compute_late_chase_guard_fields(trade)
-            trade.update(lc_fields)
-            rej_row.update(lc_fields)
-            rej_row["reject_reason"] = REJECT_LATE_CHASE_GUARD
-            ctx.writer.append_error(
-                {
-                    "event_kind": LC_LOG_EVENT_KIND,
-                    "symbol": sym,
-                    "entry_rise_10min_pct": getattr(
-                        decision, "late_chase_entry_rise_10min_pct", None
-                    ),
-                    "day_high_distance_pct": getattr(
-                        decision, "late_chase_day_high_distance_pct", None
-                    ),
-                    "reject_reason": REJECT_LATE_CHASE_GUARD,
-                }
-            )
-        if decision.reason == "classic_late_chase_rsi_over80":
-            from small_paper.classic_late_chase_rsi_guard import (
-                LOG_EVENT_KIND as CR_LOG_EVENT_KIND,
-                REJECT_CLASSIC_LATE_CHASE_RSI_OVER80,
-            )
+        ctx.state.pullback_misread_dynamic40_reject_count += 1
+        ctx.state.pullback_misread_dynamic40_reject_symbols.add(sym)
+        pb_fields = compute_pullback_misread_guard_fields(trade)
+        trade.update(pb_fields)
+        rej_row.update(pb_fields)
+        rej_row["reject_reason"] = REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD
+        pb_counters = getattr(ctx.state, "pullback_misread_entry_guard_shadow", None)
+        if pb_counters is not None:
+            pb_counters.record_reject_candidate(pb_fields)
+        ctx.writer.append_error(
+            {
+                "event_kind": PB_LOG_EVENT_KIND,
+                "symbol": sym,
+                "entry_rise_5min_pct": getattr(
+                    decision, "pullback_misread_dynamic40_entry_rise_5min_pct", None
+                ),
+                "entry_vwap_dev_pct": getattr(
+                    decision, "pullback_misread_dynamic40_entry_vwap_dev_pct", None
+                ),
+                "universe_slot": getattr(
+                    decision, "pullback_misread_dynamic40_universe_slot", ""
+                ),
+                "universe_bucket": getattr(
+                    decision, "pullback_misread_dynamic40_universe_bucket", ""
+                ),
+                "reject_reason": REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD,
+            }
+        )
+    if decision.reason == "near_day_high_low_momentum_dynamic40_guard":
+        from small_paper.near_day_high_low_momentum_dynamic40_entry_guard import (
+            LOG_EVENT_KIND as ND_LOG_EVENT_KIND,
+            REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD,
+            compute_near_day_high_low_momentum_guard_fields,
+        )
 
-            ctx.state.classic_late_chase_rsi_reject_count += 1
-            ctx.state.classic_late_chase_rsi_reject_symbols.add(sym)
-            rej_row["time"] = trade.get("entry_time")
-            rej_row["rsi14"] = getattr(decision, "classic_late_chase_rsi_rsi14", trade.get("rsi14"))
-            rej_row["late_chase_flag"] = getattr(
-                decision, "classic_late_chase_rsi_late_chase_flag", trade.get("late_chase_flag")
-            )
-            rej_row["reject_reason"] = REJECT_CLASSIC_LATE_CHASE_RSI_OVER80
-            ctx.writer.append_error(
-                {
-                    "event_kind": CR_LOG_EVENT_KIND,
-                    "symbol": sym,
-                    "time": trade.get("entry_time"),
-                    "rsi14": rej_row["rsi14"],
-                    "late_chase_flag": rej_row["late_chase_flag"],
-                    "reject_reason": REJECT_CLASSIC_LATE_CHASE_RSI_OVER80,
-                }
-            )
-        if decision.reason == "reentry_rsi_guard_below60":
-            from small_paper.reentry_rsi_guard import (
-                LOG_EVENT_KIND as RR_LOG_EVENT_KIND,
-                REJECT_REENTRY_RSI_GUARD_BELOW60,
-            )
+        ctx.state.near_day_high_low_momentum_dynamic40_reject_count += 1
+        ctx.state.near_day_high_low_momentum_dynamic40_reject_symbols.add(sym)
+        nd_fields = compute_near_day_high_low_momentum_guard_fields(trade)
+        trade.update(nd_fields)
+        rej_row.update(nd_fields)
+        rej_row["reject_reason"] = REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD
+        ctx.writer.append_error(
+            {
+                "event_kind": ND_LOG_EVENT_KIND,
+                "symbol": sym,
+                "day_high_distance_pct": getattr(
+                    decision,
+                    "near_day_high_low_momentum_dynamic40_day_high_distance_pct",
+                    None,
+                ),
+                "entry_momentum_score": getattr(
+                    decision,
+                    "near_day_high_low_momentum_dynamic40_entry_momentum_score",
+                    None,
+                ),
+                "universe_slot": getattr(
+                    decision,
+                    "near_day_high_low_momentum_dynamic40_universe_slot",
+                    "",
+                ),
+                "universe_bucket": getattr(
+                    decision,
+                    "near_day_high_low_momentum_dynamic40_universe_bucket",
+                    "",
+                ),
+                "reject_reason": REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD,
+            }
+        )
+    if decision.reason == "high_drift_pullback":
+        from small_paper.high_drift_pullback_entry_guard import (
+            LOG_EVENT_KIND as HD_LOG_EVENT_KIND,
+            REJECT_HIGH_DRIFT_PULLBACK,
+            compute_high_drift_pullback_guard_fields,
+        )
 
-            ctx.state.reentry_rsi_guard_reject_count += 1
-            ctx.state.reentry_rsi_guard_reject_symbols.add(sym)
-            rej_row["time"] = trade.get("entry_time")
-            rej_row["rsi14"] = getattr(decision, "reentry_rsi_rsi14", trade.get("rsi14"))
-            rej_row["reentry_rsi_guard_after_stop"] = getattr(
-                decision, "reentry_rsi_after_stop", trade.get("reentry_rsi_guard_after_stop")
-            )
-            rej_row["reject_reason"] = REJECT_REENTRY_RSI_GUARD_BELOW60
-            ctx.writer.append_error(
-                {
-                    "event_kind": RR_LOG_EVENT_KIND,
-                    "symbol": sym,
-                    "time": trade.get("entry_time"),
-                    "rsi14": rej_row["rsi14"],
-                    "reentry_after_stop": rej_row["reentry_rsi_guard_after_stop"],
-                    "reject_reason": REJECT_REENTRY_RSI_GUARD_BELOW60,
-                }
-            )
-        if decision.reason == "entry_quality_guard_spread":
-            from small_paper.entry_quality_guard import (
-                LOG_EVENT_KIND_SPREAD,
-                REJECT_ENTRY_QUALITY_GUARD_SPREAD,
-            )
+        ctx.state.high_drift_pullback_reject_count += 1
+        ctx.state.high_drift_pullback_reject_symbols.add(sym)
+        hd_fields = compute_high_drift_pullback_guard_fields(trade)
+        trade.update(hd_fields)
+        rej_row.update(hd_fields)
+        rej_row["reject_reason"] = REJECT_HIGH_DRIFT_PULLBACK
+        ctx.writer.append_error(
+            {
+                "event_kind": HD_LOG_EVENT_KIND,
+                "symbol": sym,
+                "entry_rise_5min_pct": getattr(
+                    decision, "high_drift_pullback_entry_rise_5min_pct", None
+                ),
+                "entry_rise_10min_pct": getattr(
+                    decision, "high_drift_pullback_entry_rise_10min_pct", None
+                ),
+                "entry_rise_15min_pct": getattr(
+                    decision, "high_drift_pullback_entry_rise_15min_pct", None
+                ),
+                "day_high_distance_pct": getattr(
+                    decision, "high_drift_pullback_day_high_distance_pct", None
+                ),
+                "universe_slot": getattr(
+                    decision, "high_drift_pullback_universe_slot", ""
+                ),
+                "universe_bucket": getattr(
+                    decision, "high_drift_pullback_universe_bucket", ""
+                ),
+                "reject_reason": REJECT_HIGH_DRIFT_PULLBACK,
+            }
+        )
+    if decision.reason == "weak_shape_reject":
+        from small_paper.weak_shape_reject_entry_guard import (
+            LOG_EVENT_KIND as WS_LOG_EVENT_KIND,
+            REJECT_WEAK_SHAPE,
+            compute_weak_shape_reject_guard_fields,
+        )
 
-            ctx.state.entry_quality_guard_reject_count += 1
-            ctx.state.entry_quality_guard_spread_reject_count += 1
-            ctx.state.entry_quality_guard_reject_symbols.add(sym)
-            rej_row["time"] = trade.get("entry_time")
-            rej_row["spread_bps"] = getattr(
-                decision, "entry_quality_spread_bps", trade.get("spread_bps")
-            )
-            rej_row["update_count_before_entry"] = getattr(
-                decision, "entry_quality_update_count", trade.get("update_count_before_entry")
-            )
-            rej_row["reject_reason"] = REJECT_ENTRY_QUALITY_GUARD_SPREAD
-            ctx.writer.append_error(
-                {
-                    "event_kind": LOG_EVENT_KIND_SPREAD,
-                    "symbol": sym,
-                    "time": trade.get("entry_time"),
-                    "spread_bps": rej_row["spread_bps"],
-                    "update_count_before_entry": rej_row["update_count_before_entry"],
-                    "reject_reason": REJECT_ENTRY_QUALITY_GUARD_SPREAD,
-                }
-            )
-        if decision.reason == "entry_quality_guard_update_count":
-            from small_paper.entry_quality_guard import (
-                LOG_EVENT_KIND_UPDATE,
-                REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT,
-            )
+        ctx.state.weak_shape_reject_count += 1
+        ctx.state.weak_shape_reject_symbols.add(sym)
+        ws_fields = compute_weak_shape_reject_guard_fields(trade)
+        trade.update(ws_fields)
+        rej_row.update(ws_fields)
+        rej_row["reject_reason"] = REJECT_WEAK_SHAPE
+        ctx.writer.append_error(
+            {
+                "event_kind": WS_LOG_EVENT_KIND,
+                "symbol": sym,
+                "weak_shape_class": getattr(decision, "weak_shape_class", ""),
+                "day_high_minutes_from_open": getattr(
+                    decision, "weak_shape_day_high_minutes_from_open", None
+                ),
+                "minutes_since_day_high_update": getattr(
+                    decision, "weak_shape_minutes_since_day_high_update", None
+                ),
+                "day_high_distance_pct": getattr(
+                    decision, "weak_shape_day_high_distance_pct", None
+                ),
+                "reject_reason": REJECT_WEAK_SHAPE,
+            }
+        )
+    if decision.reason == "late_chase_guard":
+        from small_paper.late_chase_entry_guard import (
+            LOG_EVENT_KIND as LC_LOG_EVENT_KIND,
+            REJECT_LATE_CHASE_GUARD,
+            compute_late_chase_guard_fields,
+        )
 
-            ctx.state.entry_quality_guard_reject_count += 1
-            ctx.state.entry_quality_guard_update_reject_count += 1
-            ctx.state.entry_quality_guard_reject_symbols.add(sym)
-            rej_row["time"] = trade.get("entry_time")
-            rej_row["spread_bps"] = getattr(
-                decision, "entry_quality_spread_bps", trade.get("spread_bps")
-            )
-            rej_row["update_count_before_entry"] = getattr(
-                decision, "entry_quality_update_count", trade.get("update_count_before_entry")
-            )
-            rej_row["reject_reason"] = REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT
-            ctx.writer.append_error(
-                {
-                    "event_kind": LOG_EVENT_KIND_UPDATE,
-                    "symbol": sym,
-                    "time": trade.get("entry_time"),
-                    "spread_bps": rej_row["spread_bps"],
-                    "update_count_before_entry": rej_row["update_count_before_entry"],
-                    "reject_reason": REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT,
-                }
-            )
-        if decision.reason == "entry_cluster_guard":
-            from small_paper.entry_cluster_guard import (
-                LOG_EVENT_KIND as CG_LOG_EVENT_KIND,
-                REJECT_ENTRY_CLUSTER_GUARD,
-            )
+        ctx.state.late_chase_reject_count += 1
+        ctx.state.late_chase_reject_symbols.add(sym)
+        lc_fields = compute_late_chase_guard_fields(trade)
+        trade.update(lc_fields)
+        rej_row.update(lc_fields)
+        rej_row["reject_reason"] = REJECT_LATE_CHASE_GUARD
+        ctx.writer.append_error(
+            {
+                "event_kind": LC_LOG_EVENT_KIND,
+                "symbol": sym,
+                "entry_rise_10min_pct": getattr(
+                    decision, "late_chase_entry_rise_10min_pct", None
+                ),
+                "day_high_distance_pct": getattr(
+                    decision, "late_chase_day_high_distance_pct", None
+                ),
+                "reject_reason": REJECT_LATE_CHASE_GUARD,
+            }
+        )
+    if decision.reason == "classic_late_chase_rsi_over80":
+        from small_paper.classic_late_chase_rsi_guard import (
+            LOG_EVENT_KIND as CR_LOG_EVENT_KIND,
+            REJECT_CLASSIC_LATE_CHASE_RSI_OVER80,
+        )
 
-            ctx.state.cluster_guard_reject_count += 1
-            ctx.state.cluster_guard_reject_symbols.add(sym)
-            rej_row["cluster_id"] = getattr(decision, "cluster_id", trade.get("cluster_id"))
-            rej_row["new_subcluster_id"] = getattr(
-                decision, "new_subcluster_id", trade.get("new_subcluster_id")
-            )
-            rej_row["liquidity_burst"] = getattr(
-                decision, "liquidity_burst", trade.get("liquidity_burst")
-            )
-            rej_row["cluster_guard_status"] = getattr(
-                decision, "cluster_guard_status", "REJECTED"
-            )
-            rej_row["reject_reason"] = REJECT_ENTRY_CLUSTER_GUARD
-            ctx.writer.append_error(
-                {
-                    "event_kind": CG_LOG_EVENT_KIND,
-                    "symbol": sym,
-                    "time": trade.get("entry_time"),
-                    "cluster_id": rej_row["cluster_id"],
-                    "new_subcluster_id": rej_row["new_subcluster_id"],
-                    "liquidity_burst": rej_row["liquidity_burst"],
-                    "cluster_guard_status": rej_row["cluster_guard_status"],
-                    "reject_reason": REJECT_ENTRY_CLUSTER_GUARD,
-                }
-            )
-        if decision.reason == "stop_low_mfe_guard":
-            from small_paper.stop_low_mfe_guard import (
-                LOG_EVENT_KIND as SLM_LOG_EVENT_KIND,
-                REJECT_STOP_LOW_MFE_GUARD,
-            )
+        ctx.state.classic_late_chase_rsi_reject_count += 1
+        ctx.state.classic_late_chase_rsi_reject_symbols.add(sym)
+        rej_row["time"] = trade.get("entry_time")
+        rej_row["rsi14"] = getattr(decision, "classic_late_chase_rsi_rsi14", trade.get("rsi14"))
+        rej_row["late_chase_flag"] = getattr(
+            decision, "classic_late_chase_rsi_late_chase_flag", trade.get("late_chase_flag")
+        )
+        rej_row["reject_reason"] = REJECT_CLASSIC_LATE_CHASE_RSI_OVER80
+        ctx.writer.append_error(
+            {
+                "event_kind": CR_LOG_EVENT_KIND,
+                "symbol": sym,
+                "time": trade.get("entry_time"),
+                "rsi14": rej_row["rsi14"],
+                "late_chase_flag": rej_row["late_chase_flag"],
+                "reject_reason": REJECT_CLASSIC_LATE_CHASE_RSI_OVER80,
+            }
+        )
+    if decision.reason == "reentry_rsi_guard_below60":
+        from small_paper.reentry_rsi_guard import (
+            LOG_EVENT_KIND as RR_LOG_EVENT_KIND,
+            REJECT_REENTRY_RSI_GUARD_BELOW60,
+        )
 
-            ctx.state.stop_low_mfe_guard_reject_count += 1
-            ctx.state.stop_low_mfe_guard_reject_symbols.add(sym)
-            rej_row["volume_acceleration_5m"] = getattr(
-                decision, "volume_acceleration_5m", trade.get("volume_acceleration_5m")
-            )
-            rej_row["stop_low_mfe_guard_volume_accel_threshold"] = getattr(
-                decision,
-                "stop_low_mfe_guard_volume_accel_threshold",
-                trade.get("stop_low_mfe_guard_volume_accel_threshold"),
-            )
-            rej_row["reject_reason"] = REJECT_STOP_LOW_MFE_GUARD
-            ctx.writer.append_error(
-                {
-                    "event_kind": SLM_LOG_EVENT_KIND,
-                    "symbol": sym,
-                    "time": trade.get("entry_time"),
-                    "volume_acceleration_5m": rej_row["volume_acceleration_5m"],
-                    "stop_low_mfe_guard_volume_accel_threshold": rej_row[
-                        "stop_low_mfe_guard_volume_accel_threshold"
-                    ],
-                    "reject_reason": REJECT_STOP_LOW_MFE_GUARD,
-                }
-            )
+        ctx.state.reentry_rsi_guard_reject_count += 1
+        ctx.state.reentry_rsi_guard_reject_symbols.add(sym)
+        rej_row["time"] = trade.get("entry_time")
+        rej_row["rsi14"] = getattr(decision, "reentry_rsi_rsi14", trade.get("rsi14"))
+        rej_row["reentry_rsi_guard_after_stop"] = getattr(
+            decision, "reentry_rsi_after_stop", trade.get("reentry_rsi_guard_after_stop")
+        )
+        rej_row["reject_reason"] = REJECT_REENTRY_RSI_GUARD_BELOW60
+        ctx.writer.append_error(
+            {
+                "event_kind": RR_LOG_EVENT_KIND,
+                "symbol": sym,
+                "time": trade.get("entry_time"),
+                "rsi14": rej_row["rsi14"],
+                "reentry_after_stop": rej_row["reentry_rsi_guard_after_stop"],
+                "reject_reason": REJECT_REENTRY_RSI_GUARD_BELOW60,
+            }
+        )
+    if decision.reason == "entry_quality_guard_spread":
+        from small_paper.entry_quality_guard import (
+            LOG_EVENT_KIND_SPREAD,
+            REJECT_ENTRY_QUALITY_GUARD_SPREAD,
+        )
+
+        ctx.state.entry_quality_guard_reject_count += 1
+        ctx.state.entry_quality_guard_spread_reject_count += 1
+        ctx.state.entry_quality_guard_reject_symbols.add(sym)
+        rej_row["time"] = trade.get("entry_time")
+        rej_row["spread_bps"] = getattr(
+            decision, "entry_quality_spread_bps", trade.get("spread_bps")
+        )
+        rej_row["update_count_before_entry"] = getattr(
+            decision, "entry_quality_update_count", trade.get("update_count_before_entry")
+        )
+        rej_row["reject_reason"] = REJECT_ENTRY_QUALITY_GUARD_SPREAD
+        ctx.writer.append_error(
+            {
+                "event_kind": LOG_EVENT_KIND_SPREAD,
+                "symbol": sym,
+                "time": trade.get("entry_time"),
+                "spread_bps": rej_row["spread_bps"],
+                "update_count_before_entry": rej_row["update_count_before_entry"],
+                "reject_reason": REJECT_ENTRY_QUALITY_GUARD_SPREAD,
+            }
+        )
+    if decision.reason == "entry_quality_guard_update_count":
+        from small_paper.entry_quality_guard import (
+            LOG_EVENT_KIND_UPDATE,
+            REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT,
+        )
+
+        ctx.state.entry_quality_guard_reject_count += 1
+        ctx.state.entry_quality_guard_update_reject_count += 1
+        ctx.state.entry_quality_guard_reject_symbols.add(sym)
+        rej_row["time"] = trade.get("entry_time")
+        rej_row["spread_bps"] = getattr(
+            decision, "entry_quality_spread_bps", trade.get("spread_bps")
+        )
+        rej_row["update_count_before_entry"] = getattr(
+            decision, "entry_quality_update_count", trade.get("update_count_before_entry")
+        )
+        rej_row["reject_reason"] = REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT
+        ctx.writer.append_error(
+            {
+                "event_kind": LOG_EVENT_KIND_UPDATE,
+                "symbol": sym,
+                "time": trade.get("entry_time"),
+                "spread_bps": rej_row["spread_bps"],
+                "update_count_before_entry": rej_row["update_count_before_entry"],
+                "reject_reason": REJECT_ENTRY_QUALITY_GUARD_UPDATE_COUNT,
+            }
+        )
+    if decision.reason == "entry_cluster_guard":
+        from small_paper.entry_cluster_guard import (
+            LOG_EVENT_KIND as CG_LOG_EVENT_KIND,
+            REJECT_ENTRY_CLUSTER_GUARD,
+        )
+
+        ctx.state.cluster_guard_reject_count += 1
+        ctx.state.cluster_guard_reject_symbols.add(sym)
+        rej_row["cluster_id"] = getattr(decision, "cluster_id", trade.get("cluster_id"))
+        rej_row["new_subcluster_id"] = getattr(
+            decision, "new_subcluster_id", trade.get("new_subcluster_id")
+        )
+        rej_row["liquidity_burst"] = getattr(
+            decision, "liquidity_burst", trade.get("liquidity_burst")
+        )
+        rej_row["cluster_guard_status"] = getattr(
+            decision, "cluster_guard_status", "REJECTED"
+        )
+        rej_row["reject_reason"] = REJECT_ENTRY_CLUSTER_GUARD
+        ctx.writer.append_error(
+            {
+                "event_kind": CG_LOG_EVENT_KIND,
+                "symbol": sym,
+                "time": trade.get("entry_time"),
+                "cluster_id": rej_row["cluster_id"],
+                "new_subcluster_id": rej_row["new_subcluster_id"],
+                "liquidity_burst": rej_row["liquidity_burst"],
+                "cluster_guard_status": rej_row["cluster_guard_status"],
+                "reject_reason": REJECT_ENTRY_CLUSTER_GUARD,
+            }
+        )
+    if decision.reason == "stop_low_mfe_guard":
+        from small_paper.stop_low_mfe_guard import (
+            LOG_EVENT_KIND as SLM_LOG_EVENT_KIND,
+            REJECT_STOP_LOW_MFE_GUARD,
+        )
+
+        ctx.state.stop_low_mfe_guard_reject_count += 1
+        ctx.state.stop_low_mfe_guard_reject_symbols.add(sym)
+        rej_row["volume_acceleration_5m"] = getattr(
+            decision, "volume_acceleration_5m", trade.get("volume_acceleration_5m")
+        )
+        rej_row["stop_low_mfe_guard_volume_accel_threshold"] = getattr(
+            decision,
+            "stop_low_mfe_guard_volume_accel_threshold",
+            trade.get("stop_low_mfe_guard_volume_accel_threshold"),
+        )
+        rej_row["reject_reason"] = REJECT_STOP_LOW_MFE_GUARD
+        ctx.writer.append_error(
+            {
+                "event_kind": SLM_LOG_EVENT_KIND,
+                "symbol": sym,
+                "time": trade.get("entry_time"),
+                "volume_acceleration_5m": rej_row["volume_acceleration_5m"],
+                "stop_low_mfe_guard_volume_accel_threshold": rej_row[
+                    "stop_low_mfe_guard_volume_accel_threshold"
+                ],
+                "reject_reason": REJECT_STOP_LOW_MFE_GUARD,
+            }
+        )
+    block_reason = str(decision.reason or "")
+    try:
         ctx.state.reject_rows.append(rej_row)
         rej = _event_from_gate(
             event_type="rejected",
@@ -2999,44 +3492,165 @@ def _process_push_payload(
         ctx.state.events.append(rej)
         ctx.writer.append_event(rej)
         _record_bucket(ctx.state, "rejected")
-        if ctx.discord and ctx.discord.active:
-            if decision.reason == REJECT_MAX_CONCURRENT:
-                try:
-                    v2 = int(trade.get("entry_expectancy_score_v2") or 0)
-                    if v2 >= 5:
-                        ctx.state.discord_ux.record_score5_deferred_reject(
-                            symbol=sym,
-                            entry_score_v2=v2,
-                        )
-                except (TypeError, ValueError):
-                    pass
-                from small_paper.extended_entry_shadow import (
-                    compute_entry_shadow_fields,
-                    tick_ts_from_payload,
-                )
+        if _is_entry_stop_pre_gate_reason(block_reason):
+            ctx.state.entry_stop_reject_logging_recovered_count += 1
+        if is_entry_blocked_discord_notify_reason(block_reason):
+            _notify_entry_blocked_discord(
+                ctx,
+                sym=sym,
+                trade=trade,
+                rej=rej,
+                payload=payload,
+                enriched=enriched,
+                block_reason=block_reason,
+                score5_ord=score5_ord,
+            )
+        elif ctx.discord and ctx.discord.active:
+            ctx.discord.notify_rejected(
+                event=rej,
+                payload=enriched,
+                open_slots=_active_cap_count(ctx),
+                session_bucket=session_bucket(),
+            )
+    except Exception as exc:
+        _record_pipeline_logging_error(
+            ctx, stage="stage6_record_reject", exc=exc, symbol=sym
+        )
 
-                shadow = compute_entry_shadow_fields(
-                    trade=trade,
-                    payload=payload,
-                    price_ring=ctx.symbol_price_ring.get(sym, []),
-                    entry_ts=tick_ts_from_payload(payload),
-                    session_momentum_samples=ctx.state.session_momentum_samples,
-                )
-                ctx.discord.notify_entry_cap_blocked(
-                    event=rej,
-                    payload=enriched,
-                    trade_data={**trade, **shadow},
-                    open_slots=_active_cap_count(ctx),
-                    score5_candidate_ordinal=score5_ord,
-                    ux_stats=ctx.state.discord_ux,
-                )
-            else:
-                ctx.discord.notify_rejected(
-                    event=rej,
-                    payload=enriched,
-                    open_slots=_active_cap_count(ctx),
-                    session_bucket=session_bucket(),
-                )
+
+def _warmup_ring_only_push(
+    ctx: _PushPipelineContext,
+    payload: Mapping[str, Any],
+    msg_i: int,
+    *,
+    symbol: Optional[str] = None,
+) -> None:
+    """Phase645: ring/tick update only — no gate evaluation or ENTRY during warmup."""
+    sym = symbol or _symbol_from_push(payload, ctx.code_to_symbol)
+    if not sym:
+        return
+    ctx.state.push_messages = msg_i
+    ctx.state.pre_session_warmup_ring_push_count += 1
+    age = _tick_age_sec(payload)
+    if age is not None and age > ctx.stale_tick_sec:
+        ctx.state.stale_tick_count += 1
+    import time
+
+    now_m = time.monotonic()
+    prev = ctx.last_symbol_tick.get(sym)
+    if prev is not None and (now_m - prev) > ctx.gap_threshold_sec:
+        ctx.state.data_gap_count += 1
+    ctx.last_symbol_tick[sym] = now_m
+
+    from small_paper.extended_entry_shadow import append_price_tick, tick_ts_from_payload
+
+    try:
+        px_tick = float(payload.get("CurrentPrice") or 0)
+    except (TypeError, ValueError):
+        px_tick = 0.0
+    if px_tick > 0:
+        ring = ctx.symbol_price_ring.setdefault(sym, [])
+        append_price_tick(ring, ts=tick_ts_from_payload(payload), px=px_tick)
+        or_st = getattr(ctx.state, "or_overlay", None)
+        if or_st is not None:
+            or_st.record_day_tick(
+                sym,
+                current_price=px_tick,
+                prev_close=_as_float(payload.get("PreviousClose")),
+            )
+
+
+def _process_push_payload(
+    ctx: _PushPipelineContext,
+    payload: Mapping[str, Any],
+    msg_i: int,
+    *,
+    symbol: Optional[str] = None,
+    t0_push_received_at: Optional[str] = None,
+    t0_mono: Optional[float] = None,
+    eval_mono: Optional[float] = None,
+) -> None:
+    """Phase629 ENTRY pipeline orchestrator (Stage0..Stage6).
+
+    Structure-only refactoring: every stage function contains the original
+    _process_push_payload code moved verbatim; execution order, side effects
+    and outputs are identical to the pre-Phase629 single-function version.
+    Stages exchange data exclusively through the Stage* dataclasses.
+
+    eval_mono: optional deterministic scan clock (push-replay recorded_at epoch).
+    """
+    from small_paper.pre_session_warmup import ring_only_warmup_active
+
+    if ring_only_warmup_active(config=ctx.config, am_pm_policy=ctx.am_pm_policy):
+        _warmup_ring_only_push(ctx, payload, msg_i, symbol=symbol)
+        return
+
+    if ctx.state.first_gate_eval_ts is None:
+        ctx.state.first_gate_eval_ts = _now_iso()
+
+    trace = StageTraceLogger(symbol=symbol or "", msg_i=msg_i)
+    trace.start("stage0_payload_normalize")
+    ol = _order_latency_session(ctx)
+    if ol is not None:
+        import time as _time
+
+        ol.begin_push(
+            symbol=symbol or "",
+            payload=payload,
+            message_index=msg_i,
+            t1_push_received_at=t0_push_received_at,
+            t2_mono=t0_mono if t0_mono is not None else _time.monotonic(),
+        )
+    norm = _stage0_normalize_payload(
+        ctx,
+        payload,
+        msg_i,
+        symbol=symbol,
+        t0_push_received_at=t0_push_received_at,
+        t0_mono=t0_mono,
+        eval_mono=eval_mono,
+    )
+    trace.end("stage0_payload_normalize", note="no_symbol" if norm is None else "")
+    if norm is None:
+        return
+    if trace.enabled:
+        trace.symbol = norm.symbol
+    _observer_open_position_tick(ctx, norm)
+    trace.start("stage1_freshness")
+    fresh = _stage1_evaluate_freshness(ctx, norm)
+    if ol is not None:
+        ol.mark_freshness_end()
+    trace.end("stage1_freshness", note=fresh.pre_gate_reason or (fresh.stale_reason or ""))
+    pbv2: Optional[Stage2PBv2Result] = None
+    if fresh.short_circuit_decision is None:
+        trace.start("stage2_pbv2")
+        pbv2 = _stage2_evaluate_pbv2(ctx, norm)
+        trace.end("stage2_pbv2", note=str(getattr(pbv2.decision, "reason", "") or ""))
+        trace.start("stage3_cluster_guard")
+        cluster = _stage3_cluster_decision(norm, pbv2)
+        trace.end("stage3_cluster_guard", note=cluster.status)
+    trace.start("stage4_or_overlay")
+    final = _stage4_finalize_decision(ctx, norm, fresh, pbv2)
+    if ol is not None:
+        ol.mark_decision_end(
+            accepted=bool(final.decision.accept),
+            entry_route=str(final.entry_route or ""),
+            gate_reason=str(final.decision.reason or ""),
+        )
+    trace.end("stage4_or_overlay", note=final.entry_route)
+    trace.start("stage6_post_entry")
+    rec = _stage6_record_candidate(ctx, norm, fresh, final)
+    trace.end("stage6_post_entry", note="candidate_recorded")
+    if final.decision.accept:
+        trace.start("stage5_entry_execute")
+        _stage5_execute_entry(ctx, norm, final, rec)
+        trace.end("stage5_entry_execute")
+    else:
+        trace.start("stage6_post_entry")
+        _stage6_record_reject(ctx, norm, final, rec)
+        trace.end("stage6_post_entry", note="reject_recorded")
+        if ol is not None and str(final.decision.reason or "") == REJECT_MAX_CONCURRENT:
+            ol.finish_reject(gate_reason=REJECT_MAX_CONCURRENT, entry_route=str(final.entry_route or "reject"))
 
 
 def _quality_ge_0_55_count(scores: Sequence[float]) -> int:
@@ -3308,10 +3922,13 @@ def _build_push_replay_summary(
     base.update(_stop_low_mfe_guard_summary_fields(gate, state))
     base.update(_board_entry_summary_fields(state))
     base.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
+    base.update(_pbv2_rise5_shadow_summary_fields(state))
+    base.update(_pbv2_flat_band_shadow_summary_fields(state))
     base.update(_entry_expectancy_score_summary_fields(state))
     base.update(_freshness_semantics_v2_summary_fields(config, state))
     base.update(_or_overlay_summary_fields(config, state))
     base.update(_observer_exit_pnl_summary_fields(state.events))
+    base.update(_entry_stop_reject_logging_summary_fields(state))
     base.update(
         _position_cap_summary_for_session(
             config=config,
@@ -3513,6 +4130,7 @@ def _maybe_record_live_order_wiring_entry(
             writer=ctx.writer,
             config=ctx.config,
             entry_signal_ts=signal_ts or None,
+            latency_session=getattr(ctx.state, "order_latency_dryrun", None),
         )
     except Exception as exc:
         try:
@@ -3764,6 +4382,8 @@ def run_push_replay_dry_run(
     _init_position_cap_tracking(replay_config, state)
     _init_extension_stack_for_mode(replay_config, state, repo_root=root)
     _init_or_overlay_tracking(replay_config, state)
+    _init_pbv2_rise5_shadow(replay_config, state)
+    _init_pbv2_flat_band_shadow(replay_config, state)
     if enable_board_failure_forensic_shadow:
         from small_paper.board_failure_forensic_pack import BoardFailureForensicPack
 
@@ -3912,7 +4532,16 @@ def run_push_replay_dry_run(
         push_payload = dict(payload)
         if recorded_at:
             push_payload["recorded_at"] = recorded_at
-        _process_push_payload(ctx, push_payload, msg_i, symbol=sym)
+        # Phase629A: drive entry-scan batch windows from market time so Stage
+        # call overhead cannot change flush boundaries / accepted counts.
+        replay_mono = _parse_recorded_at_ts(recorded_at) if recorded_at else None
+        _process_push_payload(
+            ctx,
+            push_payload,
+            msg_i,
+            symbol=sym,
+            eval_mono=replay_mono if replay_mono else None,
+        )
         if replay_speed_sec > 0:
             time.sleep(replay_speed_sec)
 
@@ -3954,6 +4583,8 @@ def run_push_replay_dry_run(
             poll_interval_sec=poll_interval_sec,
         )
     )
+    if discord:
+        summary.update(discord_notify_summary_fields(discord))
     if discord and discord.active:
         summary.update(
             build_session_summary_extras(
@@ -4390,10 +5021,13 @@ def _build_live_summary(
     summary.update(_stop_low_mfe_guard_summary_fields(gate, state))
     summary.update(_board_entry_summary_fields(state))
     summary.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
+    summary.update(_pbv2_rise5_shadow_summary_fields(state))
+    summary.update(_pbv2_flat_band_shadow_summary_fields(state))
     summary.update(_entry_expectancy_score_summary_fields(state))
     summary.update(_freshness_semantics_v2_summary_fields(config, state))
     summary.update(_or_overlay_summary_fields(config, state))
     summary.update(_observer_exit_pnl_summary_fields(state.events))
+    summary.update(_entry_stop_reject_logging_summary_fields(state))
     summary.update(
         _position_cap_summary_for_session(
             config=config,
@@ -4410,6 +5044,19 @@ def _build_live_summary(
     from small_paper.live_order_api_wiring import wiring_summary_fields
 
     summary.update(wiring_summary_fields(getattr(state, "live_order_wiring", None)))
+    from small_paper.order_latency_dryrun_trace import order_latency_dryrun_summary_fields
+
+    summary.update(order_latency_dryrun_summary_fields(getattr(state, "order_latency_dryrun", None)))
+    from small_paper.pre_session_warmup import warmup_summary_fields
+
+    summary.update(
+        warmup_summary_fields(
+            config=config,
+            state=state,
+            am_pm_policy=session_cfg.get("am_pm_session"),
+            trade_date=datetime.now(JST).date(),
+        )
+    )
     from small_paper.live_capital_manager import capital_summary_fields
 
     summary.update(capital_summary_fields(getattr(state, "live_capital_manager", None)))
@@ -4620,8 +5267,19 @@ def run_live_dry_run(
         )
         return PilotRunResult(output_dir=output_dir, summary=summary)
 
-    if full_session and wait_until_session and sched.is_before_session(now):
-        wait_until(sched.start_dt)
+    from small_paper.pre_session_warmup import apply_init_wait, resolve_warmup_init_plan
+
+    trade_date = now.date()
+    init_plan = resolve_warmup_init_plan(
+        config=config,
+        full_session=full_session,
+        wait_until_session=wait_until_session,
+        session_start=session_start,
+        trade_date=trade_date,
+        am_pm_policy=am_pm_policy,
+        now=now,
+    )
+    apply_init_wait(init_plan)
 
     if full_session and auto_stop:
         duration_sec = sched.seconds_until_end()
@@ -4676,11 +5334,14 @@ def run_live_dry_run(
     incremental = full_session
     writer = LiveSessionWriter(output_dir, incremental=incremental, event_fields=EVENT_FIELDS)
     state = _LiveRunState(started_mono=time.monotonic())
+    _init_order_latency_dryrun(config, state, output_dir)
     _init_position_cap_tracking(config, state)
     _init_extension_stack_for_mode(config, state, repo_root=repo_root)
     state.live_capital_read_client = capital_read_client
     state.live_capital_api_token = token
     _init_or_overlay_tracking(config, state)
+    _init_pbv2_rise5_shadow(config, state)
+    _init_pbv2_flat_band_shadow(config, state)
     pos_fields = ["symbol", "entry_time", "exit_time", "open_slots_after"]
     gap_threshold_sec = max(stale_tick_sec * 2, poll_interval_sec * 3)
     pipeline_ctx: Optional[_PushPipelineContext] = None
@@ -5101,6 +5762,7 @@ def run_live_dry_run(
             from api.kabu_register import format_register_failure_message, register_symbols_cleared
 
             reg_meta = register_symbols_cleared(push, sym_specs)
+            state.session_ready_ts = _now_iso()
             if reg_meta.get("recovered_from_register_limit"):
                 writer.append_error(
                     {
@@ -5361,6 +6023,8 @@ def run_live_dry_run(
         _apply_trading_value_shadow_finalize(state, summary)
         _apply_board_imbalance_shadow_finalize(state, summary)
         _apply_entry_expectancy_score_shadow_finalize(state, summary)
+    if discord:
+        summary.update(discord_notify_summary_fields(discord))
     try:
         notify_discord_session_end(
             discord,

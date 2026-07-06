@@ -155,15 +155,20 @@ class TestPhase490ObservabilityUpgrade(unittest.TestCase):
             "peak_open_slots": 3,
             "max_concurrent_positions": 5,
             "reject_reason_counts": {"late_chase_guard": 12},
+            "accepted_count": 2,
+            "pbv2_count": 1,
+            "or_count": 1,
         }
         fields = notifier._production_summary_fields(events=events, summary=summary)
         assert fields is not None
         names = [f["name"] for f in fields]
         self.assertIn("詳細", names)
-        self.assertIn("Symbol Attribution", names)
-        self.assertIn("Exit Breakdown", names)
-        self.assertIn("Runtime Health", names)
-        self.assertIn("Reject Funnel", names)
+        # Phase637: operator status sections replace Phase490 observability blocks
+        # in Daily/AM/PM Summary (build_observability_embed_fields remains available).
+        self.assertIn("PBv2 Summary", names)
+        self.assertIn("EXIT Summary", names)
+        self.assertIn("System Health", names)
+        self.assertIn("Today's Insight", names)
 
     @patch("small_paper.discord_notifier.get_cached_symbol_name_map")
     def test_notify_exit_includes_stop_low_mfe(self, mock_map) -> None:

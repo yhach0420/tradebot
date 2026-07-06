@@ -16,9 +16,35 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
+
+
+def _configure_stdout_utf8() -> None:
+    stdout = sys.stdout
+    if hasattr(stdout, "reconfigure"):
+        try:
+            stdout.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
+def _emit_pilot_result_summary(result: Any) -> Optional[str]:
+    """Print session summary to stdout. Return warning text if print fails."""
+    try:
+        print(json.dumps(result.summary, ensure_ascii=False, indent=2))
+        print(f"Output: {result.output_dir}")
+        print(
+            f"  accepted={result.summary.get('accepted_count')} "
+            f"rejected={result.summary.get('rejected_count')}"
+        )
+        return None
+    except (UnicodeEncodeError, BrokenPipeError, OSError) as exc:
+        msg = f"pilot_summary_print_failed: {type(exc).__name__}: {exc}"
+        print(msg, file=sys.stderr)
+        return msg
 
 
 def _bootstrap() -> tuple[Path, Path]:
@@ -33,6 +59,7 @@ def _bootstrap() -> tuple[Path, Path]:
 
 
 def main() -> int:
+    _configure_stdout_utf8()
     repo_root, native_root = _bootstrap()
 
     from small_paper.config import (
@@ -360,12 +387,7 @@ def main() -> int:
             max_polls=args.max_polls or config.max_polls,
         )
 
-    print(json.dumps(result.summary, ensure_ascii=False, indent=2))
-    print(f"Output: {result.output_dir}")
-    print(
-        f"  accepted={result.summary.get('accepted_count')} "
-        f"rejected={result.summary.get('rejected_count')}"
-    )
+    _emit_pilot_result_summary(result)
     return 0
 
 

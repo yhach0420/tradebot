@@ -23,7 +23,10 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from small_paper.reject_reasons import REJECT_MAX_CONCURRENT
+from small_paper.reject_reasons import (
+    REJECT_MAX_CONCURRENT,
+    is_entry_blocked_discord_notify_reason,
+)
 from small_paper.discord_message_builder import (
     build_daily_summary_detail,
     build_entry_cap_blocked_detail,
@@ -129,6 +132,9 @@ class SmallPaperDiscordNotifier:
         self._cap_blocked_webhook_url = ""
         self._last_sent_mono: dict[str, float] = {}
         self._last_heartbeat_mono: float = 0.0
+        self.discord_error_count: int = 0
+        self.cap_blocked_notify_attempt_count: int = 0
+        self.cap_blocked_notify_sent_count: int = 0
 
     @property
     def active(self) -> bool:
@@ -137,6 +143,20 @@ class SmallPaperDiscordNotifier:
             and self.cfg.observer_only
             and (self._resolve_trade_webhook()[0] or self._resolve_legacy_webhook())
         )
+
+    def cap_blocked_notify_enabled(self) -> bool:
+        """Cap-blocked channel is independent of trade-notify (no fallback)."""
+        return bool(
+            self.cfg.enabled
+            and self.cfg.observer_only
+            and (
+                self.cfg.send_entry_cap_blocked
+                or self.cfg.send_entry_deferred_max_concurrent
+            )
+        )
+
+    def cap_blocked_channel_ready(self) -> bool:
+        return bool(self._resolve_cap_blocked_webhook())
 
     def trade_webhook_source(self) -> str:
         """``notify`` | ``legacy_fallback`` | ```` (empty if unresolved)."""
@@ -218,6 +238,7 @@ class SmallPaperDiscordNotifier:
         ]
 
     def _log_failure(self, op: str, detail: str, extra: Optional[Mapping[str, Any]] = None) -> None:
+        self.discord_error_count += 1
         log.warning("[SMALL_PAPER_DISCORD] %s: %s", op, detail)
         if self._error_logger:
             self._error_logger(
@@ -364,10 +385,18 @@ class SmallPaperDiscordNotifier:
         open_slots: int,
         score5_candidate_ordinal: Optional[int] = None,
         ux_stats: Optional[DiscordUxSessionStats] = None,
+        block_reason: Optional[str] = None,
     ) -> bool:
-        if not (self.cfg.send_entry_cap_blocked or self.cfg.send_entry_deferred_max_concurrent):
+        if not self.cap_blocked_notify_enabled():
             return False
+        self.cap_blocked_notify_attempt_count += 1
         sym = str(event.get("symbol") or "")
+        reason = str(
+            block_reason
+            or event.get("gate_reject_reason")
+            or event.get("reject_reason")
+            or REJECT_MAX_CONCURRENT
+        )
         v2_raw = event.get("entry_expectancy_score_v2") or trade_data.get("entry_expectancy_score_v2")
         v2: Optional[int]
         try:
@@ -394,6 +423,7 @@ class SmallPaperDiscordNotifier:
             active_positions=int(open_slots),
             position_cap=cap,
             name_map=name_map,
+            block_reason=reason,
         )
         event_time = str(event.get("event_time") or "")
         ok = self._post(
@@ -404,10 +434,12 @@ class SmallPaperDiscordNotifier:
                 {"name": "時刻", "value": format_time_hms_jst(event_time), "inline": True},
             ],
             color=0xDD6B20,
-            dedupe_key=f"cap_blocked|{sym}",
+            dedupe_key=f"cap_blocked|{sym}|{reason}",
             cooldown_sec=float(self.cfg.entry_deferred_cooldown_sec),
             cap_blocked=True,
         )
+        if ok:
+            self.cap_blocked_notify_sent_count += 1
         if ok and ux_stats is not None and v2 is not None:
             ux_stats.record_entry_deferred_notify(symbol=sym, entry_score_v2=v2)
         return ok
@@ -729,7 +761,7 @@ class SmallPaperDiscordNotifier:
         detail = build_daily_summary_detail(canonical, name_map=get_cached_symbol_name_map())
         fields: list[dict[str, Any]] = []
         from small_paper.discord_message_builder import (
-            build_observability_embed_fields,
+            build_operator_status_embed_fields,
             format_research_shadow_daily_summary_lines,
         )
 
@@ -745,14 +777,17 @@ class SmallPaperDiscordNotifier:
             )
             chunk = chunk[1020:]
             idx += 1
+        # Phase637: compact operator status (keeps canonical 詳細 intact).
         fields.extend(
-            build_observability_embed_fields(
+            build_operator_status_embed_fields(
                 events=events,
                 summary=summary,
-                name_map=get_cached_symbol_name_map(),
             )
         )
-        research_shadow = format_research_shadow_daily_summary_lines(summary)
+        research_shadow = format_research_shadow_daily_summary_lines(
+            summary,
+            omit_operator_covered=True,
+        )
         if research_shadow:
             fields.append(
                 {
@@ -808,9 +843,7 @@ class SmallPaperDiscordNotifier:
         session_bucket: str,
     ) -> bool:
         reason = str(event.get("gate_reject_reason") or "")
-        if reason == REJECT_MAX_CONCURRENT and (
-            self.cfg.send_entry_cap_blocked or self.cfg.send_entry_deferred_max_concurrent
-        ):
+        if is_entry_blocked_discord_notify_reason(reason) and self.cap_blocked_notify_enabled():
             return False
         if not self.cfg.send_rejects:
             return False
@@ -1022,6 +1055,19 @@ def discord_notifier_from_pilot(
         min_continuation_quality=float(getattr(config, "min_continuation_quality", 0.55)),
         error_logger=error_logger,
     )
+
+
+def discord_notify_summary_fields(
+    notifier: Optional[SmallPaperDiscordNotifier],
+) -> dict[str, Any]:
+    if notifier is None:
+        return {}
+    return {
+        "discord_error_count": int(notifier.discord_error_count),
+        "cap_blocked_notify_attempt_count": int(notifier.cap_blocked_notify_attempt_count),
+        "cap_blocked_notify_sent_count": int(notifier.cap_blocked_notify_sent_count),
+        "cap_blocked_webhook_configured": bool(notifier.cap_blocked_channel_ready()),
+    }
 
 
 def discord_config_from_pilot(config: Any) -> SmallPaperDiscordConfig:

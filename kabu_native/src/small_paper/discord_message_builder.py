@@ -20,6 +20,7 @@ from replay.pnl_yen import (
     summarize_pnl_yen_100,
 )
 from small_paper.reject_reasons import REJECT_MAX_CONCURRENT
+from small_paper.order_latency_dryrun_trace import format_order_latency_dryrun_lines
 from small_paper.discord_symbol_names import format_symbol_display, format_symbol_label
 from small_paper.entry_expectancy_score_shadow import SCORE_POINTS_V2, _feature_token
 
@@ -391,10 +392,14 @@ def build_entry_cap_blocked_detail(
     active_positions: int,
     position_cap: int,
     name_map: Optional[Mapping[str, str]] = None,
+    block_reason: str = REJECT_MAX_CONCURRENT,
 ) -> str:
+    from small_paper.reject_reasons import entry_blocked_discord_label
+
     bullets = build_entry_reason_bullets(data)
     reason_block = "\n".join(f"・{b}" for b in bullets) if bullets else "・（なし）"
     display = format_symbol_display(symbol, name_map=name_map)
+    block_label = entry_blocked_discord_label(block_reason)
     return "\n".join(
         [
             display,
@@ -404,7 +409,8 @@ def build_entry_cap_blocked_detail(
             f"position_cap: {position_cap}",
             "",
             "見送り理由:",
-            "保有上限到達",
+            block_label,
+            f"reject_reason: {block_reason}",
             "",
             f"entry_score_v2: {entry_score_v2 if entry_score_v2 is not None else '—'}",
             "",
@@ -866,7 +872,7 @@ def format_runtime_health_lines(summary: Mapping[str, Any]) -> list[str]:
     cap = int(summary.get("max_concurrent_positions") or summary.get("max_concurrent_cap") or 3)
     feat = summary.get("live_feature_complete_rate_pct")
     feat_s = f"{_fmt_num(feat, digits=1)}%" if feat is not None else "—"
-    return [
+    lines = [
         f"api_errors: {int(summary.get('api_error_count') or 0)}",
         f"stale_ticks: {int(summary.get('stale_tick_count') or 0)}",
         f"data_gaps: {int(summary.get('data_gap_count') or 0)}",
@@ -874,6 +880,31 @@ def format_runtime_health_lines(summary: Mapping[str, Any]) -> list[str]:
         f"config: {_config_sha_tail(summary)}",
         f"peak_slots: {peak}/{cap}",
     ]
+    if summary.get("discord_error_count") is not None:
+        lines.append(f"discord_errors: {int(summary.get('discord_error_count') or 0)}")
+    if summary.get("cap_blocked_notify_sent_count") is not None:
+        lines.append(
+            f"cap_blocked_sent: {int(summary.get('cap_blocked_notify_sent_count') or 0)}"
+            f"/{int(summary.get('cap_blocked_notify_attempt_count') or 0)}"
+        )
+    exit_display = summary.get("pilot_exit_display")
+    if not exit_display:
+        from runner.pilot_subprocess_logging import format_pilot_exit_display
+
+        exit_code = summary.get("pilot_exit_code")
+        if exit_code is None:
+            exit_code = summary.get("exit_code")
+        exit_display = format_pilot_exit_display(
+            exit_code=exit_code if isinstance(exit_code, int) else None,
+            pilot_verdict=summary.get("pilot_subprocess_verdict")
+            or summary.get("pilot_verdict"),
+        )
+    if exit_display:
+        lines.append(f"Pilot Exit: {exit_display}")
+    from small_paper.pre_session_warmup import format_warmup_health_lines
+
+    lines.extend(format_warmup_health_lines(summary))
+    return lines
 
 
 def format_reject_funnel_lines(
@@ -944,6 +975,7 @@ def build_observability_embed_fields(
         ("Symbol Attribution", format_symbol_attribution_lines(events, name_map=name_map)),
         ("Exit Breakdown", format_exit_breakdown_lines(events)),
         ("Runtime Health", format_runtime_health_lines(summary)),
+        ("Order Latency DryRun", format_order_latency_dryrun_lines(summary)),
         ("Reject Funnel", format_reject_funnel_lines(summary)),
     ]
     pbv2_internal_lines = format_pbv2_internal_breakdown_lines(summary)
@@ -955,6 +987,295 @@ def build_observability_embed_fields(
     freshness_lines = format_freshness_semantics_v2_lines(summary)
     if freshness_lines:
         sections.insert(3, ("Freshness Semantics v2", freshness_lines))
+    fields: list[dict[str, Any]] = []
+    for name, lines in sections:
+        if not lines:
+            continue
+        fields.append({"name": name, "value": "\n".join(lines)[:1020], "inline": False})
+    return fields
+
+
+def _as_int(val: Any, default: int = 0) -> int:
+    try:
+        if val is None or val == "":
+            return default
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float_or_none(val: Any) -> Optional[float]:
+    try:
+        if val is None or val == "":
+            return None
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _yen_display(val: Any) -> str:
+    num = _as_float_or_none(val)
+    if num is None:
+        return "—"
+    return format_pnl_yen_100_display(num)
+
+
+def format_pbv2_summary_lines(summary: Mapping[str, Any]) -> list[str]:
+    """Phase637: compact PBv2 / OR accepted counts (measured only)."""
+    pbv2 = summary.get("pbv2_count")
+    or_n = summary.get("or_count", summary.get("or_entry_count"))
+    accepted = summary.get("accepted_count")
+    if pbv2 is None and or_n is None and accepted is None:
+        return []
+    lines = [
+        f"PBv2 accepted: {_as_int(pbv2)}",
+        f"OR accepted: {_as_int(or_n)}",
+        f"accepted total: {_as_int(accepted)}",
+    ]
+    exits = summary.get("observer_exit_count_with_pnl", summary.get("observer_exit_count"))
+    if exits is not None:
+        lines.append(f"exits(with pnl): {_as_int(exits)}")
+    return lines
+
+
+def format_flat_band_shadow_summary_lines(summary: Mapping[str, Any]) -> list[str]:
+    """Phase650: PBv2 flat-band shadow effect (measured only)."""
+    if not summary.get("pbv2_flat_band_shadow_enabled"):
+        return []
+    lines = [
+        f"variant: {summary.get('pbv2_flat_band_variant', 'flat_plus_overheat')}",
+        (
+            f"target={_as_int(summary.get('pbv2_flat_band_shadow_target_count'))} "
+            f"block={_as_int(summary.get('pbv2_flat_band_shadow_block_count'))}"
+        ),
+        (
+            f"blocked W/L: {_as_int(summary.get('pbv2_flat_band_shadow_blocked_winners'))}/"
+            f"{_as_int(summary.get('pbv2_flat_band_shadow_blocked_losers'))} "
+            f"blocked_pnl={_yen_display(summary.get('pbv2_flat_band_shadow_blocked_pnl_yen_100'))}"
+        ),
+        f"net_effect: {_yen_display(summary.get('pbv2_flat_band_shadow_net_effect_yen'))}",
+        (
+            f"flat={_as_int(summary.get('pbv2_flat_band_shadow_flat_blocks'))} "
+            f"overheat={_as_int(summary.get('pbv2_flat_band_shadow_overheat_blocks'))} "
+            f"rise5_overlap={_as_int(summary.get('pbv2_flat_band_shadow_overlap_with_rise5_shadow'))}"
+        ),
+    ]
+    return lines
+
+
+def format_rise5_shadow_summary_lines(summary: Mapping[str, Any]) -> list[str]:
+    """Phase637: PBv2 rise5 shadow effect (measured only)."""
+    if not summary.get("pbv2_rise5_shadow_enabled"):
+        return []
+    thr = summary.get("pbv2_rise5_shadow_threshold_pct")
+    lines = [
+        f"threshold: {_fmt_num(thr, digits=2)}%" if thr is not None else "threshold: —",
+        (
+            f"block={_as_int(summary.get('pbv2_rise5_shadow_block_count'))} "
+            f"kept={_as_int(summary.get('pbv2_rise5_shadow_kept_count'))} "
+            f"target={_as_int(summary.get('pbv2_rise5_shadow_target_count'))}"
+        ),
+        (
+            f"blocked W/L: {_as_int(summary.get('pbv2_rise5_shadow_blocked_winners'))}/"
+            f"{_as_int(summary.get('pbv2_rise5_shadow_blocked_losers'))} "
+            f"blocked_pnl={_yen_display(summary.get('pbv2_rise5_shadow_blocked_pnl_yen_100'))}"
+        ),
+        f"net_effect: {_yen_display(summary.get('pbv2_rise5_shadow_net_effect_yen'))}",
+    ]
+    return lines
+
+
+def format_freshness_summary_lines(summary: Mapping[str, Any]) -> list[str]:
+    """Phase637: freshness rejects/tags (measured only)."""
+    if not summary.get("freshness_semantics_v2_enabled"):
+        # Still show counts when present without the v2 flag.
+        has_any = any(
+            summary.get(k) is not None
+            for k in (
+                "event_stale_reject_count",
+                "board_stale_reject_count",
+                "trade_stale_tag_count",
+            )
+        )
+        if not has_any:
+            return []
+    return [
+        f"event_stale rejects: {_as_int(summary.get('event_stale_reject_count'))}",
+        f"board_stale rejects: {_as_int(summary.get('board_stale_reject_count'))}",
+        f"trade_stale tags: {_as_int(summary.get('trade_stale_tag_count'))}",
+    ]
+
+
+def format_cluster_guard_summary_lines(summary: Mapping[str, Any]) -> list[str]:
+    """Phase637: cluster guard measured counters."""
+    if not summary.get("entry_cluster_guard_enabled"):
+        return []
+    return [
+        f"reject: {_as_int(summary.get('cluster_guard_reject_count'))}",
+        f"exception: {_as_int(summary.get('cluster_guard_exception_count'))}",
+        (
+            f"exc_pnl={_yen_display(summary.get('cluster_guard_exception_pnl'))} "
+            f"exc_pf={summary.get('cluster_guard_exception_pf', '—')}"
+        ),
+    ]
+
+
+def format_gate_dominance_summary_lines(summary: Mapping[str, Any]) -> list[str]:
+    """Phase637: always-on gate dominance snapshot (measured only)."""
+    total = summary.get("gate_dominance_total_rejects")
+    reason = summary.get("gate_dominance_top_reason")
+    share = summary.get("gate_dominance_top_share_pct")
+    level = str(summary.get("gate_dominance_alert_level") or "none")
+    if total is None and not reason:
+        return []
+    lines = [
+        f"level: {level}",
+        f"top: {reason or '—'} ({_fmt_num(share, digits=1)}%)",
+        f"rejects(n): {_as_int(total)}",
+    ]
+    return lines
+
+
+def format_entry_quality_summary_lines(summary: Mapping[str, Any]) -> list[str]:
+    """Phase637: entry quality guard measured rejects."""
+    if not summary.get("entry_quality_guard_enabled"):
+        return []
+    return [
+        f"reject total: {_as_int(summary.get('entry_quality_guard_reject_count'))}",
+        (
+            f"spread={_as_int(summary.get('entry_quality_guard_spread_reject_count'))} "
+            f"update={_as_int(summary.get('entry_quality_guard_update_reject_count'))}"
+        ),
+    ]
+
+
+def format_exit_summary_lines(events: Sequence[Mapping[str, Any]], summary: Mapping[str, Any]) -> list[str]:
+    """Phase637: compact EXIT breakdown + monitor metrics when present."""
+    lines = format_exit_breakdown_lines(events)
+    if summary.get("exit_shadow_monitor_enabled"):
+        capture = summary.get("exit_mfe_capture_ratio")
+        opp = summary.get("exit_opportunity_loss_avg")
+        early = summary.get("exit_early_profit_take_count")
+        extra = []
+        if capture is not None:
+            extra.append(f"capture={capture}")
+        if opp is not None:
+            extra.append(f"opp_loss={opp}%")
+        if early is not None:
+            extra.append(f"early={early}")
+        if extra:
+            lines.append(" ".join(extra))
+    # Keep one-screen: at most 5 lines.
+    return lines[:5]
+
+
+def format_shadow_summary_lines(summary: Mapping[str, Any]) -> list[str]:
+    """Phase637: key measured shadow deltas only (no speculation)."""
+    lines: list[str] = []
+    if summary.get("pbv2_rise5_shadow_enabled"):
+        lines.append(
+            f"Rise5: net={_yen_display(summary.get('pbv2_rise5_shadow_net_effect_yen'))} "
+            f"block={_as_int(summary.get('pbv2_rise5_shadow_block_count'))}"
+        )
+    if summary.get("pbv2_flat_band_shadow_enabled"):
+        lines.append(
+            f"Flat-band: net={_yen_display(summary.get('pbv2_flat_band_shadow_net_effect_yen'))} "
+            f"block={_as_int(summary.get('pbv2_flat_band_shadow_block_count'))}"
+        )
+    if summary.get("pullback_misread_guard_shadow_enabled"):
+        lines.append(
+            f"PullbackMisread: Δ={_yen_display(summary.get('pullback_misread_guard_shadow_delta_yen'))} "
+            f"block={_as_int(summary.get('pullback_misread_guard_shadow_blocked_count'))}"
+        )
+    if summary.get("board_dynamic_shadow_enabled"):
+        lines.append(
+            f"BoardDynamic: Δ={_yen_display(summary.get('board_dynamic_shadow_total_delta_yen'))}"
+        )
+    if summary.get("exit_shadow_monitor_enabled"):
+        t3 = summary.get("shadow_exit_t3_delta")
+        t2 = summary.get("shadow_exit_t2_delta")
+        if t3 is not None or t2 is not None:
+            lines.append(
+                f"EXIT T3Δ={_yen_display(t3)} T2Δ={_yen_display(t2)}"
+            )
+    return lines[:4]
+
+
+def format_todays_insight_lines(
+    summary: Mapping[str, Any],
+    events: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """Phase637: brief comments strictly from measured counters."""
+    insights: list[str] = []
+
+    if summary.get("pbv2_rise5_shadow_enabled"):
+        blocks = _as_int(summary.get("pbv2_rise5_shadow_block_count"))
+        net = _as_float_or_none(summary.get("pbv2_rise5_shadow_net_effect_yen"))
+        if blocks > 0 and net is not None:
+            insights.append(
+                f"Rise5 shadow block={blocks} → net_effect={_yen_display(net)}"
+            )
+
+    level = str(summary.get("gate_dominance_alert_level") or "none")
+    if level in ("warning", "critical"):
+        reason = summary.get("gate_dominance_top_reason") or "—"
+        share = summary.get("gate_dominance_top_share_pct")
+        insights.append(
+            f"Gate dominance {level}: {reason} {_fmt_num(share, digits=1)}%"
+        )
+
+    eq = _as_int(summary.get("entry_quality_guard_reject_count"))
+    if summary.get("entry_quality_guard_enabled") and eq > 0:
+        insights.append(f"EntryQuality reject={eq}")
+
+    cg = _as_int(summary.get("cluster_guard_reject_count"))
+    if summary.get("entry_cluster_guard_enabled") and cg > 0:
+        insights.append(f"ClusterGuard reject={cg}")
+
+    if summary.get("pullback_misread_guard_shadow_enabled"):
+        delta = _as_float_or_none(summary.get("pullback_misread_guard_shadow_delta_yen"))
+        blocked = _as_int(summary.get("pullback_misread_guard_shadow_blocked_count"))
+        if blocked > 0 and delta is not None and delta != 0:
+            insights.append(
+                f"PullbackMisread shadow block={blocked} → Δ={_yen_display(delta)}"
+            )
+
+    accepted = _as_int(summary.get("accepted_count"))
+    exits = _as_int(
+        summary.get("observer_exit_count_with_pnl", summary.get("observer_exit_count"))
+    )
+    if accepted == 0 and exits == 0 and not events:
+        insights.append("本日取引なし")
+
+    if not insights:
+        insights.append("主要アラートなし")
+    return insights[:4]
+
+
+def format_system_health_summary_lines(summary: Mapping[str, Any]) -> list[str]:
+    """Phase637: system health snapshot (measured only)."""
+    return format_runtime_health_lines(summary)
+
+
+def build_operator_status_embed_fields(
+    *,
+    events: Sequence[Mapping[str, Any]],
+    summary: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Phase637: one-screen operator status sections for Daily/AM/PM Summary."""
+    sections: list[tuple[str, list[str]]] = [
+        ("PBv2 Summary", format_pbv2_summary_lines(summary)),
+        ("Rise5 Shadow Summary", format_rise5_shadow_summary_lines(summary)),
+        ("Flat-band Shadow Summary", format_flat_band_shadow_summary_lines(summary)),
+        ("Freshness Summary", format_freshness_summary_lines(summary)),
+        ("Cluster Guard Summary", format_cluster_guard_summary_lines(summary)),
+        ("Gate Dominance Summary", format_gate_dominance_summary_lines(summary)),
+        ("ENTRY Quality Summary", format_entry_quality_summary_lines(summary)),
+        ("EXIT Summary", format_exit_summary_lines(events, summary)),
+        ("Shadow Summary", format_shadow_summary_lines(summary)),
+        ("Today's Insight", format_todays_insight_lines(summary, events)),
+        ("System Health", format_system_health_summary_lines(summary)),
+    ]
     fields: list[dict[str, Any]] = []
     for name, lines in sections:
         if not lines:
@@ -980,8 +1301,16 @@ def format_heartbeat_runtime_health_fields(summary: Mapping[str, Any]) -> list[d
     ]
 
 
-def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> list[str]:
-    """Research-only shadow blocks appended to Daily / AM / PM Summary."""
+def format_research_shadow_daily_summary_lines(
+    summary: Mapping[str, Any],
+    *,
+    omit_operator_covered: bool = False,
+) -> list[str]:
+    """Research-only shadow blocks appended to Daily / AM / PM Summary.
+
+    When omit_operator_covered=True (Phase637), skip lines already shown in
+    operator status sections to keep the Discord message one-screen readable.
+    """
     lines: list[str] = []
     sector = summary.get("sector_heat_forward_shadow")
     if isinstance(sector, Mapping):
@@ -1075,14 +1404,14 @@ def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> li
             "ClassicLateChaseRSI Guard: "
             f"classic_late_chase_rsi_over80={summary.get('classic_late_chase_rsi_over80', 0)}"
         )
-    if summary.get("entry_quality_guard_enabled"):
+    if summary.get("entry_quality_guard_enabled") and not omit_operator_covered:
         lines.append(
             "EntryQuality Guard: "
             f"reject={summary.get('entry_quality_guard_reject_count', 0)} "
             f"(spread={summary.get('entry_quality_guard_spread_reject_count', 0)}, "
             f"update={summary.get('entry_quality_guard_update_reject_count', 0)})"
         )
-    if summary.get("entry_cluster_guard_enabled"):
+    if summary.get("entry_cluster_guard_enabled") and not omit_operator_covered:
         lines.append(
             "ClusterGuard: "
             f"reject={summary.get('cluster_guard_reject_count', 0)} "
@@ -1108,9 +1437,16 @@ def format_research_shadow_daily_summary_lines(summary: Mapping[str, Any]) -> li
             f"reject={summary.get('pullback_misread_dynamic40_reject_count', 0)}"
         )
 
-    from small_paper.exit_shadow_monitor import format_exit_shadow_monitor_discord_lines
+    if not omit_operator_covered:
+        from small_paper.exit_shadow_monitor import format_exit_shadow_monitor_discord_lines
 
-    lines.extend(format_exit_shadow_monitor_discord_lines(summary))
+        lines.extend(format_exit_shadow_monitor_discord_lines(summary))
+        from small_paper.pbv2_rise5_shadow import format_pbv2_rise5_shadow_discord_lines
+
+        lines.extend(format_pbv2_rise5_shadow_discord_lines(summary))
+        from small_paper.pbv2_flat_band_guard_shadow import format_pbv2_flat_band_shadow_discord_lines
+
+        lines.extend(format_pbv2_flat_band_shadow_discord_lines(summary))
 
     if isinstance(live_trans, Mapping):
         lines.append("LiveConfig Transition Shadow:")

@@ -79,6 +79,9 @@ class SmallPaperPilotConfig:
     live_heartbeat_sec: float = 300.0
     live_stale_tick_sec: float = 120.0
     live_max_consecutive_api_errors: int = 10
+    pre_session_warmup_enabled: bool = True
+    pre_session_warmup_am_start: str = "08:50"
+    pre_session_warmup_pm_start: str = "12:15"
     policy_label: str = "q055_cap3"
     policy_trial: bool = False
     baseline_policy: str = ""
@@ -103,6 +106,7 @@ class SmallPaperPilotConfig:
     volume_gate_relaxation_shadow_enabled: bool = True
     live_order_dry_run_enabled: bool = True
     live_order_api_wiring_enabled: bool = True
+    order_latency_dryrun_trace_enabled: bool = True
     live_capital_check_enabled: bool = True
     live_order_adapter_enabled: bool = True
     live_order_notifier_enabled: bool = True
@@ -150,6 +154,16 @@ class SmallPaperPilotConfig:
     low_liquidity_shadow_enabled: bool = False
     low_liquidity_shadow_trading_value_min: float = 1e8
     low_liquidity_shadow_turnover_proxy_min: float = 0.002
+    pbv2_rise5_shadow_enabled: bool = False
+    pbv2_rise5_shadow_threshold_pct: float = 1.84
+    pbv2_rise5_shadow_apply_pool: str = "PBV2_ONLY"
+    pbv2_flat_band_shadow_enabled: bool = False
+    pbv2_flat_band_shadow_apply_pool: str = "PBV2_ONLY"
+    pbv2_flat_band_shadow_rise5_flat_min_pct: float = 0.0
+    pbv2_flat_band_shadow_rise5_flat_max_pct: float = 0.5
+    pbv2_flat_band_shadow_rise10_flat_min_pct: float = -0.5
+    pbv2_flat_band_shadow_rise10_flat_max_pct: float = 0.5
+    pbv2_flat_band_shadow_overheat_rise5_pct: float = 2.0
     shadow_only: bool = False
     entry_max_price_age_sec: float = 3.0
     entry_max_board_age_sec: float = 3.0
@@ -289,6 +303,18 @@ class SmallPaperPilotConfig:
             out["low_liquidity_shadow_turnover_proxy_min"] = (
                 self.low_liquidity_shadow_turnover_proxy_min
             )
+        if self.pbv2_rise5_shadow_enabled:
+            out["pbv2_rise5_shadow_enabled"] = True
+            out["pbv2_rise5_shadow_threshold_pct"] = self.pbv2_rise5_shadow_threshold_pct
+            out["pbv2_rise5_shadow_apply_pool"] = self.pbv2_rise5_shadow_apply_pool
+        if self.pbv2_flat_band_shadow_enabled:
+            out["pbv2_flat_band_shadow_enabled"] = True
+            out["pbv2_flat_band_shadow_apply_pool"] = self.pbv2_flat_band_shadow_apply_pool
+            out["pbv2_flat_band_shadow_rise5_flat_min_pct"] = self.pbv2_flat_band_shadow_rise5_flat_min_pct
+            out["pbv2_flat_band_shadow_rise5_flat_max_pct"] = self.pbv2_flat_band_shadow_rise5_flat_max_pct
+            out["pbv2_flat_band_shadow_rise10_flat_min_pct"] = self.pbv2_flat_band_shadow_rise10_flat_min_pct
+            out["pbv2_flat_band_shadow_rise10_flat_max_pct"] = self.pbv2_flat_band_shadow_rise10_flat_max_pct
+            out["pbv2_flat_band_shadow_overheat_rise5_pct"] = self.pbv2_flat_band_shadow_overheat_rise5_pct
         if self.shadow_only:
             out["shadow_only"] = True
         if self.entry_score_v2_min > 0:
@@ -518,6 +544,15 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         live_max_consecutive_api_errors=int(
             (raw.get("live") or {}).get("max_consecutive_api_errors", 10)
         ),
+        pre_session_warmup_enabled=bool(
+            (raw.get("live") or {}).get("pre_session_warmup_enabled", True)
+        ),
+        pre_session_warmup_am_start=str(
+            (raw.get("live") or {}).get("pre_session_warmup_am_start", "08:50")
+        ),
+        pre_session_warmup_pm_start=str(
+            (raw.get("live") or {}).get("pre_session_warmup_pm_start", "12:15")
+        ),
         policy_label=str(raw.get("policy_label", "q055_cap3")),
         policy_trial=bool(raw.get("policy_trial", False)),
         baseline_policy=str(raw.get("baseline_policy", "")),
@@ -556,6 +591,7 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         ),
         live_order_dry_run_enabled=bool(raw.get("live_order_dry_run_enabled", True)),
         live_order_api_wiring_enabled=bool(raw.get("live_order_api_wiring_enabled", True)),
+        order_latency_dryrun_trace_enabled=bool(raw.get("order_latency_dryrun_trace_enabled", True)),
         live_capital_check_enabled=bool(raw.get("live_capital_check_enabled", True)),
         live_order_adapter_enabled=bool(raw.get("live_order_adapter_enabled", True)),
         live_order_notifier_enabled=bool(raw.get("live_order_notifier_enabled", True)),
@@ -636,6 +672,32 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         ),
         low_liquidity_shadow_turnover_proxy_min=float(
             raw.get("low_liquidity_shadow_turnover_proxy_min", 0.002)
+        ),
+        pbv2_rise5_shadow_enabled=bool(raw.get("pbv2_rise5_shadow_enabled", False)),
+        pbv2_rise5_shadow_threshold_pct=float(
+            raw.get("pbv2_rise5_shadow_threshold_pct", 1.84)
+        ),
+        pbv2_rise5_shadow_apply_pool=str(
+            raw.get("pbv2_rise5_shadow_apply_pool", "PBV2_ONLY") or "PBV2_ONLY"
+        ),
+        pbv2_flat_band_shadow_enabled=bool(raw.get("pbv2_flat_band_shadow_enabled", False)),
+        pbv2_flat_band_shadow_apply_pool=str(
+            raw.get("pbv2_flat_band_shadow_apply_pool", "PBV2_ONLY") or "PBV2_ONLY"
+        ),
+        pbv2_flat_band_shadow_rise5_flat_min_pct=float(
+            raw.get("pbv2_flat_band_shadow_rise5_flat_min_pct", 0.0)
+        ),
+        pbv2_flat_band_shadow_rise5_flat_max_pct=float(
+            raw.get("pbv2_flat_band_shadow_rise5_flat_max_pct", 0.5)
+        ),
+        pbv2_flat_band_shadow_rise10_flat_min_pct=float(
+            raw.get("pbv2_flat_band_shadow_rise10_flat_min_pct", -0.5)
+        ),
+        pbv2_flat_band_shadow_rise10_flat_max_pct=float(
+            raw.get("pbv2_flat_band_shadow_rise10_flat_max_pct", 0.5)
+        ),
+        pbv2_flat_band_shadow_overheat_rise5_pct=float(
+            raw.get("pbv2_flat_band_shadow_overheat_rise5_pct", 2.0)
         ),
         shadow_only=bool(raw.get("shadow_only", False)),
         entry_max_price_age_sec=float(raw.get("entry_max_price_age_sec", 3.0)),

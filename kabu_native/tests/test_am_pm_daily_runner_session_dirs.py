@@ -115,6 +115,8 @@ def test_run_pilot_session_does_not_raise_on_list_set(tmp_path: Path) -> None:
 
     class FakeProc:
         returncode = 0
+        stderr = ""
+        stdout = ""
 
     calls = {"n": 0}
 
@@ -167,14 +169,18 @@ def test_am_detection_warning_pm_prep_reached(tmp_path: Path) -> None:
                 "am_csv": "kabu_native/results/reports/universe_core10_dynamic40_am_20260521.csv",
             },
         ):
-            with patch("runner.am_pm_daily_runner.run_pilot_session", return_value=am_live):
-                with patch(
-                    "runner.am_pm_daily_runner.wait_until_hhmm",
-                    return_value={"skipped": True},
-                ):
-                    with patch("runner.am_pm_daily_runner.build_pm_universe") as pm_build:
-                        pm_build.return_value = {"ok": False, "error": "stop_here"}
-                        rc = _run_daily_runner_body(state)
+            with patch(
+                "runner.am_pm_daily_runner.notify_screening_universe_discord",
+                return_value={"skipped": True},
+            ):
+                with patch("runner.am_pm_daily_runner.run_pilot_session", return_value=am_live):
+                    with patch(
+                        "runner.am_pm_daily_runner.wait_until_hhmm",
+                        return_value={"skipped": True},
+                    ):
+                        with patch("runner.am_pm_daily_runner.build_pm_universe") as pm_build:
+                            pm_build.return_value = {"ok": False, "error": "stop_here"}
+                            rc = _run_daily_runner_body(state)
 
     assert rc == 2
     assert state.stopped_reason == "pm_universe"

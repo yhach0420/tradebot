@@ -733,6 +733,14 @@ class EntryScanController:
         log.info("entry_scan_audit %s", row)
 
 
+def _config_float(config: Any, name: str, default: float) -> float:
+    """Read a float config value; preserve explicit 0.0 (do not treat as missing)."""
+    raw = getattr(config, name, default)
+    if raw is None:
+        return float(default)
+    return float(raw)
+
+
 def entry_scan_controller_from_config(
     config: Any,
     *,
@@ -740,10 +748,12 @@ def entry_scan_controller_from_config(
     audit_writer: Optional[Callable[[Mapping[str, Any]], None]] = None,
 ) -> EntryScanController:
     return EntryScanController(
-        max_price_age_sec=float(getattr(config, "entry_max_price_age_sec", 3.0) or 3.0),
-        max_board_age_sec=float(getattr(config, "entry_max_board_age_sec", 3.0) or 3.0),
+        max_price_age_sec=_config_float(config, "entry_max_price_age_sec", 3.0),
+        max_board_age_sec=_config_float(config, "entry_max_board_age_sec", 3.0),
         max_entries_per_scan=int(getattr(config, "max_entries_per_scan", 1) or 1),
-        scan_window_sec=float(getattr(config, "entry_scan_window_sec", 2.0) or 2.0),
+        # Phase629A: `or 2.0` treated explicit 0.0 as missing and forced a 2s wall-clock
+        # batch window, so Stage call overhead changed flush boundaries and accepted counts.
+        scan_window_sec=_config_float(config, "entry_scan_window_sec", 2.0),
         freshness_guard_enabled=bool(getattr(config, "entry_freshness_guard_enabled", True)),
         board_fallback_enabled=bool(getattr(config, "entry_freshness_board_fallback_enabled", False)),
         board_fallback_max_spread_bps=float(

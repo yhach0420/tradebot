@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, time as dt_time
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, Sequence
+from typing import Any, Callable, Literal, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -1186,10 +1186,21 @@ def run_pilot_session(state: DailyRunnerState, *, session: AM_PM_KIND) -> dict[s
     exit_code: Optional[int] = None
     proc_error: Optional[str] = None
     proc_exc_type: Optional[str] = None
+    captured_stdout: Optional[str] = None
+    captured_stderr: Optional[str] = None
 
     try:
-        proc = subprocess.run(cmd, cwd=str(state.repo_root))
+        proc = subprocess.run(
+            cmd,
+            cwd=str(state.repo_root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         exit_code = proc.returncode
+        captured_stdout = proc.stdout
+        captured_stderr = proc.stderr
     except Exception as exc:
         proc_exc_type = type(exc).__name__
         proc_error = str(exc)
@@ -1213,6 +1224,7 @@ def run_pilot_session(state: DailyRunnerState, *, session: AM_PM_KIND) -> dict[s
 
     discovered: Optional[Path] = None
     post_error: Optional[str] = None
+    new_dirs: list[Path] = []
     try:
         after_dirs = set(_list_session_dirs(state))
         new_dirs = sorted(set(after_dirs) - set(before_dirs), key=lambda p: p.name)
@@ -1226,10 +1238,7 @@ def run_pilot_session(state: DailyRunnerState, *, session: AM_PM_KIND) -> dict[s
         )
         result["summary_found"] = summary_ok
         result["session_detection_ok"] = summary_ok
-        pilot_ok = exit_code == 0 and not proc_error
-        result["pilot_ok"] = pilot_ok
-        result["ok"] = pilot_ok
-        if pilot_ok and not summary_ok:
+        if exit_code == 0 and not proc_error and not summary_ok:
             result["warning"] = (
                 "session_dir_not_detected: pilot exited 0 but no matching "
                 "small_paper_summary.json (check live_session_* / live_full_session_*)"
@@ -1257,6 +1266,28 @@ def run_pilot_session(state: DailyRunnerState, *, session: AM_PM_KIND) -> dict[s
         stopped_reason=stopped,
     )
     result["summary_path_exists"] = result["finalize_snapshot"]["summary_path_exists"]
+    _persist_pilot_subprocess_artifacts(
+        state,
+        result,
+        session_dir=discovered,
+        fallback_dirs=new_dirs,
+        stdout=captured_stdout,
+        stderr=captured_stderr,
+        proc_error=proc_error,
+        proc_exc_type=proc_exc_type,
+    )
+    _apply_pilot_verdict_policy(state, result)
+    target_dir = discovered or (new_dirs[-1] if new_dirs else None)
+    if target_dir is not None:
+        from runner.pilot_subprocess_logging import patch_session_summary_subprocess_meta
+
+        patch_session_summary_subprocess_meta(
+            target_dir,
+            exit_code=result.get("exit_code"),
+            pilot_verdict=result.get("pilot_verdict"),
+            stdout_path=str(result.get("pilot_stdout_path") or ""),
+            stderr_path=str(result.get("pilot_stderr_path") or ""),
+        )
     return result
 
 
@@ -1331,8 +1362,19 @@ def build_summary_payload(state: DailyRunnerState) -> dict[str, Any]:
         "pm_session_dir": state.sessions.get("pm_dir"),
         "am_universe_csv": state.am_prep.get("am_csv"),
         "pm_universe_csv": state.pm_prep.get("pm_csv"),
-        "am_live_ok": state.am_live.get("ok"),
-        "pm_live_ok": state.pm_live.get("ok"),
+        "am_live_ok": (state.am_live or {}).get("ok"),
+        "pm_live_ok": (state.pm_live or {}).get("ok"),
+        "am_pilot_verdict": (state.am_live or {}).get("pilot_verdict"),
+        "pm_pilot_verdict": (state.pm_live or {}).get("pilot_verdict"),
+        "am_warning_notes": (state.am_live or {}).get("warning_notes"),
+        "pm_warning_notes": (state.pm_live or {}).get("warning_notes"),
+    }
+    from runner.pilot_subprocess_logging import pilot_subprocess_daily_summary_fields
+
+    payload.update(pilot_subprocess_daily_summary_fields("am", state.am_live, repo_root=state.repo_root))
+    payload.update(pilot_subprocess_daily_summary_fields("pm", state.pm_live, repo_root=state.repo_root))
+    payload.update(
+        {
         "am_session_warning": state.sessions.get("am_warning"),
         "pm_session_warning": state.sessions.get("pm_warning"),
         "universe_mode": state.options.universe_mode,
@@ -1364,7 +1406,8 @@ def build_summary_payload(state: DailyRunnerState) -> dict[str, Any]:
         "kabu_register_clear_before_pm": (state.pm_wait or {}).get(
             "kabu_register_clear_before_pm"
         ),
-    }
+        }
+    )
     if price_risk:
         payload["price_risk_symbol_checks"] = state.am_prep.get("price_risk_symbol_checks")
         payload["price_risk_focus_cautions"] = state.am_prep.get("price_risk_focus_cautions") or []
@@ -1414,6 +1457,7 @@ def write_outputs(state: DailyRunnerState) -> dict[str, str]:
             "E": "universe_generation_failed",
             "F": "intraday_refresh_shadow_ready",
             "G": "refresh_universe_generation_failed",
+            "H": "completed_with_warnings",
         },
         "verdict_notes": state.verdict_notes,
         "stopped_reason": state.stopped_reason,
@@ -1502,10 +1546,218 @@ def write_outputs(state: DailyRunnerState) -> dict[str, str]:
     return {k: rel_path(state.repo_root, v) for k, v in paths.items()}
 
 
-def _pilot_failed_hard(live: dict[str, Any]) -> bool:
+def _stderr_summary(stderr: Optional[str], *, max_lines: int = 8, max_chars: int = 500) -> str:
+    from runner.pilot_subprocess_logging import tail_lines
+
+    lines = tail_lines(stderr, n=max_lines)
+    if not lines:
+        return ""
+    return "\n".join(lines)[:max_chars]
+
+
+def _persist_pilot_subprocess_artifacts(
+    state: DailyRunnerState,
+    result: dict[str, Any],
+    *,
+    session_dir: Optional[Path],
+    fallback_dirs: list[Path],
+    stdout: Optional[str],
+    stderr: Optional[str],
+    proc_error: Optional[str],
+    proc_exc_type: Optional[str],
+) -> None:
+    from runner.pilot_subprocess_logging import (
+        parse_traceback_fields,
+        persist_pilot_subprocess_logs,
+        tail_lines,
+    )
+
+    stderr_text = stderr or ""
+    if proc_error:
+        stderr_text = f"{stderr_text}\n{proc_exc_type or 'Error'}: {proc_error}\n".strip()
+
+    target = session_dir or (fallback_dirs[-1] if fallback_dirs else None)
+    if target is not None:
+        meta = persist_pilot_subprocess_logs(target, stdout=stdout, stderr=stderr_text)
+        result["pilot_stdout_path"] = rel_path(state.repo_root, Path(meta["pilot_stdout_path"]))
+        result["pilot_stderr_path"] = rel_path(state.repo_root, Path(meta["pilot_stderr_path"]))
+        result["stdout_last_20_lines"] = meta["stdout_last_20_lines"]
+        result["stderr_last_20_lines"] = meta["stderr_last_20_lines"]
+        result["first_exception"] = meta.get("first_exception", "")
+        result["first_traceback"] = meta.get("first_traceback", "")
+        result["first_error_line"] = meta.get("first_error_line", "")
+        result["stderr_tail"] = "\n".join(meta["stderr_last_20_lines"])[:500]
+        return
+
+    tb = parse_traceback_fields(stderr_text)
+    result["stdout_last_20_lines"] = tail_lines(stdout)
+    result["stderr_last_20_lines"] = tail_lines(stderr_text)
+    result.update(tb)
+    result["stderr_tail"] = "\n".join(result["stderr_last_20_lines"])[:500]
+
+
+def _session_dir_from_live(repo_root: Path, live: Mapping[str, Any]) -> Optional[Path]:
+    rel = live.get("session_dir")
+    if not rel:
+        return None
+    p = repo_root / str(rel).replace("/", "\\")
+    return p if p.is_dir() else None
+
+
+def _load_pilot_session_summary(repo_root: Path, live: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+    session_dir = _session_dir_from_live(repo_root, live)
+    if session_dir is None:
+        return None
+    summary_path = session_dir / "small_paper_summary.json"
+    if not summary_path.is_file():
+        return None
+    try:
+        return json.loads(summary_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _pilot_session_summary_health(
+    summary: Mapping[str, Any], live: Mapping[str, Any]
+) -> dict[str, Any]:
+    stop_reason = str(summary.get("stop_reason") or "")
+    session_started = bool(
+        int(summary.get("push_messages") or 0) > 0
+        or int(summary.get("gate_evaluations") or 0) > 0
+        or float(summary.get("runtime_sec") or 0) > 0
+    )
+    summary_finalized = bool(summary.get("generated_at") and summary.get("ended_at"))
+    fatal_error = bool(
+        summary.get("fatal_error")
+        or live.get("error")
+        or live.get("post_pilot_error")
+    )
+    return {
+        "session_started": session_started,
+        "summary_finalized": summary_finalized,
+        "fatal_error": fatal_error,
+        "stop_reason": stop_reason,
+        "accepted_count": int(summary.get("accepted_count") or 0),
+    }
+
+
+def _pilot_completed_with_warnings(
+    repo_root: Path, live: Mapping[str, Any]
+) -> tuple[bool, dict[str, Any]]:
+    """True when pilot exit!=0 but session artifacts indicate a completed run."""
+    if live.get("error"):
+        return False, {"reason": "proc_error"}
+    exit_code = live.get("exit_code")
+    if exit_code in (None, 0):
+        return False, {"reason": "exit_code_ok"}
+    summary = _load_pilot_session_summary(repo_root, live)
+    if summary is None:
+        return False, {"reason": "no_summary"}
+    health = _pilot_session_summary_health(summary, live)
+    if health["fatal_error"]:
+        return False, {"reason": "fatal_error", **health}
+    from runner.pilot_subprocess_logging import (
+        is_post_session_subprocess_failure,
+        session_stop_reason_soft_ok,
+    )
+
+    if not session_stop_reason_soft_ok(health["stop_reason"]):
+        if not (
+            is_post_session_subprocess_failure(live)
+            and health["summary_finalized"]
+            and health["session_started"]
+        ):
+            return False, {"reason": f"stop_reason={health['stop_reason']}", **health}
+    if not health["session_started"]:
+        return False, {"reason": "session_not_started", **health}
+    if not health["summary_finalized"]:
+        return False, {"reason": "summary_not_finalized", **health}
+    return True, health
+
+
+def _apply_pilot_verdict_policy(state: DailyRunnerState, live: dict[str, Any]) -> None:
+    """Set pilot_verdict / pilot_ok / warning_notes after subprocess + session discovery."""
+    exit_code = live.get("exit_code")
+    if live.get("error"):
+        live["pilot_verdict"] = "failed"
+        live["pilot_ok"] = False
+        live["ok"] = False
+        return
+
+    soft_ok, details = _pilot_completed_with_warnings(state.repo_root, live)
+    live["pilot_verdict_details"] = details
+    summary = _load_pilot_session_summary(state.repo_root, live)
+    if summary is not None:
+        live["session_summary_stop_reason"] = summary.get("stop_reason")
+        live["session_summary_accepted_count"] = summary.get("accepted_count")
+
+    if exit_code in (None, 0):
+        live["pilot_verdict"] = "success"
+        live["pilot_ok"] = True
+        live["ok"] = True
+        return
+
+    if soft_ok:
+        live["pilot_verdict"] = "completed_with_warnings"
+        live["pilot_ok"] = True
+        live["ok"] = True
+        from runner.pilot_subprocess_logging import build_warning_log_notes
+
+        live["warning_notes"] = build_warning_log_notes(live)
+        return
+
+    live["pilot_verdict"] = "failed"
+    live["pilot_ok"] = False
+    live["ok"] = False
+
+
+def _pilot_failed_hard(live: Mapping[str, Any], *, repo_root: Optional[Path] = None) -> bool:
     if live.get("error"):
         return True
-    return live.get("exit_code", 1) != 0
+    if live.get("pilot_verdict") == "completed_with_warnings":
+        return False
+    exit_code = live.get("exit_code")
+    if exit_code in (None, 0):
+        return False
+    if repo_root is not None:
+        soft_ok, _ = _pilot_completed_with_warnings(repo_root, live)
+        if soft_ok:
+            return False
+    return True
+
+
+def _record_pilot_hard_failure(
+    state: DailyRunnerState, *, session: AM_PM_KIND, live: dict[str, Any]
+) -> None:
+    diag = {
+        "first_exception": str(live.get("first_exception") or ""),
+        "first_traceback": str(live.get("first_traceback") or ""),
+        "first_error_line": str(live.get("first_error_line") or ""),
+        "pilot_exit_code": live.get("exit_code"),
+        "pilot_stdout_path": live.get("pilot_stdout_path"),
+        "pilot_stderr_path": live.get("pilot_stderr_path"),
+        "stderr_last_20_lines": live.get("stderr_last_20_lines") or [],
+        "stdout_last_20_lines": live.get("stdout_last_20_lines") or [],
+    }
+    state.sessions[f"{session}_pilot_failure"] = diag
+    if diag["first_exception"]:
+        state.verdict_notes.append(f"{session.upper()} first_exception={diag['first_exception'][:200]}")
+    if diag["first_error_line"] and not diag["first_exception"]:
+        state.verdict_notes.append(f"{session.upper()} first_error_line={diag['first_error_line'][:200]}")
+
+
+def _record_pilot_soft_ok_notes(state: DailyRunnerState, *, session: AM_PM_KIND, live: dict[str, Any]) -> None:
+    if live.get("pilot_verdict") != "completed_with_warnings":
+        return
+    state.sessions[f"{session}_pilot_verdict"] = "completed_with_warnings"
+    for note in live.get("warning_notes") or []:
+        state.verdict_notes.append(f"{session.upper()} completed_with_warnings: {note}")
+    details = live.get("pilot_verdict_details") or {}
+    if details.get("accepted_count") is not None:
+        state.verdict_notes.append(
+            f"{session.upper()} accepted_count={details.get('accepted_count')} "
+            f"stop_reason={details.get('stop_reason')}"
+        )
 
 
 def _apply_session_detection_warning(
@@ -1597,8 +1849,9 @@ def _run_daily_runner_body(state: DailyRunnerState) -> int:
                 state.sessions["kabu_register_clear_after_am"] = kabu_clear_stale_registrations(
                     state, label="after_am_session"
                 )
-            if _pilot_failed_hard(state.am_live or {}):
+            if _pilot_failed_hard(state.am_live or {}, repo_root=state.repo_root):
                 state.verdict = "am_failed"
+                _record_pilot_hard_failure(state, session="am", live=state.am_live or {})
                 state.verdict_notes.append(
                     f"AM pilot exit={state.am_live.get('exit_code')} "
                     f"error={state.am_live.get('error')}"
@@ -1606,6 +1859,7 @@ def _run_daily_runner_body(state: DailyRunnerState) -> int:
                 state.stopped_reason = "am_pilot"
                 write_outputs(state)
                 return 2
+            _record_pilot_soft_ok_notes(state, session="am", live=state.am_live or {})
             _apply_session_detection_warning(state, session="am", live=state.am_live)
         else:
             state.am_live = {"skipped": True, "reason": "dry_run_only"}
@@ -1671,8 +1925,9 @@ def _run_daily_runner_body(state: DailyRunnerState) -> int:
             state.sessions["kabu_register_clear_after_pm"] = kabu_clear_stale_registrations(
                 state, label="after_pm_session"
             )
-        if _pilot_failed_hard(state.pm_live or {}):
+        if _pilot_failed_hard(state.pm_live or {}, repo_root=state.repo_root):
             state.verdict = "pm_failed"
+            _record_pilot_hard_failure(state, session="pm", live=state.pm_live or {})
             state.verdict_notes.append(
                 f"PM pilot exit={state.pm_live.get('exit_code')} "
                 f"error={state.pm_live.get('error')}"
@@ -1680,6 +1935,7 @@ def _run_daily_runner_body(state: DailyRunnerState) -> int:
             state.stopped_reason = "pm_pilot"
             write_outputs(state)
             return 2
+        _record_pilot_soft_ok_notes(state, session="pm", live=state.pm_live or {})
         _apply_session_detection_warning(state, session="pm", live=state.pm_live)
     else:
         state.pm_live = {"skipped": True, "reason": "dry_run_only"}
@@ -1687,7 +1943,12 @@ def _run_daily_runner_body(state: DailyRunnerState) -> int:
     if state.options.enable_intraday_refresh and state.options.dry_run_only:
         state.verdict = "intraday_refresh_shadow_ready"
     else:
-        state.verdict = "am_pm_daily_runner_ready"
+        am_verdict = (state.am_live or {}).get("pilot_verdict", "success")
+        pm_verdict = (state.pm_live or {}).get("pilot_verdict", "success")
+        if "completed_with_warnings" in (am_verdict, pm_verdict):
+            state.verdict = "completed_with_warnings"
+        else:
+            state.verdict = "am_pm_daily_runner_ready"
     state.verdict_notes.append(
         "AM/PM run complete" + (" (dry_run_only)" if state.options.dry_run_only else "")
     )

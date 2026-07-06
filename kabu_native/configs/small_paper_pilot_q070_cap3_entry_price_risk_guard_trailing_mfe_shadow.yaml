@@ -192,6 +192,20 @@ cap_pbv2: 4
 cap_or: 1
 or_max_update_count: 8
 
+# Phase635: PBv2-only rise5 p95 shadow (no ENTRY block). Rollback: pbv2_rise5_shadow_enabled=false
+pbv2_rise5_shadow_enabled: true
+pbv2_rise5_shadow_threshold_pct: 1.84
+pbv2_rise5_shadow_apply_pool: PBV2_ONLY
+
+# Phase650: PBv2 flat-band guard shadow (no ENTRY block). Rollback: pbv2_flat_band_shadow_enabled=false
+pbv2_flat_band_shadow_enabled: true
+pbv2_flat_band_shadow_apply_pool: PBV2_ONLY
+pbv2_flat_band_shadow_rise5_flat_min_pct: 0.0
+pbv2_flat_band_shadow_rise5_flat_max_pct: 0.5
+pbv2_flat_band_shadow_rise10_flat_min_pct: -0.5
+pbv2_flat_band_shadow_rise10_flat_max_pct: 0.5
+pbv2_flat_band_shadow_overheat_rise5_pct: 2.0
+
 live:
   session_start: "09:00"
   session_end: "15:30"
@@ -201,6 +215,9 @@ live:
   max_consecutive_api_errors: 10
   record_push_jsonl: true
   duration_sec: 600
+  pre_session_warmup_enabled: true
+  pre_session_warmup_am_start: "08:50"
+  pre_session_warmup_pm_start: "12:15"
 
 output:
   base_dir: kabu_native/results/small_paper

@@ -253,6 +253,7 @@ def process_entry_wiring(
     config: Any,
     entry_signal_ts: Optional[str] = None,
     exchange: Optional[int] = None,
+    latency_session: Any = None,
 ) -> dict[str, Any]:
     if not wiring_enabled(config):
         return {"skipped": True}
@@ -270,6 +271,8 @@ def process_entry_wiring(
     sample.payload_build_start_ts = _iso_now()
     limit_px = _limit_entry_price(payload)
     if limit_px is None:
+        if latency_session is not None:
+            latency_session.finish_reject(gate_reason="missing_limit_price", entry_route="reject")
         return {"blocked": True, "reason": "missing_limit_price"}
     cid = make_client_order_id(symbol, suffix="entry")
     sample.client_order_id = cid
@@ -283,10 +286,16 @@ def process_entry_wiring(
         timeout_sec=float(getattr(config, "live_order_entry_timeout_sec", DEFAULT_ENTRY_TIMEOUT_SEC)),
     )
     sample.payload_build_done_ts = _iso_now()
+    if latency_session is not None:
+        latency_session.mark_order_build_end(symbol=symbol)
+        latency_session.mark_dryrun_start(symbol=symbol)
     pf = _run_inline_preflight(config)
     sample.preflight_done_ts = _iso_now()
     sample.would_send_order_ts = _iso_now()
     sample.would_send_mono = time.perf_counter()
+    if latency_session is not None:
+        latency_session.mark_dryrun_end(symbol=symbol)
+        latency_session.finish_wiring(symbol=symbol)
     row = sample.to_row(config)
     row["sendorder_payload"] = order_payload
     row["preflight_ok"] = pf.get("ok")

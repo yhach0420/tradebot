@@ -375,6 +375,18 @@ class ObserverPositionTracker:
                     "limit_up_proximity_prev_close_used",
                     "pullback_misread_dynamic40_guard_blocked",
                     "pullback_misread_guard_shadow_blocked",
+                    "pbv2_rise5_shadow_block",
+                    "pbv2_rise5_shadow_reason",
+                    "pbv2_rise5_value",
+                    "pbv2_rise5_threshold",
+                    "pbv2_rise5_shadow_apply_pool",
+                    "pbv2_flat_band_shadow_block",
+                    "pbv2_flat_band_shadow_reason",
+                    "pbv2_flat_band_rise5",
+                    "pbv2_flat_band_rise10",
+                    "pbv2_flat_band_variant",
+                    "pbv2_flat_band_shadow_apply_pool",
+                    "flat_band_and_rise5_shadow_block",
                     "day_high_distance_pct",
                     "entry_momentum_score",
                     "near_day_high_low_momentum_dynamic40_guard_blocked",
@@ -924,6 +936,28 @@ class ObserverPositionTracker:
                 exit_reason=reason,
             )
             full.update(pb_exit)
+            from small_paper.pbv2_rise5_shadow import enrich_exit_pbv2_rise5_shadow_fields
+
+            rise5_exit = enrich_exit_pbv2_rise5_shadow_fields(
+                pos.entry_shadow,
+                entry_price=pos.entry_price,
+                exit_price=actual_exit_price,
+                exit_reason=reason,
+                peak_mfe_pct=_as_float(full.get("peak_mfe_pct")),
+                peak_mae_pct=_as_float(full.get("rolling_mae_pct") or full.get("peak_mae_pct")),
+            )
+            full.update(rise5_exit)
+            from small_paper.pbv2_flat_band_guard_shadow import enrich_exit_pbv2_flat_band_shadow_fields
+
+            flat_exit = enrich_exit_pbv2_flat_band_shadow_fields(
+                pos.entry_shadow,
+                entry_price=pos.entry_price,
+                exit_price=actual_exit_price,
+                exit_reason=reason,
+                peak_mfe_pct=_as_float(full.get("peak_mfe_pct")),
+                peak_mae_pct=_as_float(full.get("rolling_mae_pct") or full.get("peak_mae_pct")),
+            )
+            full.update(flat_exit)
         if pos.rich_ticks:
             from small_paper.board_dynamic_trailing_shadow import (
                 enrich_exit_board_dynamic_shadow_fields,
