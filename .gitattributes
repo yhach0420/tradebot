@@ -1,0 +1,5 @@
+# Phase687W13A — reproducible Monday baseline line endings
+# Keep production pin hashes stable across Windows/macOS/Linux checkouts.
+kabu_native/configs/*.yaml text eol=lf
+kabu_native/configs/*.yml text eol=lf
+kabu_native/configs/*.pin text eol=lf
