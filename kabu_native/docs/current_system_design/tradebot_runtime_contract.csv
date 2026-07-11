@@ -1,0 +1,21 @@
+Feature,Status,Current value
+Entry Cluster Guard,MAINLINE_ACTIVE,True
+Stop Low MFE Guard,NOT_RUNTIME_REACHABLE,False
+Exit Shadow Monitor,NOT_RUNTIME_REACHABLE,False
+Flat-band,MAINLINE_ACTIVE,True
+I/H/C,SHADOW_ACTIVE,readiness/microsequence shadows true
+same-symbol,MAINLINE_ACTIVE,no_overlap_replace
+open_symbols_exceed_cap,OBSERVABILITY_ONLY,continue (will_stop=false)
+Discord Router,MAINLINE_ACTIVE,W10
+Registration lifetime,MAINLINE_ACTIVE,defer unregister while Capture active
+live_trading_enabled,MAINLINE_ACTIVE,false
+order_enabled,MAINLINE_ACTIVE,false
+Hard Stop,MAINLINE_ACTIVE,1.20%
+Board Dynamic Trailing,MAINLINE_ACTIVE,board_high/low tiers
+No Progress Exit,MAINLINE_ACTIVE,true
+OR Overlay,MAINLINE_ACTIVE,cap 4/1
+NP Pre-entry Logger,OBSERVABILITY_ONLY,true
+Flat Weak Range Shadow,SHADOW_ACTIVE,true
+Market Capture Sidecar,MAINLINE_ACTIVE,required until 15:35
+W4S Forward Soak,MAINLINE_ACTIVE,LIVE_PAPER_RUNTIME only
+Real Orders,NOT_IMPLEMENTED,NOT AUTHORIZED

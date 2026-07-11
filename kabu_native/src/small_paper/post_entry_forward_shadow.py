@@ -298,6 +298,7 @@ class PostEntryForwardShadowSession:
     """Session accumulator for post-entry forward shadow."""
 
     rows: list[dict[str, Any]] = field(default_factory=list)
+    _session_end_finalized: bool = False
 
     def record_exit(self, exit_row: Mapping[str, Any]) -> None:
         checkpoints = {
@@ -361,6 +362,17 @@ class PostEntryForwardShadowSession:
         path = output_dir / "small_paper_shadow_post_entry.csv"
         _write_csv(path, POST_ENTRY_CSV_FIELDS, self.rows)
         return path
+
+    def finalize_session_end(self, *, ts: float, day: str) -> None:
+        """Explicit ExtensionBus lifecycle no-op (exit-driven; no open positions).
+
+        Phase687W1: previously missing → AttributeError in extension_errors.
+        Idempotent: safe under double finalize.
+        """
+        if self._session_end_finalized:
+            return
+        self._session_end_finalized = True
+        return None
 
 
 def finalize_session_post_entry_shadow(

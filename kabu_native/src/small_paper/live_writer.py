@@ -62,6 +62,22 @@ class LiveSessionWriter:
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
 
+    def append_np_pre_entry_features(self, record: Mapping[str, Any]) -> None:
+        """Phase687: 1-row predictor log (no outcome fields)."""
+        if not self.incremental:
+            return
+        path = self.output_dir / "np_pre_entry_features.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
+    def append_np_pre_entry_outcomes(self, record: Mapping[str, Any]) -> None:
+        """Phase687: 1-row outcome log (separate from predictors)."""
+        if not self.incremental:
+            return
+        path = self.output_dir / "np_pre_entry_outcomes.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
     def append_live_order_intent(self, record: Mapping[str, Any]) -> None:
         if not self.incremental:
             return
@@ -118,6 +134,11 @@ class LiveSessionWriter:
 
     def append_entry_scan_audit(self, record: Mapping[str, Any]) -> None:
         path = self.output_dir / "entry_scan_audit.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
+    def append_discord_entry_delivery(self, record: Mapping[str, Any]) -> None:
+        path = self.output_dir / "discord_entry_delivery.jsonl"
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
 

@@ -247,7 +247,7 @@ def evaluate_extend_candidate(
 
 
 def make_position_id(symbol: str, entry_time: datetime) -> str:
-    stamp = entry_time.strftime("%Y%m%dT%H%M%S")
+    stamp = entry_time.strftime("%Y%m%dT%H%M%S%f")
     return f"{symbol}_{stamp}"
 
 

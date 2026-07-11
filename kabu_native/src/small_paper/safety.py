@@ -898,14 +898,14 @@ def run_all_safety_checks(
             config,
             repo_root=repo_root,
             run_session_key=(
-                f"{day_key}/{session_stamp}" if session_stamp else None
+                f"{day_key}/live_session_{session_stamp}" if session_stamp else None
             ),
         ),
         check_daytrade_suitability_trial_config(
             config,
             repo_root=repo_root,
             run_session_key=(
-                f"{day_key}/{session_stamp}" if session_stamp else None
+                f"{day_key}/live_session_{session_stamp}" if session_stamp else None
             ),
         ),
         check_output_path_writable(config, repo_root=repo_root, day_key=day_key),

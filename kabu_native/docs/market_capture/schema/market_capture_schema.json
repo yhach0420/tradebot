@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "market_capture_schema.json",
+  "title": "Phase687W9 Market Capture Event",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "capture_session_id",
+    "sequence",
+    "received_at_jst",
+    "received_at_utc",
+    "received_monotonic_ns",
+    "original_payload"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "capture_session_id": { "type": "string" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "received_at_jst": { "type": "string" },
+    "received_at_utc": { "type": "string" },
+    "received_monotonic_ns": { "type": "integer" },
+    "symbol": {},
+    "exchange": {},
+    "current_price": {},
+    "current_price_time": {},
+    "trading_volume": {},
+    "trading_value": {},
+    "bid": {},
+    "ask": {},
+    "original_payload": { "type": "object" }
+  },
+  "additionalProperties": true
+}

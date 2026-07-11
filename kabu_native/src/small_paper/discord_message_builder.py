@@ -94,6 +94,46 @@ def format_slot_usage(open_slots: int, max_slots: int) -> str:
     return f"{used}/{cap}"
 
 
+def format_position_slot_pair(
+    pre_count: Optional[int],
+    post_count: int,
+    max_slots: int,
+) -> str:
+    """Discord ENTRY slot line: pre→post/max (post_count is after register)."""
+    cap = max(1, int(max_slots))
+    post = max(0, min(int(post_count), cap))
+    if pre_count is None:
+        return format_slot_usage(post, cap)
+    pre = max(0, min(int(pre_count), cap))
+    if pre == post:
+        return f"{pre}/{cap}"
+    return f"{pre}→{post}/{cap}"
+
+
+def append_discord_delivery_audit_lines(
+    lines: list[str],
+    *,
+    event_time: Optional[str] = None,
+    sent_time: Optional[str] = None,
+    generated_at: Optional[str] = None,
+    session_id: Optional[str] = None,
+    position_id: Optional[str] = None,
+    sequence_id: Optional[int] = None,
+) -> None:
+    if generated_at:
+        lines.append(f"generated_at: {format_time_hms_jst(generated_at)}")
+    if event_time:
+        lines.append(f"event_time: {format_time_hms_jst(event_time)}")
+    if sent_time:
+        lines.append(f"sent_time: {format_time_hms_jst(sent_time)}")
+    if session_id:
+        lines.append(f"session_id: {session_id}")
+    if position_id:
+        lines.append(f"position_id: {position_id}")
+    if sequence_id is not None:
+        lines.append(f"sequence_id: {sequence_id}")
+
+
 def _symbol_short(sym: str) -> str:
     s = str(sym or "").strip().upper()
     return s.replace(".T", "") if s else "—"
@@ -325,13 +365,21 @@ def build_entry_detail(
     score5_candidate_ordinal: Optional[int] = None,
     name_map: Optional[Mapping[str, str]] = None,
     entry_time: Optional[str] = None,
+    sent_time: Optional[str] = None,
+    sequence_id: Optional[int] = None,
 ) -> str:
     display = format_symbol_display(symbol, name_map=name_map)
     lines = [
         f"銘柄: {display}",
     ]
-    if entry_time:
-        lines.append(f"時刻: {format_time_hms_jst(entry_time)}")
+    append_discord_delivery_audit_lines(
+        lines,
+        event_time=entry_time,
+        sent_time=sent_time or str(data.get("discord_sent_ts") or ""),
+        session_id=str(data.get("session_id") or "") or None,
+        position_id=str(data.get("position_id") or "") or None,
+        sequence_id=sequence_id,
+    )
     lines.extend(
         [
         f"ENTRY価格: {_fmt_num(entry_price)}",
@@ -470,6 +518,13 @@ def build_exit_detail(
     board_dynamic_trailing_giveback_frac: Optional[float] = None,
     exit_time: Optional[str] = None,
     name_map: Optional[Mapping[str, str]] = None,
+    market_time_age_sec: Optional[float] = None,
+    price_age_sec: Optional[float] = None,
+    stale_trade: bool = False,
+    sent_time: Optional[str] = None,
+    session_id: Optional[str] = None,
+    position_id: Optional[str] = None,
+    sequence_id: Optional[int] = None,
 ) -> str:
     yen = resolve_pnl_yen_100(
         entry_price=entry_price,
@@ -481,8 +536,14 @@ def build_exit_detail(
     lines = [
         f"銘柄: {display}",
     ]
-    if exit_time:
-        lines.append(f"EXIT時刻: {format_time_hms_jst(exit_time)}")
+    append_discord_delivery_audit_lines(
+        lines,
+        event_time=exit_time,
+        sent_time=sent_time,
+        session_id=session_id,
+        position_id=position_id,
+        sequence_id=sequence_id,
+    )
     lines.extend(
         [
         f"ENTRY価格: {_fmt_num(entry_price)}",
@@ -494,6 +555,11 @@ def build_exit_detail(
         f"EXIT理由: {humanize_exit_reason(exit_reason)}",
         ]
     )
+    lag = market_time_age_sec if market_time_age_sec is not None else price_age_sec
+    if lag is not None:
+        lines.append(f"market_time_age_sec: {int(round(float(lag)))}秒")
+    if stale_trade:
+        lines.append("⚠ stale_trade: board timestamp lag vs accept")
     if is_stop_low_mfe_exit(exit_reason, mfe_pct):
         lines.append(f"⚠ stop_low_mfe: MFE<{STOP_LOW_MFE_THRESHOLD_PCT:.1f}% at stop")
     if (
@@ -519,13 +585,24 @@ def build_universe_screening_overview(
     session_label: str,
     watch_symbol_count: int,
     name_map: Optional[Mapping[str, str]] = None,
+    generated_at: Optional[str] = None,
+    sent_at: Optional[str] = None,
+    sequence_id: Optional[int] = None,
 ) -> str:
     """Initial universe after AM/PM screening (no add/remove vs prior refresh)."""
     _ = name_map
-    return "\n".join(
-        [
+    lines = [
             f"セッション: {session_label}",
             f"現在監視: {watch_symbol_count}銘柄",
+    ]
+    append_discord_delivery_audit_lines(
+        lines,
+        generated_at=generated_at,
+        sent_time=sent_at,
+        sequence_id=sequence_id,
+    )
+    lines.extend(
+        [
             "",
             "初期監視銘柄:",
             "（下の監視銘柄一覧を参照）",
@@ -534,6 +611,7 @@ def build_universe_screening_overview(
             "（なし）",
         ]
     )
+    return "\n".join(lines)
 
 
 def build_universe_refresh_overview(
@@ -1447,6 +1525,20 @@ def format_research_shadow_daily_summary_lines(
         from small_paper.pbv2_flat_band_guard_shadow import format_pbv2_flat_band_shadow_discord_lines
 
         lines.extend(format_pbv2_flat_band_shadow_discord_lines(summary))
+        from small_paper.flat_weak_range_forward_shadow import format_flat_weak_range_shadow_discord_lines
+
+        lines.extend(format_flat_weak_range_shadow_discord_lines(summary))
+        from small_paper.readiness_forward_shadow import format_readiness_shadow_discord_lines
+
+        lines.extend(format_readiness_shadow_discord_lines(summary))
+        if isinstance(summary.get("readiness_precision_shadow"), Mapping):
+            from small_paper.ihc_shadow_counterfactual import format_entry_shadow_discord_lines
+
+            lines.extend(format_entry_shadow_discord_lines(summary))
+        else:
+            from small_paper.shadow_ihc_portfolio import format_ihc_shadow_discord_lines
+
+            lines.extend(format_ihc_shadow_discord_lines(summary))
 
     if isinstance(live_trans, Mapping):
         lines.append("LiveConfig Transition Shadow:")

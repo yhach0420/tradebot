@@ -289,10 +289,12 @@ def notify_screening_universe_discord(
         return {"sent": False, "skipped": True, "reason": "discord_not_active"}
     syms = load_symbols(universe=universe_csv, native_root=state.native_root)
     watch = symbols_list(syms)
+    generated_at = datetime.now(JST).isoformat(timespec="milliseconds")
     sent = notifier.notify_universe_screening(
         session_label=session_label,
         watch_symbols=watch,
         day_stamp=state.options.day_stamp,
+        generated_at=generated_at,
     )
     return {
         "sent": bool(sent),
@@ -300,6 +302,8 @@ def notify_screening_universe_discord(
         "symbol_count": len(watch),
         "universe_csv": rel_path(state.repo_root, universe_csv),
         "trade_notify_webhook_source": notifier.trade_webhook_source(),
+        "generated_at": generated_at,
+        "discord_sent_at": generated_at if sent else None,
     }
 
 
@@ -1360,6 +1364,8 @@ def build_summary_payload(state: DailyRunnerState) -> dict[str, Any]:
         "core_stale_caution": (state.preflight.get("core10") or {}).get("stale_caution"),
         "am_session_dir": state.sessions.get("am_dir"),
         "pm_session_dir": state.sessions.get("pm_dir"),
+        "am_summary_path": state.sessions.get("am_summary_path"),
+        "pm_summary_path": state.sessions.get("pm_summary_path"),
         "am_universe_csv": state.am_prep.get("am_csv"),
         "pm_universe_csv": state.pm_prep.get("pm_csv"),
         "am_live_ok": (state.am_live or {}).get("ok"),
@@ -1432,6 +1438,30 @@ def build_summary_payload(state: DailyRunnerState) -> dict[str, Any]:
 def write_outputs(state: DailyRunnerState) -> dict[str, str]:
     state.reports_dir.mkdir(parents=True, exist_ok=True)
     day = state.options.day_stamp
+    try:
+        from small_paper.am_pm_summary_preservation import (
+            preserve_daily_runner_summaries,
+            rel_path as preserve_rel_path,
+        )
+
+        am_dir = _session_dir_from_live(state.repo_root, state.am_live or {})
+        pm_dir = _session_dir_from_live(state.repo_root, state.pm_live or {})
+        preserved = preserve_daily_runner_summaries(
+            state.repo_root,
+            day_stamp=day,
+            am_session_dir=am_dir,
+            pm_session_dir=pm_dir,
+        )
+        if preserved.get("am_summary_path"):
+            state.sessions["am_summary_path"] = preserve_rel_path(
+                state.repo_root, Path(preserved["am_summary_path"])
+            )
+        if preserved.get("pm_summary_path"):
+            state.sessions["pm_summary_path"] = preserve_rel_path(
+                state.repo_root, Path(preserved["pm_summary_path"])
+            )
+    except Exception as exc:
+        log.warning("daily_runner am/pm summary preservation failed: %s", exc)
     full = {
         "phase": 148,
         "generated_at": state.generated_at,

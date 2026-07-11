@@ -112,6 +112,7 @@ class SmallPaperPilotConfig:
     live_order_notifier_enabled: bool = True
     live_order_discord_enabled: bool = False
     live_order_jsonl_enabled: bool = True
+    live_order_safety_sm_enabled: bool = False
     dry_run: bool = True
     live_trading_enabled: bool = False
     live_order_entry_timeout_sec: float = 4.0
@@ -164,6 +165,25 @@ class SmallPaperPilotConfig:
     pbv2_flat_band_shadow_rise10_flat_min_pct: float = -0.5
     pbv2_flat_band_shadow_rise10_flat_max_pct: float = 0.5
     pbv2_flat_band_shadow_overheat_rise5_pct: float = 2.0
+    pbv2_flat_band_mainline_enabled: bool = False
+    vwap_shadow_reject_enabled: bool = True
+    flat_weak_range_shadow_enabled: bool = False
+    readiness_precision_shadow_enabled: bool = False
+    readiness_precision_shadow_expectancy_max: float = 2.5
+    readiness_precision_shadow_require_live_incomplete: bool = True
+    readiness_economics_shadow_enabled: bool = False
+    readiness_economics_shadow_bounce_min: float = 0.45
+    readiness_economics_shadow_require_live_incomplete: bool = True
+    readiness_refined_h_shadow_enabled: bool = False
+    readiness_refined_h_bounce_min: float = 0.45
+    readiness_refined_h_pre_entry_mfe_max_pct: float = 1.0
+    readiness_refined_h_require_live_incomplete: bool = True
+    microsequence_recovery_fail_shadow_enabled: bool = False
+    microsequence_recovery_fail_bounce_min: float = 0.2182
+    microsequence_recovery_fail_fall_from_high_max: float = -0.1735
+    microsequence_recovery_fail_slope_5min_max: float = 0.1152
+    # Phase687: no-progress pre-entry board/volume forward logger (logger only; no reject).
+    np_pre_entry_feature_logger_enabled: bool = False
     shadow_only: bool = False
     entry_max_price_age_sec: float = 3.0
     entry_max_board_age_sec: float = 3.0
@@ -238,6 +258,8 @@ class SmallPaperPilotConfig:
             out["live_order_discord_enabled"] = True
         if self.live_order_jsonl_enabled:
             out["live_order_jsonl_enabled"] = True
+        if self.live_order_safety_sm_enabled:
+            out["live_order_safety_sm_enabled"] = True
         out["dry_run"] = self.dry_run
         if self.vol_liq_startup_cache_enabled:
             out["vol_liq_startup_cache_enabled"] = True
@@ -315,6 +337,49 @@ class SmallPaperPilotConfig:
             out["pbv2_flat_band_shadow_rise10_flat_min_pct"] = self.pbv2_flat_band_shadow_rise10_flat_min_pct
             out["pbv2_flat_band_shadow_rise10_flat_max_pct"] = self.pbv2_flat_band_shadow_rise10_flat_max_pct
             out["pbv2_flat_band_shadow_overheat_rise5_pct"] = self.pbv2_flat_band_shadow_overheat_rise5_pct
+        if self.pbv2_flat_band_mainline_enabled:
+            out["pbv2_flat_band_mainline_enabled"] = True
+            out["pbv2_flat_band_shadow_apply_pool"] = self.pbv2_flat_band_shadow_apply_pool
+            out["pbv2_flat_band_shadow_rise5_flat_min_pct"] = self.pbv2_flat_band_shadow_rise5_flat_min_pct
+            out["pbv2_flat_band_shadow_rise5_flat_max_pct"] = self.pbv2_flat_band_shadow_rise5_flat_max_pct
+            out["pbv2_flat_band_shadow_rise10_flat_min_pct"] = self.pbv2_flat_band_shadow_rise10_flat_min_pct
+            out["pbv2_flat_band_shadow_rise10_flat_max_pct"] = self.pbv2_flat_band_shadow_rise10_flat_max_pct
+            out["pbv2_flat_band_shadow_overheat_rise5_pct"] = self.pbv2_flat_band_shadow_overheat_rise5_pct
+        if not self.vwap_shadow_reject_enabled:
+            out["vwap_shadow_reject_enabled"] = False
+        if self.flat_weak_range_shadow_enabled:
+            out["flat_weak_range_shadow_enabled"] = True
+        if self.readiness_precision_shadow_enabled:
+            out["readiness_precision_shadow_enabled"] = True
+            out["readiness_precision_shadow_expectancy_max"] = self.readiness_precision_shadow_expectancy_max
+            out["readiness_precision_shadow_require_live_incomplete"] = (
+                self.readiness_precision_shadow_require_live_incomplete
+            )
+        if self.readiness_economics_shadow_enabled:
+            out["readiness_economics_shadow_enabled"] = True
+            out["readiness_economics_shadow_bounce_min"] = self.readiness_economics_shadow_bounce_min
+            out["readiness_economics_shadow_require_live_incomplete"] = (
+                self.readiness_economics_shadow_require_live_incomplete
+            )
+        if self.readiness_refined_h_shadow_enabled:
+            out["readiness_refined_h_shadow_enabled"] = True
+            out["readiness_refined_h_shadow_research_only"] = True
+            out["readiness_refined_h_bounce_min"] = self.readiness_refined_h_bounce_min
+            out["readiness_refined_h_pre_entry_mfe_max_pct"] = self.readiness_refined_h_pre_entry_mfe_max_pct
+            out["readiness_refined_h_require_live_incomplete"] = (
+                self.readiness_refined_h_require_live_incomplete
+            )
+        if self.microsequence_recovery_fail_shadow_enabled:
+            out["microsequence_recovery_fail_shadow_enabled"] = True
+            out["microsequence_recovery_fail_bounce_min"] = self.microsequence_recovery_fail_bounce_min
+            out["microsequence_recovery_fail_fall_from_high_max"] = (
+                self.microsequence_recovery_fail_fall_from_high_max
+            )
+            out["microsequence_recovery_fail_slope_5min_max"] = (
+                self.microsequence_recovery_fail_slope_5min_max
+            )
+        if self.np_pre_entry_feature_logger_enabled:
+            out["np_pre_entry_feature_logger_enabled"] = True
         if self.shadow_only:
             out["shadow_only"] = True
         if self.entry_score_v2_min > 0:
@@ -377,6 +442,7 @@ class SmallPaperPilotConfig:
         entry_quality_guard = None
         entry_cluster_guard = None
         stop_low_mfe_guard = None
+        flat_band_guard = None
         if self.entry_price_risk_guard_enabled:
             from small_paper.entry_price_risk_guard import build_entry_price_risk_guard_state
 
@@ -431,6 +497,10 @@ class SmallPaperPilotConfig:
             from small_paper.stop_low_mfe_guard import build_stop_low_mfe_guard_state
 
             stop_low_mfe_guard = build_stop_low_mfe_guard_state(self)
+        if self.pbv2_flat_band_mainline_enabled:
+            from small_paper.pbv2_flat_band_entry_guard import build_pbv2_flat_band_entry_guard_state
+
+            flat_band_guard = build_pbv2_flat_band_entry_guard_state(self)
         if repo_root is not None and run_session_key:
             if self.symbol_cooloff_enabled:
                 from small_paper.symbol_cooloff import build_symbol_cooloff_state
@@ -464,6 +534,7 @@ class SmallPaperPilotConfig:
             entry_quality_guard=entry_quality_guard,
             entry_cluster_guard=entry_cluster_guard,
             stop_low_mfe_guard=stop_low_mfe_guard,
+            pbv2_flat_band_entry_guard=flat_band_guard,
         )
 
 
@@ -597,6 +668,7 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         live_order_notifier_enabled=bool(raw.get("live_order_notifier_enabled", True)),
         live_order_discord_enabled=bool(raw.get("live_order_discord_enabled", False)),
         live_order_jsonl_enabled=bool(raw.get("live_order_jsonl_enabled", True)),
+        live_order_safety_sm_enabled=bool(raw.get("live_order_safety_sm_enabled", False)),
         dry_run=bool(raw.get("dry_run", True)),
         live_trading_enabled=bool(raw.get("live_trading_enabled", False)),
         live_order_entry_timeout_sec=float(raw.get("live_order_entry_timeout_sec", 4.0)),
@@ -698,6 +770,44 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
         ),
         pbv2_flat_band_shadow_overheat_rise5_pct=float(
             raw.get("pbv2_flat_band_shadow_overheat_rise5_pct", 2.0)
+        ),
+        pbv2_flat_band_mainline_enabled=bool(raw.get("pbv2_flat_band_mainline_enabled", False)),
+        vwap_shadow_reject_enabled=bool(raw.get("vwap_shadow_reject_enabled", True)),
+        flat_weak_range_shadow_enabled=bool(raw.get("flat_weak_range_shadow_enabled", False)),
+        readiness_precision_shadow_enabled=bool(raw.get("readiness_precision_shadow_enabled", False)),
+        readiness_precision_shadow_expectancy_max=float(
+            raw.get("readiness_precision_shadow_expectancy_max", 2.5) or 2.5
+        ),
+        readiness_precision_shadow_require_live_incomplete=bool(
+            raw.get("readiness_precision_shadow_require_live_incomplete", True)
+        ),
+        readiness_economics_shadow_enabled=bool(raw.get("readiness_economics_shadow_enabled", False)),
+        readiness_economics_shadow_bounce_min=float(raw.get("readiness_economics_shadow_bounce_min", 0.45) or 0.45),
+        readiness_economics_shadow_require_live_incomplete=bool(
+            raw.get("readiness_economics_shadow_require_live_incomplete", True)
+        ),
+        readiness_refined_h_shadow_enabled=bool(raw.get("readiness_refined_h_shadow_enabled", False)),
+        readiness_refined_h_bounce_min=float(raw.get("readiness_refined_h_bounce_min", 0.45) or 0.45),
+        readiness_refined_h_pre_entry_mfe_max_pct=float(
+            raw.get("readiness_refined_h_pre_entry_mfe_max_pct", 1.0) or 1.0
+        ),
+        readiness_refined_h_require_live_incomplete=bool(
+            raw.get("readiness_refined_h_require_live_incomplete", True)
+        ),
+        microsequence_recovery_fail_shadow_enabled=bool(
+            raw.get("microsequence_recovery_fail_shadow_enabled", False)
+        ),
+        microsequence_recovery_fail_bounce_min=float(
+            raw.get("microsequence_recovery_fail_bounce_min", 0.2182) or 0.2182
+        ),
+        microsequence_recovery_fail_fall_from_high_max=float(
+            raw.get("microsequence_recovery_fail_fall_from_high_max", -0.1735) or -0.1735
+        ),
+        microsequence_recovery_fail_slope_5min_max=float(
+            raw.get("microsequence_recovery_fail_slope_5min_max", 0.1152) or 0.1152
+        ),
+        np_pre_entry_feature_logger_enabled=bool(
+            raw.get("np_pre_entry_feature_logger_enabled", False)
         ),
         shadow_only=bool(raw.get("shadow_only", False)),
         entry_max_price_age_sec=float(raw.get("entry_max_price_age_sec", 3.0)),

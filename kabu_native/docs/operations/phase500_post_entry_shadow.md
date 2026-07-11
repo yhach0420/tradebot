@@ -8,13 +8,13 @@
 
 | # | 回答 |
 |---|------|
-| 1 score>=3件数 | **66** |
-| 2 score>=3 pnl | **-172898.76** |
-| 3 score>=4件数 | **40** |
-| 4 score>=4 pnl | **-122999.88** |
-| 5 stop_hit一致率 | **0.4545** |
+| 1 score>=3件数 | **0** |
+| 2 score>=3 pnl | **0** |
+| 3 score>=4件数 | **0** |
+| 4 score>=4 pnl | **0** |
+| 5 stop_hit一致率 | **0.0** |
 | 6 no_progress一致率 | **0.0** |
-| 7 6976影響 | **-12000.0** |
+| 7 6976影響 | **0** |
 | 8 6/22影響 | **0** |
 | 9 Runtime候補 | **False** |
 | 10 次アクション | Continue forward shadow collection; evaluate after 10 trading days |

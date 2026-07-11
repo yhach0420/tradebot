@@ -49,6 +49,7 @@ class TestPhase413NoOverlapReplacePolicy(unittest.TestCase):
             state=state,
             writer=writer,
             source="test",
+            discord=None,
         )
         trade = {"symbol": "6981.T", "entry_time": "2026-06-16T09:00:00+09:00", "profile": "p"}
         decision = SimpleNamespace(quality_tier="Q")
@@ -76,6 +77,7 @@ class TestPhase413NoOverlapReplacePolicy(unittest.TestCase):
             state=state,
             writer=writer,
             source="test",
+            discord=None,
         )
         trade = {"symbol": "6981.T", "entry_time": "2026-06-16T09:00:00+09:00", "profile": "p"}
         decision = SimpleNamespace(quality_tier="Q")
@@ -98,6 +100,7 @@ class TestPhase413NoOverlapReplacePolicy(unittest.TestCase):
             state=state,
             writer=writer,
             source="test",
+            discord=None,
         )
         trade = {"symbol": "7203.T", "entry_time": "2026-06-16T09:00:00+09:00", "profile": "p"}
         decision = SimpleNamespace(quality_tier="Q")
@@ -120,6 +123,7 @@ class TestPhase413NoOverlapReplacePolicy(unittest.TestCase):
             state=state,
             writer=writer,
             source="test",
+            discord=None,
         )
         trade = {"symbol": "6981.T", "entry_time": "2026-06-16T09:00:00+09:00", "profile": "p"}
         decision = SimpleNamespace(quality_tier="Q")

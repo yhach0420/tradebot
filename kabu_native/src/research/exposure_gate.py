@@ -27,6 +27,7 @@ REJECT_ENTRY_PRICE_RISK_GUARD = "entry_price_risk_guard"
 REJECT_PULLBACK_MISREAD_DYNAMIC40_GUARD = "pullback_misread_dynamic40_guard"
 REJECT_HIGH_DRIFT_PULLBACK = "high_drift_pullback"
 REJECT_WEAK_SHAPE = "weak_shape_reject"
+REJECT_FLAT_BAND_MAINLINE = "flat_band_mainline"
 REJECT_NEAR_DAY_HIGH_LOW_MOMENTUM_DYNAMIC40_GUARD = (
     "near_day_high_low_momentum_dynamic40_guard"
 )
@@ -163,6 +164,10 @@ class GateDecision:
     entry_expectancy_score_v2: Optional[int] = None
     entry_score_v2_threshold: Optional[int] = None
     entry_score_v2_gate_pass: Optional[bool] = None
+    pbv2_flat_band_rise5: Optional[float] = None
+    pbv2_flat_band_rise10: Optional[float] = None
+    pbv2_flat_band_shadow_reason: str = ""
+    pbv2_flat_band_variant: str = ""
 
 
 def _entry_score_v2_fields(trade: Mapping[str, Any]) -> dict[str, Any]:
@@ -205,6 +210,7 @@ class ExposureGate:
         entry_quality_guard: Optional[Any] = None,
         entry_cluster_guard: Optional[Any] = None,
         stop_low_mfe_guard: Optional[Any] = None,
+        pbv2_flat_band_entry_guard: Optional[Any] = None,
     ) -> None:
         self.config = config
         self.state = ExposureGateState()
@@ -224,6 +230,7 @@ class ExposureGate:
         self.entry_quality_guard = entry_quality_guard
         self.entry_cluster_guard = entry_cluster_guard
         self.stop_low_mfe_guard = stop_low_mfe_guard
+        self.pbv2_flat_band_entry_guard = pbv2_flat_band_entry_guard
 
     def evaluate_entry(
         self,
@@ -378,6 +385,29 @@ class ExposureGate:
                     weak_shape_day_high_minutes_from_open=ws.day_high_minutes_from_open,
                     weak_shape_minutes_since_day_high_update=ws.minutes_since_day_high_update,
                     weak_shape_day_high_distance_pct=ws.day_high_distance_pct,
+                )
+
+        if self.pbv2_flat_band_entry_guard is not None:
+            fb = self.pbv2_flat_band_entry_guard.check(trade)
+            if fb.blocked:
+                self.pbv2_flat_band_entry_guard.reject_count += 1
+                sym = str(trade.get("symbol") or "")
+                if sym:
+                    self.pbv2_flat_band_entry_guard.rejected_symbols.add(sym)
+                q_pre = continuation_quality_score(trade)
+                return GateDecision(
+                    accept=False,
+                    reason=REJECT_FLAT_BAND_MAINLINE,
+                    continuation_quality_score=q_pre,
+                    quality_tier=quality_tier(
+                        q_pre,
+                        min_top=self.config.min_continuation_quality,
+                        min_above=self.config.min_above_median_quality,
+                    ),
+                    pbv2_flat_band_rise5=fb.rise5,
+                    pbv2_flat_band_rise10=fb.rise10,
+                    pbv2_flat_band_shadow_reason=fb.reason,
+                    pbv2_flat_band_variant="flat_plus_overheat",
                 )
 
         if self.near_day_high_low_momentum_dynamic40_guard is not None:

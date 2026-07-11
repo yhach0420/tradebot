@@ -32,6 +32,7 @@ EXTENSION_FLAGS_OFF: dict[str, bool] = {
     "live_order_dry_run_enabled": False,
     "live_order_api_wiring_enabled": False,
     "live_order_jsonl_enabled": False,
+    "live_order_safety_sm_enabled": False,
     "volume_gate_relaxation_shadow_enabled": False,
     "entry_latency_trace_enabled": False,
     "exit_shadow_monitor_enabled": False,

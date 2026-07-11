@@ -1,5 +1,9 @@
 # Phase591 — Live Trading Architecture Design
 
+> **Source of Truth (Phase687W3+):** [`docs/live_trading/live_order_system_design.md`](../live_trading/live_order_system_design.md)  
+> Phase591–594 docs remain historical for the earlier dry-run adapter stack.  
+> Current SafetySM status: **DRYRUN_MOCK_ONLY** — Runtime wiring `NOT_CONNECTED`; Kabu submit `PRODUCTION_FORBIDDEN`.
+
 **Verdict:** `phase591_live_trading_architecture_design_done`
 
 ## Scope

@@ -4,7 +4,9 @@ from pathlib import Path
 
 class TestPhase250aIntradayRefreshCrashFix(unittest.TestCase):
     def _maybe_intraday_refresh_body(self) -> str:
-        src = Path("kabu_native/src/small_paper/pilot_runner.py").read_text(encoding="utf-8")
+        src = (Path(__file__).resolve().parents[1] / "src" / "small_paper" / "pilot_runner.py").read_text(
+            encoding="utf-8"
+        )
         start = src.index("    def _maybe_intraday_refresh() -> None:")
         end = src.index("    def _maybe_am_pm_force_close() -> None:", start)
         return src[start:end]

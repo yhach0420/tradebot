@@ -71,8 +71,11 @@ class TestIntradayRefresh(unittest.TestCase):
         self.assertTrue(reg_meta.get("register_count_ok"))
 
     def test_open_symbols_exceed_cap_blocks(self) -> None:
+        """Merge returns empty only when open symbols exceed TOTAL_SLOTS (register universe=50)."""
+        from universe.intraday_refresh import TOTAL_SLOTS
+
         base = _sample_rows()
-        too_many = [f"O{i}.T" for i in range(4)]
+        too_many = [f"O{i}.T" for i in range(TOTAL_SLOTS + 1)]
         merged, meta = merge_universe_with_open_symbols(
             base,
             open_symbols=too_many,

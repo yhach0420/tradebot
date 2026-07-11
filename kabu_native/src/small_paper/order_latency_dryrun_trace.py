@@ -360,6 +360,15 @@ class OrderLatencyDryRunSession:
         t5_ref = tr.t5_decision_at or t9_ref
         push_to_decision_ms = _ms_between(tr.t1_push_received_at, t5_ref)
         decision_to_order_ms = _ms_between(t5_ref, t9_ref) if t9_ref else None
+        price_to_order = _sec_between(tr.t0_current_price_time, t9_ref)
+        push_to_order = _sec_between(tr.t1_push_received_at, t9_ref)
+        current_price_age_at_accept = _sec_between(tr.t0_current_price_time, t5_ref)
+        current_price_age_at_push = _sec_between(tr.t0_current_price_time, tr.t1_push_received_at)
+        stale_market_ts = bool(
+            current_price_age_at_push is not None and current_price_age_at_push > 60.0
+        )
+        # Pipeline delay must not be inferred from stale CurrentPriceTime.
+        pipeline_order_sec = push_to_order
         row = {
             "symbol": tr.symbol,
             "message_index": tr.message_index,
@@ -375,8 +384,16 @@ class OrderLatencyDryRunSession:
             "t5_decision_at": tr.t5_decision_at,
             "t9_dryrun_start_at": tr.t9_dryrun_start_at,
             "t10_dryrun_end_at": tr.t10_dryrun_end_at,
-            "price_to_order_sec": _sec_between(tr.t0_current_price_time, t9_ref),
-            "push_to_order_sec": _sec_between(tr.t1_push_received_at, t9_ref),
+            "price_to_order_sec": price_to_order,
+            "push_to_order_sec": push_to_order,
+            "push_to_accept_sec": _sec_between(tr.t1_push_received_at, t5_ref),
+            "accept_to_order_build_sec": _sec_between(t5_ref, t9_ref) if t9_ref else None,
+            "market_event_to_send_sec": price_to_order,
+            "current_price_age_at_accept_sec": current_price_age_at_accept,
+            "current_price_age_at_push_sec": current_price_age_at_push,
+            "stale_market_timestamp": stale_market_ts,
+            "pipeline_order_sec": pipeline_order_sec,
+            "price_to_order_is_stale_inflated": stale_market_ts,
             "push_to_decision_ms": push_to_decision_ms,
             "decision_to_order_ms": decision_to_order_ms,
             "decision_latency_ms": _ms_mono(tr.t2_process_start_mono, tr.t5_decision_end_mono),

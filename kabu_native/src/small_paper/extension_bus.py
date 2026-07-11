@@ -235,6 +235,18 @@ class ExtensionBus:
             "entry_expectancy_score_shadow",
             lambda: finalize_session_entry_expectancy_score(state.accepted_rows, state.events),
         )
+        if output_dir is not None:
+            from small_paper.ihc_shadow_counterfactual import finalize_session_ihc_shadow_summary
+
+            _run_step(
+                "ihc_shadow_counterfactual",
+                lambda: finalize_session_ihc_shadow_summary(
+                    state.accepted_rows,
+                    state.events,
+                    session_dir=output_dir,
+                    config=config,
+                ),
+            )
 
         jst = ZoneInfo("Asia/Tokyo")
         day = datetime.now(jst).strftime("%Y%m%d")

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "discord_notification_schema.json",
+  "title": "Phase687W10 Discord Notification Envelope",
+  "type": "object",
+  "required": [
+    "notification_id",
+    "category",
+    "severity",
+    "event_type",
+    "title",
+    "trading_date",
+    "dedupe_key",
+    "actual_or_shadow",
+    "payload_schema_version",
+    "payload_hash"
+  ],
+  "properties": {
+    "notification_id": { "type": "string" },
+    "category": {
+      "type": "string",
+      "enum": [
+        "TRADE_ACTUAL",
+        "SESSION_SUMMARY",
+        "OPERATIONS",
+        "MARKET_CAPTURE",
+        "CAP_BLOCKED",
+        "RESEARCH_SHADOW",
+        "CRITICAL_SAFETY"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["INFO", "NOTICE", "WARNING", "ERROR", "CRITICAL"]
+    },
+    "actual_or_shadow": {
+      "type": "string",
+      "enum": ["ACTUAL", "SHADOW", "OPERATIONS", "CAPTURE", "NONE"]
+    },
+    "payload_schema_version": { "type": "string" },
+    "payload_hash": { "type": "string" }
+  }
+}

@@ -47,7 +47,8 @@ class TestPhase616bExtensionBusSessionEnd(unittest.TestCase):
 
     def test_on_session_end_with_exit_shadow_monitor_enabled(self) -> None:
         config = load_pilot_config(PROD_YAML)
-        self.assertTrue(config.exit_shadow_monitor_enabled)
+        # Phase669: exit shadow monitor disabled; session_end must still succeed
+        self.assertFalse(config.exit_shadow_monitor_enabled)
         bus = ExtensionBus(
             mode=CoreRuntimeMode.FULL_EXTENSION,
             config=config,
@@ -55,7 +56,7 @@ class TestPhase616bExtensionBusSessionEnd(unittest.TestCase):
             writer=object(),
             output_dir=None,
         )
-        summary = {"exit_shadow_monitor_enabled": True}
+        summary = {"exit_shadow_monitor_enabled": False}
         out = bus.on_session_end(
             _mock_state(),
             summary,

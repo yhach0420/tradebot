@@ -119,6 +119,14 @@ class _VirtualPosition:
     virtual_hold_ignore_logged: bool = False
     fade_watch: Optional[FadeWatchState] = None
     entry_shadow: dict[str, Any] = field(default_factory=dict)
+    market_entry_time: Optional[datetime] = None
+    current_price_time: Optional[datetime] = None
+    accepted_event_time: Optional[datetime] = None
+    market_time_age_sec: Optional[float] = None
+    price_age_sec_at_entry: Optional[float] = None
+    stale_trade: bool = False
+    session_id: str = ""
+    session_kind: str = ""
 
 
 @dataclass
@@ -166,6 +174,20 @@ class ObserverPositionTracker:
         self.stats = ObserverSessionStats()
         self.board_exit_shadow = board_exit_shadow
         self.exit_candidate_shadow = exit_candidate_shadow
+        self._scope: Optional[Any] = None
+
+    def bind_session(self, scope: Any) -> None:
+        """Phase663A: reset observer positions at session boundary (no AM→PM carry)."""
+        self._scope = scope
+        self._positions.clear()
+
+    @property
+    def session_id(self) -> str:
+        return str(getattr(self._scope, "session_id", "") or "")
+
+    @property
+    def session_kind(self) -> str:
+        return str(getattr(self._scope, "session_kind", "") or "")
 
     def open_count(self) -> int:
         return sum(1 for p in self._positions.values() if not p.closed)
@@ -305,11 +327,39 @@ class ObserverPositionTracker:
         sym = str(trade.get("symbol") or "")
         if not sym:
             return
+        from small_paper.observer_session_scope import observer_entry_allowed_for_scope
+
+        if self._scope is not None and not observer_entry_allowed_for_scope(
+            self._scope, trade, payload=payload
+        ):
+            return
         if sym in self._positions and not self._positions[sym].closed:
             return
         if sym in self._positions:
             del self._positions[sym]
-        ent = parse_kabu_time(trade.get("entry_time"), fallback=datetime.now(JST))
+        from small_paper.observer_entry_time import (
+            market_time_age_sec,
+            observer_entry_fields,
+            resolve_market_entry_time,
+            resolve_observer_entry_time,
+        )
+        from small_paper.realtime_board_exit_shadow import make_position_id
+
+        now = datetime.now(JST)
+        ent = resolve_observer_entry_time(trade, payload=payload, fallback_now=now)
+        market_ent = resolve_market_entry_time(trade, payload=payload)
+        ts_fields = observer_entry_fields(trade, payload=payload, fallback_now=now)
+        accepted_evt = parse_kabu_time(
+            ts_fields.get("accepted_event_time"), fallback=ent
+        )
+        mkt_age = market_time_age_sec(ent, market_ent)
+        stale_trade = bool(ts_fields.get("stale_trade"))
+        price_age: Optional[float] = None
+        if trade.get("price_age_sec") is not None:
+            try:
+                price_age = float(trade["price_age_sec"])
+            except (TypeError, ValueError):
+                price_age = None
         trade_vh_ex = parse_kabu_time(trade.get("exit_time"), fallback=ent)
         if self.cfg.uses_combined_structural_exit():
             ex = self._session_end_datetime(ent)
@@ -319,7 +369,6 @@ class ObserverPositionTracker:
         take = entry_price * (1.0 + self.cfg.display_take_pct / 100.0)
         comps = continuation_components(trade)
         q = float(comps["continuation_quality"])
-        from small_paper.realtime_board_exit_shadow import make_position_id
 
         position_id = make_position_id(sym, ent)
         self._positions[sym] = _VirtualPosition(
@@ -342,9 +391,18 @@ class ObserverPositionTracker:
             last_price=entry_price,
             mae_pnl_pct=0.0,
             trade_virtual_exit_time=trade_vh_ex,
+            market_entry_time=market_ent,
+            current_price_time=market_ent,
+            accepted_event_time=accepted_evt,
+            market_time_age_sec=mkt_age,
+            price_age_sec_at_entry=price_age,
+            stale_trade=stale_trade,
+            session_id=self.session_id,
+            session_kind=self.session_kind,
             entry_shadow={
-                k: trade.get(k)
-                for k in (
+                **{
+                    k: trade.get(k)
+                    for k in (
                     "extended_entry_shadow_flag",
                     "extended_entry_shadow_reasons",
                     "entry_rise_5min_pct",
@@ -398,8 +456,47 @@ class ObserverPositionTracker:
                     "day_return_rank",
                     "minutes_from_open",
                     "or_o_r003_pass",
+                    "live_feature_complete",
+                    "bounce_from_recent_low",
+                    "fall_from_recent_high",
+                    "slope_5min",
+                    "microsequence_ok",
+                    "readiness_precision_shadow_candidate",
+                    "readiness_precision_shadow_block",
+                    "readiness_economics_shadow_candidate",
+                    "readiness_economics_shadow_block",
+                    "readiness_shadow_union_block",
+                    "readiness_shadow_overlap_block",
+                    "mfe_pre_entry_pct",
+                    "mfe_pre_entry_source",
+                    "mfe_pre_entry_window_sec",
+                    "readiness_refined_h_shadow_candidate",
+                    "readiness_refined_h_shadow_block",
+                    "readiness_refined_h_shadow_research_only",
+                    "microsequence_recovery_fail_shadow_candidate",
+                    "microsequence_recovery_fail_shadow_block",
+                    "microsequence_pre_entry_ok",
+                    "microseq_bounce_from_recent_low",
+                    "microseq_fall_from_recent_high",
+                    "microseq_slope_5min",
+                    "shadow_union_ihc_block",
+                    "shadow_overlap_type",
+                    "ihc_overlap_count",
+                    "ihc_i_feature_source",
+                    "ihc_h_feature_source",
+                    "ihc_c_feature_source",
+                    "ihc_union_feature_sources",
+                    "readiness_bounce_from_recent_low_accept",
+                    "readiness_bounce_from_recent_low",
+                    "readiness_fall_from_recent_high",
+                    "readiness_slope_5min",
+                    "readiness_microsequence_ok",
+                    "readiness_price_history_insufficient",
+                    "readiness_same_symbol_entry_count_today",
                 )
                 if k in trade
+            },
+                **ts_fields,
             },
         )
         if self.board_exit_shadow is not None:
@@ -433,6 +530,8 @@ class ObserverPositionTracker:
     ) -> list[ObserverJudgmentEvent]:
         pos = self._positions.get(symbol)
         if pos is None or pos.closed:
+            return []
+        if self._scope is not None and pos.session_id and pos.session_id != self.session_id:
             return []
 
         now = datetime.now(JST)
@@ -844,8 +943,12 @@ class ObserverPositionTracker:
         full = {
             **dict(ctx),
             "entry_time": pos.entry_time.isoformat(timespec="seconds"),
+            "observer_entry_time": pos.entry_time.isoformat(timespec="seconds"),
             "exit_time": now.isoformat(timespec="seconds"),
             "hold_sec": round(hold_sec, 1),
+            "position_id": pos.position_id,
+            "session_id": pos.session_id or self.session_id,
+            "session_kind": pos.session_kind or self.session_kind,
             "exit_reason": reason,
             "structural_exit_reason": reason if structural else "",
             "exit_kind": exit_kind,
@@ -872,6 +975,17 @@ class ObserverPositionTracker:
             "trailing_mfe_exit": reason == "trailing_mfe_exit",
             "no_progress_exit": reason == "no_progress_exit",
         }
+        if pos.market_entry_time is not None:
+            full["market_entry_time"] = pos.market_entry_time.isoformat(timespec="seconds")
+            full["current_price_time"] = pos.market_entry_time.isoformat(timespec="seconds")
+        if pos.accepted_event_time is not None:
+            full["accepted_event_time"] = pos.accepted_event_time.isoformat(timespec="seconds")
+        if pos.market_time_age_sec is not None:
+            full["market_time_age_sec"] = round(pos.market_time_age_sec, 1)
+        if pos.price_age_sec_at_entry is not None:
+            full["price_age_sec"] = round(pos.price_age_sec_at_entry, 1)
+        if pos.stale_trade:
+            full["stale_trade"] = True
         pnl_pct = float(full.get("realized_pnl_pct") or ctx.get("unrealized_pnl_pct") or 0.0)
         full["pnl_pct"] = round(pnl_pct, 4)
         if pos.entry_shadow:
@@ -958,6 +1072,49 @@ class ObserverPositionTracker:
                 peak_mae_pct=_as_float(full.get("rolling_mae_pct") or full.get("peak_mae_pct")),
             )
             full.update(flat_exit)
+            from small_paper.flat_weak_range_forward_shadow import (
+                enrich_exit_flat_weak_range_shadow_fields,
+                flat_weak_range_shadow_enabled,
+            )
+
+            if flat_weak_range_shadow_enabled(self.cfg):
+                fwr_exit = enrich_exit_flat_weak_range_shadow_fields(
+                    pos.entry_shadow,
+                    entry_price=pos.entry_price,
+                    exit_price=actual_exit_price,
+                    exit_reason=reason,
+                )
+                full.update(fwr_exit)
+            from small_paper.readiness_forward_shadow import (
+                enrich_exit_readiness_shadow_fields,
+                readiness_shadow_any_enabled,
+            )
+
+            if readiness_shadow_any_enabled(self.cfg):
+                hold_sec = (now - pos.entry_time).total_seconds() if pos.entry_time else None
+                readiness_exit = enrich_exit_readiness_shadow_fields(
+                    pos.entry_shadow,
+                    entry_price=pos.entry_price,
+                    exit_price=actual_exit_price,
+                    exit_reason=reason,
+                    hold_sec=hold_sec,
+                )
+                full.update(readiness_exit)
+            from small_paper.microsequence_recovery_fail_forward_shadow import (
+                enrich_exit_microsequence_recovery_fail_shadow_fields,
+                microsequence_recovery_fail_shadow_enabled,
+            )
+
+            if microsequence_recovery_fail_shadow_enabled(self.cfg):
+                hold_sec = (now - pos.entry_time).total_seconds() if pos.entry_time else None
+                ms_c_exit = enrich_exit_microsequence_recovery_fail_shadow_fields(
+                    pos.entry_shadow,
+                    entry_price=pos.entry_price,
+                    exit_price=actual_exit_price,
+                    exit_reason=reason,
+                    hold_sec=hold_sec,
+                )
+                full.update(ms_c_exit)
         if pos.rich_ticks:
             from small_paper.board_dynamic_trailing_shadow import (
                 enrich_exit_board_dynamic_shadow_fields,

@@ -1,0 +1,759 @@
+{
+  "title_en": "TradeBot Current System Design Specification",
+  "title_ja": "TradeBot 現行システム設計仕様書",
+  "version": "2026.07.12",
+  "state": "PAPER TRADE ONLY — REAL ORDERS NOT AUTHORIZED / NOT IMPLEMENTED",
+  "production_yaml": "configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml",
+  "yaml_sha256": "a20e40ed1bf52624478ecfecf73270a2e3f8df293b37ebcf9d5534ba410e4690",
+  "runtime_contract": [
+    {
+      "Feature": "Entry Cluster Guard",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "True"
+    },
+    {
+      "Feature": "Stop Low MFE Guard",
+      "Status": "NOT_RUNTIME_REACHABLE",
+      "Current value": "False"
+    },
+    {
+      "Feature": "Exit Shadow Monitor",
+      "Status": "NOT_RUNTIME_REACHABLE",
+      "Current value": "False"
+    },
+    {
+      "Feature": "Flat-band",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "True"
+    },
+    {
+      "Feature": "I/H/C",
+      "Status": "SHADOW_ACTIVE",
+      "Current value": "readiness/microsequence shadows true"
+    },
+    {
+      "Feature": "same-symbol",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "no_overlap_replace"
+    },
+    {
+      "Feature": "open_symbols_exceed_cap",
+      "Status": "OBSERVABILITY_ONLY",
+      "Current value": "continue (will_stop=false)"
+    },
+    {
+      "Feature": "Discord Router",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "W10"
+    },
+    {
+      "Feature": "Registration lifetime",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "defer unregister while Capture active"
+    },
+    {
+      "Feature": "live_trading_enabled",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "false"
+    },
+    {
+      "Feature": "order_enabled",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "false"
+    },
+    {
+      "Feature": "Hard Stop",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "1.20%"
+    },
+    {
+      "Feature": "Board Dynamic Trailing",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "board_high/low tiers"
+    },
+    {
+      "Feature": "No Progress Exit",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "true"
+    },
+    {
+      "Feature": "OR Overlay",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "cap 4/1"
+    },
+    {
+      "Feature": "NP Pre-entry Logger",
+      "Status": "OBSERVABILITY_ONLY",
+      "Current value": "true"
+    },
+    {
+      "Feature": "Flat Weak Range Shadow",
+      "Status": "SHADOW_ACTIVE",
+      "Current value": "true"
+    },
+    {
+      "Feature": "Market Capture Sidecar",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "required until 15:35"
+    },
+    {
+      "Feature": "W4S Forward Soak",
+      "Status": "MAINLINE_ACTIVE",
+      "Current value": "LIVE_PAPER_RUNTIME only"
+    },
+    {
+      "Feature": "Real Orders",
+      "Status": "NOT_IMPLEMENTED",
+      "Current value": "NOT AUTHORIZED"
+    }
+  ],
+  "entry_conditions": [
+    {
+      "条件名": "PBv2 profile / entry_score_v2",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "entry_profile / entry_score_v2_min / momentum_score_cutoff_max",
+      "現行値": "momentum_volume_v2 / min=3 / cutoff<=0.2546",
+      "入力": "entry_expectancy_score_v2, momentum_continuation_score, board tier",
+      "判定": "score_v2>=min AND momentum_score_cutoff_pass AND board_mid_or_high",
+      "reject reason": "entry_score_v2_below_threshold / momentum_low_required",
+      "Runtime file/function": "src/research/exposure_gate.py::ExposureGate.evaluate_entry L235-698",
+      "actual/shadow": "actual",
+      "変更可否": "YAML+pin; strategy change needs GO"
+    },
+    {
+      "条件名": "Momentum low (explicit cutoff)",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "momentum_score_cutoff_max",
+      "現行値": "0.2546",
+      "入力": "momentum_continuation_score",
+      "判定": "score <= cutoff (Phase472 PBv2)",
+      "reject reason": "momentum_low_required",
+      "Runtime file/function": "src/research/exposure_gate.py::evaluate_entry + entry_expectancy_score_shadow.momentum_score_cutoff_pass",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Board mid/high required",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "(derived with entry_score_v2)",
+      "現行値": "board_mid_or_high_required_for_v2",
+      "入力": "board imbalance / board tier tokens",
+      "判定": "board mid or high required for v2 accept",
+      "reject reason": "entry_score_v2_below_threshold",
+      "Runtime file/function": "src/small_paper/entry_expectancy_score_shadow.py::board_mid_or_high_required_for_v2",
+      "actual/shadow": "actual",
+      "変更可否": "code"
+    },
+    {
+      "条件名": "OR Open Strength Overlay",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "or_overlay_enabled / cap_pbv2 / cap_or / or_max_update_count",
+      "現行値": "true / 4 / 1 / 8",
+      "入力": "OR open strength features, update_count",
+      "判定": "CAP_SPLIT_4_1: PBv2<=4, OR<=1, total<=5",
+      "reject reason": "or_cap_full / pbv2_cap_full",
+      "Runtime file/function": "src/small_paper/or_overlay_entry.py + pilot_runner._maybe_try_or_overlay_entry",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Price Risk Guard",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "entry_price_risk_guard_enabled / min_entry_price / max_tick_ratio_pct / apply_mode",
+      "現行値": "true / 50.0 / 5.0% / reject_entry",
+      "入力": "entry price, tick size ratio",
+      "判定": "price>=min AND tick_ratio<=max; apply reject_entry",
+      "reject reason": "entry_price_risk_guard",
+      "Runtime file/function": "src/research/exposure_gate.py::evaluate_entry",
+      "actual/shadow": "actual (shadow flag true for audit)",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "High Drift Pullback",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "high_drift_guard_enabled",
+      "現行値": "true",
+      "入力": "day_high distance, r5/r10/r15, dynamic40",
+      "判定": "dynamic40 AND ((dh>=1.2% AND r10<-0.15% AND r5>r10) OR (dh>=1.5% AND (r15<-0.5% OR r5<-0.5%)))",
+      "reject reason": "high_drift_pullback",
+      "Runtime file/function": "src/research/exposure_gate.py::evaluate_entry",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Weak Shape",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "weak_shape_reject_enabled",
+      "現行値": "true",
+      "入力": "opening_peak / slow_opening_peak shape labels",
+      "判定": "reject opening_peak / slow_opening_peak at ENTRY",
+      "reject reason": "weak_shape_reject",
+      "Runtime file/function": "src/research/exposure_gate.py::evaluate_entry",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Late Chase Guard",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "late_chase_guard_enabled",
+      "現行値": "true",
+      "入力": "r10, day_high_distance",
+      "判定": "r10<0.3719 AND day_high_distance<1.1872 → reject",
+      "reject reason": "late_chase_guard",
+      "Runtime file/function": "src/research/exposure_gate.py::evaluate_entry + late_chase_guard",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Classic RSI late chase",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "classic_late_chase_rsi_guard_enabled / threshold",
+      "現行値": "true / 80.0",
+      "入力": "late_chase_cluster flag, RSI14",
+      "判定": "late_chase_cluster AND RSI14>=threshold",
+      "reject reason": "classic_late_chase_rsi_over80",
+      "Runtime file/function": "src/small_paper/classic_late_chase_rsi_guard.py + exposure_gate",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Reentry RSI",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "reentry_rsi_guard_enabled / threshold",
+      "現行値": "true / 60.0",
+      "入力": "prior stop_hit, RSI14",
+      "判定": "re-entry after stop_hit requires RSI14>threshold",
+      "reject reason": "reentry_rsi_guard_below60",
+      "Runtime file/function": "src/research/exposure_gate.py::evaluate_entry",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Entry Quality G9",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "entry_quality_guard_enabled / max_spread_bps / max_update_count",
+      "現行値": "true / 50.0 / 5",
+      "入力": "spread_bps, update_count",
+      "判定": "require spread<=50bps AND update_count<=5",
+      "reject reason": "entry_quality_guard_spread / entry_quality_guard_update_count",
+      "Runtime file/function": "src/small_paper/entry_quality_guard.py",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Entry Cluster Guard",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "entry_cluster_guard_enabled / reject_clusters / exception / liquidity_burst",
+      "現行値": "true / clusters=[5] / csubs=[] / exception=true / thr=0.052267",
+      "入力": "cluster model features, liquidity_burst",
+      "判定": "reject cluster5 unless E4 liquidity_burst exception",
+      "reject reason": "entry_cluster_guard",
+      "Runtime file/function": "src/small_paper/entry_cluster_guard.py",
+      "actual/shadow": "actual",
+      "変更可否": "config+model json"
+    },
+    {
+      "条件名": "Flat-band mainline",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "pbv2_flat_band_mainline_enabled (+ threshold keys)",
+      "現行値": "true; rise5[0.0,0.5] rise10[-0.5,0.5] overheat>=2.0",
+      "入力": "entry_rise_5min_pct, entry_rise_10min_pct, PBv2 pool",
+      "判定": "flat band + overheat evaluate_flat_plus_overheat",
+      "reject reason": "flat_band_mainline",
+      "Runtime file/function": "src/small_paper/pbv2_flat_band_entry_guard.py",
+      "actual/shadow": "actual (shadow flag false)",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Near day-high + low momentum (Dynamic40)",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "enable_near_day_high_low_momentum_dynamic40_guard",
+      "現行値": "true",
+      "入力": "dynamic40, day-high proximity, momentum",
+      "判定": "production ENTRY reject for D40 near-high low-mom",
+      "reject reason": "near_day_high_low_momentum_dynamic40_guard",
+      "Runtime file/function": "src/research/exposure_gate.py::evaluate_entry",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Position cap",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "max_concurrent_positions / position_cap_mode / position_cap_release / cap_pbv2 / cap_or",
+      "現行値": "5 / true / structural_exit / 4/1",
+      "入力": "open position count by pool",
+      "判定": "total<=5 with OR split; release on structural exit",
+      "reject reason": "max_concurrent / pbv2_cap_full / or_cap_full",
+      "Runtime file/function": "pilot_runner + exposure_gate + or_overlay_cap",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "same_symbol_open_policy",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "same_symbol_open_policy",
+      "現行値": "no_overlap_replace",
+      "入力": "open positions for symbol",
+      "判定": "reject ENTRY while same symbol open (no overlap replace chain)",
+      "reject reason": "REJECT_SAME_SYMBOL_OPEN_OVERLAP",
+      "Runtime file/function": "src/small_paper/pilot_runner.py::_maybe_reject_same_symbol_open_overlap",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Allowed trading windows",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "allowed_trading_windows / use_market_time_window",
+      "現行値": "09:05-11:23, 12:33-15:20; use_market_time_window=true",
+      "入力": "market clock JST",
+      "判定": "outside window → reject",
+      "reject reason": "outside_allowed_trading_window",
+      "Runtime file/function": "src/research/exposure_gate.py::evaluate_entry",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Stale price / board freshness",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "entry_freshness_guard_enabled / entry_max_price_age_sec / entry_max_board_age_sec / freshness_semantics_v2",
+      "現行値": "true / 3.0s / 3.0s / v2=True",
+      "入力": "CurrentPriceTime, board update time, event age",
+      "判定": "price/board age <=3s; trade_stale tag_only at 10s",
+      "reject reason": "freshness/stale reject (scan controller)",
+      "Runtime file/function": "src/small_paper/entry_scan_controller.py + pilot_runner",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Daytrade suitability",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "daytrade_suitability_enabled / rule / apply_mode",
+      "現行値": "true / volatility_liquidity_top50 / reject_entry",
+      "入力": "vol/liq ranking prior sessions",
+      "判定": "reject if not in suitability set",
+      "reject reason": "daytrade_suitability",
+      "Runtime file/function": "src/small_paper/daytrade_suitability_gate.py",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    },
+    {
+      "条件名": "Stop Low MFE Guard",
+      "status": "NOT_RUNTIME_REACHABLE",
+      "config key": "stop_low_mfe_guard_enabled",
+      "現行値": "false",
+      "入力": "n/a (disabled)",
+      "判定": "gate branch not taken when false",
+      "reject reason": "stop_low_mfe_guard (unused)",
+      "Runtime file/function": "src/research/exposure_gate.py::evaluate_entry (guard None when disabled)",
+      "actual/shadow": "OFF",
+      "変更可否": "must stay false unless explicit GO"
+    },
+    {
+      "条件名": "Daily loss / risk cluster",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "daily_loss_guard_enabled / daily_loss_guard_pct / risk_cluster_*",
+      "現行値": "true / -2.5% / consecutive=5",
+      "入力": "session PnL, consecutive losses",
+      "判定": "block further ENTRY when tripped",
+      "reject reason": "daily_loss_guard / risk_cluster_block",
+      "Runtime file/function": "src/research/exposure_gate.py::evaluate_entry",
+      "actual/shadow": "actual",
+      "変更可否": "config"
+    }
+  ],
+  "exit_conditions": [
+    {
+      "条件名": "Hard Stop -1.2%",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "discord_hard_stop_pct (Observer hard_stop_pct default 1.20)",
+      "現行値": "1.20%",
+      "入力": "entry_price, mark price",
+      "判定": "price <= entry*(1-0.012) → stop_hit",
+      "exit reason": "stop_hit",
+      "Runtime file/function": "src/small_paper/observer_position_tracker.py (hard_stop_pct=1.20)",
+      "actual/shadow": "actual"
+    },
+    {
+      "条件名": "Board Dynamic Trailing",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "structural_exit_policy=combined_structural_exit_v1_trailing_mfe_shadow",
+      "現行値": "board_high: activate 1.0% giveback 60%; board_low: activate 0.6% giveback 40%; split@47.62",
+      "入力": "peak_pnl, pnl, entry_imbalance_percentile",
+      "判定": "peak>=activate AND pnl<=peak*giveback",
+      "exit reason": "trailing_mfe_exit",
+      "Runtime file/function": "src/research/structural_exit_policies.py::trailing_mfe_params + board_dynamic_trailing_shadow.py",
+      "actual/shadow": "actual (+ legacy 0.8%/50% shadow counterfactual logs)"
+    },
+    {
+      "条件名": "No Progress Exit",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "no_progress_exit_enabled",
+      "現行値": "true (linmfe_t900_i0p6_s0p05_c0p8_p0p3)",
+      "入力": "hold_sec, MFE, pnl",
+      "判定": "hold>=900s, required MFE 0.6+0.05/5m cap 0.8, pnl<0.3%",
+      "exit reason": "no_progress_exit",
+      "Runtime file/function": "src/small_paper/no_progress_exit.py + observer_position_tracker",
+      "actual/shadow": "actual"
+    },
+    {
+      "条件名": "Session end exit/finalize",
+      "status": "MAINLINE_ACTIVE",
+      "config key": "live.session_end / AM-PM runner session boundaries",
+      "現行値": "AM end ~11:25; PM/session_close at session end",
+      "入力": "session clock, open positions",
+      "判定": "force close remaining → session_close",
+      "exit reason": "session_close",
+      "Runtime file/function": "observer_position_tracker + am_pm_daily_runner",
+      "actual/shadow": "actual"
+    },
+    {
+      "条件名": "Stop Low MFE Guard",
+      "status": "NOT_RUNTIME_REACHABLE",
+      "config key": "stop_low_mfe_guard_enabled",
+      "現行値": "false",
+      "入力": "n/a",
+      "判定": "disabled",
+      "exit reason": "n/a",
+      "Runtime file/function": "exposure_gate stop_low_mfe branch OFF",
+      "actual/shadow": "OFF"
+    },
+    {
+      "条件名": "Exit Shadow Monitor (T2/T3)",
+      "status": "NOT_RUNTIME_REACHABLE",
+      "config key": "exit_shadow_monitor_enabled / t2 / t3",
+      "現行値": "false / false / false",
+      "入力": "n/a",
+      "判定": "disabled (Phase669 removed from portfolio)",
+      "exit reason": "n/a",
+      "Runtime file/function": "realtime_board_exit_shadow / exit shadow monitor OFF",
+      "actual/shadow": "OFF"
+    }
+  ],
+  "shadow_research": [
+    {
+      "name": "I Shadow (readiness precision)",
+      "class": "SHADOW",
+      "affects_mainline": "no",
+      "config": "readiness_precision_shadow_enabled=true",
+      "runtime": "src/small_paper/readiness_forward_shadow.py"
+    },
+    {
+      "name": "H Shadow (readiness economics / refined H)",
+      "class": "SHADOW",
+      "affects_mainline": "no",
+      "config": "readiness_economics_shadow_enabled / readiness_refined_h_shadow_enabled=true",
+      "runtime": "src/small_paper/readiness_forward_shadow.py"
+    },
+    {
+      "name": "C Shadow (microsequence recovery-fail)",
+      "class": "SHADOW",
+      "affects_mainline": "no",
+      "config": "microsequence_recovery_fail_shadow_enabled=true",
+      "runtime": "src/small_paper/microsequence_recovery_fail_forward_shadow.py"
+    },
+    {
+      "name": "Flat Weak Range",
+      "class": "SHADOW",
+      "affects_mainline": "no",
+      "config": "flat_weak_range_shadow_enabled=true",
+      "runtime": "src/small_paper/flat_weak_range_forward_shadow.py"
+    },
+    {
+      "name": "NP Logger",
+      "class": "OBSERVABILITY_ONLY",
+      "affects_mainline": "no (logger only)",
+      "config": "np_pre_entry_feature_logger_enabled=true",
+      "runtime": "src/small_paper/np_pre_entry_feature_logger.py"
+    },
+    {
+      "name": "Sector Heat",
+      "class": "RESEARCH_ONLY",
+      "affects_mainline": "no",
+      "config": "n/a in production YAML",
+      "runtime": "research scripts (not Monday mainline path)"
+    },
+    {
+      "name": "Position Sizing Shadow",
+      "class": "RESEARCH_ONLY",
+      "affects_mainline": "no",
+      "config": "n/a production sizing fixed paper",
+      "runtime": "research / live capital dry-run only"
+    },
+    {
+      "name": "Classic Technical Indicator Research",
+      "class": "RESEARCH_ONLY",
+      "affects_mainline": "no",
+      "config": "classic momentum forward shadow modules",
+      "runtime": "src/small_paper/classic_momentum_forward_shadow.py"
+    },
+    {
+      "name": "Volume gate relaxation V90/V80",
+      "class": "SHADOW",
+      "affects_mainline": "no (production remains V100)",
+      "config": "volume_gate_relaxation_shadow_enabled=true",
+      "runtime": "pilot_runner volume gate shadow"
+    },
+    {
+      "name": "PBv2 rise5 shadow",
+      "class": "DEPRECATED",
+      "affects_mainline": "no",
+      "config": "pbv2_rise5_shadow_enabled=false",
+      "runtime": "src/small_paper/pbv2_rise5_shadow.py"
+    },
+    {
+      "name": "VWAP shadow reject",
+      "class": "DEPRECATED",
+      "affects_mainline": "no",
+      "config": "vwap_shadow_reject_enabled=false",
+      "runtime": "src/small_paper/vwap_shadow_reject.py"
+    },
+    {
+      "name": "Exit Shadow Monitor",
+      "class": "NOT_RUNTIME_REACHABLE",
+      "affects_mainline": "no",
+      "config": "exit_shadow_monitor_enabled=false",
+      "runtime": "disabled"
+    },
+    {
+      "name": "IHC portfolio counterfactual",
+      "class": "SHADOW",
+      "affects_mainline": "no",
+      "config": "runtime hook",
+      "runtime": "src/small_paper/shadow_ihc_portfolio.py / ihc_shadow_counterfactual.py"
+    }
+  ],
+  "discord_routing": [
+    {
+      "category": "TRADE_ACTUAL",
+      "env_keys": "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL | KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL",
+      "rate_limit": "dedupe only",
+      "fallback": "none"
+    },
+    {
+      "category": "SESSION_SUMMARY",
+      "env_keys": "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL | KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL",
+      "rate_limit": "dedupe only",
+      "fallback": "none"
+    },
+    {
+      "category": "CAP_BLOCKED",
+      "env_keys": "KABU_SMALL_PAPER_CAP_BLOCKED_WEBHOOK_URL",
+      "rate_limit": "1 per symbol/session/reason via dedupe",
+      "fallback": "none"
+    },
+    {
+      "category": "OPERATIONS",
+      "env_keys": "KABU_DISCORD_OPERATIONS_WEBHOOK_URL",
+      "rate_limit": "15 min",
+      "fallback": "none"
+    },
+    {
+      "category": "MARKET_CAPTURE",
+      "env_keys": "KABU_DISCORD_MARKET_CAPTURE_WEBHOOK_URL | KABU_MARKET_CAPTURE_WEBHOOK_URL",
+      "rate_limit": "15 min",
+      "fallback": "none"
+    },
+    {
+      "category": "RESEARCH_SHADOW",
+      "env_keys": "KABU_DISCORD_RESEARCH_WEBHOOK_URL | KABU_SHADOW_DISCORD_WEBHOOK_URL",
+      "rate_limit": "AM/PM by caller",
+      "fallback": "none; no cross to TRADE"
+    },
+    {
+      "category": "CRITICAL_SAFETY",
+      "env_keys": "KABU_DISCORD_CRITICAL_WEBHOOK_URL",
+      "rate_limit": "30 min",
+      "fallback": "CRITICAL_OPERATIONS_FALLBACK_DEFAULT=false"
+    }
+  ],
+  "components": [
+    {
+      "component": "Checked BAT",
+      "path": "run_paper_trade_checked.bat",
+      "role": "Windows entry"
+    },
+    {
+      "component": "Checked PS1",
+      "path": "kabu_native/scripts/run_paper_trade_checked.ps1",
+      "role": "PYTHONPATH + module launch"
+    },
+    {
+      "component": "Checked Runner",
+      "path": "src/small_paper/paper_trade_checked_runner.py",
+      "role": "precheck/capture/paper/W4S orchestrator"
+    },
+    {
+      "component": "Paper BAT",
+      "path": "run_paper_trade.bat",
+      "role": "preflight + AM/PM daily runner"
+    },
+    {
+      "component": "AM/PM Runner script",
+      "path": "scripts/run_core10_dynamic40_am_pm_daily_runner.py",
+      "role": "CLI to am_pm_daily_runner"
+    },
+    {
+      "component": "AM/PM Orchestrator",
+      "path": "src/runner/am_pm_daily_runner.py",
+      "role": "AM/PM universe + pilot spawn"
+    },
+    {
+      "component": "Pilot Runtime",
+      "path": "src/small_paper/pilot_runner.py",
+      "role": "PUSH eval ENTRY/EXIT paper"
+    },
+    {
+      "component": "ExposureGate",
+      "path": "src/research/exposure_gate.py",
+      "role": "ENTRY accept/reject"
+    },
+    {
+      "component": "Observer tracker",
+      "path": "src/small_paper/observer_position_tracker.py",
+      "role": "positions + EXIT"
+    },
+    {
+      "component": "Capture Sidecar",
+      "path": "src/small_paper/market_capture_sidecar.py",
+      "role": "independent PUSH capture"
+    },
+    {
+      "component": "Capture Supervisor",
+      "path": "src/small_paper/market_capture_supervisor.py",
+      "role": "max 1 restart"
+    },
+    {
+      "component": "Capture Writer",
+      "path": "src/small_paper/market_capture_writer.py",
+      "role": "part JSONL O_EXCL"
+    },
+    {
+      "component": "Registration lifetime",
+      "path": "src/small_paper/registration_lifetime.py",
+      "role": "W11A defer unregister"
+    },
+    {
+      "component": "Discord Router",
+      "path": "src/notify/discord_notification_router.py",
+      "role": "W10 category routing"
+    },
+    {
+      "component": "Discord Worker",
+      "path": "src/notify/discord_notification_worker.py",
+      "role": "async fail-open send"
+    },
+    {
+      "component": "W4S",
+      "path": "src/research/phase687w4s_runtime_readonly_forward_soak.py",
+      "role": "forward soak evaluator"
+    },
+    {
+      "component": "Seal propagation",
+      "path": "src/small_paper/w4s_seal_propagation.py",
+      "role": "session_seal SoT"
+    },
+    {
+      "component": "SafetySM",
+      "path": "src/small_paper/live_order_safety_sm.py",
+      "role": "dry-run safety engine"
+    },
+    {
+      "component": "Production YAML",
+      "path": "configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml",
+      "role": "runtime config SoT"
+    },
+    {
+      "component": "Runtime Gate",
+      "path": "tests/runtime_gate_manifest.json",
+      "role": "Monday contract 28 nodes"
+    }
+  ],
+  "runtime_gate_nodes": [
+    "tests/test_phase687w8_paper_trade_checked_runner.py",
+    "tests/test_phase687w4t_kabu_readonly_readiness.py",
+    "tests/test_phase687w9_market_capture_sidecar.py",
+    "tests/test_phase687w11a_monday_p1_fixes.py",
+    "tests/test_am_pm_daily_runner_session_dirs.py",
+    "tests/test_phase549_entry_cluster_guard_runtime.py",
+    "tests/test_phase413_no_overlap_replace_policy.py",
+    "tests/test_canonical_summary.py",
+    "tests/test_phase687w7a2_w4s_seal_propagation.py",
+    "tests/test_phase687w4s_forward_soak.py",
+    "tests/test_phase687w10_discord_notifications.py",
+    "tests/test_phase687w10a_shadow_runtime_hook.py",
+    "tests/test_phase687_np_pre_entry_feature_logger.py",
+    "tests/test_phase687w7_operational_recovery.py",
+    "tests/test_phase687w7a_stateful_recovery.py",
+    "tests/test_phase687w7a1_recovery_assertion_integrity.py",
+    "tests/test_phase687w6_production_enablement_gate.py",
+    "tests/test_phase687w5_kabu_order_contract.py",
+    "tests/test_phase687w2_live_order_safety.py",
+    "tests/test_kabu_register.py",
+    "tests/test_intraday_refresh.py",
+    "tests/test_phase176_intraday_refresh_degraded_behavior.py",
+    "tests/test_phase616b_extension_bus_session_end_fix.py",
+    "tests/test_phase662_observer_entry_time_freshness.py",
+    "tests/test_phase684_ihc_counterfactual.py",
+    "tests/test_phase650_pbv2_flat_band_shadow.py",
+    "tests/test_allowed_trading_windows.py",
+    "tests/test_position_cap_mode.py"
+  ],
+  "research_long_files": [
+    "tests/test_phase655_no_progress_entry_quality.py",
+    "tests/test_phase656_winner_attribution.py",
+    "tests/test_phase658_full_period_shadow_revalidation.py",
+    "tests/test_phase660_rise5_recent_regression.py",
+    "tests/test_phase665_pretrend_shape.py",
+    "tests/test_phase666_breakout_initiation.py",
+    "tests/test_phase667_flat_vwap_volume.py",
+    "tests/test_phase668_shadow_adoption_review.py",
+    "tests/test_phase669_flat_band_adoption.py",
+    "tests/test_phase670_flat_weak_range_forward_shadow.py",
+    "tests/test_phase671_early_stop_feature_discovery.py",
+    "tests/test_phase672_pre_entry_microsequence.py",
+    "tests/test_phase673_microsequence_third_condition.py",
+    "tests/test_phase674_microsequence_candidate_robustness.py",
+    "tests/test_phase675_recent_early_stop_focus.py",
+    "tests/test_phase676_opening_coldstart_feature_incomplete.py",
+    "tests/test_phase677_entry_readiness_gate_audit.py",
+    "tests/test_phase678_readiness_gate_robustness.py",
+    "tests/test_phase679_readiness_shadow_combo.py",
+    "tests/test_phase679b_h_economics_winner_quality.py",
+    "tests/test_phase681_microsequence_c_runtime_shadow.py",
+    "tests/test_phase682_shadow_portfolio_consistency.py",
+    "tests/test_phase683_shadow_feature_namespace.py"
+  ],
+  "real_order_status": "NOT AUTHORIZED / NOT IMPLEMENTED",
+  "mainline_features": [
+    "Entry Cluster Guard",
+    "Flat-band",
+    "same-symbol",
+    "Discord Router",
+    "Registration lifetime",
+    "live_trading_enabled",
+    "order_enabled",
+    "Hard Stop",
+    "Board Dynamic Trailing",
+    "No Progress Exit",
+    "OR Overlay",
+    "Market Capture Sidecar",
+    "W4S Forward Soak"
+  ],
+  "shadow_features": [
+    "I Shadow (readiness precision)",
+    "H Shadow (readiness economics / refined H)",
+    "C Shadow (microsequence recovery-fail)",
+    "Flat Weak Range",
+    "Volume gate relaxation V90/V80",
+    "IHC portfolio counterfactual"
+  ],
+  "disabled_features": [
+    "Stop Low MFE Guard",
+    "Exit Shadow Monitor"
+  ],
+  "pdf": {
+    "pdf": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\docs\\current_system_design\\tradebot_current_system_design.pdf",
+    "mermaid_embedded": 3,
+    "pages_estimate": "see PDF"
+  }
+}

@@ -3,6 +3,9 @@ Phase575: Vol/Liq startup cache (production).
 
 Caches build_vol_liq_threshold() output per run_session_key.
 Fallback uses the same full prior_vol_liq_scores scan as pre-Phase575.
+
+Phase687W1: normalize safety bare-stamp keys to live_session_* so AM/PM
+startup hits cache instead of ~1000s baseline_fallback.
 """
 
 from __future__ import annotations
@@ -19,6 +22,10 @@ from small_paper.daytrade_suitability_gate import (
     DaytradeSuitabilityState,
     discover_sessions_for_suitability_prior,
     prior_vol_liq_scores,
+)
+from small_paper.vol_liq_session_key import (
+    normalize_vol_liq_run_session_key,
+    vol_liq_cache_key_aliases,
 )
 
 CACHE_SCHEMA_VERSION = 1
@@ -178,17 +185,48 @@ def load_cache_payload(
     run_session_key: str,
     config_fp: Mapping[str, Any],
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
-    path = cache_path_for_key(cache_dir, run_session_key)
-    if not path.is_file():
-        return None, "cache_missing"
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None, "cache_corrupt"
-    err = validate_cache_payload(payload, run_session_key=run_session_key, config_fp=config_fp)
-    if err:
-        return None, err
-    return payload, None
+    """Load cache for canonical key, with alias fallback (bare stamp ↔ live_session_)."""
+    canon = normalize_vol_liq_run_session_key(run_session_key)
+    last_err: Optional[str] = "cache_missing"
+    saw_file = False
+    for alias in vol_liq_cache_key_aliases(canon):
+        path = cache_path_for_key(cache_dir, alias)
+        if not path.is_file():
+            if not saw_file:
+                last_err = "cache_missing"
+            continue
+        saw_file = True
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            last_err = "cache_corrupt"
+            continue
+        stored_key = str(payload.get("run_session_key") or "")
+        ok_keys = set(vol_liq_cache_key_aliases(canon))
+        if stored_key and stored_key not in ok_keys:
+            last_err = "run_session_key_mismatch"
+            continue
+        check_key = stored_key or alias
+        err = validate_cache_payload(payload, run_session_key=check_key, config_fp=config_fp)
+        if err == "run_session_key_mismatch" and alias in ok_keys:
+            patched = dict(payload)
+            patched["run_session_key"] = alias
+            err = validate_cache_payload(patched, run_session_key=alias, config_fp=config_fp)
+            if err is None:
+                payload = patched
+        if err:
+            last_err = err
+            continue
+        if str(payload.get("run_session_key") or "") != canon:
+            promoted = dict(payload)
+            promoted["run_session_key"] = canon
+            try:
+                save_cache_payload(cache_dir, promoted)
+            except OSError:
+                pass
+            payload = promoted
+        return payload, None
+    return None, last_err
 
 
 def build_vol_liq_threshold_full_scan_with_scores(
@@ -199,6 +237,7 @@ def build_vol_liq_threshold_full_scan_with_scores(
 ) -> tuple[Optional[DaytradeSuitabilityState], list[float]]:
     from small_paper.daytrade_suitability_gate import LOOKBACK_PRIOR_ONLY, RULE_VOLATILITY_LIQUIDITY_TOP50
 
+    run_session_key = normalize_vol_liq_run_session_key(run_session_key)
     cfg = DaytradeSuitabilityConfig(
         enabled=True,
         rule=str(getattr(pilot_config, "daytrade_suitability_rule", RULE_VOLATILITY_LIQUIDITY_TOP50)),
@@ -240,7 +279,8 @@ def _record_metrics(metrics: VolLiqCacheBuildMetrics) -> None:
 
 def get_vol_liq_cache_metrics(run_session_key: Optional[str] = None) -> Optional[VolLiqCacheBuildMetrics]:
     if run_session_key:
-        return _LAST_METRICS.get(run_session_key)
+        key = normalize_vol_liq_run_session_key(run_session_key)
+        return _LAST_METRICS.get(key) or _LAST_METRICS.get(run_session_key)
     if not _LAST_METRICS:
         return None
     return next(reversed(_LAST_METRICS.values()))
@@ -261,6 +301,7 @@ def build_vol_liq_threshold_with_startup_cache(
     if not bool(getattr(pilot_config, "daytrade_suitability_enabled", False)):
         return None
 
+    run_session_key = normalize_vol_liq_run_session_key(run_session_key)
     t0 = time.perf_counter()
     cache_dir = resolve_cache_dir(pilot_config, repo_root=repo_root)
     cfg_fp = config_fingerprint(pilot_config)

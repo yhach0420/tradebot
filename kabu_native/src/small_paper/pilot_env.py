@@ -31,29 +31,19 @@ def load_pilot_environment(
     """
     Load repository-root `.env` before safety checks or live pilot.
 
-    Uses the same path resolution as ``api.rest_client.load_kabu_env``.
+    Delegates to ``small_paper.env_loader`` (cwd-independent, OS env wins).
     """
-    from api.rest_client import load_kabu_env
+    from small_paper.env_loader import load_repo_dotenv
 
     root = Path(repo_root).resolve()
-    returned = load_kabu_env(repo_root=root)
-    dotenv_path = returned / ".env"
-    exists = dotenv_path.is_file()
-    loaded = exists
-    try:
-        from dotenv import load_dotenv  # noqa: F401
-
-        loaded = exists
-    except ImportError:
-        loaded = False
-
+    st = load_repo_dotenv(repo_root=root, override=False)
     env_name = (discord_webhook_env or "KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL").strip()
     return PilotEnvStatus(
-        repo_root=root,
+        repo_root=st.repo_root,
         cwd=os.getcwd(),
-        dotenv_path=dotenv_path,
-        dotenv_exists=exists,
-        dotenv_loaded=loaded,
+        dotenv_path=st.dotenv_path,
+        dotenv_exists=st.dotenv_exists,
+        dotenv_loaded=st.dotenv_loaded,
         kabu_api_password_set=bool(os.environ.get("KABU_API_PASSWORD", "").strip()),
         discord_webhook_env=env_name,
         discord_webhook_set=bool(os.environ.get(env_name, "").strip()),

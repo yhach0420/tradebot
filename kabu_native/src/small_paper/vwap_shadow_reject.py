@@ -36,6 +36,10 @@ def entry_vwap_dev_pct_from_payload(entry_px: float, payload: Mapping[str, Any])
     return None
 
 
+def vwap_shadow_reject_enabled(config: Any) -> bool:
+    return bool(getattr(config, "vwap_shadow_reject_enabled", True))
+
+
 def compute_vwap_shadow_reject_fields(
     *,
     payload: Mapping[str, Any],

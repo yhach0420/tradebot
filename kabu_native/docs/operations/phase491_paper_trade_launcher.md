@@ -58,7 +58,11 @@ Runner 完了後、JSON 1行が標準出力に出る（`verdict`, `exit_code`, `
 日次成果物は例:
 
 - `kabu_native/results/reports/daily_runner_summary_YYYYMMDD.json`
+  - `am_summary_path` / `pm_summary_path` → Phase653 preserved snapshots
+- `kabu_native/results/reports/daily_runner/daily_summary_am_YYYYMMDD.json`
+- `kabu_native/results/reports/daily_runner/daily_summary_pm_YYYYMMDD.json`
 - `kabu_native/results/reports/phase148_am_pm_daily_runner_YYYYMMDD.json`
+- Per session: `live_session_*/small_paper_summary_am.json` / `small_paper_summary_pm.json` (Phase653)
 
 ## トラブルシュート
 

@@ -1,0 +1,56 @@
+{
+  "verdict": "CURRENT_SYSTEM_DESIGN_COMPLETE",
+  "document_version": "2026.07.12",
+  "yaml_sha256": "a20e40ed1bf52624478ecfecf73270a2e3f8df293b37ebcf9d5534ba410e4690",
+  "config_mismatch_count": 0,
+  "config_mismatches": [],
+  "broken_code_references": [],
+  "secret_leak_count": 0,
+  "validation_issues": [],
+  "missing_artifacts": [],
+  "submit_cancel": 0,
+  "generated_at_jst": "2026-07-12T06:32:15+09:00",
+  "pdf_validation": {
+    "pdf": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\docs\\current_system_design\\tradebot_current_system_design.pdf",
+    "mermaid_embedded": 3,
+    "pages_estimate": "see PDF"
+  },
+  "output_directory": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\docs\\current_system_design",
+  "diagrams_generated": [
+    "tradebot_runtime_call_graph.mmd",
+    "tradebot_data_flow.mmd",
+    "tradebot_session_lifecycle.mmd"
+  ],
+  "traceability_coverage": 10,
+  "runtime_components": 20,
+  "mainline_features": [
+    "Entry Cluster Guard",
+    "Flat-band",
+    "same-symbol",
+    "Discord Router",
+    "Registration lifetime",
+    "live_trading_enabled",
+    "order_enabled",
+    "Hard Stop",
+    "Board Dynamic Trailing",
+    "No Progress Exit",
+    "OR Overlay",
+    "Market Capture Sidecar",
+    "W4S Forward Soak"
+  ],
+  "shadow_features": [
+    "I Shadow (readiness precision)",
+    "H Shadow (readiness economics / refined H)",
+    "C Shadow (microsequence recovery-fail)",
+    "Flat Weak Range",
+    "Volume gate relaxation V90/V80",
+    "IHC portfolio counterfactual"
+  ],
+  "disabled_features": [
+    "Stop Low MFE Guard",
+    "Exit Shadow Monitor"
+  ],
+  "real_order_status": "NOT AUTHORIZED / NOT IMPLEMENTED",
+  "code_diff_note": "Generator writes only under docs/current_system_design/. Pre-existing working tree changes outside this folder are out of scope for Phase687W12.",
+  "generator_write_scope": "docs/current_system_design/"
+}

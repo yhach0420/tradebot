@@ -61,7 +61,9 @@ def test_register_symbols_cleared_fails_after_retry() -> None:
         register_symbols_cleared(FakePush(), [("7203", 1)])
         raise AssertionError("expected KabuNativeApiError")
     except KabuNativeApiError as e:
-        assert "after unregister retry" in str(e)
+        msg = str(e)
+        assert "retried once" in msg or "after unregister retry" in msg
+        assert "4002006" in msg
 
 
 if __name__ == "__main__":

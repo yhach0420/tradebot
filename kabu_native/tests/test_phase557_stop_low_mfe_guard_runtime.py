@@ -67,6 +67,16 @@ def _base_trade(**overrides: object) -> dict[str, object]:
     return base
 
 
+def _complete_trade(**overrides: object) -> dict[str, object]:
+    model = load_default_model(repo_root=KABU)
+    trade = _base_trade(**overrides)
+    for feat in model.cluster_features:
+        trade.setdefault(feat, 0.1)
+    for feat in model.csub_features:
+        trade.setdefault(feat, 0.01)
+    return trade
+
+
 def _slm_guard(*, enabled: bool = True, threshold: float = DEFAULT_THRESHOLD) -> StopLowMfeGuardState:
     return StopLowMfeGuardState(
         config=StopLowMfeGuardConfig(
@@ -217,7 +227,7 @@ class TestStopLowMfeGuardExposureGate(unittest.TestCase):
                 "cluster_reject_candidate": True,
             },
         ):
-            decision = gate.evaluate_entry(_base_trade(volume_acceleration_5m=0.02))
+            decision = gate.evaluate_entry(_complete_trade(volume_acceleration_5m=0.02))
         self.assertFalse(decision.accept)
         self.assertEqual(decision.reason, REJECT_ENTRY_CLUSTER_GUARD)
         self.assertEqual(slm.reject_count, 0)
@@ -319,7 +329,8 @@ class TestStopLowMfeGuardConfig(unittest.TestCase):
             / "small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml"
         )
         config = load_pilot_config(cfg_path)
-        self.assertTrue(config.stop_low_mfe_guard_enabled)
+        # Phase606: production rolled back stop_low_mfe_guard to disabled
+        self.assertFalse(config.stop_low_mfe_guard_enabled)
         self.assertAlmostEqual(config.stop_low_mfe_guard_threshold, 0.009)
         self.assertEqual(config.stop_low_mfe_guard_missing_policy, "pass")
         self.assertTrue(config.stop_low_mfe_guard_pbv2_only)
@@ -332,7 +343,18 @@ class TestStopLowMfeGuardConfig(unittest.TestCase):
         )
         config = load_pilot_config(cfg_path)
         gate = config.make_exposure_gate(repo_root=KABU)
-        self.assertIsNotNone(getattr(gate, "stop_low_mfe_guard", None))
+        # Disabled in production YAML → not attached
+        self.assertIsNone(getattr(gate, "stop_low_mfe_guard", None))
+        # Explicit enable still attaches
+        enabled = SmallPaperPilotConfig(
+            stop_low_mfe_guard_enabled=True,
+            stop_low_mfe_guard_threshold=0.009,
+            stop_low_mfe_guard_missing_policy="pass",
+            stop_low_mfe_guard_pbv2_only=True,
+            entry_cluster_guard_enabled=False,
+        )
+        gate_on = enabled.make_exposure_gate(repo_root=KABU)
+        self.assertIsNotNone(getattr(gate_on, "stop_low_mfe_guard", None))
 
     def test_config_from_pilot(self) -> None:
         config = SmallPaperPilotConfig(
@@ -367,8 +389,8 @@ class TestPhase557Verdict(unittest.TestCase):
 
     def test_production_startup_smoke_test(self) -> None:
         smoke = run_production_startup_smoke_test(repo_root=REPO)
-        self.assertTrue(smoke.checks.get("stop_low_mfe_guard"))
-        self.assertTrue(smoke.checks.get("stop_low_mfe_guard_summary"))
+        # Phase606: stop_low_mfe_guard is intentionally off in production YAML
+        self.assertFalse(bool(smoke.checks.get("stop_low_mfe_guard")))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,183 @@
+{
+  "contract_id": "kabusapi_sendorder_stock_credit",
+  "contract_version": "687W5A.1",
+  "source": {
+    "title": "kabuステーションAPIリファレンス — 注文発注（現物・信用） POST /sendorder",
+    "url": "https://kabucom.github.io/kabusapi/reference/index.html",
+    "section": "発注 / 注文発注（現物・信用）",
+    "retrieved_at": "2026-07-11T05:15:00+09:00",
+    "note": "Structured field constraints only. Not a full copy of the vendor HTML/OpenAPI."
+  },
+  "source_of_truth_priority": [
+    "official_kabusapi_reference",
+    "this_vendor_snapshot",
+    "live_order_api_wiring.py",
+    "OrderRequestBuilder",
+    "test_fixtures"
+  ],
+  "endpoint": "POST /sendorder",
+  "product_scope": "stock_cash_and_margin",
+  "fields": {
+    "Symbol": {"type": "string", "required": true},
+    "Exchange": {
+      "type": "integer",
+      "required": true,
+      "enum": {"1": "TSE", "3": "NSE", "5": "FSE", "6": "SSE", "9": "SOR", "27": "TSE_PLUS"},
+      "constraints": [
+        "Normal-time NEW orders must not specify Exchange=1 (TSE).",
+        "During SOR/TSE+ maintenance, cash-only may specify TSE.",
+        "Margin repay: may use TSE until repay deadline if position opened on TSE.",
+        "TSE-held positions cannot be repaid via SOR or TSE+."
+      ]
+    },
+    "SecurityType": {"type": "integer", "required": true, "enum": {"1": "STOCK"}},
+    "Side": {"type": "string", "required": true, "enum": {"1": "SELL", "2": "BUY"}},
+    "CashMargin": {
+      "type": "integer",
+      "required": true,
+      "enum": {"1": "CASH", "2": "MARGIN_NEW", "3": "MARGIN_REPAY"}
+    },
+    "MarginTradeType": {
+      "type": "integer",
+      "required_when": "CashMargin in {2,3}",
+      "not_required_when": "CashMargin=1",
+      "enum": {"1": "SYSTEM", "2": "GENERAL_LONG", "3": "GENERAL_DAYTRADE"}
+    },
+    "MarginPremiumUnit": {
+      "type": "number",
+      "required_when": "premium_auction_window_and_eligible",
+      "status_in_tradebot": "NOT_IMPLEMENTED"
+    },
+    "DelivType": {
+      "type": "integer",
+      "required": true,
+      "enum": {"0": "NONE", "2": "DEPOSIT", "3": "AU_MONEY_CONNECT"},
+      "rules": {
+        "CASH_BUY": "required (typically 2 or account-specific)",
+        "CASH_SELL": "0",
+        "MARGIN_NEW": "0",
+        "MARGIN_REPAY": "required (typically 2; 3 only if au money connect enabled)"
+      }
+    },
+    "FundType": {
+      "type": "string",
+      "rules": {
+        "CASH_BUY": "required",
+        "CASH_SELL": "two_halfwidth_spaces",
+        "MARGIN_NEW": "optional; '11' or omit (auto-set to '11')",
+        "MARGIN_REPAY": "optional; '11' or omit (auto-set to '11')"
+      },
+      "enum_known": {"  ": "CASH_SELL", "02": "PROTECTED", "AA": "MARGIN_SUBSTITUTE", "11": "MARGIN"}
+    },
+    "AccountType": {
+      "type": "integer",
+      "required": true,
+      "enum": {"2": "GENERAL", "4": "SPECIFIC", "12": "CORPORATE"}
+    },
+    "Qty": {"type": "integer", "required": true},
+    "ClosePositionOrder": {
+      "type": "integer",
+      "required_when": "CashMargin=3 AND ClosePositions absent",
+      "mutually_exclusive_with": "ClosePositions",
+      "enum": {
+        "0": "date_asc_pnl_desc",
+        "1": "date_asc_pnl_asc",
+        "2": "date_desc_pnl_desc",
+        "3": "date_desc_pnl_asc",
+        "4": "pnl_desc_date_asc",
+        "5": "pnl_desc_date_desc",
+        "6": "pnl_asc_date_asc",
+        "7": "pnl_asc_date_desc"
+      },
+      "production_note": "Value 0 is an official repay-order mode, not an arbitrary default. Production adoption requires explicit policy review."
+    },
+    "ClosePositions": {
+      "type": "array",
+      "required_when": "CashMargin=3 AND ClosePositionOrder absent",
+      "mutually_exclusive_with": "ClosePositionOrder",
+      "item_fields": {"HoldID": "string (E...)", "Qty": "integer"}
+    },
+    "FrontOrderType": {
+      "type": "integer",
+      "required": true,
+      "enum_supported_in_tradebot_dryrun": {"10": "MARKET", "20": "LIMIT"},
+      "enum_official_additional_not_implemented": {
+        "13": "MOO_AM",
+        "14": "MOO_PM",
+        "15": "MOC_AM",
+        "16": "MOC_PM",
+        "17": "IOC_MARKET",
+        "21": "LOO_AM",
+        "22": "LOO_PM",
+        "23": "LOC_AM",
+        "24": "LOC_PM",
+        "25": "FUNARI_AM",
+        "26": "FUNARI_PM",
+        "27": "IOC_LIMIT",
+        "30": "REVERSE_LIMIT"
+      }
+    },
+    "Price": {
+      "type": "number",
+      "required": true,
+      "rules": {
+        "MARKET_family": "must be 0",
+        "LIMIT_family": "must be order price > 0",
+        "REVERSE_LIMIT": "omit / use AfterHitPrice (NOT_IMPLEMENTED)"
+      }
+    },
+    "ExpireDay": {
+      "type": "integer",
+      "required": true,
+      "notes": "yyyyMMdd or 0 (= kabuStation 'today' / next tradable day semantics)"
+    },
+    "ReverseLimitOrder": {
+      "type": "object",
+      "required_when": "FrontOrderType=30",
+      "status_in_tradebot": "NOT_IMPLEMENTED"
+    }
+  },
+  "transaction_types": {
+    "CASH_BUY": {
+      "status_in_tradebot": "NOT_IMPLEMENTED",
+      "Side": "2",
+      "CashMargin": 1,
+      "FundType": "required",
+      "DelivType": "required_nonzero_typical"
+    },
+    "CASH_SELL": {
+      "status_in_tradebot": "NOT_IMPLEMENTED",
+      "Side": "1",
+      "CashMargin": 1,
+      "FundType": "two_spaces",
+      "DelivType": 0
+    },
+    "MARGIN_NEW_BUY": {
+      "status_in_tradebot": "IMPLEMENTED_DRYRUN",
+      "Side": "2",
+      "CashMargin": 2,
+      "MarginTradeType": "required",
+      "DelivType": 0,
+      "FundType": "omit_or_11",
+      "ClosePositions": "forbidden",
+      "ClosePositionOrder": "forbidden",
+      "Exchange_new_order": "SOR(9) or TSE_PLUS(27); TSE(1) only maintenance exception"
+    },
+    "MARGIN_REPAY_SELL": {
+      "status_in_tradebot": "IMPLEMENTED_DRYRUN",
+      "Side": "1",
+      "CashMargin": 3,
+      "MarginTradeType": "must_match_open_position",
+      "DelivType": "required (2 typical)",
+      "FundType": "omit_or_11",
+      "close_xor": ["ClosePositions", "ClosePositionOrder"],
+      "Exchange": "must_match_open_position_exchange; no silent SOR/TSE+ remap"
+    }
+  },
+  "tradebot_margin_trade_type": {
+    "wiring_default": 3,
+    "official_label": "一般信用（デイトレ）",
+    "live_account_verification": "NOT_VERIFIED_IN_THIS_PHASE",
+    "policy": "Do not invent system/general/daytrade selection; fixtures must set margin_trade_type_source explicitly."
+  }
+}

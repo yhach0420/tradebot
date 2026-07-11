@@ -18,6 +18,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
@@ -39,10 +40,27 @@ from small_paper.discord_message_builder import (
     build_universe_screening_overview,
     split_watch_symbols_discord_fields,
     format_slot_usage,
+    format_position_slot_pair,
     format_time_hms_jst,
 )
 from small_paper.discord_symbol_names import format_symbol_display, get_cached_symbol_name_map
-from small_paper.discord_ux_session import DiscordUxSessionStats
+from small_paper.discord_entry_delivery import (
+    CLASS_HTTP_FAILED,
+    CLASS_NOTIFY_NOT_CALLED,
+    CLASS_NO_RETRY_TERMINATED,
+    CLASS_OTHER,
+    CLASS_WEBHOOK_SEND_FAILED,
+    DiscordPostResult,
+    DeliveryAuditCallback,
+    EntryNotifyRetryQueue,
+    FINAL_DELIVERED,
+    FINAL_FAILED,
+    FINAL_SKIPPED,
+    FINAL_SUPPRESSED,
+    _PendingEntryNotify,
+    now_iso,
+    webhook_url_hash,
+)
 
 log = logging.getLogger("kabu_native.small_paper.discord")
 
@@ -91,6 +109,15 @@ def _fmt_num(v: Any, *, digits: int = 2) -> str:
         return str(v)
 
 
+def _optional_float(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _stop_take(entry_price: float, hard_stop_pct: float) -> tuple[float, float]:
     stop = entry_price * (1.0 - float(hard_stop_pct) / 100.0)
     take = entry_price * (1.0 + _DISPLAY_TAKE_PCT / 100.0)
@@ -119,6 +146,7 @@ class SmallPaperDiscordNotifier:
         policy_label: str = "q055_cap3",
         min_continuation_quality: float = 0.55,
         error_logger: Optional[ErrorLogger] = None,
+        delivery_audit: Optional[DeliveryAuditCallback] = None,
     ) -> None:
         self.cfg = cfg
         self.profile = profile
@@ -126,6 +154,8 @@ class SmallPaperDiscordNotifier:
         self.policy_label = policy_label
         self.min_continuation_quality = min_continuation_quality
         self._error_logger = error_logger
+        self._delivery_audit = delivery_audit
+        self.entry_retry_queue = EntryNotifyRetryQueue(max_retries=3)
         self._legacy_webhook_url = ""
         self._trade_webhook_url = ""
         self._trade_webhook_source = ""
@@ -135,6 +165,25 @@ class SmallPaperDiscordNotifier:
         self.discord_error_count: int = 0
         self.cap_blocked_notify_attempt_count: int = 0
         self.cap_blocked_notify_sent_count: int = 0
+        self._notify_sequence: int = 0
+        try:
+            from small_paper.env_loader import ensure_repo_dotenv
+
+            ensure_repo_dotenv()
+        except Exception:
+            pass
+
+    def _ensure_env(self) -> None:
+        try:
+            from small_paper.env_loader import ensure_repo_dotenv
+
+            ensure_repo_dotenv()
+        except Exception:
+            pass
+
+    def _next_sequence_id(self) -> int:
+        self._notify_sequence += 1
+        return self._notify_sequence
 
     @property
     def active(self) -> bool:
@@ -174,6 +223,7 @@ class SmallPaperDiscordNotifier:
         return (time.monotonic() - self._last_heartbeat_mono) >= self.heartbeat_interval_sec()
 
     def _resolve_legacy_webhook(self) -> str:
+        self._ensure_env()
         if self._legacy_webhook_url:
             return self._legacy_webhook_url
         env_name = (self.cfg.webhook_env or _LEGACY_WEBHOOK_ENV).strip()
@@ -183,6 +233,7 @@ class SmallPaperDiscordNotifier:
         return url
 
     def _resolve_trade_webhook(self) -> tuple[str, str]:
+        self._ensure_env()
         if self._trade_webhook_url:
             return self._trade_webhook_url, self._trade_webhook_source
         notify_env = (self.cfg.trade_notify_webhook_env or _TRADE_NOTIFY_WEBHOOK_ENV).strip()
@@ -199,6 +250,7 @@ class SmallPaperDiscordNotifier:
         return "", ""
 
     def _resolve_cap_blocked_webhook(self) -> str:
+        self._ensure_env()
         if self._cap_blocked_webhook_url:
             return self._cap_blocked_webhook_url
         env_name = (self.cfg.trade_cap_blocked_webhook_env or _CAP_BLOCKED_WEBHOOK_ENV).strip()
@@ -237,15 +289,43 @@ class SmallPaperDiscordNotifier:
             },
         ]
 
-    def _log_failure(self, op: str, detail: str, extra: Optional[Mapping[str, Any]] = None) -> None:
+    def _log_failure(
+        self,
+        op: str,
+        detail: str,
+        extra: Optional[Mapping[str, Any]] = None,
+        *,
+        error_type: str = "discord_error",
+    ) -> None:
         self.discord_error_count += 1
         log.warning("[SMALL_PAPER_DISCORD] %s: %s", op, detail)
         if self._error_logger:
+            payload = {"operation": op, **dict(extra or {})}
+            payload.setdefault("error_type", error_type)
             self._error_logger(
                 "discord_notify",
                 detail,
-                {"operation": op, **dict(extra or {})},
+                payload,
             )
+
+    def _log_entry_notify_failure(
+        self,
+        *,
+        symbol: str,
+        event_time: str,
+        detail: str,
+        extra: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        self._log_failure(
+            "entry_notify",
+            detail,
+            {
+                "symbol": symbol,
+                "event_time": event_time,
+                **dict(extra or {}),
+            },
+            error_type="discord_entry_notify_failed",
+        )
 
     def _post(
         self,
@@ -258,32 +338,77 @@ class SmallPaperDiscordNotifier:
         cooldown_sec: Optional[float] = None,
         trade_notify: bool = False,
         cap_blocked: bool = False,
+        sequence_id: Optional[int] = None,
     ) -> bool:
+        return self._post_with_result(
+            event_tag=event_tag,
+            title_line=title_line,
+            fields=fields,
+            color=color,
+            dedupe_key=dedupe_key,
+            cooldown_sec=cooldown_sec,
+            trade_notify=trade_notify,
+            cap_blocked=cap_blocked,
+            sequence_id=sequence_id,
+        ).final_result == FINAL_DELIVERED
+
+    def _post_with_result(
+        self,
+        *,
+        event_tag: str,
+        title_line: str,
+        fields: list[dict[str, Any]],
+        color: int,
+        dedupe_key: Optional[str] = None,
+        cooldown_sec: Optional[float] = None,
+        trade_notify: bool = False,
+        cap_blocked: bool = False,
+        sequence_id: Optional[int] = None,
+        payload_prebuilt: bool = True,
+    ) -> DiscordPostResult:
+        res = DiscordPostResult(payload_built=payload_prebuilt)
         if not self.cfg.enabled or not self.cfg.observer_only:
-            return False
+            res.final_result = FINAL_SKIPPED
+            res.suppressed_reason = "discord_disabled_or_not_observer_only"
+            res.failure_classification = CLASS_NOTIFY_NOT_CALLED
+            return res
         if dedupe_key and not self._cooldown_ok(dedupe_key, cooldown_sec=cooldown_sec):
-            return False
+            res.final_result = FINAL_SUPPRESSED
+            res.suppressed_reason = f"cooldown:{dedupe_key}"
+            res.failure_classification = CLASS_OTHER
+            return res
         if cap_blocked:
             webhook = self._resolve_cap_blocked_webhook()
             env_hint = self.cfg.trade_cap_blocked_webhook_env
             source = "cap_blocked"
         elif trade_notify:
             if not self.active:
-                return False
+                res.final_result = FINAL_SKIPPED
+                res.suppressed_reason = "trade_notify_inactive"
+                res.failure_classification = CLASS_NOTIFY_NOT_CALLED
+                return res
             webhook, source = self._resolve_trade_webhook()
             env_hint = self.cfg.trade_notify_webhook_env
             if source == "legacy_fallback":
                 env_hint = f"{self.cfg.trade_notify_webhook_env} (fallback {self.cfg.webhook_env})"
         else:
             if not self.active:
-                return False
+                res.final_result = FINAL_SKIPPED
+                res.suppressed_reason = "legacy_inactive"
+                res.failure_classification = CLASS_NOTIFY_NOT_CALLED
+                return res
             webhook = self._resolve_legacy_webhook()
             env_hint = self.cfg.webhook_env
             source = "legacy"
         if not webhook:
+            res.final_result = FINAL_FAILED
+            res.failure_classification = CLASS_WEBHOOK_SEND_FAILED
+            res.failure_reason = f"webhook_empty:{env_hint}"
             self._log_failure("webhook", f"env {env_hint} empty", {"channel": source})
-            return False
+            return res
 
+        seq = sequence_id if sequence_id is not None else self._next_sequence_id()
+        footer_text = f"observer only · dry-run · no real orders · seq {seq}"
         payload = {
             "content": self._header_content(event_tag, title_line),
             "embeds": [
@@ -292,26 +417,150 @@ class SmallPaperDiscordNotifier:
                     "color": color,
                     "fields": fields,
                     "footer": {
-                        "text": "observer only · dry-run · no real orders",
+                        "text": footer_text,
                     },
                 }
             ],
         }
+        res.webhook_url_hash = webhook_url_hash(webhook)
+        res.webhook_called = True
+        # Phase687W10: async worker — never block PUSH/ENTRY/EXIT on Discord HTTP
         try:
-            resp = requests.post(webhook, json=payload, timeout=15)
-            if resp.status_code >= 400:
-                self._log_failure(
-                    "http",
-                    f"HTTP {resp.status_code}",
-                    {"body": (resp.text or "")[:200]},
-                )
-                return False
+            from notify.discord_notification_model import (
+                ActualOrShadow,
+                NotificationCategory,
+                Severity,
+                build_envelope,
+            )
+            from notify.discord_notification_router import get_router
+
+            if cap_blocked:
+                category = NotificationCategory.CAP_BLOCKED
+                aos = ActualOrShadow.NONE
+                ownership = "PAPER_RUNTIME"
+            elif trade_notify:
+                tag = (event_tag or "").upper()
+                if tag in ("ENTRY", "EXIT"):
+                    category = NotificationCategory.TRADE_ACTUAL
+                    aos = ActualOrShadow.ACTUAL
+                elif "SUMMARY" in tag or tag in ("AM", "PM", "DAILY"):
+                    category = NotificationCategory.SESSION_SUMMARY
+                    aos = ActualOrShadow.ACTUAL
+                else:
+                    category = NotificationCategory.SESSION_SUMMARY
+                    aos = ActualOrShadow.ACTUAL
+                ownership = "PAPER_RUNTIME"
+            else:
+                category = NotificationCategory.OPERATIONS
+                aos = ActualOrShadow.OPERATIONS
+                ownership = "PAPER_RUNTIME"
+
+            native = Path(__file__).resolve().parents[2]
+            env = build_envelope(
+                category=category,
+                severity=Severity.INFO if category != NotificationCategory.CAP_BLOCKED else Severity.NOTICE,
+                event_type=event_tag or "NOTIFY",
+                title=title_line,
+                content=str(payload.get("content") or title_line),
+                embeds=list(payload.get("embeds") or []),
+                dedupe_key=dedupe_key or "",
+                actual_or_shadow=aos,
+                source_module="discord_notifier",
+                ownership=ownership,
+            )
+            # Prefer configured category webhook; if empty, use already-resolved webhook via direct enqueue
+            router = get_router(native)
+            outcome = router.publish(env)
+            if outcome.get("status") == "SKIPPED_WEBHOOK_NOT_CONFIGURED" and webhook:
+                # Compatibility: existing trade/legacy/cap URLs still work via direct enqueue
+                env.webhook_env_key = env_hint
+                q = router.worker.enqueue(env, webhook)
+                outcome = q
+                if q.get("queued") and dedupe_key:
+                    router.dedupe.record(
+                        dedupe_key=dedupe_key,
+                        status="SENT",
+                        notification_id=env.notification_id,
+                        payload_hash=env.payload_hash,
+                    )
+            status = str(outcome.get("status") or "")
+            if status in ("QUEUED", "SENT"):
+                if dedupe_key:
+                    self._mark_sent(dedupe_key)
+                res.final_result = FINAL_DELIVERED
+                res.sent_time = now_iso()
+                return res
+            if status in ("DEDUPED", "RATE_LIMITED"):
+                res.final_result = FINAL_SUPPRESSED
+                res.suppressed_reason = status.lower()
+                return res
+            if status == "SKIPPED_WEBHOOK_NOT_CONFIGURED":
+                res.final_result = FINAL_SKIPPED
+                res.suppressed_reason = "webhook_not_configured"
+                return res
+            # DROPPED / FAILED — fail-open for trading (do not raise)
+            res.final_result = FINAL_FAILED
+            res.failure_reason = status
+            res.failure_classification = CLASS_WEBHOOK_SEND_FAILED
+            return res
         except Exception as e:
-            self._log_failure("post", str(e))
-            return False
-        if dedupe_key:
-            self._mark_sent(dedupe_key)
-        return True
+            # Fail-open: trading continues even if notify stack breaks
+            from notify.discord_notification_audit import mask_secrets_text
+
+            res.final_result = FINAL_FAILED
+            res.failure_classification = CLASS_WEBHOOK_SEND_FAILED
+            res.exception_type = type(e).__name__
+            # Never store raw exception text (may embed webhook URL / tokens)
+            res.exception_message = mask_secrets_text(str(e))[:240]
+            if "webhook" in res.exception_message.lower() or "discord.com" in res.exception_message.lower():
+                res.exception_message = "[REDACTED]"
+            res.failure_reason = res.exception_type
+            self._log_failure(
+                "post_async",
+                res.exception_type,
+                {"exception_type": res.exception_type, "error_category": "notify_stack"},
+            )
+            return res
+
+    def _emit_entry_delivery_audit(
+        self,
+        *,
+        result: DiscordPostResult,
+        event: Mapping[str, Any],
+        sequence_id: int,
+        persisted_to_log: bool,
+    ) -> None:
+        if self._delivery_audit is None:
+            return
+        self._delivery_audit(
+            result.to_audit_record(
+                symbol=str(event.get("symbol") or ""),
+                event_time=str(event.get("event_time") or ""),
+                position_id=str(event.get("position_id") or ""),
+                session_id=str(event.get("session_id") or ""),
+                sequence_id=sequence_id,
+                persisted_to_log=persisted_to_log,
+            )
+        )
+
+    def _send_pending_entry_notify(self, item: _PendingEntryNotify) -> DiscordPostResult:
+        return self.notify_entry(
+            event=item.event,
+            payload=item.payload,
+            open_slots=item.open_slots,
+            session_bucket=item.session_bucket,
+            slot_before=item.slot_before,
+            score5_candidate_ordinal=item.score5_candidate_ordinal,
+            sequence_id=item.sequence_id,
+            is_retry=True,
+            retry_attempt=item.attempt,
+        )
+
+    def flush_entry_notify_retries(self) -> list[DiscordPostResult]:
+        return self.entry_retry_queue.flush(
+            self._send_pending_entry_notify,
+            audit=self._delivery_audit,
+        )
 
     def notify_entry(
         self,
@@ -324,7 +573,11 @@ class SmallPaperDiscordNotifier:
         ux_stats: Optional[DiscordUxSessionStats] = None,
         entry_signal_mono: Optional[float] = None,
         notify_mono: Optional[float] = None,
-    ) -> bool:
+        slot_before: Optional[int] = None,
+        sequence_id: Optional[int] = None,
+        is_retry: bool = False,
+        retry_attempt: int = 0,
+    ) -> DiscordPostResult:
         sym = str(event.get("symbol") or "")
         entry_px = event.get("current_price") or payload.get("CurrentPrice")
         try:
@@ -338,17 +591,22 @@ class SmallPaperDiscordNotifier:
                 (float(notify_mono) - float(entry_signal_mono)) * 1000.0,
                 1,
             )
-        if notify_mono is not None:
-            merged["discord_sent_ts"] = datetime.now(JST).isoformat(timespec="milliseconds")
         v2_raw = merged.get("entry_expectancy_score_v2")
         try:
             v2 = int(v2_raw) if v2_raw is not None and v2_raw != "" else None
         except (TypeError, ValueError):
             v2 = None
-        slot = format_slot_usage(open_slots, self._max_slots())
+        pre_slot = slot_before
+        if pre_slot is None and event.get("position_slot_before") is not None:
+            try:
+                pre_slot = int(event.get("position_slot_before"))
+            except (TypeError, ValueError):
+                pre_slot = None
+        slot = format_position_slot_pair(pre_slot, open_slots, self._max_slots())
         name_map = get_cached_symbol_name_map()
         display = format_symbol_display(sym, name_map=name_map)
         event_time = str(event.get("event_time") or "")
+        seq = sequence_id if sequence_id is not None else self._next_sequence_id()
         detail = build_entry_detail(
             symbol=sym,
             entry_price=entry_f,
@@ -359,8 +617,15 @@ class SmallPaperDiscordNotifier:
             score5_candidate_ordinal=score5_candidate_ordinal,
             name_map=name_map,
             entry_time=event_time,
+            sent_time="",
+            sequence_id=seq,
         )
-        ok = self._post(
+        post_res = DiscordPostResult(
+            notify_entry_called=True,
+            payload_built=True,
+            retry_count=retry_attempt,
+        )
+        post_res = self._post_with_result(
             event_tag="ENTRY",
             title_line=f"【ENTRY】 {display}",
             fields=[
@@ -371,10 +636,55 @@ class SmallPaperDiscordNotifier:
             color=0x2F855A,
             dedupe_key=f"entry|{sym}|{event.get('message_index')}",
             trade_notify=True,
+            sequence_id=seq,
+            payload_prebuilt=True,
         )
-        if ok and ux_stats is not None and v2 is not None and v2 >= self.cfg.entry_deferred_min_score_v2:
-            ux_stats.record_score5_entry()
-        return ok
+        post_res.notify_entry_called = True
+        post_res.payload_built = True
+        post_res.retry_count = retry_attempt
+        if post_res.final_result != FINAL_DELIVERED and not is_retry:
+            if post_res.final_result == FINAL_FAILED:
+                self.entry_retry_queue.enqueue(
+                    _PendingEntryNotify(
+                        event=dict(event),
+                        payload=dict(payload),
+                        open_slots=open_slots,
+                        session_bucket=session_bucket,
+                        slot_before=pre_slot,
+                        score5_candidate_ordinal=score5_candidate_ordinal,
+                        sequence_id=seq,
+                        attempt=0,
+                    )
+                )
+        if post_res.final_result != FINAL_DELIVERED:
+            self._log_entry_notify_failure(
+                symbol=sym,
+                event_time=event_time,
+                detail=post_res.failure_reason or "ENTRY Discord notify failed",
+                extra={
+                    "position_slot_before": pre_slot,
+                    "position_slot_after": open_slots,
+                    "session_id": event.get("session_id"),
+                    "position_id": event.get("position_id"),
+                    "sequence_id": seq,
+                    "http_status": post_res.http_status,
+                    "exception_type": post_res.exception_type,
+                    "failure_classification": post_res.failure_classification,
+                    "retry_count": post_res.retry_count,
+                },
+            )
+        persisted = False
+        if post_res.final_result == FINAL_DELIVERED:
+            if ux_stats is not None and v2 is not None and v2 >= self.cfg.entry_deferred_min_score_v2:
+                ux_stats.record_score5_entry()
+            persisted = True
+        self._emit_entry_delivery_audit(
+            result=post_res,
+            event=event,
+            sequence_id=seq,
+            persisted_to_log=persisted,
+        )
+        return post_res
 
     def notify_entry_cap_blocked(
         self,
@@ -606,6 +916,8 @@ class SmallPaperDiscordNotifier:
         exit_time = str(
             context.get("exit_time") or context.get("event_time") or context.get("timestamp") or ""
         )
+        sent_time = datetime.now(JST).isoformat(timespec="milliseconds")
+        seq = self._next_sequence_id()
         detail = build_exit_detail(
             symbol=sym,
             entry_price=entry_px,
@@ -629,6 +941,13 @@ class SmallPaperDiscordNotifier:
             ),
             exit_time=exit_time,
             name_map=name_map,
+            market_time_age_sec=_optional_float(context.get("market_time_age_sec")),
+            price_age_sec=_optional_float(context.get("price_age_sec")),
+            stale_trade=bool(context.get("stale_trade")),
+            sent_time=sent_time,
+            session_id=str(context.get("session_id") or "") or None,
+            position_id=str(context.get("position_id") or "") or None,
+            sequence_id=seq,
         )
         if self.cfg.position_cap_mode:
             detail += "\nExit source: structural_observer"
@@ -649,6 +968,7 @@ class SmallPaperDiscordNotifier:
             color=0xC05621,
             dedupe_key=f"exit|{sym}|{reason}|{context.get('exit_time', '')}",
             trade_notify=True,
+            sequence_id=seq,
         )
 
     def notify_universe_refresh(
@@ -707,15 +1027,22 @@ class SmallPaperDiscordNotifier:
         watch_symbols: Sequence[str],
         day_stamp: str = "",
         status: str = "completed",
+        generated_at: Optional[str] = None,
     ) -> bool:
         """Post initial watch list after AM/PM universe screening (not 10:00/14:30 refresh)."""
         if not self.cfg.send_universe_refresh:
             return False
         name_map = get_cached_symbol_name_map()
+        sent_at = datetime.now(JST).isoformat(timespec="milliseconds")
+        gen_at = generated_at or sent_at
+        seq = self._next_sequence_id()
         overview = build_universe_screening_overview(
             session_label=session_label,
             watch_symbol_count=len(watch_symbols),
             name_map=name_map,
+            generated_at=gen_at,
+            sent_at=sent_at,
+            sequence_id=seq,
         )
         if status != "completed":
             overview = f"状態: {status}\n{overview}"
@@ -737,6 +1064,7 @@ class SmallPaperDiscordNotifier:
             dedupe_key=f"screening|{session_label}|{dedupe_day}",
             cooldown_sec=43200.0,
             trade_notify=True,
+            sequence_id=seq,
         )
 
     def _production_summary_fields(
@@ -762,7 +1090,6 @@ class SmallPaperDiscordNotifier:
         fields: list[dict[str, Any]] = []
         from small_paper.discord_message_builder import (
             build_operator_status_embed_fields,
-            format_research_shadow_daily_summary_lines,
         )
 
         chunk = detail
@@ -784,18 +1111,8 @@ class SmallPaperDiscordNotifier:
                 summary=summary,
             )
         )
-        research_shadow = format_research_shadow_daily_summary_lines(
-            summary,
-            omit_operator_covered=True,
-        )
-        if research_shadow:
-            fields.append(
-                {
-                    "name": "Research Shadow",
-                    "value": "\n".join(research_shadow)[:1020],
-                    "inline": False,
-                }
-            )
+        # Phase687W10A: RESEARCH_SHADOW is a separate Discord category (AM/PM hook).
+        # Do not embed hypothetical Shadow PnL into actual trade-notify Summary.
         return fields
 
     def notify_daily_summary(
@@ -963,26 +1280,49 @@ def notify_discord_session_end(
     monitored_symbol_count: Optional[int] = None,
     reject_rows: Optional[Sequence[Mapping[str, Any]]] = None,
     ux_stats: Optional[DiscordUxSessionStats] = None,
+    native_root: Optional[Path] = None,
+    output_dir: Optional[Path] = None,
 ) -> None:
-    """Session-end Discord: Daily Summary (Phase276+) or legacy SUMMARY."""
-    if not discord or not discord.active:
-        return
-    if discord.cfg.send_daily_summary:
-        discord.notify_daily_summary(
-            events=events,
-            summary=summary,
-            monitored_symbol_count=monitored_symbol_count,
-            reject_rows=reject_rows,
-            ux_stats=ux_stats,
+    """Session-end Discord: actual AM/PM/Daily Summary, then RESEARCH_SHADOW AM/PM hook.
+
+    Shadow enqueue is fail-open and never blocks Paper finalize.
+    """
+    if discord and discord.active:
+        if discord.cfg.send_daily_summary:
+            discord.notify_daily_summary(
+                events=events,
+                summary=summary,
+                monitored_symbol_count=monitored_symbol_count,
+                reject_rows=reject_rows,
+                ux_stats=ux_stats,
+            )
+        else:
+            discord.notify_session_summary(
+                events=events,
+                summary=summary,
+                monitored_symbol_count=monitored_symbol_count,
+                reject_rows=reject_rows,
+                ux_stats=ux_stats,
+            )
+    # Phase687W10A: real AM/PM finalize path → RESEARCH_SHADOW (ownership RESEARCH)
+    try:
+        from small_paper.shadow_summary_runtime_hook import enqueue_shadow_summary_for_session
+
+        root = Path(native_root) if native_root else Path(__file__).resolve().parents[2]
+        out = Path(output_dir) if output_dir else None
+        if out is None:
+            raw = summary.get("output_dir") or summary.get("session_dir")
+            if raw:
+                out = Path(str(raw))
+        enqueue_shadow_summary_for_session(
+            summary,
+            native_root=root,
+            output_dir=out,
+            session_id=str(summary.get("session_id") or ""),
+            trading_date=str(summary.get("trading_date") or "") or None,
         )
-    else:
-        discord.notify_session_summary(
-            events=events,
-            summary=summary,
-            monitored_symbol_count=monitored_symbol_count,
-            reject_rows=reject_rows,
-            ux_stats=ux_stats,
-        )
+    except Exception as exc:
+        log.warning("shadow summary runtime hook failed (fail-open): %s", exc)
 
 
 def build_session_summary_extras(
@@ -1046,6 +1386,7 @@ def discord_notifier_from_pilot(
     config: Any,
     *,
     error_logger: Optional[ErrorLogger] = None,
+    delivery_audit: Optional[DeliveryAuditCallback] = None,
 ) -> SmallPaperDiscordNotifier:
     return SmallPaperDiscordNotifier(
         discord_config_from_pilot(config),
@@ -1054,6 +1395,7 @@ def discord_notifier_from_pilot(
         policy_label=str(getattr(config, "policy_label", "q055_cap3")),
         min_continuation_quality=float(getattr(config, "min_continuation_quality", 0.55)),
         error_logger=error_logger,
+        delivery_audit=delivery_audit,
     )
 
 

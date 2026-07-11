@@ -1,0 +1,17 @@
+flowchart LR
+  subgraph PaperPath
+    KP[Kabu PUSH] --> PE[Paper Evaluation]
+    PE --> EN[ENTRY]
+    PE --> EX[EXIT]
+    EN --> POS[Position]
+    EX --> POS
+    POS --> EV[Event JSONL]
+    EV --> SUM[Canonical Summary]
+    SUM --> DC[Discord W10 Router]
+  end
+  subgraph CapturePath
+    KP2[Kabu PUSH] --> IC[Independent Capture]
+    IC --> JL[push_part_*.jsonl]
+    JL --> MAN[capture_manifest / status]
+    MAN --> SEAL[capture_seal 15:35]
+  end

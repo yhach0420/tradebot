@@ -1,0 +1,11 @@
+requirement,file,symbol,lines,config,artifact,test
+Checked startup,src/small_paper/paper_trade_checked_runner.py,PaperTradeCheckedRunner.run,1669-1801,configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml,results/reports/paper_trade_checked_runner/,tests/test_phase687w8_paper_trade_checked_runner.py
+ENTRY gate,src/research/exposure_gate.py,ExposureGate.evaluate_entry,235-698,entry_* / guards,paper events JSONL,tests/test_phase549_entry_cluster_guard_runtime.py
+EXIT trailing,src/research/structural_exit_policies.py,trailing_mfe_params,131-137,structural_exit_policy,exit events,tests/test_phase335_realtime_board_exit_shadow.py
+Capture supervisor,src/small_paper/market_capture_supervisor.py,MAX_AUTO_RESTARTS,21,n/a,data/market_capture/,tests/test_phase687w9_market_capture_sidecar.py
+Registration defer,src/small_paper/registration_lifetime.py,safe_paper_unregister,306-359,n/a,audit defer reason,tests/test_phase687w11a_monday_p1_fixes.py
+Discord W10,src/notify/discord_notification_router.py,DiscordNotificationRouter,44-347,webhook env keys,discord audit,tests/test_phase687w10_discord_notifications.py
+W4S seal,src/small_paper/w4s_seal_propagation.py,finalize_session_seal_propagation,412-480,n/a,session_seal.json,tests/test_phase687w7a2_w4s_seal_propagation.py
+Flat-band mainline,src/small_paper/pbv2_flat_band_entry_guard.py,would_block_flat_band_mainline,48-66,pbv2_flat_band_mainline_enabled=True,flat_band_mainline_reject events,tests/test_phase650_pbv2_flat_band_shadow.py
+same-symbol policy,src/small_paper/pilot_runner.py,_maybe_reject_same_symbol_open_overlap,2187-2251,same_symbol_open_policy=no_overlap_replace,reject events,tests/test_phase413_no_overlap_replace_policy.py
+Safety flags,src/small_paper/paper_trade_checked_runner.py,step_safety_flags,921-1028,live_trading_enabled=false order_enabled=false,checked runner json,tests/test_phase687w2_live_order_safety.py

@@ -9,8 +9,19 @@ results/
 kabu_native/results/
 kabu_native/data/push_jsonl/
 kabu_native/data/intraday_1m/
+kabu_native/data/market_capture/
 logs/runtime/
+
+# runtime state (dedupe / pid / lock / heartbeat) — never commit
+kabu_native/runtime/
+**/*.pid
+**/*.lock
+**/*heartbeat*
+**/discord_notification_dedupe.jsonl
+**/discord_notification_demo_dedupe.jsonl
+**/discord_notification_audit*.jsonl
 
 # python cache
 __pycache__/
 *.pyc
+.pytest_cache/

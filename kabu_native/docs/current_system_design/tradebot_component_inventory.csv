@@ -1,0 +1,21 @@
+component,path,role
+Checked BAT,run_paper_trade_checked.bat,Windows entry
+Checked PS1,kabu_native/scripts/run_paper_trade_checked.ps1,PYTHONPATH + module launch
+Checked Runner,src/small_paper/paper_trade_checked_runner.py,precheck/capture/paper/W4S orchestrator
+Paper BAT,run_paper_trade.bat,preflight + AM/PM daily runner
+AM/PM Runner script,scripts/run_core10_dynamic40_am_pm_daily_runner.py,CLI to am_pm_daily_runner
+AM/PM Orchestrator,src/runner/am_pm_daily_runner.py,AM/PM universe + pilot spawn
+Pilot Runtime,src/small_paper/pilot_runner.py,PUSH eval ENTRY/EXIT paper
+ExposureGate,src/research/exposure_gate.py,ENTRY accept/reject
+Observer tracker,src/small_paper/observer_position_tracker.py,positions + EXIT
+Capture Sidecar,src/small_paper/market_capture_sidecar.py,independent PUSH capture
+Capture Supervisor,src/small_paper/market_capture_supervisor.py,max 1 restart
+Capture Writer,src/small_paper/market_capture_writer.py,part JSONL O_EXCL
+Registration lifetime,src/small_paper/registration_lifetime.py,W11A defer unregister
+Discord Router,src/notify/discord_notification_router.py,W10 category routing
+Discord Worker,src/notify/discord_notification_worker.py,async fail-open send
+W4S,src/research/phase687w4s_runtime_readonly_forward_soak.py,forward soak evaluator
+Seal propagation,src/small_paper/w4s_seal_propagation.py,session_seal SoT
+SafetySM,src/small_paper/live_order_safety_sm.py,dry-run safety engine
+Production YAML,configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml,runtime config SoT
+Runtime Gate,tests/runtime_gate_manifest.json,Monday contract 28 nodes

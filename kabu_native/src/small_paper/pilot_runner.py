@@ -231,10 +231,38 @@ EVENT_FIELDS = (
     "pbv2_flat_band_shadow_blocked_mae",
     "pbv2_flat_band_shadow_pnl_yen_100",
     "pbv2_flat_band_shadow_delta_yen",
+    "flat_weak_range_shadow_candidate",
+    "flat_weak_range_shadow_block",
+    "flat_weak_range_shadow_reason",
+    "pretrend_shape",
+    "flat_subclass",
+    "breakout_class",
+    "actual_pnl_yen_100",
+    "shadow_pnl_yen_100",
+    "delta_yen",
+    "blocked_winner",
+    "blocked_loser",
+    "blocked_big_winner",
     "universe_slot",
     "universe_bucket",
     "source_bucket",
     "reject_reason",
+    "readiness_bounce_from_recent_low_accept",
+    "microseq_bounce_from_recent_low",
+    "microseq_fall_from_recent_high",
+    "microseq_slope_5min",
+    "readiness_precision_shadow_block",
+    "readiness_economics_shadow_block",
+    "microsequence_recovery_fail_shadow_block",
+    "shadow_union_ihc_block",
+    "shadow_overlap_type",
+    "ihc_i_feature_source",
+    "ihc_h_feature_source",
+    "ihc_c_feature_source",
+    "ihc_union_feature_sources",
+    "np_logger_ok",
+    "np_feature_complete",
+    "np_logger_row_id",
 )
 
 
@@ -391,6 +419,8 @@ def _candidate_trade_from_push(
         "profile": profile,
         "symbol": symbol,
         "entry_time": ent.isoformat(),
+        "market_entry_time": ent.isoformat(),
+        "current_price_time": ent.isoformat(),
         "exit_time": ex.isoformat(),
         "trade_date": ent.date().isoformat(),
         "pnl_pct": 0.0,
@@ -598,6 +628,38 @@ def _default_pbv2_flat_band_shadow_counters() -> Any:
     return PbV2FlatBandShadowCounters()
 
 
+def _default_flat_weak_range_forward_shadow_counters() -> Any:
+    from small_paper.flat_weak_range_forward_shadow import FlatWeakRangeForwardShadowCounters
+
+    return FlatWeakRangeForwardShadowCounters()
+
+
+def _default_readiness_forward_shadow_counters() -> Any:
+    from small_paper.readiness_forward_shadow import ReadinessForwardShadowCounters
+
+    return ReadinessForwardShadowCounters()
+
+
+def _default_microsequence_recovery_fail_forward_shadow_counters() -> Any:
+    from small_paper.microsequence_recovery_fail_forward_shadow import (
+        MicrosequenceRecoveryFailForwardShadowCounters,
+    )
+
+    return MicrosequenceRecoveryFailForwardShadowCounters()
+
+
+def _default_ihc_shadow_portfolio_counters() -> Any:
+    from small_paper.shadow_ihc_portfolio import IhcShadowPortfolioCounters
+
+    return IhcShadowPortfolioCounters()
+
+
+def _default_np_pre_entry_feature_logger_counters() -> Any:
+    from small_paper.np_pre_entry_feature_logger import NpPreEntryFeatureLoggerCounters
+
+    return NpPreEntryFeatureLoggerCounters()
+
+
 def _default_realtime_board_exit_shadow() -> Any:
     from small_paper.realtime_board_exit_shadow import RealtimeBoardExitShadowLogger
 
@@ -681,6 +743,8 @@ class _LiveRunState:
     high_drift_pullback_reject_symbols: set[str] = field(default_factory=set)
     weak_shape_reject_count: int = 0
     weak_shape_reject_symbols: set[str] = field(default_factory=set)
+    pbv2_flat_band_mainline_reject_count: int = 0
+    pbv2_flat_band_mainline_reject_symbols: set[str] = field(default_factory=set)
     late_chase_reject_count: int = 0
     late_chase_reject_symbols: set[str] = field(default_factory=set)
     classic_late_chase_rsi_reject_count: int = 0
@@ -708,6 +772,7 @@ class _LiveRunState:
     live_capital_read_client: Any = None
     live_capital_api_token: str = ""
     live_order_adapter: Any = None
+    live_order_safety_bridge: Any = None
     intraday_refresh_done: bool = False
     intraday_refresh_count: int = 0
     intraday_refresh_triggered_count: int = 0
@@ -744,12 +809,22 @@ class _LiveRunState:
     )
     pbv2_rise5_shadow: Any = field(default_factory=_default_pbv2_rise5_shadow_counters)
     pbv2_flat_band_shadow: Any = field(default_factory=_default_pbv2_flat_band_shadow_counters)
+    flat_weak_range_forward_shadow: Any = field(
+        default_factory=_default_flat_weak_range_forward_shadow_counters
+    )
+    readiness_forward_shadow: Any = field(default_factory=_default_readiness_forward_shadow_counters)
+    microsequence_recovery_fail_forward_shadow: Any = field(
+        default_factory=_default_microsequence_recovery_fail_forward_shadow_counters
+    )
+    ihc_shadow_portfolio: Any = field(default_factory=_default_ihc_shadow_portfolio_counters)
+    np_pre_entry_feature_logger: Any = field(default_factory=_default_np_pre_entry_feature_logger_counters)
     realtime_board_exit_shadow: Any = field(default_factory=_default_realtime_board_exit_shadow)
     entry_expectancy_score_shadow: Any = field(default_factory=_default_entry_expectancy_score_counters)
     discord_ux: DiscordUxSessionStats = field(default_factory=DiscordUxSessionStats)
     position_cap_stats: Any = None
     peak_observer_open: int = 0
     observer_tracker: Any = None
+    observer_session_id: Optional[str] = None
     or_overlay: Any = None
 
 
@@ -805,6 +880,97 @@ def _init_live_order_adapter(config: SmallPaperPilotConfig, state: _LiveRunState
         state.live_order_adapter = LiveOrderAdapterSession(position_cap=cap, entry_timeout_sec=timeout)
 
 
+def _init_live_order_safety_sm(
+    config: SmallPaperPilotConfig,
+    state: _LiveRunState,
+    *,
+    output_dir: Path,
+    session_id: str = "",
+) -> None:
+    """Phase687W4: Wire LiveOrderSafetyEngine dry-run bridge (no real submits)."""
+    try:
+        from small_paper.live_order_runtime_bridge import build_runtime_bridge, safety_sm_enabled
+
+        if not safety_sm_enabled(config):
+            return
+        client = getattr(state, "live_capital_read_client", None)
+        token = str(getattr(state, "live_capital_api_token", "") or "")
+        sid = session_id or output_dir.name
+        bridge = build_runtime_bridge(
+            output_dir=output_dir / "live_order_safety",
+            session_id=sid,
+            config=config,
+            kabu_client=client,
+            kabu_token=token,
+            allow_mock_capital=False,
+        )
+        bridge.startup()
+        state.live_order_safety_bridge = bridge
+        # Phase687W7/W7A: session manifest at SafetySM start (create_then_update; no strategy change)
+        try:
+            from small_paper.operational_recovery import create_session_manifest, disk_usage_pct, config_sha256
+            from small_paper.stateful_journal_recovery import resolve_git_commit
+
+            cfg_path = getattr(config, "config_path", None) or getattr(config, "source_path", None)
+            # Prefer explicit config path from load; fall back to production YAML path
+            if not cfg_path:
+                cfg_path = (
+                    Path(__file__).resolve().parents[2]
+                    / "configs"
+                    / "small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml"
+                )
+            git_commit = resolve_git_commit(Path(__file__).resolve().parents[2])
+            cfg_sha = config_sha256(cfg_path)
+            np_enabled = bool(
+                getattr(config, "phase687_np_feature_logger_enabled", False)
+                or getattr(config, "np_feature_logger_enabled", False)
+            )
+            trading_day = str(getattr(state, "trading_day", "") or getattr(config, "trading_day", "") or "")
+            am_pm = str(getattr(state, "session_am_pm", "") or getattr(config, "session_label", "") or "")
+            jr = getattr(bridge, "journal_restore", {}) or {}
+            create_session_manifest(
+                session_id=sid,
+                output_dir=output_dir / "live_order_safety",
+                trading_day=trading_day,
+                session_am_pm=am_pm,
+                git_commit=git_commit,
+                config_sha=cfg_sha,
+                live_trading_enabled=bool(getattr(config, "live_trading_enabled", False)),
+                order_enabled=bool(getattr(config, "order_enabled", False)),
+                safety_sm_enabled=True,
+                np_logger_enabled=np_enabled,
+                disk_usage_pct=disk_usage_pct(output_dir),
+                token_probe_status=str(
+                    (getattr(bridge, "token_probe", {}) or {}).get("token_probe_status")
+                    or (getattr(bridge, "token_probe", {}) or {}).get("status")
+                    or "UNKNOWN"
+                ),
+                kabu_readonly_status=str(
+                    ((getattr(bridge, "account_audit", {}) or {}).get("account_status"))
+                    or ((getattr(bridge, "startup_recon", {}) or {}).get("account_status"))
+                    or "UNKNOWN"
+                ),
+                journal_sequence_start=int(jr.get("journal_sequence_after") or 0),
+            )
+            # mark completeness on manifest
+            man_path = output_dir / "live_order_safety" / "session_manifest.json"
+            if man_path.is_file():
+                import json as _json
+
+                man = _json.loads(man_path.read_text(encoding="utf-8"))
+                incomplete = (
+                    man.get("git_commit") in ("", "UNSET", "demo", "UNAVAILABLE")
+                    or man.get("config_sha256") in ("", "UNSET", "demo", "MISSING")
+                )
+                man["manifest_completeness"] = "INCOMPLETE" if incomplete else "COMPLETE"
+                man["disk_usage_start"] = man.get("disk_usage_pct")
+                man_path.write_text(_json.dumps(man, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except Exception:
+            pass
+    except Exception:
+        state.live_order_safety_bridge = None
+
+
 def _init_pbv2_rise5_shadow(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
     from small_paper.pbv2_rise5_shadow import build_pbv2_rise5_shadow_counters, rise5_shadow_enabled
 
@@ -820,6 +986,48 @@ def _init_pbv2_flat_band_shadow(config: SmallPaperPilotConfig, state: _LiveRunSt
 
     if flat_band_shadow_enabled(config):
         state.pbv2_flat_band_shadow = build_pbv2_flat_band_shadow_counters(config)
+
+
+def _init_flat_weak_range_forward_shadow(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
+    from small_paper.flat_weak_range_forward_shadow import build_flat_weak_range_forward_shadow_counters
+
+    built = build_flat_weak_range_forward_shadow_counters(config)
+    if built is not None:
+        state.flat_weak_range_forward_shadow = built
+
+
+def _init_readiness_forward_shadow(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
+    from small_paper.readiness_forward_shadow import build_readiness_forward_shadow_counters
+
+    built = build_readiness_forward_shadow_counters(config)
+    if built is not None:
+        state.readiness_forward_shadow = built
+
+
+def _init_microsequence_recovery_fail_forward_shadow(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
+    from small_paper.microsequence_recovery_fail_forward_shadow import (
+        build_microsequence_recovery_fail_forward_shadow_counters,
+    )
+
+    built = build_microsequence_recovery_fail_forward_shadow_counters(config)
+    if built is not None:
+        state.microsequence_recovery_fail_forward_shadow = built
+
+
+def _init_ihc_shadow_portfolio(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
+    from small_paper.shadow_ihc_portfolio import build_ihc_shadow_portfolio_counters
+
+    built = build_ihc_shadow_portfolio_counters(config)
+    if built is not None:
+        state.ihc_shadow_portfolio = built
+
+
+def _init_np_pre_entry_feature_logger(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
+    from small_paper.np_pre_entry_feature_logger import build_np_pre_entry_feature_logger_counters
+
+    built = build_np_pre_entry_feature_logger_counters(config)
+    if built is not None:
+        state.np_pre_entry_feature_logger = built
 
 
 def _init_or_overlay_tracking(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
@@ -1203,6 +1411,26 @@ def _log_and_dispatch_observer_events(
                 flat_counters = getattr(state, "pbv2_flat_band_shadow", None)
                 if flat_counters is not None:
                     flat_counters.record_exit(row)
+                fwr_counters = getattr(state, "flat_weak_range_forward_shadow", None)
+                if fwr_counters is not None:
+                    fwr_counters.record_exit(row)
+                readiness_counters = getattr(state, "readiness_forward_shadow", None)
+                if readiness_counters is not None:
+                    readiness_counters.record_exit(row)
+                ms_c_counters = getattr(state, "microsequence_recovery_fail_forward_shadow", None)
+                if ms_c_counters is not None:
+                    ms_c_counters.record_exit(row)
+                ihc_counters = getattr(state, "ihc_shadow_portfolio", None)
+                if ihc_counters is not None:
+                    ihc_counters.record_exit(row)
+                np_counters = getattr(state, "np_pre_entry_feature_logger", None)
+                if np_counters is not None:
+                    outcome = np_counters.record_exit(row)
+                    if outcome is not None and writer is not None:
+                        try:
+                            writer.append_np_pre_entry_outcomes(outcome)
+                        except Exception:
+                            pass
                 score_counters = getattr(state, "entry_expectancy_score_shadow", None)
                 if score_counters is not None:
                     score_counters.record_exit(row)
@@ -1236,13 +1464,18 @@ def _log_and_dispatch_observer_events(
                     stats = getattr(state, "position_cap_stats", None)
                     if stats is not None:
                         stats.record_observer_open(c)
-    _dispatch_observer_events(events, discord=discord)
+    _dispatch_observer_events(
+        events,
+        discord=discord,
+        observer_session_id=getattr(state, "observer_session_id", None) if state else None,
+    )
 
 
 def _dispatch_observer_events(
     events: Sequence[ObserverJudgmentEvent],
     *,
     discord: Optional[SmallPaperDiscordNotifier],
+    observer_session_id: Optional[str] = None,
 ) -> None:
     if not discord or not discord.active:
         return
@@ -1254,6 +1487,11 @@ def _dispatch_observer_events(
                 discord.notify_take(context=ev.context)
             elif ev.kind == OBSERVER_EXIT:
                 if not ev.context.get("is_structural_exit"):
+                    continue
+                ev_sid = str(ev.context.get("session_id") or "")
+                if observer_session_id and ev_sid and ev_sid != observer_session_id:
+                    continue
+                if ev.context.get("phantom_session_exit"):
                     continue
                 discord.notify_exit(context=ev.context)
         except Exception:
@@ -1393,6 +1631,25 @@ def _weak_shape_reject_guard_summary_fields(
     out = guard.summary_fields()
     out["weak_shape_reject_count"] = state.weak_shape_reject_count
     out["weak_shape_reject_symbols"] = sorted(state.weak_shape_reject_symbols)
+    return out
+
+
+def _pbv2_flat_band_mainline_summary_fields(
+    gate: ExposureGate,
+    state: _LiveRunState,
+) -> dict[str, Any]:
+    guard = getattr(gate, "pbv2_flat_band_entry_guard", None)
+    if guard is None:
+        return {
+            "pbv2_flat_band_mainline_enabled": False,
+            "pbv2_flat_band_mainline_reject_count": 0,
+            "pbv2_flat_band_mainline_reject_symbols": [],
+        }
+    out = guard.summary_fields()
+    out["pbv2_flat_band_mainline_reject_count"] = state.pbv2_flat_band_mainline_reject_count
+    out["pbv2_flat_band_mainline_reject_symbols"] = sorted(
+        state.pbv2_flat_band_mainline_reject_symbols
+    )
     return out
 
 
@@ -1569,6 +1826,41 @@ def _pbv2_flat_band_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any
     return counters.summary_fields()
 
 
+def _flat_weak_range_forward_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "flat_weak_range_forward_shadow", None)
+    if counters is None:
+        return {"flat_weak_range_shadow_enabled": False}
+    return counters.summary_fields()
+
+
+def _readiness_forward_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "readiness_forward_shadow", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
+def _microsequence_recovery_fail_forward_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "microsequence_recovery_fail_forward_shadow", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
+def _ihc_shadow_portfolio_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "ihc_shadow_portfolio", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
+def _np_pre_entry_feature_logger_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "np_pre_entry_feature_logger", None)
+    if counters is None:
+        return {}
+    return counters.summary_fields()
+
+
 def _entry_expectancy_score_summary_fields(state: _LiveRunState) -> dict[str, Any]:
     counters = getattr(state, "entry_expectancy_score_shadow", None)
     if counters is None:
@@ -1631,6 +1923,25 @@ def _apply_board_imbalance_shadow_finalize(
     summary.update(finalize_session_board_imbalance_shadow(state.accepted_rows, state.events))
 
 
+def _apply_ihc_shadow_counterfactual_finalize(
+    state: _LiveRunState,
+    summary: dict[str, Any],
+    *,
+    output_dir: Path,
+    config: SmallPaperPilotConfig,
+) -> None:
+    from small_paper.ihc_shadow_counterfactual import finalize_session_ihc_shadow_summary
+
+    ihc = finalize_session_ihc_shadow_summary(
+        state.accepted_rows,
+        state.events,
+        session_dir=output_dir,
+        config=config,
+    )
+    if ihc:
+        summary.update(ihc)
+
+
 def _record_bucket(state: _LiveRunState, event_type: str) -> None:
     bucket = session_bucket()
     if bucket in state.bucket_summary and event_type in state.bucket_summary[bucket]:
@@ -1665,6 +1976,7 @@ class _PushPipelineContext:
     am_pm_policy: Optional[Any] = None
     entry_eligible_symbols: Optional[set[str]] = None
     symbol_price_ring: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
+    symbol_board_ring: dict[str, list] = field(default_factory=dict)
     entry_scan: Optional[Any] = None
     symbol_universe_meta: dict[str, dict[str, str]] = field(default_factory=dict)
     latency_trace: Optional[Any] = None
@@ -1713,6 +2025,80 @@ def _is_entry_stop_pre_gate_reason(reason: str) -> bool:
     return str(reason or "") in _ENTRY_STOP_PRE_GATE_REASONS
 
 
+def _entry_stop_source_event_id(
+    *,
+    symbol: str,
+    reason: str,
+    message_index: int,
+    entry_time: Any = None,
+) -> str:
+    et = str(entry_time or "")
+    return f"entry_stop|{reason}|{symbol}|{message_index}|{et}"
+
+
+def _annotate_entry_stop_reject_event(
+    ctx: _PushPipelineContext,
+    rej: dict[str, Any],
+    *,
+    reason: str,
+    symbol: str,
+    message_index: int,
+    trade: Mapping[str, Any],
+    cand: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    """Ensure Phase640 schema fields on entry-stop / outside-universe rejects."""
+    am_pm = ""
+    policy = getattr(ctx, "am_pm_policy", None)
+    if policy is not None:
+        am_pm = str(getattr(policy, "kind", "") or "")
+    source_event_id = _entry_stop_source_event_id(
+        symbol=symbol,
+        reason=reason,
+        message_index=message_index,
+        entry_time=trade.get("entry_time") or rej.get("entry_time"),
+    )
+    candidate_id = ""
+    if cand:
+        candidate_id = str(cand.get("candidate_id") or cand.get("message_index") or "")
+    if not candidate_id:
+        candidate_id = f"cand|{symbol}|{message_index}"
+    rej.setdefault("accepted", False)
+    rej["accepted"] = False
+    rej["rejected"] = True
+    rej["reject_reason"] = reason
+    rej["gate_reject_reason"] = reason
+    rej.setdefault(
+        "entry_score_v2",
+        trade.get("entry_expectancy_score_v2")
+        if trade.get("entry_expectancy_score_v2") is not None
+        else trade.get("entry_score_v2"),
+    )
+    rej.setdefault("strategy_namespace", str(trade.get("profile") or getattr(ctx.config, "profile", "") or ""))
+    rej.setdefault("actual_or_shadow", "actual")
+    rej["candidate_id"] = candidate_id
+    rej["source_event_id"] = source_event_id
+    if am_pm:
+        rej.setdefault("am_pm_session", am_pm)
+    day = str(trade.get("trade_date") or trade.get("trading_date") or "")
+    if not day and rej.get("entry_time"):
+        try:
+            day = str(rej.get("entry_time") or "")[:10].replace("-", "")
+        except Exception:
+            day = ""
+    if day:
+        rej.setdefault("trading_date", day)
+    return rej
+
+
+def _entry_stop_reject_already_logged(ctx: _PushPipelineContext, source_event_id: str) -> bool:
+    if not source_event_id:
+        return False
+    for ev in ctx.state.events:
+        if ev.get("event_type") == "rejected" and str(ev.get("source_event_id") or "") == source_event_id:
+            return True
+    return False
+
+
 def _record_pipeline_logging_error(
     ctx: _PushPipelineContext,
     *,
@@ -1758,7 +2144,8 @@ def _notify_entry_blocked_discord(
     """trade-cap-blocked webhook only (never trade-notify)."""
     if not is_entry_blocked_discord_notify_reason(block_reason):
         return
-    if ctx.discord is None or not ctx.discord.cap_blocked_notify_enabled():
+    discord = getattr(ctx, "discord", None)
+    if discord is None or not discord.cap_blocked_notify_enabled():
         return
     if block_reason == REJECT_MAX_CONCURRENT:
         try:
@@ -1782,7 +2169,7 @@ def _notify_entry_blocked_discord(
         entry_ts=tick_ts_from_payload(payload),
         session_momentum_samples=ctx.state.session_momentum_samples,
     )
-    ctx.discord.notify_entry_cap_blocked(
+    discord.notify_entry_cap_blocked(
         event=rej,
         payload=enriched,
         trade_data={**dict(trade), **shadow},
@@ -2112,19 +2499,23 @@ def _execute_accepted_entry(
         )
         trade.update(shadow)
         ctx.state.extended_entry_shadow.record_accept(shadow)
-        from small_paper.vwap_shadow_reject import compute_vwap_shadow_reject_fields
-
-        try:
-            entry_px_vwap = float(payload.get("CurrentPrice") or 0)
-        except (TypeError, ValueError):
-            entry_px_vwap = 0.0
-        vwap_shadow = compute_vwap_shadow_reject_fields(
-            payload=payload,
-            entry_px=entry_px_vwap,
-            entry_vwap_dev_pct=shadow.get("entry_vwap_dev_pct"),
+        from small_paper.vwap_shadow_reject import (
+            compute_vwap_shadow_reject_fields,
+            vwap_shadow_reject_enabled,
         )
-        trade.update(vwap_shadow)
-        ctx.state.vwap_shadow_reject.record_accept(vwap_shadow)
+
+        if vwap_shadow_reject_enabled(ctx.config):
+            try:
+                entry_px_vwap = float(payload.get("CurrentPrice") or 0)
+            except (TypeError, ValueError):
+                entry_px_vwap = 0.0
+            vwap_shadow = compute_vwap_shadow_reject_fields(
+                payload=payload,
+                entry_px=entry_px_vwap,
+                entry_vwap_dev_pct=shadow.get("entry_vwap_dev_pct"),
+            )
+            trade.update(vwap_shadow)
+            ctx.state.vwap_shadow_reject.record_accept(vwap_shadow)
         from small_paper.limit_up_proximity_entry_guard_shadow import (
             compute_limit_up_proximity_guard_fields,
         )
@@ -2226,6 +2617,73 @@ def _execute_accepted_entry(
         flat_counters = getattr(ctx.state, "pbv2_flat_band_shadow", None)
         if flat_counters is not None:
             flat_counters.record_accept(flat_shadow)
+    from small_paper.flat_weak_range_forward_shadow import (
+        compute_flat_weak_range_shadow_fields,
+        flat_weak_range_shadow_enabled,
+    )
+
+    if flat_weak_range_shadow_enabled(ctx.config):
+        fwr_shadow = compute_flat_weak_range_shadow_fields(ctx.config, trade)
+        trade.update(fwr_shadow)
+        fwr_counters = getattr(ctx.state, "flat_weak_range_forward_shadow", None)
+        if fwr_counters is not None:
+            fwr_counters.record_accept(fwr_shadow)
+    from small_paper.readiness_forward_shadow import (
+        compute_readiness_shadow_fields,
+        readiness_shadow_any_enabled,
+    )
+
+    if readiness_shadow_any_enabled(ctx.config):
+        from small_paper.extended_entry_shadow import tick_ts_from_payload
+
+        entry_ts = tick_ts_from_payload(payload)
+        ring = ctx.symbol_price_ring.get(sym, [])
+        same_sym_n = (
+            sum(1 for r in ctx.state.accepted_rows if str(r.get("symbol") or "") == sym) + 1
+        )
+        readiness_shadow = compute_readiness_shadow_fields(
+            ctx.config,
+            trade,
+            price_ring=ring,
+            entry_ts=entry_ts,
+            same_symbol_entry_count_today=same_sym_n,
+        )
+        trade.update(readiness_shadow)
+        readiness_counters = getattr(ctx.state, "readiness_forward_shadow", None)
+        if readiness_counters is not None:
+            readiness_counters.record_accept(readiness_shadow)
+    from small_paper.microsequence_recovery_fail_forward_shadow import (
+        compute_microsequence_recovery_fail_shadow_fields,
+        microsequence_recovery_fail_shadow_enabled,
+    )
+
+    ms_c_shadow: dict[str, Any] = {}
+    if microsequence_recovery_fail_shadow_enabled(ctx.config):
+        from small_paper.extended_entry_shadow import tick_ts_from_payload
+
+        entry_ts_ms = tick_ts_from_payload(payload)
+        ring_ms = ctx.symbol_price_ring.get(sym, [])
+        ms_c_shadow = compute_microsequence_recovery_fail_shadow_fields(
+            ctx.config,
+            trade,
+            price_ring=ring_ms,
+            entry_ts=entry_ts_ms,
+        )
+        trade.update(ms_c_shadow)
+        ms_c_counters = getattr(ctx.state, "microsequence_recovery_fail_forward_shadow", None)
+        if ms_c_counters is not None:
+            ms_c_counters.record_accept(ms_c_shadow)
+    from small_paper.shadow_ihc_portfolio import compute_ihc_shadow_fields
+
+    ihc_fields = compute_ihc_shadow_fields(
+        i_block=bool(trade.get("readiness_precision_shadow_block")),
+        h_block=bool(trade.get("readiness_economics_shadow_block")),
+        c_block=bool(trade.get("microsequence_recovery_fail_shadow_block")),
+    )
+    trade.update(ihc_fields)
+    ihc_counters = getattr(ctx.state, "ihc_shadow_portfolio", None)
+    if ihc_counters is not None:
+        ihc_counters.record_accept({**trade, **ihc_fields})
     or_st = getattr(ctx.state, "or_overlay", None)
     if or_st is not None:
         or_st.record_entry(trade)
@@ -2252,6 +2710,35 @@ def _execute_accepted_entry(
     if ctx.config.position_cap_mode:
         acc["position_cap_mode"] = True
         acc["max_concurrent_positions"] = ctx.config.max_concurrent_positions
+    from small_paper.np_pre_entry_feature_logger import (
+        compute_np_pre_entry_predictor_row,
+        np_pre_entry_feature_logger_enabled,
+    )
+
+    if np_pre_entry_feature_logger_enabled(ctx.config):
+        from small_paper.extended_entry_shadow import tick_ts_from_payload
+
+        accepted_at_ts = float(tick_ts_from_payload(payload))
+        accepted_at_iso = str(acc.get("event_time") or trade.get("accepted_at") or _now_iso())
+        np_row = compute_np_pre_entry_predictor_row(
+            trade={**trade, "accepted_at": accepted_at_iso},
+            board_ring=ctx.symbol_board_ring.get(sym, []),
+            accepted_at_ts=accepted_at_ts,
+            accepted_at_iso=accepted_at_iso,
+        )
+        trade["np_logger_ok"] = np_row.get("np_logger_ok")
+        trade["np_feature_complete"] = np_row.get("np_feature_complete")
+        trade["np_logger_row_id"] = np_row.get("np_logger_row_id")
+        acc["np_logger_ok"] = np_row.get("np_logger_ok")
+        acc["np_feature_complete"] = np_row.get("np_feature_complete")
+        acc["np_logger_row_id"] = np_row.get("np_logger_row_id")
+        np_counters = getattr(ctx.state, "np_pre_entry_feature_logger", None)
+        if np_counters is not None:
+            np_counters.record_accept(np_row)
+        try:
+            ctx.writer.append_np_pre_entry_features(np_row)
+        except Exception:
+            pass
     ctx.state.events.append(acc)
     ctx.writer.append_event(acc)
     ctx.state.accepted_rows.append(dict(trade))
@@ -2261,6 +2748,22 @@ def _execute_accepted_entry(
             entry_px = float(payload.get("CurrentPrice") or 0)
         except (TypeError, ValueError):
             entry_px = 0.0
+        accept_clock = str(acc.get("event_time") or _now_iso())
+        trade["accepted_at"] = accept_clock
+        trade["accepted_event_time"] = accept_clock
+        acc["accepted_at"] = accept_clock
+        acc["accepted_event_time"] = accept_clock
+        if trade.get("market_entry_time") in (None, ""):
+            trade["market_entry_time"] = trade.get("entry_time")
+        if trade.get("current_price_time") in (None, ""):
+            trade["current_price_time"] = trade.get("market_entry_time") or trade.get("entry_time")
+        acc["market_entry_time"] = trade.get("market_entry_time")
+        acc["current_price_time"] = trade.get("current_price_time")
+        if ctx.observer and ctx.observer.session_id:
+            acc["session_id"] = ctx.observer.session_id
+            acc["session_kind"] = ctx.observer.session_kind
+            trade["session_id"] = ctx.observer.session_id
+            trade["session_kind"] = ctx.observer.session_kind
         if entry_px > 0 and ctx.observer.has_open(sym):
             overlap_events = ctx.observer.close_for_overlap(
                 symbol=sym,
@@ -2287,6 +2790,9 @@ def _execute_accepted_entry(
                 quality_tier=str(decision.quality_tier or ""),
                 entry_price=entry_px,
             )
+            from small_paper.observer_entry_time import observer_entry_fields
+
+            acc.update(observer_entry_fields(trade, payload=enriched))
         _record_observer_open_peak(ctx)
         if ctx.config.position_cap_mode:
             slot_after = _active_cap_count(ctx)
@@ -2302,27 +2808,38 @@ def _execute_accepted_entry(
     )
     if ctx.discord and ctx.discord.active:
         import time
+        from small_paper.discord_entry_delivery import FINAL_DELIVERED
 
         notify_mono = time.monotonic()
         signal_mono = float((scan_meta or {}).get("entry_signal_mono") or notify_mono)
-        ctx.discord.notify_entry(
+        entry_res = ctx.discord.notify_entry(
             event=acc,
             payload=enriched,
             open_slots=slot_after,
+            slot_before=slot_before if ctx.config.position_cap_mode else None,
             session_bucket=bucket,
             score5_candidate_ordinal=score5_ord,
             ux_stats=ctx.state.discord_ux,
             entry_signal_mono=signal_mono,
             notify_mono=notify_mono,
         )
+        acc["entry_delivery_result"] = entry_res.final_result
+        acc["entry_delivery_failure_classification"] = entry_res.failure_classification
+        acc["entry_notify_retry_count"] = entry_res.retry_count
+        if entry_res.final_result == FINAL_DELIVERED:
+            acc["discord_sent_ts"] = entry_res.sent_time
+            acc["entry_delivery_http_status"] = entry_res.http_status
+            if entry_res.discord_message_id:
+                acc["discord_message_id"] = entry_res.discord_message_id
     _maybe_record_live_order_pipeline_entry(ctx, sym=sym, trade=trade, payload=payload, acc=acc, scan_meta=scan_meta)
+    _maybe_record_live_order_wiring_entry(
+        ctx, sym=sym, trade=trade, payload=payload, acc=acc, scan_meta=scan_meta
+    )
+    _maybe_record_live_order_safety_entry(ctx, sym=sym, trade=trade, payload=payload, acc=acc)
     if not _legacy_live_order_hooks_enabled(ctx.config):
         return
     _maybe_record_live_capital_check_entry(ctx, sym=sym, trade=trade, payload=payload, acc=acc)
     _maybe_record_live_order_entry(ctx, sym=sym, trade=trade, payload=payload, acc=acc)
-    _maybe_record_live_order_wiring_entry(
-        ctx, sym=sym, trade=trade, payload=payload, acc=acc, scan_meta=scan_meta
-    )
 
 
 def _process_scan_flush(ctx: _PushPipelineContext, flush: Any) -> None:
@@ -2497,6 +3014,17 @@ def _stage0_normalize_payload(
     if px_tick > 0:
         ring = ctx.symbol_price_ring.setdefault(sym, [])
         append_price_tick(ring, ts=tick_ts_from_payload(payload), px=px_tick)
+        from small_paper.np_pre_entry_feature_logger import (
+            append_board_snap,
+            extract_board_snap,
+            np_pre_entry_feature_logger_enabled,
+        )
+
+        if np_pre_entry_feature_logger_enabled(ctx.config):
+            snap = extract_board_snap(payload, ts=tick_ts_from_payload(payload))
+            if snap is not None:
+                board_ring = ctx.symbol_board_ring.setdefault(sym, [])
+                append_board_snap(board_ring, snap)
         or_st = getattr(ctx.state, "or_overlay", None)
         if or_st is not None:
             or_st.record_day_tick(
@@ -3290,6 +3818,38 @@ def _stage6_record_reject(
                 "reject_reason": REJECT_WEAK_SHAPE,
             }
         )
+    if decision.reason == "flat_band_mainline":
+        from small_paper.pbv2_flat_band_entry_guard import (
+            LOG_EVENT_KIND as FB_LOG_EVENT_KIND,
+            REJECT_FLAT_BAND_MAINLINE,
+            compute_flat_band_mainline_fields,
+        )
+
+        ctx.state.pbv2_flat_band_mainline_reject_count += 1
+        ctx.state.pbv2_flat_band_mainline_reject_symbols.add(sym)
+        fb_fields = compute_flat_band_mainline_fields(ctx.config, trade)
+        trade.update(fb_fields)
+        rej_row.update(fb_fields)
+        rej_row["reject_reason"] = REJECT_FLAT_BAND_MAINLINE
+        ctx.writer.append_error(
+            {
+                "event_kind": FB_LOG_EVENT_KIND,
+                "symbol": sym,
+                "pbv2_flat_band_shadow_reason": getattr(
+                    decision, "pbv2_flat_band_shadow_reason", fb_fields.get("pbv2_flat_band_shadow_reason", "")
+                ),
+                "pbv2_flat_band_rise5": getattr(
+                    decision, "pbv2_flat_band_rise5", fb_fields.get("pbv2_flat_band_rise5")
+                ),
+                "pbv2_flat_band_rise10": getattr(
+                    decision, "pbv2_flat_band_rise10", fb_fields.get("pbv2_flat_band_rise10")
+                ),
+                "pbv2_flat_band_variant": getattr(
+                    decision, "pbv2_flat_band_variant", fb_fields.get("pbv2_flat_band_variant", "")
+                ),
+                "reject_reason": REJECT_FLAT_BAND_MAINLINE,
+            }
+        )
     if decision.reason == "late_chase_guard":
         from small_paper.late_chase_entry_guard import (
             LOG_EVENT_KIND as LC_LOG_EVENT_KIND,
@@ -3480,6 +4040,21 @@ def _stage6_record_reject(
         )
     block_reason = str(decision.reason or "")
     try:
+        if _is_entry_stop_pre_gate_reason(block_reason):
+            sid = _entry_stop_source_event_id(
+                symbol=sym,
+                reason=block_reason,
+                message_index=msg_i,
+                entry_time=trade.get("entry_time"),
+            )
+            if _entry_stop_reject_already_logged(ctx, sid):
+                ol = _order_latency_session(ctx)
+                if ol is not None:
+                    ol.finish_reject(
+                        gate_reason=block_reason or "reject",
+                        entry_route=str(getattr(final, "entry_route", None) or "reject"),
+                    )
+                return
         ctx.state.reject_rows.append(rej_row)
         rej = _event_from_gate(
             event_type="rejected",
@@ -3489,6 +4064,21 @@ def _stage6_record_reject(
             message_index=msg_i,
             current_price=payload.get("CurrentPrice"),
         )
+        if _is_entry_stop_pre_gate_reason(block_reason):
+            cand_ev = None
+            for ev in reversed(ctx.state.events):
+                if ev.get("event_type") == "candidate" and ev.get("symbol") == sym:
+                    cand_ev = ev
+                    break
+            _annotate_entry_stop_reject_event(
+                ctx,
+                rej,
+                reason=block_reason,
+                symbol=sym,
+                message_index=msg_i,
+                trade=trade,
+                cand=cand_ev,
+            )
         ctx.state.events.append(rej)
         ctx.writer.append_event(rej)
         _record_bucket(ctx.state, "rejected")
@@ -3515,6 +4105,12 @@ def _stage6_record_reject(
     except Exception as exc:
         _record_pipeline_logging_error(
             ctx, stage="stage6_record_reject", exc=exc, symbol=sym
+        )
+    ol = _order_latency_session(ctx)
+    if ol is not None:
+        ol.finish_reject(
+            gate_reason=block_reason or "reject",
+            entry_route=str(getattr(final, "entry_route", None) or "reject"),
         )
 
 
@@ -3551,6 +4147,17 @@ def _warmup_ring_only_push(
     if px_tick > 0:
         ring = ctx.symbol_price_ring.setdefault(sym, [])
         append_price_tick(ring, ts=tick_ts_from_payload(payload), px=px_tick)
+        from small_paper.np_pre_entry_feature_logger import (
+            append_board_snap,
+            extract_board_snap,
+            np_pre_entry_feature_logger_enabled,
+        )
+
+        if np_pre_entry_feature_logger_enabled(ctx.config):
+            snap = extract_board_snap(payload, ts=tick_ts_from_payload(payload))
+            if snap is not None:
+                board_ring = ctx.symbol_board_ring.setdefault(sym, [])
+                append_board_snap(board_ring, snap)
         or_st = getattr(ctx.state, "or_overlay", None)
         if or_st is not None:
             or_st.record_day_tick(
@@ -3581,7 +4188,25 @@ def _process_push_payload(
     """
     from small_paper.pre_session_warmup import ring_only_warmup_active
 
-    if ring_only_warmup_active(config=ctx.config, am_pm_policy=ctx.am_pm_policy):
+    warmup_now: Optional[datetime] = None
+    for raw in (
+        t0_push_received_at,
+        payload.get("recorded_at") if isinstance(payload, Mapping) else None,
+        payload.get("CurrentPriceTime") if isinstance(payload, Mapping) else None,
+    ):
+        if not raw:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=JST)
+            warmup_now = dt.astimezone(JST)
+            break
+        except Exception:
+            continue
+    if ring_only_warmup_active(
+        config=ctx.config, am_pm_policy=ctx.am_pm_policy, now=warmup_now
+    ):
         _warmup_ring_only_push(ctx, payload, msg_i, symbol=symbol)
         return
 
@@ -3649,8 +4274,6 @@ def _process_push_payload(
         trace.start("stage6_post_entry")
         _stage6_record_reject(ctx, norm, final, rec)
         trace.end("stage6_post_entry", note="reject_recorded")
-        if ol is not None and str(final.decision.reason or "") == REJECT_MAX_CONCURRENT:
-            ol.finish_reject(gate_reason=REJECT_MAX_CONCURRENT, entry_route=str(final.entry_route or "reject"))
 
 
 def _quality_ge_0_55_count(scores: Sequence[float]) -> int:
@@ -3913,6 +4536,7 @@ def _build_push_replay_summary(
     base.update(_near_day_high_low_momentum_dynamic40_guard_summary_fields(gate, state))
     base.update(_high_drift_pullback_guard_summary_fields(gate, state))
     base.update(_weak_shape_reject_guard_summary_fields(gate, state))
+    base.update(_pbv2_flat_band_mainline_summary_fields(gate, state))
     base.update(_late_chase_guard_summary_fields(gate, state))
     base.update(_classic_late_chase_rsi_guard_summary_fields(gate, state))
     base.update(_reentry_rsi_guard_summary_fields(gate, state))
@@ -3924,6 +4548,11 @@ def _build_push_replay_summary(
     base.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     base.update(_pbv2_rise5_shadow_summary_fields(state))
     base.update(_pbv2_flat_band_shadow_summary_fields(state))
+    base.update(_flat_weak_range_forward_shadow_summary_fields(state))
+    base.update(_readiness_forward_shadow_summary_fields(state))
+    base.update(_microsequence_recovery_fail_forward_shadow_summary_fields(state))
+    base.update(_ihc_shadow_portfolio_summary_fields(state))
+    base.update(_np_pre_entry_feature_logger_summary_fields(state))
     base.update(_entry_expectancy_score_summary_fields(state))
     base.update(_freshness_semantics_v2_summary_fields(config, state))
     base.update(_or_overlay_summary_fields(config, state))
@@ -4146,6 +4775,65 @@ def _maybe_record_live_order_wiring_entry(
             pass
 
 
+def _maybe_record_live_order_safety_entry(
+    ctx: "_PushPipelineContext",
+    *,
+    sym: str,
+    trade: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    acc: dict[str, Any],
+) -> None:
+    """Phase687W4: actual accepted ENTRY → SafetySM dry-run intent (no real submit)."""
+    try:
+        from small_paper.live_order_runtime_bridge import ENTRY_SOURCE_ACTUAL, safety_sm_enabled
+
+        bridge = getattr(ctx.state, "live_order_safety_bridge", None)
+        if bridge is None or not safety_sm_enabled(ctx.config):
+            return
+        entry_px = float(
+            trade.get("entry_price")
+            or payload.get("AskPrice")
+            or payload.get("CurrentPrice")
+            or 0.0
+        )
+        if entry_px <= 0:
+            return
+        position_id = str(trade.get("entry_time") or trade.get("position_id") or acc.get("entry_time") or "")
+        if not position_id:
+            position_id = f"{sym}:{acc.get('accepted_at') or ''}"
+        bridge.on_actual_entry(
+            symbol=sym,
+            price=entry_px,
+            position_id=position_id,
+            accepted_at=str(acc.get("accepted_at") or ""),
+            signal_event_id=str(trade.get("entry_time") or position_id),
+            source_kind=ENTRY_SOURCE_ACTUAL,
+            timestamps={
+                "push_received_mono": float(acc.get("push_received_mono") or 0.0),
+                "accepted_mono": float(acc.get("accepted_mono") or 0.0),
+            },
+            freshness={
+                "price_age_sec": acc.get("price_age_sec"),
+                "board_age_sec": acc.get("board_age_sec"),
+                "market_event_age_sec": acc.get("market_event_age_sec"),
+            },
+        )
+    except Exception as exc:
+        writer = getattr(ctx, "writer", None)
+        if writer is not None:
+            try:
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "component": "live_order_safety_sm_entry",
+                        "symbol": sym,
+                        "error": str(exc),
+                    }
+                )
+            except Exception:
+                pass
+
+
 def _maybe_record_live_order_exit(
     *,
     config: SmallPaperPilotConfig,
@@ -4154,6 +4842,38 @@ def _maybe_record_live_order_exit(
     symbol: str,
     context: Mapping[str, Any],
 ) -> None:
+    try:
+        from small_paper.live_order_runtime_bridge import EXIT_SOURCE_ACTUAL, safety_sm_enabled
+
+        bridge = getattr(state, "live_order_safety_bridge", None)
+        if bridge is not None and safety_sm_enabled(config) and context.get("is_structural_exit"):
+            qty = context.get("quantity") or context.get("shares") or context.get("lot_size")
+            try:
+                qty_i = int(qty) if qty is not None else None
+            except (TypeError, ValueError):
+                qty_i = None
+            bridge.on_actual_exit(
+                symbol=symbol,
+                position_id=str(context.get("position_id") or context.get("entry_time") or symbol),
+                exit_reason=str(context.get("exit_reason") or context.get("reason") or ""),
+                holding_quantity=qty_i,
+                exit_signal_at=str(context.get("exit_time") or _now_iso()),
+                is_structural_exit=True,
+                source_kind=EXIT_SOURCE_ACTUAL,
+            )
+    except Exception as exc:
+        if writer is not None:
+            try:
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "component": "live_order_safety_sm_exit",
+                        "symbol": symbol,
+                        "error": str(exc),
+                    }
+                )
+            except Exception:
+                pass
     try:
         from small_paper.live_order_adapter import live_order_adapter_enabled, process_paper_exit
 
@@ -4384,6 +5104,11 @@ def run_push_replay_dry_run(
     _init_or_overlay_tracking(replay_config, state)
     _init_pbv2_rise5_shadow(replay_config, state)
     _init_pbv2_flat_band_shadow(replay_config, state)
+    _init_flat_weak_range_forward_shadow(replay_config, state)
+    _init_readiness_forward_shadow(replay_config, state)
+    _init_microsequence_recovery_fail_forward_shadow(replay_config, state)
+    _init_ihc_shadow_portfolio(replay_config, state)
+    _init_np_pre_entry_feature_logger(replay_config, state)
     if enable_board_failure_forensic_shadow:
         from small_paper.board_failure_forensic_pack import BoardFailureForensicPack
 
@@ -4460,16 +5185,20 @@ def run_push_replay_dry_run(
                 writer.append_error(
                     {
                         "event_time": _now_iso(),
-                        "error_type": "discord_error",
-                        "operation": op,
+                        "error_type": str(extra.get("error_type") or "discord_error"),
+                        "operation": extra.get("operation") or op,
                         "message": msg,
-                        **dict(extra),
+                        **{k: v for k, v in dict(extra).items() if k not in ("error_type", "operation")},
                     }
                 )
+
+            def _entry_delivery_audit(record: Mapping[str, Any]) -> None:
+                writer.append_discord_entry_delivery(record)
 
             discord = discord_notifier_from_pilot(
                 replay_config,
                 error_logger=_discord_error_logger,
+                delivery_audit=_entry_delivery_audit,
             )
 
     gap_threshold_sec = max(replay_config.live_stale_tick_sec * 2, max(poll_interval_sec, 0.001) * 3)
@@ -4593,25 +5322,28 @@ def run_push_replay_dry_run(
                 observer_stats=_observer_stats_dict(observer),
             )
         )
-        _attach_canonical_summary_fields(summary, state.events, config=config)
-        try:
-            notify_discord_session_end(
-                discord,
-                events=state.events,
-                summary=summary,
-                reject_rows=state.reject_rows,
-                ux_stats=state.discord_ux,
-            )
-        except Exception as exc:
-            log.warning("discord session_end notify failed: %s", exc)
-            summary["discord_session_end_error"] = str(exc)
-
+    _attach_canonical_summary_fields(summary, state.events, config=config)
+    # Phase687W10A: Shadow finalize BEFORE session-end notify (RESEARCH_SHADOW hook).
     _apply_quality_formula_shadow_finalize(state, summary)
     _apply_trading_value_shadow_finalize(state, summary)
     _apply_board_imbalance_shadow_finalize(state, summary)
     _apply_entry_expectancy_score_shadow_finalize(state, summary)
+    _apply_ihc_shadow_counterfactual_finalize(state, summary, output_dir=output_dir, config=replay_config)
     _apply_post_entry_forward_shadow_finalize(state, summary, output_dir=output_dir)
     _apply_classic_momentum_forward_shadow_finalize(state, summary, output_dir=output_dir)
+    try:
+        notify_discord_session_end(
+            discord,
+            events=state.events,
+            summary=summary,
+            reject_rows=state.reject_rows,
+            ux_stats=state.discord_ux,
+            native_root=Path(__file__).resolve().parents[2],
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        log.warning("discord session_end notify failed: %s", exc)
+        summary["discord_session_end_error"] = str(exc)
     writer.finalize_batch(
         events=state.events,
         positions=positions,
@@ -5012,6 +5744,7 @@ def _build_live_summary(
     summary.update(_near_day_high_low_momentum_dynamic40_guard_summary_fields(gate, state))
     summary.update(_high_drift_pullback_guard_summary_fields(gate, state))
     summary.update(_weak_shape_reject_guard_summary_fields(gate, state))
+    summary.update(_pbv2_flat_band_mainline_summary_fields(gate, state))
     summary.update(_late_chase_guard_summary_fields(gate, state))
     summary.update(_classic_late_chase_rsi_guard_summary_fields(gate, state))
     summary.update(_reentry_rsi_guard_summary_fields(gate, state))
@@ -5023,6 +5756,7 @@ def _build_live_summary(
     summary.update(_pullback_misread_entry_guard_shadow_summary_fields(state))
     summary.update(_pbv2_rise5_shadow_summary_fields(state))
     summary.update(_pbv2_flat_band_shadow_summary_fields(state))
+    summary.update(_flat_weak_range_forward_shadow_summary_fields(state))
     summary.update(_entry_expectancy_score_summary_fields(state))
     summary.update(_freshness_semantics_v2_summary_fields(config, state))
     summary.update(_or_overlay_summary_fields(config, state))
@@ -5339,9 +6073,15 @@ def run_live_dry_run(
     _init_extension_stack_for_mode(config, state, repo_root=repo_root)
     state.live_capital_read_client = capital_read_client
     state.live_capital_api_token = token
+    _init_live_order_safety_sm(config, state, output_dir=output_dir, session_id=output_dir.name)
     _init_or_overlay_tracking(config, state)
     _init_pbv2_rise5_shadow(config, state)
     _init_pbv2_flat_band_shadow(config, state)
+    _init_flat_weak_range_forward_shadow(config, state)
+    _init_readiness_forward_shadow(config, state)
+    _init_microsequence_recovery_fail_forward_shadow(config, state)
+    _init_ihc_shadow_portfolio(config, state)
+    _init_np_pre_entry_feature_logger(config, state)
     pos_fields = ["symbol", "entry_time", "exit_time", "open_slots_after"]
     gap_threshold_sec = max(stale_tick_sec * 2, poll_interval_sec * 3)
     pipeline_ctx: Optional[_PushPipelineContext] = None
@@ -5351,20 +6091,36 @@ def run_live_dry_run(
     if config.discord_observer_only and not config.order_enabled:
         observer = _make_observer_tracker(config, state, am_pm_policy=am_pm_policy)
         state.observer_tracker = observer
+        from small_paper.observer_session_scope import build_observer_session_scope
+
+        observer_scope = build_observer_session_scope(
+            output_dir=output_dir,
+            trade_date=datetime.now(JST).date(),
+            am_pm_policy=am_pm_policy,
+        )
+        observer.bind_session(observer_scope)
+        state.observer_session_id = observer_scope.session_id
         if config.discord_enabled:
 
             def _discord_error_logger(op: str, msg: str, extra: Mapping[str, Any]) -> None:
                 writer.append_error(
                     {
                         "event_time": _now_iso(),
-                        "error_type": "discord_error",
-                        "operation": op,
+                        "error_type": str(extra.get("error_type") or "discord_error"),
+                        "operation": extra.get("operation") or op,
                         "message": msg,
-                        **dict(extra),
+                        **{k: v for k, v in dict(extra).items() if k not in ("error_type", "operation")},
                     }
                 )
 
-            discord = discord_notifier_from_pilot(config, error_logger=_discord_error_logger)
+            def _entry_delivery_audit(record: Mapping[str, Any]) -> None:
+                writer.append_discord_entry_delivery(record)
+
+            discord = discord_notifier_from_pilot(
+                config,
+                error_logger=_discord_error_logger,
+                delivery_audit=_entry_delivery_audit,
+            )
         if discord is not None and discord.active and am_pm_policy is not None:
             sk = str(getattr(am_pm_policy, "kind", "am")).lower()
             screening_label = "PM Screening" if sk == "pm" else "AM Screening"
@@ -5374,6 +6130,7 @@ def run_live_dry_run(
                 session_label=screening_label,
                 watch_symbols=watch_syms,
                 day_stamp=day_stamp,
+                generated_at=datetime.now(JST).isoformat(timespec="milliseconds"),
             )
 
     entry_eligible: Optional[set[str]] = {t[0] for t in symbols} if enable_intraday_refresh else None
@@ -5644,6 +6401,25 @@ def run_live_dry_run(
                     "after_symbols": after_syms[:200],
                 },
             )
+            # Phase687W9: publish Paper SoT symbols to registration manifest (Sidecar follower).
+            # Does not change universe selection — notify only.
+            try:
+                from small_paper.market_capture_registration import notify_registration_refresh
+                from small_paper.market_capture_sidecar import capture_day_dir
+
+                notify_syms = after_syms or [s[0] for s in specs]
+                day = datetime.now(JST).strftime("%Y%m%d")
+                notify_registration_refresh(
+                    native_root,
+                    trading_date=day,
+                    new_symbols=notify_syms,
+                    previous_symbols=before_syms,
+                    universe_path=str(refresh_path),
+                    verified=True,
+                    capture_day_dir=capture_day_dir(native_root, day),
+                )
+            except Exception:
+                pass
         except Exception as e:
             _log_api_error("intraday_refresh_register", e)
             state.intraday_refresh_failed_count += 1
@@ -5674,7 +6450,15 @@ def run_live_dry_run(
         state.session_force_close_done = True
         if observer and observer.open_count() > 0:
             exit_events = observer.close_all(reason=am_pm_policy.force_close_reason)
-            _dispatch_observer_events(exit_events, discord=discord)
+            _log_and_dispatch_observer_events(
+                exit_events,
+                discord=discord,
+                writer=writer,
+                state=state,
+                gate=gate,
+                source="am_pm_force_close",
+                config=config,
+            )
         gate.state.open_slots = []
         _request_stop(am_pm_policy.force_close_reason)
 
@@ -5730,6 +6514,8 @@ def run_live_dry_run(
             runtime_sec=runtime,
         )
         writer.write_summary(summary_partial)
+        if discord and discord.active:
+            discord.flush_entry_notify_retries()
         if discord and discord.should_send_heartbeat():
             obs_stats = _observer_stats_dict(observer)
             extras = build_session_summary_extras(
@@ -5763,6 +6549,21 @@ def run_live_dry_run(
 
             reg_meta = register_symbols_cleared(push, sym_specs)
             state.session_ready_ts = _now_iso()
+            try:
+                from small_paper.market_capture_registration import notify_registration_refresh
+                from small_paper.market_capture_sidecar import capture_day_dir
+
+                day = datetime.now(JST).strftime("%Y%m%d")
+                notify_registration_refresh(
+                    native_root,
+                    trading_date=day,
+                    new_symbols=[s[0] for s in sym_specs],
+                    universe_path=str(universe_csv_path or ""),
+                    verified=True,
+                    capture_day_dir=capture_day_dir(native_root, day),
+                )
+            except Exception:
+                pass
             if reg_meta.get("recovered_from_register_limit"):
                 writer.append_error(
                     {
@@ -5831,7 +6632,15 @@ def run_live_dry_run(
                 }
             )
             try:
-                push.unregister_all()
+                from small_paper.registration_lifetime import safe_paper_unregister
+
+                safe_paper_unregister(
+                    push,
+                    native_root=native_root,
+                    paper_session_id=str(getattr(state, "session_id", "") or ""),
+                    am_pm=str(getattr(am_pm_policy, "kind", "") or "") if am_pm_policy else "",
+                    path_label="reconnect_cleanup",
+                )
             except Exception as e:
                 _log_api_error("unregister_all", e)
             await asyncio.sleep(min(30.0, poll_interval_sec * 2))
@@ -5842,7 +6651,12 @@ def run_live_dry_run(
 
                 token = rest.issue_token_from_env()
                 push = KabuNativePushClient(rest, token)
-                register_symbols_cleared(push, sym_specs)
+                register_symbols_cleared(
+                    push,
+                    sym_specs,
+                    clear_first=False,
+                    native_root=native_root,
+                )
                 state.consecutive_api_errors = 0
                 return True
             except Exception as e:
@@ -5903,7 +6717,15 @@ def run_live_dry_run(
                 if final_flush is not None:
                     _process_scan_flush(pipeline_ctx, final_flush)
             try:
-                push.unregister_all()
+                from small_paper.registration_lifetime import safe_paper_unregister
+
+                safe_paper_unregister(
+                    push,
+                    native_root=native_root,
+                    paper_session_id=str(getattr(state, "session_id", "") or ""),
+                    am_pm=str(getattr(am_pm_policy, "kind", "") or "") if am_pm_policy else "",
+                    path_label="session_finally",
+                )
             except Exception:
                 pass
 
@@ -5958,6 +6780,116 @@ def run_live_dry_run(
             observer_stats=_observer_stats_dict(observer),
         )
     )
+    # Phase687W4S: persist SafetySM soak snapshot (no strategy change)
+    try:
+        bridge = getattr(state, "live_order_safety_bridge", None)
+        if bridge is not None:
+            from small_paper.live_order_runtime_bridge import write_soak_session_snapshot
+
+            write_soak_session_snapshot(
+                bridge,
+                output_dir=output_dir / "live_order_safety",
+                canonical_entry_count=len(state.accepted_rows),
+                canonical_exit_count=sum(
+                    1
+                    for e in state.events
+                    if str(e.get("event") or e.get("kind") or "") in ("OBSERVER_EXIT", "exit")
+                    or e.get("is_structural_exit")
+                ),
+            )
+            # Phase687W7A: finalize manifest + full session seal (hash only; no secrets)
+            try:
+                import json as _json
+
+                from small_paper.operational_recovery import (
+                    disk_usage_pct,
+                    finalize_session_manifest,
+                )
+
+                safety_dir = output_dir / "live_order_safety"
+                man_path = safety_dir / "session_manifest.json"
+                # duplicate finalize: skip if already sealed
+                already = False
+                if man_path.is_file():
+                    try:
+                        prev = _json.loads(man_path.read_text(encoding="utf-8"))
+                        already = bool(prev.get("sealed")) and prev.get("session_seal_status") in (
+                            "SEALED",
+                            "SEALED_VALID",
+                            "INCOMPLETE",
+                        )
+                    except Exception:
+                        already = False
+                if not already:
+                    eng = getattr(bridge, "engine", None)
+                    submit_n = 0
+                    cancel_n = 0
+                    leak_n = 0
+                    intent_n = 0
+                    seq_end = 0
+                    if eng is not None:
+                        submit_attr = getattr(eng, "actual_broker_submit_count", 0)
+                        submit_n = int(submit_attr() if callable(submit_attr) else (submit_attr or 0))
+                        br = getattr(eng, "broker", None)
+                        cancel_n = int(getattr(br, "actual_broker_cancel_count", 0) or 0)
+                        ledger = getattr(eng, "ledger", None)
+                        if ledger is not None and hasattr(ledger, "leak_count"):
+                            leak_n = int(ledger.leak_count())
+                        intent_n = len(getattr(eng, "orders", {}) or {})
+                        store = getattr(eng, "store", None)
+                        if store is not None:
+                            seq_end = int(getattr(store, "_seq", 0) or 0)
+                    exit_n = sum(
+                        1
+                        for e in state.events
+                        if str(e.get("event") or e.get("kind") or "") in ("OBSERVER_EXIT", "exit")
+                        or e.get("is_structural_exit")
+                    )
+                    finalize_session_manifest(
+                        safety_dir,
+                        canonical_entry_count=len(state.accepted_rows),
+                        canonical_exit_count=exit_n,
+                        safety_sm_signal_count=int(getattr(bridge, "actual_entry_signal_count", 0) or 0)
+                        + int(getattr(bridge, "actual_exit_signal_count", 0) or 0),
+                        intent_count=intent_n,
+                        submit_count=submit_n,
+                        cancel_count=cancel_n,
+                        reservation_leak=leak_n,
+                        reconciliation_mismatch=int(
+                            (getattr(bridge, "startup_recon", {}) or {}).get("diff_count") or 0
+                        ),
+                        kill_switch_events=1 if getattr(eng, "kill_switch", False) else 0,
+                        journal_sequence_end=seq_end,
+                        snapshot_completeness="COMPLETE",
+                        session_seal_status="SEALED",
+                    )
+                    # Disk / growth metadata must be on manifest BEFORE seal (W7A2: no post-seal rewrite)
+                    if man_path.is_file():
+                        man = _json.loads(man_path.read_text(encoding="utf-8"))
+                        man["disk_usage_end"] = disk_usage_pct(output_dir)
+                        try:
+                            start = float(man.get("disk_usage_start") or man.get("disk_usage_pct") or 0)
+                            end = float(man.get("disk_usage_end") or 0)
+                            man["session_growth_mb"] = None
+                            man["disk_usage_delta_pct"] = round(end - start, 3) if start and end else None
+                        except Exception:
+                            pass
+                        man_path.write_text(_json.dumps(man, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                    # Phase687W7A2: session-root seal is SoT; propagate into soak snapshot.
+                    # Do not rewrite session_manifest.json after seal (circular invalidation).
+                    from small_paper.w4s_seal_propagation import finalize_session_seal_propagation
+
+                    prop = finalize_session_seal_propagation(
+                        output_dir,
+                        safety_dir=safety_dir,
+                        session_id=str(getattr(bridge, "session_id", "") or ""),
+                    )
+                    # Seal status for operators lives on session_seal.json + soak snapshot (SoT copy)
+                    _ = prop
+            except Exception:
+                pass
+    except Exception:
+        pass
     monitored_n: Optional[int] = None
     if state.intraday_refresh_last_register_count:
         monitored_n = int(state.intraday_refresh_last_register_count)
@@ -6023,9 +6955,11 @@ def run_live_dry_run(
         _apply_trading_value_shadow_finalize(state, summary)
         _apply_board_imbalance_shadow_finalize(state, summary)
         _apply_entry_expectancy_score_shadow_finalize(state, summary)
+        _apply_ihc_shadow_counterfactual_finalize(state, summary, output_dir=output_dir, config=config)
     if discord:
         summary.update(discord_notify_summary_fields(discord))
     try:
+        # Phase687W10A: after Shadow finalize + canonical — RESEARCH_SHADOW AM/PM hook
         notify_discord_session_end(
             discord,
             events=state.events,
@@ -6033,6 +6967,8 @@ def run_live_dry_run(
             monitored_symbol_count=monitored_n,
             reject_rows=state.reject_rows,
             ux_stats=state.discord_ux,
+            native_root=native_root,
+            output_dir=output_dir,
         )
     except Exception as exc:
         log.warning("discord session_end notify failed: %s", exc)
@@ -6056,6 +6992,18 @@ def run_live_dry_run(
         summary=summary,
         pos_fields=pos_fields,
     )
+    try:
+        from small_paper.am_pm_summary_preservation import preserve_session_summary_at_end
+
+        preserved = preserve_session_summary_at_end(
+            output_dir,
+            session_cfg=session_cfg,
+            summary=summary,
+        )
+        if preserved is not None:
+            summary["am_pm_summary_preserved_path"] = str(preserved)
+    except Exception as exc:
+        log.warning("am_pm summary preservation failed: %s", exc)
     _write_quality_top_debug(output_dir, state.events)
     _write_phase396_artifacts_safe(
         repo_root,

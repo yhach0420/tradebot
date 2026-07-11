@@ -81,10 +81,10 @@ stop_low_mfe_guard_missing_policy: pass
 stop_low_mfe_guard_pbv2_only: true
 
 # Phase563: EXIT shadow monitor (T3 board_high loosen primary, T2 faster trailing watch).
-# Observer-only; actual EXIT policy unchanged. Rollback: exit_shadow_monitor_enabled=false.
-exit_shadow_monitor_enabled: true
-exit_shadow_monitor_t2_enabled: true
-exit_shadow_monitor_t3_enabled: true
+# Phase669: T2/T3 removed from portfolio. Rollback: re-enable flags below.
+exit_shadow_monitor_enabled: false
+exit_shadow_monitor_t2_enabled: false
+exit_shadow_monitor_t3_enabled: false
 
 # Phase364: production ENTRY guard — Dynamic40 near day high + low momentum
 enable_near_day_high_low_momentum_dynamic40_guard: true
@@ -109,6 +109,7 @@ live_order_adapter_enabled: true
 live_order_notifier_enabled: true
 live_order_discord_enabled: false
 live_order_jsonl_enabled: true
+live_order_safety_sm_enabled: true
 dry_run: true
 live_trading_enabled: false
 live_order_entry_timeout_sec: 4.0
@@ -192,19 +193,49 @@ cap_pbv2: 4
 cap_or: 1
 or_max_update_count: 8
 
-# Phase635: PBv2-only rise5 p95 shadow (no ENTRY block). Rollback: pbv2_rise5_shadow_enabled=false
-pbv2_rise5_shadow_enabled: true
+# Phase635: PBv2-only rise5 p95 shadow — Phase669 REMOVE (redundant with flat-band mainline).
+pbv2_rise5_shadow_enabled: false
 pbv2_rise5_shadow_threshold_pct: 1.84
 pbv2_rise5_shadow_apply_pool: PBV2_ONLY
 
-# Phase650: PBv2 flat-band guard shadow (no ENTRY block). Rollback: pbv2_flat_band_shadow_enabled=false
-pbv2_flat_band_shadow_enabled: true
+# Phase650/669: PBv2 flat-band — mainline ENTRY reject (shadow disabled, code retained).
+pbv2_flat_band_mainline_enabled: true
+pbv2_flat_band_shadow_enabled: false
 pbv2_flat_band_shadow_apply_pool: PBV2_ONLY
 pbv2_flat_band_shadow_rise5_flat_min_pct: 0.0
 pbv2_flat_band_shadow_rise5_flat_max_pct: 0.5
 pbv2_flat_band_shadow_rise10_flat_min_pct: -0.5
 pbv2_flat_band_shadow_rise10_flat_max_pct: 0.5
 pbv2_flat_band_shadow_overheat_rise5_pct: 2.0
+
+# Phase186/669: VWAP shadow reject — Phase669 REMOVE.
+vwap_shadow_reject_enabled: false
+
+# Phase670: flat weak + range reject forward shadow (no ENTRY block).
+flat_weak_range_shadow_enabled: true
+
+# Phase679: readiness precision/economics forward shadow (no ENTRY block).
+readiness_precision_shadow_enabled: true
+readiness_precision_shadow_expectancy_max: 2.5
+readiness_precision_shadow_require_live_incomplete: true
+readiness_economics_shadow_enabled: true
+readiness_economics_shadow_bounce_min: 0.45
+readiness_economics_shadow_require_live_incomplete: true
+
+# Phase680: refined H forward shadow — research_only (Phase680 leakage invalid).
+readiness_refined_h_shadow_enabled: true
+readiness_refined_h_bounce_min: 0.45
+readiness_refined_h_pre_entry_mfe_max_pct: 1.0
+readiness_refined_h_require_live_incomplete: true
+
+# Phase681: microsequence recovery-fail (rule C) forward shadow (no ENTRY block).
+microsequence_recovery_fail_shadow_enabled: true
+microsequence_recovery_fail_bounce_min: 0.2182
+microsequence_recovery_fail_fall_from_high_max: -0.1735
+microsequence_recovery_fail_slope_5min_max: 0.1152
+
+# Phase687: no-progress pre-entry board/volume forward logger (logger only; no reject/ranking).
+np_pre_entry_feature_logger_enabled: true
 
 live:
   session_start: "09:00"

@@ -34,7 +34,7 @@ def _sample_payload(*, bid_qty: float = 6000.0, ask_qty: float = 4000.0) -> dict
 class TestPhase335RealtimeBoardExitShadow(unittest.TestCase):
     def test_make_position_id(self) -> None:
         ent = datetime(2026, 6, 5, 10, 0, 0, tzinfo=JST)
-        self.assertEqual(make_position_id("9984.T", ent), "9984.T_20260605T100000")
+        self.assertEqual(make_position_id("9984.T", ent), "9984.T_20260605T100000000000")
 
     def test_evaluate_shadow_watches(self) -> None:
         watches = evaluate_shadow_watches(

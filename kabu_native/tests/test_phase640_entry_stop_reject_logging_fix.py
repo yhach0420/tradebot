@@ -113,9 +113,40 @@ class Phase640EntryStopRejectLoggingTests(unittest.TestCase):
         self.assertEqual(len(cands), 1)
         self.assertEqual(len(rejs), 1)
         self.assertEqual(rejs[0].get("gate_reject_reason"), "am_pm_entry_stop")
+        self.assertEqual(rejs[0].get("reject_reason"), "am_pm_entry_stop")
+        self.assertFalse(rejs[0].get("accepted"))
+        self.assertTrue(rejs[0].get("rejected"))
+        self.assertEqual(rejs[0].get("am_pm_session"), "am")
+        self.assertTrue(rejs[0].get("source_event_id"))
+        self.assertTrue(rejs[0].get("candidate_id"))
         self.assertEqual(len(ctx.state.reject_rows), 1)
         self.assertEqual(ctx.state.entry_stop_reject_logging_recovered_count, 1)
         self.assertEqual(ctx.state.accepted_rows, [])
+
+    def test_pm_entry_stop_records_rejected_event(self) -> None:
+        ctx = _mk_ctx(self._tmpdir / "pm_stop")
+        ctx.am_pm_policy = AmPmSessionPolicy.afternoon()
+        after_stop = datetime(2026, 7, 1, 15, 20, tzinfo=JST).isoformat(timespec="seconds")
+        with patch.object(AmPmSessionPolicy, "entry_allowed_now", return_value=False):
+            _process_push_payload(ctx, _sample_payload(after_stop), 1, t0_push_received_at=after_stop)
+        rejs = [e for e in ctx.state.events if e.get("event_type") == "rejected"]
+        self.assertEqual(len(rejs), 1)
+        self.assertEqual(rejs[0].get("gate_reject_reason"), "am_pm_entry_stop")
+        self.assertEqual(rejs[0].get("am_pm_session"), "pm")
+        self.assertEqual(ctx.state.entry_stop_reject_logging_recovered_count, 1)
+        self.assertEqual(ctx.state.accepted_rows, [])
+
+    def test_entry_stop_same_source_event_id_no_double_reject(self) -> None:
+        ctx = _mk_ctx(self._tmpdir / "dedupe")
+        ctx.am_pm_policy = AmPmSessionPolicy.morning()
+        after_stop = datetime(2026, 7, 1, 11, 25, tzinfo=JST).isoformat(timespec="seconds")
+        payload = _sample_payload(after_stop)
+        with patch.object(AmPmSessionPolicy, "entry_allowed_now", return_value=False):
+            _process_push_payload(ctx, payload, 1, t0_push_received_at=after_stop)
+            _process_push_payload(ctx, payload, 1, t0_push_received_at=after_stop)
+        rejs = [e for e in ctx.state.events if e.get("event_type") == "rejected"]
+        self.assertEqual(len(rejs), 1)
+        self.assertEqual(ctx.state.entry_stop_reject_logging_recovered_count, 1)
 
     def test_outside_refresh_universe_records_rejected_event(self) -> None:
         ctx = _mk_ctx(self._tmpdir / "outside")

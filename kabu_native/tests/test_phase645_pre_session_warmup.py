@@ -93,6 +93,13 @@ class Phase645WarmupTests(unittest.TestCase):
         self.assertFalse(entry_evaluation_allowed(policy, now=before))
         self.assertTrue(entry_evaluation_allowed(policy, now=after))
 
+    def test_ring_only_false_after_entry_stop(self) -> None:
+        """Phase687W11C: post-entry_stop must evaluate/log am_pm_entry_stop, not warmup-skip."""
+        policy = AmPmSessionPolicy.morning()
+        after_stop = datetime(2026, 7, 6, 11, 22, tzinfo=JST)
+        self.assertFalse(ring_only_warmup_active(config=_Cfg(), am_pm_policy=policy, now=after_stop))
+        self.assertFalse(entry_evaluation_allowed(policy, now=after_stop))
+
     def test_warmup_ring_only_skips_gate(self) -> None:
         state = _LiveRunState(started_mono=0.0)
         ctx = _PushPipelineContext(

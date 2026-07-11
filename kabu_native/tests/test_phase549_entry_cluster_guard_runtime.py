@@ -64,6 +64,19 @@ def _base_trade(**overrides: object) -> dict[str, object]:
     return base
 
 
+def _complete_trade(**overrides: object) -> dict[str, object]:
+    """Phase627: reject path requires reject-stage features present (non-null)."""
+    model = load_default_model(repo_root=KABU)
+    trade = _base_trade(**overrides)
+    for feat in model.cluster_features:
+        trade.setdefault(feat, 0.1)
+    for feat in model.csub_features:
+        trade.setdefault(feat, 0.01)
+    trade.setdefault("liquidity_burst", 0.01)
+    trade.setdefault("entry_score_v2", 5)
+    return trade
+
+
 def _guard(
     *,
     enabled: bool = True,
@@ -146,7 +159,7 @@ class TestEntryClusterGuardCore(unittest.TestCase):
                 "cluster_reject_candidate": True,
             },
         ):
-            result = guard.check(_base_trade())
+            result = guard.check(_complete_trade())
         self.assertTrue(result.blocked)
         self.assertEqual(result.cluster_guard_status, CLUSTER_GUARD_REJECTED)
 
@@ -163,7 +176,7 @@ class TestEntryClusterGuardCore(unittest.TestCase):
                 "cluster_reject_candidate": True,
             },
         ):
-            result = guard.check(_base_trade())
+            result = guard.check(_complete_trade())
         self.assertTrue(result.blocked)
 
     def test_exception_liquidity_burst_passes(self) -> None:
@@ -179,7 +192,7 @@ class TestEntryClusterGuardCore(unittest.TestCase):
                 "cluster_reject_candidate": True,
             },
         ):
-            result = guard.check(_base_trade())
+            result = guard.check(_complete_trade())
         self.assertFalse(result.blocked)
         self.assertTrue(result.via_exception)
         self.assertEqual(result.cluster_guard_status, CLUSTER_GUARD_EXCEPTION)
@@ -197,7 +210,7 @@ class TestEntryClusterGuardCore(unittest.TestCase):
                 "cluster_reject_candidate": True,
             },
         ):
-            result = guard.check(_base_trade())
+            result = guard.check(_complete_trade())
         self.assertTrue(result.blocked)
 
     def test_threshold_boundary(self) -> None:
@@ -213,13 +226,12 @@ class TestEntryClusterGuardCore(unittest.TestCase):
                 "cluster_reject_candidate": True,
             },
         ):
-            result = guard.check(_base_trade())
+            result = guard.check(_complete_trade())
         self.assertFalse(result.blocked)
         self.assertTrue(result.via_exception)
 
     def test_record_reject_increments_counts(self) -> None:
         guard = _guard()
-        chk = guard.check(_base_trade())
         with patch.object(
             EntryClusterModel,
             "classify",
@@ -231,8 +243,8 @@ class TestEntryClusterGuardCore(unittest.TestCase):
                 "cluster_reject_candidate": True,
             },
         ):
-            chk = guard.check(_base_trade())
-        guard.record_reject(_base_trade(), chk)
+            chk = guard.check(_complete_trade())
+        guard.record_reject(_complete_trade(), chk)
         self.assertEqual(guard.reject_count, 1)
         self.assertEqual(guard.blocked_cluster_counts.get("c5_s3"), 1)
 
@@ -273,7 +285,7 @@ class TestEntryClusterGuardExposureGate(unittest.TestCase):
                 "cluster_reject_candidate": True,
             },
         ):
-            decision = _gate_with_cluster_guard(guard).evaluate_entry(_base_trade())
+            decision = _gate_with_cluster_guard(guard).evaluate_entry(_complete_trade())
         self.assertFalse(decision.accept)
         self.assertEqual(decision.reason, REJECT_ENTRY_CLUSTER_GUARD)
         self.assertEqual(decision.cluster_guard_status, CLUSTER_GUARD_REJECTED)
@@ -291,7 +303,7 @@ class TestEntryClusterGuardExposureGate(unittest.TestCase):
                 "cluster_reject_candidate": True,
             },
         ):
-            decision = _gate_with_cluster_guard(guard).evaluate_entry(_base_trade())
+            decision = _gate_with_cluster_guard(guard).evaluate_entry(_complete_trade())
         self.assertTrue(decision.accept)
         self.assertEqual(decision.cluster_guard_status, CLUSTER_GUARD_EXCEPTION)
         self.assertTrue(decision.entry_cluster_guard_via_exception)
@@ -313,7 +325,8 @@ class TestEntryClusterGuardConfig(unittest.TestCase):
             0.052267,
         )
         self.assertEqual(config.raw.get("entry_cluster_guard_reject_clusters"), [5])
-        self.assertEqual(config.raw.get("entry_cluster_guard_reject_csubs"), [0, 2, 3, 5])
+        # Phase606: csub reject list rolled back to empty in production YAML
+        self.assertEqual(config.raw.get("entry_cluster_guard_reject_csubs"), [])
         self.assertEqual(
             config.raw.get("entry_cluster_guard_model_path"),
             "kabu_native/configs/entry_cluster_guard_model.json",

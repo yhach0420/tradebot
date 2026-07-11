@@ -231,7 +231,10 @@ class TestExitShadowMonitorConfigRollback(unittest.TestCase):
             / "small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml"
         )
         config = load_pilot_config(cfg_path)
-        self.assertTrue(config.exit_shadow_monitor_enabled)
+        # Phase669: exit shadow monitor removed from portfolio (flags false)
+        self.assertFalse(config.exit_shadow_monitor_enabled)
+        self.assertFalse(config.exit_shadow_monitor_t2_enabled)
+        self.assertFalse(config.exit_shadow_monitor_t3_enabled)
 
     def test_rollback_disabled(self) -> None:
         from small_paper.config import SmallPaperPilotConfig
@@ -262,7 +265,8 @@ class TestExitShadowMonitorIntegration(unittest.TestCase):
         from small_paper.production_startup_smoke_test import run_production_startup_smoke_test
 
         smoke = run_production_startup_smoke_test(repo_root=REPO)
-        self.assertTrue(smoke.checks.get("exit_shadow_monitor_summary"))
+        # Monitor disabled in production — summary check may be absent/false
+        self.assertFalse(bool(smoke.checks.get("exit_shadow_monitor")))
 
     def test_verdict_constant(self) -> None:
         self.assertEqual(PHASE563_VERDICT, "phase563_shadow_exit_daily_monitor_pilot_ready")

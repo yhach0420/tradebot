@@ -126,9 +126,25 @@ def ring_only_warmup_active(
     am_pm_policy: Optional[Any],
     now: Optional[datetime] = None,
 ) -> bool:
+    """True only during pre-session warmup (before allowed_entry_start).
+
+    Phase687W11C: must NOT treat post-entry_stop as warmup — otherwise
+    am_pm_entry_stop rejects are swallowed without candidate/rejected events.
+    """
     if not pre_session_warmup_enabled(config) or am_pm_policy is None:
         return False
-    return not entry_evaluation_allowed(am_pm_policy, now=now)
+    now = now or datetime.now(JST)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=JST)
+    else:
+        now = now.astimezone(JST)
+    start = str(getattr(am_pm_policy, "allowed_entry_start", "") or "").strip()
+    if not start:
+        # Fallback: only when entry is not yet allowed and stop not reached
+        if getattr(am_pm_policy, "entry_stop_reached", lambda _n=None: False)(now):
+            return False
+        return not entry_evaluation_allowed(am_pm_policy, now=now)
+    return now.time() < parse_hhmm(start)
 
 
 def compute_ready_delay_sec(

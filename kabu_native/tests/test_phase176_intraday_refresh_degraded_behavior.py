@@ -9,7 +9,7 @@ class TestPhase176IntradayRefreshDegradedBehavior(unittest.TestCase):
         running the live loop. This regression test enforces the critical invariant:
         open_symbols_exceed_cap MUST NOT call _request_stop().
         """
-        path = Path("kabu_native/src/small_paper/pilot_runner.py")
+        path = Path(__file__).resolve().parents[1] / "src" / "small_paper" / "pilot_runner.py"
         src = path.read_text(encoding="utf-8")
         self.assertNotIn('_request_stop("open_symbols_exceed_cap")', src)
         self.assertIn("action\": \"continue_keep_previous_subscription", src)

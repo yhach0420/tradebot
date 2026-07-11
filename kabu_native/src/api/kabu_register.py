@@ -67,21 +67,53 @@ def register_symbols_cleared(
     *,
     clear_first: bool = True,
     retry_on_limit: bool = True,
+    native_root: Optional[Any] = None,
+    trading_date: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     unregister/all (optional) then PUT /register.
     On 4002006 / register limit: clear again and retry once.
+
+    Phase687W11A: when live Capture Sidecar owns registration for the day,
+    clear_first is forced False (never unregister_all).
     """
+    from pathlib import Path
+
     n = len(symbols_spec)
     if n > KABU_PUSH_REGISTER_LIMIT:
         raise KabuNativeApiError(
             f"register symbol count {n} exceeds kabu limit {KABU_PUSH_REGISTER_LIMIT}"
         )
 
+    effective_clear = bool(clear_first)
+    defer_meta: dict[str, Any] = {}
+    if effective_clear:
+        try:
+            from small_paper.registration_lifetime import (
+                clear_first_allowed_for_register,
+                should_defer_paper_unregister,
+            )
+
+            root = Path(native_root) if native_root else Path(__file__).resolve().parents[2]
+            if not clear_first_allowed_for_register(root, trading_date=trading_date):
+                effective_clear = False
+                defer_meta = should_defer_paper_unregister(root, trading_date=trading_date).to_dict()
+        except Exception:
+            pass
+
     steps: list[dict[str, Any]] = []
 
     def _clear(step_name: str) -> None:
-        if not clear_first:
+        if not effective_clear:
+            steps.append(
+                {
+                    "step": step_name,
+                    "ok": True,
+                    "skipped": True,
+                    "reason": "CAPTURE_ACTIVE_CLEAR_DEFERRED",
+                    **({"capture": defer_meta} if defer_meta else {}),
+                }
+            )
             return
         unr = unregister_all_safe(push)
         steps.append({"step": step_name, **unr})
@@ -94,7 +126,14 @@ def register_symbols_cleared(
     _clear("unregister_all_before_register")
     try:
         out = _register("register")
-        return {"ok": True, "symbol_count": n, "steps": steps, "response": out}
+        return {
+            "ok": True,
+            "symbol_count": n,
+            "steps": steps,
+            "response": out,
+            "clear_first_effective": effective_clear,
+            "capture_clear_deferred": bool(defer_meta),
+        }
     except KabuNativeApiError as first_err:
         steps.append(
             {
@@ -107,6 +146,7 @@ def register_symbols_cleared(
         )
         if not retry_on_limit or not is_register_limit_error(first_err):
             raise
+        # Limit retry still must not unregister_all while Capture owns the day
         _clear("unregister_all_retry_after_limit")
         try:
             out = _register("register_retry")
@@ -116,6 +156,8 @@ def register_symbols_cleared(
                 "steps": steps,
                 "response": out,
                 "recovered_from_register_limit": True,
+                "clear_first_effective": effective_clear,
+                "capture_clear_deferred": bool(defer_meta),
             }
         except KabuNativeApiError as second_err:
             steps.append(
@@ -127,7 +169,7 @@ def register_symbols_cleared(
                 }
             )
             raise KabuNativeApiError(
-                f"register failed after unregister retry ({n} symbols): {second_err}"
+                format_register_failure_message(second_err, symbol_count=n)
             ) from second_err
 
 
