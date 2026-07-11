@@ -1,0 +1,5 @@
+2026-05-16 21:42:04,660 INFO PUSH spec only (no REST token / board)
+2026-05-16 21:42:04,660 INFO JSON 出力: kabu_native\results\reports\api_check_20260516_214204.json
+2026-05-16 21:42:04,859 INFO token 取得成功（ログ・JSON には出力しません）
+2026-05-16 21:42:05,197 INFO 板取得成功 CurrentPrice=5745.0 Symbol='9984'
+2026-05-16 21:42:05,198 INFO JSON 出力: kabu_native\results\reports\api_check_20260516_214204.json

@@ -1,6 +1,6 @@
 # Phase403 — Gradual Time-Decay MFE Shadow
 
-Generated: 2026-06-25T07:14:21+09:00
+Generated: 2026-07-12T02:10:25+09:00
 Period: 20260529 – 20260615
 Verdict: **no_adopt_candidate**
 

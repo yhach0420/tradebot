@@ -1,6 +1,6 @@
 # Phase399 — Historical Position-CAP Backfill
 
-Generated: 2026-06-25T07:12:14+09:00
+Generated: 2026-07-12T01:47:50+09:00
 
 ## Verdict: **historical_backfill_ready**
 

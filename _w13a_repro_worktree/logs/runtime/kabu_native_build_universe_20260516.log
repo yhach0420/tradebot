@@ -1,0 +1,10 @@
+2026-05-16 21:47:28,228 INFO token 取得成功（ログ・JSON に出力しません）
+2026-05-16 21:47:28,237 INFO PASS 9984@1 ソフトバンクグループ reasons=- tv=409873170400.0
+2026-05-16 21:47:29,270 INFO SKIP 7203@1 トヨタ自動車 reasons=missing_trading_value|missing_spread_bps tv=None
+2026-05-16 21:47:30,226 INFO PASS 6758@1 ソニーグループ reasons=- tv=114647778300.0
+2026-05-16 21:47:35,230 INFO PASS 8306@1 三菱ＵＦＪフィナンシャル・グループ reasons=- tv=138013524750.0
+2026-05-16 21:47:36,216 INFO SKIP 1306@1 ＮＥＸＴ　ＦＵＮＤＳ　ＴＯＰＩＸ連動型上場投信 reasons=market_not_prime|etf|missing_trading_value|missing_spread_bps tv=None
+2026-05-16 21:47:37,245 INFO SKIP 1321@1 ＮＥＸＴ　ＦＵＮＤＳ　日経２２５連動型上場投信 reasons=market_not_prime|etf tv=46259552240.0
+2026-05-16 21:47:37,247 INFO included=3 excluded=3
+2026-05-16 21:47:37,247 INFO CSV: kabu_native\data\universe\universe_20260516.csv
+2026-05-16 21:47:37,248 INFO JSON: kabu_native\data\universe\universe_20260516.json

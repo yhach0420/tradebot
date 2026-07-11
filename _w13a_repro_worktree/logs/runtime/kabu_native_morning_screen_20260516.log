@@ -1,0 +1,6 @@
+2026-05-16 21:55:23,486 INFO token 取得成功
+2026-05-16 21:55:23,491 INFO TOP1 9984@1 score=59.49 pass=True reasons=-
+2026-05-16 21:55:23,491 INFO TOP2 8306@1 score=57.47 pass=True reasons=-
+2026-05-16 21:55:23,491 INFO TOP3 6758@1 score=54.31 pass=True reasons=-
+2026-05-16 21:55:23,493 INFO CSV: kabu_native\results\morning_screen\20260516\morning_screen_20260516_215523.csv
+2026-05-16 21:55:23,493 INFO JSON: kabu_native\results\morning_screen\20260516\morning_screen_20260516_215523.json

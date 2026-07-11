@@ -1,6 +1,6 @@
 # Phase402 — Time-Decayed MFE / Stop Shadow
 
-Generated: 2026-06-25T07:13:24+09:00
+Generated: 2026-07-12T02:09:28+09:00
 Period: 20260529 – 20260615
 Verdict: **adopt_candidate_found**
 

@@ -1,0 +1,19 @@
+
+[2026/05/13 23:22:29.76] start_issue_bot: launching inner bat
+[2026/05/13 23:22:29.77] ROOT=C:\Users\yhach\Documents\tradebotfile
+[2026/05/13 23:22:29.77] LOG=C:\Users\yhach\Documents\tradebotfile\logs\runtime\issue_bot_20260513.log
+
+=== run_issue_bot_inner 2026/05/13 23:22:29.95 ===
+ROOT=C:\Users\yhach\Documents\tradebotfile
+LOG=C:\Users\yhach\Documents\tradebotfile\logs\runtime\issue_bot_20260513.log
+where python:
+C:\Users\yhach\AppData\Local\Programs\Python\Python314\python.exe
+C:\Users\yhach\AppData\Local\Microsoft\WindowsApps\python.exe
+python --version:
+Python 3.14.3
+CD=C:\Users\yhach\Documents\tradebotfile
+CMD=python .\discord_issue_bot\discord_issue_bot.py
+========================================
+[2026-05-13 23:22:30] [INFO    ] discord.client: logging in using static token
+[2026-05-13 23:22:31] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: cedf38af27a4f9c8dd6e21804dc5238b).
+^C

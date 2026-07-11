@@ -1,0 +1,16 @@
+# Pandoc -> Typst -> PDF（日本語向けの最低限の組版）
+# 例: pandoc docs/DESIGN.md -d tools/design-pandoc-pdf.yaml -o docs/DESIGN.pdf
+pdf-engine: typst
+variables:
+  lang: ja
+  region: JP
+  # fontsize は Typst 側で単位必須のため未指定（既定 11pt 相当に任せる）
+  linestretch: 1.22
+  papersize: a4
+  mainfont: "Yu Gothic UI"
+  margin:
+    top: 22mm
+    bottom: 26mm
+    left: 24mm
+    right: 24mm
+  page-numbering: "1"

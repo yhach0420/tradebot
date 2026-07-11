@@ -1,6 +1,6 @@
 # Phase405 — Time-Based MFE / STOP Boundary Inference
 
-Generated: 2026-06-25T07:15:46+09:00
+Generated: 2026-07-12T02:11:50+09:00
 Period: 20260529 – 20260615
 Trades analyzed: 755
 

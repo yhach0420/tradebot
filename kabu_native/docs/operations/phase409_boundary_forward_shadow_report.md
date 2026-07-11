@@ -2,20 +2,20 @@
 
 Daily forward shadow for Phase408 corrected boundary policy (Stack C / position_cap_mode).
 
-- generated_at: 2026-07-06T11:25:58+09:00
-- day_count: 10
-- verdict: adoption_review_allowed
+- generated_at: 2026-07-12T02:13:51+09:00
+- day_count: 1
+- verdict: observe
 - adoption_review_allowed: False
 
 ## Cumulative metrics
 
-| baseline PnL | ¥3300.0 |
-| shadow PnL | ¥-13100.0 |
-| delta | ¥-16400.0 |
-| baseline PF | 1.0125 |
-| shadow PF | 0.9501 |
-| baseline maxDD | ¥36000.0 |
-| shadow maxDD | ¥37500.0 |
+| baseline PnL | ¥100.0 |
+| shadow PnL | ¥200.0 |
+| delta | ¥100.0 |
+| baseline PF | inf |
+| shadow PF | inf |
+| baseline maxDD | ¥0.0 |
+| shadow maxDD | ¥0.0 |
 
 ## Phase408 reference (historical corrected replay)
 

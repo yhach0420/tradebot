@@ -1,6 +1,6 @@
 # Phase400 — Holding Time Audit (Position-CAP Mode)
 
-Generated: 2026-06-25T07:12:17+09:00
+Generated: 2026-07-12T01:47:52+09:00
 
 Period: `20260615` – `20260615`
 Source: Phase399 `phase399_historical_position_cap_backfill_trades.csv` (position_cap_accepted trades only)

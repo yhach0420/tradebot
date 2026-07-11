@@ -1,6 +1,6 @@
 # Phase406 — Portfolio-Level Adoption Re-Evaluation
 
-Generated: 2026-06-25T07:16:24+09:00
+Generated: 2026-07-12T02:12:26+09:00
 Verdict: **adopt_candidate**
 
 Phase406: #1 phase404_best (Tier S) PnL ¥402380.0 PF 1.3225 Calmar 4.2806 → A_adopt_candidate
