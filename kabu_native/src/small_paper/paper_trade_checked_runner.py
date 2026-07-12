@@ -630,7 +630,8 @@ class PaperTradeCheckedRunner:
         }
         self.paper_blocked_capture_continues = False
         self.kabu_readonly_status = "UNKNOWN"
-        self._step_total = 16
+        self.universe_prebuild: dict[str, Any] = {}
+        self._step_total = 17
 
     def _env(self) -> dict[str, str]:
         try:
@@ -1335,6 +1336,90 @@ class PaperTradeCheckedRunner:
         print(f"seal: {c.get('seal_pass')}")
         print(f"capture_complete: {c.get('capture_complete')}")
 
+    def step_universe_prebuild(self) -> bool:
+        """Phase687W15B: ensure same-day AM universe SoT exists (no previous-day fallback)."""
+        started = time.time()
+        from small_paper.universe_prebuild import run_universe_prebuild, write_prebuild_artifact
+
+        result = run_universe_prebuild(
+            repo_root=self.repo_root,
+            native_root=self.native_root,
+            trading_date=self.trading_date,
+            allow_synthetic=bool(self.capture_synthetic),
+        )
+        self.universe_prebuild = dict(result)
+        try:
+            write_prebuild_artifact(self.native_root, self.trading_date, result)
+        except OSError:
+            pass
+        ok = bool(result.get("ok"))
+        reason = str(result.get("error_reason") or result.get("verdict") or "")
+        if not ok:
+            if reason == "universe_validation_failed":
+                next_action = (
+                    f"expected_symbols=50 actual_symbols={result.get('symbol_count')}; "
+                    "Check generator output and validation_result."
+                )
+            elif reason == "non_trading_day":
+                next_action = "Trading date is weekend; formal Paper start is blocked."
+            else:
+                next_action = "Check feature source and generator log."
+            step = self._record(
+                "universe_prebuild",
+                4,
+                "run_universe_prebuild",
+                exit_code=1,
+                started=started,
+                stdout=json.dumps(
+                    {
+                        k: result.get(k)
+                        for k in (
+                            "verdict",
+                            "existing_or_generated",
+                            "output_path",
+                            "symbol_count",
+                            "core_count",
+                            "dynamic_count",
+                            "error_reason",
+                            "generator_exit_code",
+                        )
+                    },
+                    ensure_ascii=False,
+                ),
+                result="FAIL",
+                blocked_reason=reason or "universe_generation_failed",
+            )
+            self._print_step(4, self._step_total, "Universe prebuild", step.result)
+            self._block("universe_prebuild", 1, step.blocked_reason, next_action)
+            return False
+
+        step = self._record(
+            "universe_prebuild",
+            4,
+            "run_universe_prebuild",
+            exit_code=0,
+            started=started,
+            stdout=json.dumps(
+                {
+                    k: result.get(k)
+                    for k in (
+                        "verdict",
+                        "existing_or_generated",
+                        "output_path",
+                        "symbol_count",
+                        "core_count",
+                        "dynamic_count",
+                        "duration_sec",
+                    )
+                },
+                ensure_ascii=False,
+            ),
+            result="PASS",
+        )
+        self._print_step(4, self._step_total, "Universe prebuild", step.result)
+        self.capture["universe_prebuild"] = result
+        return True
+
     def step_universe_resolve(self) -> bool:
         started = time.time()
         from small_paper.market_capture_registration import resolve_universe_symbols
@@ -1354,7 +1439,7 @@ class PaperTradeCheckedRunner:
             }
         step = self._record(
             "universe_resolve",
-            4,
+            5,
             "resolve_universe_symbols",
             exit_code=0 if ok else 1,
             started=started,
@@ -1362,7 +1447,7 @@ class PaperTradeCheckedRunner:
             result="PASS" if ok else "FAIL",
             blocked_reason="" if ok else str(resolved.get("reason") or "universe_resolve_failed"),
         )
-        self._print_step(4, self._step_total, "Universe resolve", step.result)
+        self._print_step(5, self._step_total, "Universe resolve", step.result)
         self.capture["universe"] = resolved
         if not ok:
             self._block("universe_resolve", 1, step.blocked_reason, "Provide today's universe CSV SoT (≤50 symbols).")
@@ -1386,7 +1471,7 @@ class PaperTradeCheckedRunner:
         ok = bool(coord.get("ok")) and int(coord.get("expected_count") or 0) <= 50
         step = self._record(
             "registration_coordination",
-            5,
+            6,
             "coordinate_registration",
             exit_code=0 if ok else 1,
             started=started,
@@ -1402,7 +1487,7 @@ class PaperTradeCheckedRunner:
             result="PASS" if ok else "FAIL",
             blocked_reason="" if ok else str(coord.get("reason") or "registration_coordination_failed"),
         )
-        self._print_step(5, self._step_total, "Registration", step.result)
+        self._print_step(6, self._step_total, "Registration", step.result)
         self.capture["registration"] = coord
         self.capture["symbols_label"] = f"{coord.get('expected_count', 0)}/50"
         if not ok:
@@ -1439,7 +1524,7 @@ class PaperTradeCheckedRunner:
         )
         step = self._record(
             "capture_sidecar_start",
-            6,
+            7,
             spawn.get("cmd") or "spawn_sidecar",
             exit_code=0 if ok else 1,
             started=started,
@@ -1447,7 +1532,7 @@ class PaperTradeCheckedRunner:
             result="PASS" if ok else "FAIL",
             blocked_reason="" if ok else str(wait.get("reason") or "capture_sidecar_start_failed"),
         )
-        self._print_step(6, self._step_total, "Capture sidecar", step.result)
+        self._print_step(7, self._step_total, "Capture sidecar", step.result)
         if ok:
             self._print_capture_banner()
         else:
@@ -1538,7 +1623,7 @@ class PaperTradeCheckedRunner:
         ok = seal_ok or override or continuing
         step = self._record(
             "capture_finalize_verify",
-            16,
+            17,
             "capture_seal_verify",
             exit_code=0 if ok else 1,
             started=started,
@@ -1552,7 +1637,7 @@ class PaperTradeCheckedRunner:
             result="PASS" if ok else "FAIL",
             blocked_reason="" if ok else "capture_seal_missing",
         )
-        self._print_step(16, self._step_total, "Capture finalize", step.result)
+        self._print_step(17, self._step_total, "Capture finalize", step.result)
         if continuing:
             print()
             print("[MARKET CAPTURE]")
@@ -1677,15 +1762,18 @@ class PaperTradeCheckedRunner:
         self.trading_date = trading_date_jst()
         self._print_banner()
 
-        # Phase687W9 order:
-        # 1 JST date (done) → 2 disk → 3 kabu readonly → 4 universe → 5 registration
-        # → 6 capture start → 7 CAPTURE_ONLINE wait → 8 cache → 9 preflight → 10 smoke
-        # → 11 recovery/design/safety → 12 paper bat → 13 W4S → 14-16 capture finalize
+        # Phase687W9/W15B order:
+        # 1 JST date (done) → 2 disk → 3 kabu readonly → 4 universe prebuild → 5 universe resolve
+        # → 6 registration → 7 capture start → … → paper path → capture finalize
         if not self.step_disk_guard():
             self._print_blocked()
             self.write_logs()
             return int((self.blocked or {}).get("exit_code") or 1)
         if not self.step_kabu_readonly():
+            self._print_blocked()
+            self.write_logs()
+            return int((self.blocked or {}).get("exit_code") or 1)
+        if not self.step_universe_prebuild():
             self._print_blocked()
             self.write_logs()
             return int((self.blocked or {}).get("exit_code") or 1)
@@ -1776,6 +1864,7 @@ class PaperTradeCheckedRunner:
 
         payload_extra = {
             "capture": self.capture,
+            "universe_prebuild": self.universe_prebuild,
             "paper_blocked_capture_continues": self.paper_blocked_capture_continues,
         }
         self.write_logs()

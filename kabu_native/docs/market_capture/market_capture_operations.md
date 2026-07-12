@@ -7,24 +7,27 @@ cd C:\Users\yhach\Documents\tradebotfile
 .\run_paper_trade_checked.bat
 ```
 
-## Checked runner order (W9)
+## Checked runner order (W9 / W15B)
 
 1. JST trading date
 2. Disk guard
 3. Kabu read-only readiness
-4. Universe resolve (existing SoT, ≤50)
-5. Registration coordination (lock)
-6. Capture Sidecar start
-7. Wait `CAPTURE_ONLINE`
-8. Cache prebuild
-9. Pipeline preflight
-10. Smoke
-11. Recovery / design / safety flags
-12. Existing `run_paper_trade.bat` (once)
-13. W4S
-14. Capture continues to 15:35 JST
-15. Capture finalize
-16. Capture summary/seal verify
+4. Universe prebuild / validate (same-day SoT; auto `build_am_universe` if missing)
+5. Universe resolve (existing SoT, ≤50)
+6. Registration coordination (lock)
+7. Capture Sidecar start
+8. Wait `CAPTURE_ONLINE`
+9. Cache prebuild
+10. Pipeline preflight
+11. Smoke
+12. Recovery / design / safety flags
+13. Existing `run_paper_trade.bat` (once)
+14. W4S
+15. Capture continues to 15:35 JST
+16. Capture finalize
+17. Capture summary/seal verify
+
+Universe prebuild never copies a previous trading day's CSV. Fail-closed on generation/validation failure.
 
 ## Paper blocked — Capture continues
 

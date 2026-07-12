@@ -5,6 +5,7 @@
   "exclude_markers": ["research_long"],
   "nodes": [
     "tests/test_phase687w8_paper_trade_checked_runner.py",
+    "tests/test_phase687w15b_auto_universe_prebuild.py",
     "tests/test_phase687w4t_kabu_readonly_readiness.py",
     "tests/test_phase687w9_market_capture_sidecar.py",
     "tests/test_phase687w11a_monday_p1_fixes.py",

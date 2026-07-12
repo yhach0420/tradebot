@@ -15,8 +15,13 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $NativeRoot = Resolve-Path (Join-Path $ScriptDir "..")
 $RepoRoot = Resolve-Path (Join-Path $NativeRoot "..")
 
-$env:PYTHONPATH = "src;$RepoRoot"
+$env:PYTHONPATH = "$(Join-Path $NativeRoot 'src');$RepoRoot"
 $env:PYTHONIOENCODING = "utf-8"
+
+# Ensure child processes inherit resolved paths even if user shell had empty PYTHONPATH
+if (-not $env:PYTHONPATH -or $env:PYTHONPATH.Trim().Length -eq 0) {
+    $env:PYTHONPATH = "$(Join-Path $NativeRoot 'src');$RepoRoot"
+}
 
 Set-Location $NativeRoot
 
