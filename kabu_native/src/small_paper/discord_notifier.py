@@ -33,7 +33,11 @@ from small_paper.discord_message_builder import (
     build_entry_cap_blocked_detail,
     build_entry_deferred_detail,
     build_entry_detail,
+    build_entry_embed_payload,
     build_exit_detail,
+    build_exit_embed_payload,
+    build_cap_blocked_embed_payload,
+    build_summary_embed_payload,
     format_heartbeat_runtime_health_fields,
     summary_notification_labels,
     build_universe_refresh_overview,
@@ -143,7 +147,7 @@ class SmallPaperDiscordNotifier:
         *,
         profile: str,
         entry_profile: str,
-        policy_label: str = "q055_cap3",
+        policy_label: str = "paper_cap5",
         min_continuation_quality: float = 0.55,
         error_logger: Optional[ErrorLogger] = None,
         delivery_audit: Optional[DeliveryAuditCallback] = None,
@@ -273,11 +277,14 @@ class SmallPaperDiscordNotifier:
         return max(1, int(self.cfg.max_concurrent_positions))
 
     def _header_content(self, event_tag: str, title_line: str = "") -> str:
-        lines = ["[SMALL PAPER DRY RUN]", f"[{event_tag}]", "[NO ORDER]"]
-        lines.append(f"[policy: {self.policy_label}]")
-        if title_line:
-            lines.append(title_line)
-        return "\n".join(lines)
+        # Phase687W25C: embed-only cards — no plain-text banner duplication
+        del event_tag, title_line
+        return ""
+
+    def _default_footer(self, *, test_mode: bool = False) -> str:
+        from small_paper.discord_message_builder import PAPER_ONLY_FOOTER, TEST_FOOTER
+
+        return TEST_FOOTER if test_mode else PAPER_ONLY_FOOTER
 
     def _policy_fields(self) -> list[dict[str, Any]]:
         return [
@@ -339,6 +346,9 @@ class SmallPaperDiscordNotifier:
         trade_notify: bool = False,
         cap_blocked: bool = False,
         sequence_id: Optional[int] = None,
+        description: str = "",
+        footer_text: Optional[str] = None,
+        content: str = "",
     ) -> bool:
         return self._post_with_result(
             event_tag=event_tag,
@@ -350,6 +360,9 @@ class SmallPaperDiscordNotifier:
             trade_notify=trade_notify,
             cap_blocked=cap_blocked,
             sequence_id=sequence_id,
+            description=description,
+            footer_text=footer_text,
+            content=content,
         ).final_result == FINAL_DELIVERED
 
     def _post_with_result(
@@ -365,6 +378,9 @@ class SmallPaperDiscordNotifier:
         cap_blocked: bool = False,
         sequence_id: Optional[int] = None,
         payload_prebuilt: bool = True,
+        description: str = "",
+        footer_text: Optional[str] = None,
+        content: str = "",
     ) -> DiscordPostResult:
         res = DiscordPostResult(payload_built=payload_prebuilt)
         if not self.cfg.enabled or not self.cfg.observer_only:
@@ -408,20 +424,19 @@ class SmallPaperDiscordNotifier:
             return res
 
         seq = sequence_id if sequence_id is not None else self._next_sequence_id()
-        footer_text = f"observer only · dry-run · no real orders · seq {seq}"
-        payload = {
-            "content": self._header_content(event_tag, title_line),
-            "embeds": [
-                {
-                    "title": title_line,
-                    "color": color,
-                    "fields": fields,
-                    "footer": {
-                        "text": footer_text,
-                    },
-                }
-            ],
+        foot = footer_text if footer_text is not None else self._default_footer()
+        embed: dict[str, Any] = {
+            "title": title_line[:256],
+            "color": color,
+            "fields": fields,
+            "footer": {"text": f"{foot}"[:2048]},
         }
+        if description:
+            embed["description"] = description[:2048]
+        # Embed-only: avoid duplicate banners in message content
+        payload: dict[str, Any] = {"embeds": [embed]}
+        if content:
+            payload["content"] = content[:1800]
         res.webhook_url_hash = webhook_url_hash(webhook)
         res.webhook_called = True
         # Phase687W10: async worker — never block PUSH/ENTRY/EXIT on Discord HTTP
@@ -461,7 +476,7 @@ class SmallPaperDiscordNotifier:
                 severity=Severity.INFO if category != NotificationCategory.CAP_BLOCKED else Severity.NOTICE,
                 event_type=event_tag or "NOTIFY",
                 title=title_line,
-                content=str(payload.get("content") or title_line),
+                content=str(payload.get("content") or ""),
                 embeds=list(payload.get("embeds") or []),
                 dedupe_key=dedupe_key or "",
                 actual_or_shadow=aos,
@@ -604,10 +619,10 @@ class SmallPaperDiscordNotifier:
                 pre_slot = None
         slot = format_position_slot_pair(pre_slot, open_slots, self._max_slots())
         name_map = get_cached_symbol_name_map()
-        display = format_symbol_display(sym, name_map=name_map)
         event_time = str(event.get("event_time") or "")
         seq = sequence_id if sequence_id is not None else self._next_sequence_id()
-        detail = build_entry_detail(
+        # Keep text builder for audit/JSONL callers; Discord uses embed card
+        _ = build_entry_detail(
             symbol=sym,
             entry_price=entry_f,
             stop_price=stop_px,
@@ -620,6 +635,54 @@ class SmallPaperDiscordNotifier:
             sent_time="",
             sequence_id=seq,
         )
+        reentry_info: dict[str, Any] = {}
+        try:
+            from pathlib import Path
+
+            from small_paper.daily_symbol_discord_state import get_daily_symbol_state
+
+            native = Path(__file__).resolve().parents[2]
+            day_state = get_daily_symbol_state(native_root=native)
+            if is_retry:
+                st = day_state.get(sym)
+                n = int(st.entry_count_today)
+                reentry_info = {
+                    "entry_count_today_after": n,
+                    "is_reentry": n >= 2,
+                }
+                if n >= 2 and st.previous_exit_at:
+                    from small_paper.daily_symbol_discord_state import elapsed_label
+                    from small_paper.discord_message_builder import (
+                        format_time_hms_jst,
+                        humanize_exit_reason,
+                    )
+
+                    reentry_info.update(
+                        {
+                            "previous_exit_reason": st.previous_exit_reason,
+                            "previous_exit_reason_ja": humanize_exit_reason(st.previous_exit_reason),
+                            "previous_exit_at": st.previous_exit_at,
+                            "previous_exit_time_hms": format_time_hms_jst(st.previous_exit_at),
+                            "previous_exit_elapsed": elapsed_label(st.previous_exit_at, event_time),
+                            "previous_exit_price": st.previous_exit_price,
+                        }
+                    )
+            else:
+                reentry_info = day_state.record_accepted_entry(sym, entry_time=event_time)
+        except Exception:
+            reentry_info = {}
+        embed = build_entry_embed_payload(
+            symbol=sym,
+            entry_price=entry_f,
+            slot_usage=slot,
+            entry_score_v2=v2,
+            data=merged,
+            name_map=name_map,
+            entry_time=event_time,
+            stop_price=stop_px if stop_px else None,
+            score5_candidate_ordinal=score5_candidate_ordinal,
+            reentry_info=reentry_info,
+        )
         post_res = DiscordPostResult(
             notify_entry_called=True,
             payload_built=True,
@@ -627,13 +690,11 @@ class SmallPaperDiscordNotifier:
         )
         post_res = self._post_with_result(
             event_tag="ENTRY",
-            title_line=f"【ENTRY】 {display}",
-            fields=[
-                {"name": "詳細", "value": detail[:1020], "inline": False},
-                {"name": "session", "value": session_bucket, "inline": True},
-                {"name": "時刻", "value": format_time_hms_jst(event_time), "inline": True},
-            ],
-            color=0x2F855A,
+            title_line=str(embed["title"]),
+            fields=list(embed.get("fields") or []),
+            color=int(embed.get("color") or 0x2F855A),
+            description=str(embed.get("description") or ""),
+            footer_text=str(embed.get("footer") or ""),
             dedupe_key=f"entry|{sym}|{event.get('message_index')}",
             trade_notify=True,
             sequence_id=seq,
@@ -725,8 +786,7 @@ class SmallPaperDiscordNotifier:
             merged["score5_candidate_ordinal"] = score5_candidate_ordinal
         cap = self._max_slots()
         name_map = get_cached_symbol_name_map()
-        display = format_symbol_display(sym, name_map=name_map)
-        detail = build_entry_cap_blocked_detail(
+        _ = build_entry_cap_blocked_detail(
             symbol=sym,
             entry_score_v2=v2,
             data=merged,
@@ -735,15 +795,22 @@ class SmallPaperDiscordNotifier:
             name_map=name_map,
             block_reason=reason,
         )
-        event_time = str(event.get("event_time") or "")
+        embed = build_cap_blocked_embed_payload(
+            symbol=sym,
+            entry_score_v2=v2,
+            data=merged,
+            active_positions=int(open_slots),
+            position_cap=cap,
+            name_map=name_map,
+            block_reason=reason,
+        )
         ok = self._post(
             event_tag="CAP BLOCKED",
-            title_line=display,
-            fields=[
-                {"name": "詳細", "value": detail[:1020], "inline": False},
-                {"name": "時刻", "value": format_time_hms_jst(event_time), "inline": True},
-            ],
-            color=0xDD6B20,
+            title_line=str(embed["title"]),
+            fields=list(embed.get("fields") or []),
+            description=str(embed.get("description") or ""),
+            footer_text=str(embed.get("footer") or ""),
+            color=int(embed.get("color") or 0xDD6B20),
             dedupe_key=f"cap_blocked|{sym}|{reason}",
             cooldown_sec=float(self.cfg.entry_deferred_cooldown_sec),
             cap_blocked=True,
@@ -912,13 +979,12 @@ class SmallPaperDiscordNotifier:
         except (TypeError, ValueError):
             pnl_yen_100 = None
         name_map = get_cached_symbol_name_map()
-        display = format_symbol_display(sym, name_map=name_map)
         exit_time = str(
             context.get("exit_time") or context.get("event_time") or context.get("timestamp") or ""
         )
         sent_time = datetime.now(JST).isoformat(timespec="milliseconds")
         seq = self._next_sequence_id()
-        detail = build_exit_detail(
+        _ = build_exit_detail(
             symbol=sym,
             entry_price=entry_px,
             exit_price=exit_px,
@@ -939,33 +1005,105 @@ class SmallPaperDiscordNotifier:
             board_dynamic_trailing_giveback_frac=context.get(
                 "board_dynamic_trailing_giveback_frac"
             ),
+            entry_time=str(
+                context.get("entry_time")
+                or context.get("market_entry_time")
+                or ""
+            )
+            or None,
             exit_time=exit_time,
             name_map=name_map,
             market_time_age_sec=_optional_float(context.get("market_time_age_sec")),
             price_age_sec=_optional_float(context.get("price_age_sec")),
             stale_trade=bool(context.get("stale_trade")),
+            price_freshness_source=str(
+                context.get("price_freshness_source")
+                or context.get("price_source")
+                or ""
+            )
+            or None,
             sent_time=sent_time,
             session_id=str(context.get("session_id") or "") or None,
             position_id=str(context.get("position_id") or "") or None,
             sequence_id=seq,
         )
-        if self.cfg.position_cap_mode:
-            detail += "\nExit source: structural_observer"
-            if context.get("session_close"):
-                detail += "\nSession close: position-cap slot released"
-        fields = [
-            {
-                "name": "観測のみ",
-                "value": "発注なし — 構造EXITの通知",
-                "inline": False,
-            },
-            {"name": "詳細", "value": detail[:1020], "inline": False},
-        ]
+        symbol_cum: Optional[float] = None
+        try:
+            from pathlib import Path
+
+            from small_paper.daily_symbol_discord_state import get_daily_symbol_state
+            from replay.pnl_yen import resolve_pnl_yen_100 as _resolve_yen
+
+            yen_for_state = pnl_yen_100
+            if yen_for_state is None:
+                yen_for_state = _resolve_yen(
+                    entry_price=entry_px,
+                    exit_price=exit_px,
+                    side=str(context.get("side") or "long"),
+                    pnl_yen_100=None,
+                )
+            native = Path(__file__).resolve().parents[2]
+            day_state = get_daily_symbol_state(native_root=native)
+            exit_snap = day_state.record_official_exit(
+                sym,
+                exit_reason=reason,
+                exit_time=exit_time,
+                exit_price=exit_px,
+                pnl_yen_100=yen_for_state,
+            )
+            symbol_cum = float(exit_snap.get("realized_pnl_yen_100_today") or 0)
+        except Exception:
+            symbol_cum = None
+        embed = build_exit_embed_payload(
+            symbol=sym,
+            entry_price=entry_px,
+            exit_price=exit_px,
+            pnl_pct=pnl,
+            mfe_pct=float(mfe) if mfe is not None else None,
+            mae_pct=float(mae) if mae is not None else None,
+            hold_minutes=hold_sec / 60.0,
+            exit_reason=reason,
+            pnl_yen_100=pnl_yen_100,
+            side=str(context.get("side") or "long"),
+            board_dynamic_trailing_tier=str(
+                context.get("board_dynamic_trailing_tier") or ""
+            )
+            or None,
+            board_dynamic_trailing_activate_pct=context.get(
+                "board_dynamic_trailing_activate_pct"
+            ),
+            board_dynamic_trailing_giveback_frac=context.get(
+                "board_dynamic_trailing_giveback_frac"
+            ),
+            name_map=name_map,
+            entry_time=str(
+                context.get("entry_time")
+                or context.get("market_entry_time")
+                or ""
+            )
+            or None,
+            exit_time=exit_time,
+            market_time_age_sec=_optional_float(context.get("market_time_age_sec")),
+            price_age_sec=_optional_float(context.get("price_age_sec")),
+            board_age_sec=_optional_float(context.get("board_age_sec")),
+            stale_trade=bool(context.get("stale_trade")),
+            price_freshness_source=str(
+                context.get("price_freshness_source")
+                or context.get("price_source")
+                or ""
+            )
+            or None,
+            session_close=bool(context.get("session_close")),
+            position_cap_mode=bool(self.cfg.position_cap_mode),
+            symbol_pnl_yen_100_today=symbol_cum,
+        )
         return self._post(
             event_tag="EXIT",
-            title_line=f"【EXIT】 {display}",
-            fields=fields,
-            color=0xC05621,
+            title_line=str(embed["title"]),
+            fields=list(embed.get("fields") or []),
+            description=str(embed.get("description") or ""),
+            footer_text=str(embed.get("footer") or ""),
+            color=int(embed.get("color") or 0xC05621),
             dedupe_key=f"exit|{sym}|{reason}|{context.get('exit_time', '')}",
             trade_notify=True,
             sequence_id=seq,
@@ -1067,7 +1205,7 @@ class SmallPaperDiscordNotifier:
             sequence_id=seq,
         )
 
-    def _production_summary_fields(
+    def _production_summary_embed(
         self,
         *,
         events: Sequence[Mapping[str, Any]],
@@ -1075,7 +1213,8 @@ class SmallPaperDiscordNotifier:
         monitored_symbol_count: Optional[int] = None,
         reject_rows: Optional[Sequence[Mapping[str, Any]]] = None,
         ux_stats: Optional[DiscordUxSessionStats] = None,
-    ) -> Optional[list[dict[str, Any]]]:
+    ) -> Optional[dict[str, Any]]:
+        del events, monitored_symbol_count, reject_rows, ux_stats
         if summary.get("summary_integrity_error"):
             log.warning(
                 "Discord summary skipped: integrity error %s",
@@ -1086,34 +1225,103 @@ class SmallPaperDiscordNotifier:
         if not isinstance(canonical, Mapping):
             log.warning("Discord summary skipped: missing canonical_summary")
             return None
-        detail = build_daily_summary_detail(canonical, name_map=get_cached_symbol_name_map())
-        fields: list[dict[str, Any]] = []
-        from small_paper.discord_message_builder import (
-            build_operator_status_embed_fields,
+        am_pm = str(summary.get("am_pm") or summary.get("session_kind") or "").upper()
+        if not am_pm:
+            tag, _ = summary_notification_labels(summary)
+            if "AM" in tag.upper():
+                am_pm = "AM"
+            elif "PM" in tag.upper():
+                am_pm = "PM"
+        # Operator/debug sections stay in canonical_summary / JSONL — not Discord.
+        day_yen = None
+        reentry_audit = None
+        try:
+            from pathlib import Path
+
+            from small_paper.daily_symbol_discord_state import get_daily_symbol_state, trading_date_jst
+
+            native = Path(__file__).resolve().parents[2]
+            day_state = get_daily_symbol_state(native_root=native)
+            reentry_audit = day_state.summary_audit()
+            # 本日累計: canonical only (AM preserved + current session)
+            sess = float(canonical.get("total_pnl_yen_100") or 0)
+            day_yen = sess
+            if str(am_pm).upper() == "PM":
+                day = str(summary.get("trading_date") or trading_date_jst())
+                am_path = (
+                    native
+                    / "results"
+                    / "small_paper"
+                    / day
+                    / "small_paper_summary_am.json"
+                )
+                # also check daily_runner copy
+                alt = (
+                    native
+                    / "results"
+                    / "reports"
+                    / "daily_runner"
+                    / f"daily_summary_am_{day}.json"
+                )
+                for p in (am_path, alt):
+                    if not p.is_file():
+                        # scan session dirs for AM copy
+                        continue
+                    try:
+                        import json
+
+                        am_sum = json.loads(p.read_text(encoding="utf-8"))
+                        am_can = am_sum.get("canonical_summary") or am_sum
+                        if isinstance(am_can, Mapping):
+                            day_yen = float(am_can.get("total_pnl_yen_100") or 0) + sess
+                            break
+                    except Exception:
+                        continue
+                else:
+                    # fallback: session dirs
+                    day_dir = native / "results" / "small_paper" / day
+                    if day_dir.is_dir():
+                        for p in sorted(day_dir.glob("**/small_paper_summary_am.json")):
+                            try:
+                                import json
+
+                                am_sum = json.loads(p.read_text(encoding="utf-8"))
+                                am_can = am_sum.get("canonical_summary") or am_sum
+                                if isinstance(am_can, Mapping):
+                                    day_yen = float(am_can.get("total_pnl_yen_100") or 0) + sess
+                                    break
+                            except Exception:
+                                continue
+            # Attach day total onto metrics view without mutating SoT
+        except Exception:
+            day_yen = canonical.get("total_pnl_yen_100")
+            reentry_audit = None
+        return build_summary_embed_payload(
+            canonical,
+            am_pm=am_pm,
+            day_realized_pnl_yen_100=day_yen,
+            reentry_audit=reentry_audit,
         )
 
-        chunk = detail
-        idx = 1
-        while chunk:
-            fields.append(
-                {
-                    "name": "詳細" if idx == 1 and len(detail) <= 1020 else f"詳細({idx})",
-                    "value": chunk[:1020],
-                    "inline": False,
-                }
-            )
-            chunk = chunk[1020:]
-            idx += 1
-        # Phase637: compact operator status (keeps canonical 詳細 intact).
-        fields.extend(
-            build_operator_status_embed_fields(
-                events=events,
-                summary=summary,
-            )
+    def _production_summary_fields(
+        self,
+        *,
+        events: Sequence[Mapping[str, Any]],
+        summary: Mapping[str, Any],
+        monitored_symbol_count: Optional[int] = None,
+        reject_rows: Optional[Sequence[Mapping[str, Any]]] = None,
+        ux_stats: Optional[DiscordUxSessionStats] = None,
+    ) -> Optional[list[dict[str, Any]]]:
+        embed = self._production_summary_embed(
+            events=events,
+            summary=summary,
+            monitored_symbol_count=monitored_symbol_count,
+            reject_rows=reject_rows,
+            ux_stats=ux_stats,
         )
-        # Phase687W10A: RESEARCH_SHADOW is a separate Discord category (AM/PM hook).
-        # Do not embed hypothetical Shadow PnL into actual trade-notify Summary.
-        return fields
+        if embed is None:
+            return None
+        return list(embed.get("fields") or [])
 
     def notify_daily_summary(
         self,
@@ -1126,16 +1334,16 @@ class SmallPaperDiscordNotifier:
     ) -> bool:
         if not self.cfg.send_daily_summary:
             return False
-        fields = self._production_summary_fields(
+        embed = self._production_summary_embed(
             events=events,
             summary=summary,
             monitored_symbol_count=monitored_symbol_count,
             reject_rows=reject_rows,
             ux_stats=ux_stats,
         )
-        if not fields:
+        if not embed:
             return False
-        event_tag, title_line = summary_notification_labels(summary)
+        event_tag, _legacy_title = summary_notification_labels(summary)
         dedupe_key = "daily_summary"
         if event_tag == "AM Summary":
             dedupe_key = "am_summary"
@@ -1143,9 +1351,11 @@ class SmallPaperDiscordNotifier:
             dedupe_key = "pm_summary"
         return self._post(
             event_tag=event_tag,
-            title_line=title_line,
-            fields=fields,
-            color=0x805AD5,
+            title_line=str(embed["title"]),
+            fields=list(embed.get("fields") or []),
+            description=str(embed.get("description") or ""),
+            footer_text=str(embed.get("footer") or ""),
+            color=int(embed.get("color") or 0x805AD5),
             dedupe_key=dedupe_key,
             cooldown_sec=300.0,
             trade_notify=True,
@@ -1392,7 +1602,7 @@ def discord_notifier_from_pilot(
         discord_config_from_pilot(config),
         profile=str(config.profile),
         entry_profile=str(config.entry_profile),
-        policy_label=str(getattr(config, "policy_label", "q055_cap3")),
+        policy_label=str(getattr(config, "policy_label", "paper_cap5") or "paper_cap5"),
         min_continuation_quality=float(getattr(config, "min_continuation_quality", 0.55)),
         error_logger=error_logger,
         delivery_audit=delivery_audit,
@@ -1436,7 +1646,7 @@ def discord_config_from_pilot(config: Any) -> SmallPaperDiscordConfig:
         entry_deferred_daily_max=int(getattr(config, "discord_entry_deferred_daily_max", 50)),
         send_universe_refresh=bool(getattr(config, "discord_send_universe_refresh", True)),
         send_daily_summary=bool(getattr(config, "discord_send_daily_summary", True)),
-        max_concurrent_positions=int(getattr(config, "max_concurrent_positions", 3)),
+        max_concurrent_positions=int(getattr(config, "max_concurrent_positions", 5)),
         position_cap_mode=bool(getattr(config, "position_cap_mode", False)),
         heartbeat_min=float(config.discord_heartbeat_min),
         webhook_env=str(config.discord_webhook_env),

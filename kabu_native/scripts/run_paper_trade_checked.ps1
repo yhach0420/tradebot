@@ -6,7 +6,9 @@
 param(
     [switch]$NoPause,
     [switch]$SkipPaper,
-    [switch]$SkipW4s
+    [switch]$SkipW4s,
+    [switch]$DemoPushE2E,
+    [switch]$CommFaultE2E
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,6 +25,13 @@ if (-not $env:PYTHONPATH -or $env:PYTHONPATH.Trim().Length -eq 0) {
     $env:PYTHONPATH = "$(Join-Path $NativeRoot 'src');$RepoRoot"
 }
 
+if ($DemoPushE2E) {
+    $env:TRADEBOT_DEMO_PUSH_E2E = "1"
+}
+if ($CommFaultE2E) {
+    $env:TRADEBOT_COMM_FAULT_E2E = "1"
+}
+
 Set-Location $NativeRoot
 
 $pyArgs = @(
@@ -35,6 +44,8 @@ $pyArgs = @(
 
 if ($SkipPaper) { $pyArgs += "--skip-paper" }
 if ($SkipW4s) { $pyArgs += "--skip-w4s" }
+if ($DemoPushE2E) { $pyArgs += "--demo-push-e2e" }
+if ($CommFaultE2E) { $pyArgs += "--comm-fault-e2e" }
 
 $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) {

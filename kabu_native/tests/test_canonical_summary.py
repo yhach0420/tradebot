@@ -114,7 +114,7 @@ class TestCanonicalSummary(unittest.TestCase):
         detail = "\n".join(lines)
         self.assertNotIn("total_pnl_pct", detail)
         self.assertNotIn("avg_pnl_pct", detail)
-        self.assertIn("avg_pnl_yen_100:", detail)
+        self.assertIn("平均損益:", detail)
 
     def test_duplicate_entry_not_in_exit_reason_display(self) -> None:
         events = [
@@ -135,7 +135,7 @@ class TestCanonicalSummary(unittest.TestCase):
         self.assertTrue(best["duplicate_entry_observed"])
         self.assertNotIn("重複エントリー", best["display"])
         self.assertNotIn("overlap_replaced_review", best["display"])
-        self.assertIn("利益確定条件到達", best["display"])
+        self.assertIn("トレーリング決済", best["display"])
         self.assertEqual(best["exit_reason"], "trailing_mfe_exit")
 
     def test_discord_matches_canonical_summary(self) -> None:

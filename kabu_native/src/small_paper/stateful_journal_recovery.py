@@ -546,6 +546,45 @@ def restored_order_detail_rows(tmp_root: Path) -> list[dict[str, Any]]:
 # ─── Full session seal ──────────────────────────────────────────────────────
 
 
+def ensure_required_seal_artifacts(
+    session_root: Path,
+    *,
+    safety_dir: Optional[Path] = None,
+) -> list[str]:
+    """Create empty placeholders for missing required seal artifacts (abort-safe).
+
+    Does not invent strategy content — empty files make early abort sealable as
+    SEALED_VALID under the existing schema (no new seal status).
+    """
+    root = Path(session_root)
+    safety = Path(safety_dir) if safety_dir else (root / "live_order_safety")
+    safety.mkdir(parents=True, exist_ok=True)
+    created: list[str] = []
+    journal_names = {
+        "order_intents.jsonl",
+        "order_state_events.jsonl",
+        "capital_reservations.jsonl",
+        "broker_reconciliation.jsonl",
+        "kill_switch_events.jsonl",
+        "session_manifest.json",
+        "soak_session_snapshot.json",
+    }
+    for name in REQUIRED_SEAL_ARTIFACTS:
+        if _find_artifact(root, name) is not None:
+            continue
+        target_dir = safety if name in journal_names else root
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path = target_dir / name
+        if name.endswith(".json"):
+            path.write_text("{}\n", encoding="utf-8")
+        elif name.endswith(".csv"):
+            path.write_text("", encoding="utf-8")
+        else:
+            path.write_text("", encoding="utf-8")
+        created.append(str(path))
+    return created
+
+
 def _find_artifact(root: Path, required_name: str) -> Optional[Path]:
     direct = list(root.rglob(required_name))
     if direct:

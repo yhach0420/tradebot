@@ -80,10 +80,10 @@ class TestPhase333Summary100ShareYenPnl(unittest.TestCase):
         detail = build_daily_summary_detail(canonical)
         lines = format_discord_summary_lines(canonical)
         self.assertEqual(detail, "\n".join(lines))
-        self.assertIn("trade_count: 2", detail)
-        self.assertIn("profit_factor_yen_100:", detail)
-        self.assertIn("win_rate_yen_100:", detail)
-        self.assertIn("total_pnl_yen_100:", detail)
+        self.assertIn("取引数: 2", detail)
+        self.assertIn("PF:", detail)
+        self.assertIn("勝率:", detail)
+        self.assertIn("最終損益:", detail)
         self.assertIn("監視銘柄数: 50", detail)
         self.assertIn("取引銘柄数: 2", detail)
         self.assertNotIn("total_pnl_pct", detail)
@@ -91,8 +91,8 @@ class TestPhase333Summary100ShareYenPnl(unittest.TestCase):
         self.assertNotIn("shadow", detail.lower())
         self.assertNotIn("見送り最高score", detail)
         self.assertNotIn("score5", detail)
-        self.assertEqual(detail.count("profit_factor_yen_100:"), 1)
-        self.assertEqual(detail.count("PF:"), 0)
+        self.assertEqual(detail.count("PF:"), 1)
+        self.assertNotIn("profit_factor_yen_100:", detail)
 
     def test_aggregate_daily_metrics_uses_yen_win_rate(self) -> None:
         events = [

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
+import re
 import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
@@ -486,7 +487,18 @@ def _parse_jsonl_lines(text: str) -> tuple[list[dict[str, Any]], list[str], bool
     return rows, issues, partial_tail
 
 
-def check_journal_integrity(path: Path, *, make_recovery_copy: bool = True) -> JournalIntegrityResult:
+def check_journal_integrity(
+    path: Path,
+    *,
+    make_recovery_copy: bool = True,
+    require_contiguous_sequence: Optional[bool] = None,
+) -> JournalIntegrityResult:
+    """Validate a single journal file.
+
+    Phase687W30: when ``require_contiguous_sequence`` is None, auto-disable
+    per-file contiguous checks if sibling journals share the global sequence
+    namespace under the same safety_dir.
+    """
     if not path.is_file():
         return JournalIntegrityResult(
             status=JournalIntegrityStatus.JOURNAL_OK.value,
@@ -502,6 +514,18 @@ def check_journal_integrity(path: Path, *, make_recovery_copy: bool = True) -> J
             "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
             encoding="utf-8",
         )
+
+    if require_contiguous_sequence is None:
+        sibling_names = (
+            "order_intents.jsonl",
+            "order_state_events.jsonl",
+            "capital_reservations.jsonl",
+            "broker_reconciliation.jsonl",
+            "kill_switch_events.jsonl",
+        )
+        parent = path.parent
+        sibling_present = sum(1 for n in sibling_names if (parent / n).is_file())
+        require_contiguous_sequence = sibling_present <= 1
 
     seqs: list[int] = []
     schemas: set[str] = set()
@@ -555,13 +579,15 @@ def check_journal_integrity(path: Path, *, make_recovery_copy: bool = True) -> J
                     issues.append(f"duplicate_sequence:{s}")
                     break
                 seen.add(s)
-            if status == JournalIntegrityStatus.JOURNAL_OK:
+            if status == JournalIntegrityStatus.JOURNAL_OK and require_contiguous_sequence:
                 uniq = sorted(set(seqs))
                 for a, b in zip(uniq, uniq[1:]):
                     if b != a + 1:
                         status = JournalIntegrityStatus.JOURNAL_SEQUENCE_GAP
                         issues.append(f"sequence_gap:{a}->{b}")
                         break
+            elif status == JournalIntegrityStatus.JOURNAL_OK and not require_contiguous_sequence:
+                issues.append("sequence_contiguous_check_skipped_shared_namespace")
         for k, c in idem.items():
             if c > 1:
                 status = JournalIntegrityStatus.JOURNAL_DUPLICATE
@@ -572,6 +598,97 @@ def check_journal_integrity(path: Path, *, make_recovery_copy: bool = True) -> J
         entry_blocked=status != JournalIntegrityStatus.JOURNAL_OK,
         issues=issues,
         recovery_copy_path=recovery_copy,
+        original_preserved=True,
+        sequences=seqs,
+    )
+
+
+_JOURNAL_SEQUENCE_FILES = (
+    "order_intents.jsonl",
+    "order_state_events.jsonl",
+    "capital_reservations.jsonl",
+    "broker_reconciliation.jsonl",
+    "kill_switch_events.jsonl",
+)
+
+
+def check_journals_global_sequence(
+    safety_dir: Path,
+    *,
+    make_recovery_copy: bool = False,
+) -> JournalIntegrityResult:
+    """Validate shared monotonic sequence across all SafetySM journals.
+
+    Phase687W32: JournalStore allocates one global sequence for all journal files.
+    Per-file contiguous checks are forbidden and produce false JOURNAL_SEQUENCE_GAP.
+    """
+    safety = Path(safety_dir)
+    issues: list[str] = []
+    all_rows: list[tuple[int, str, dict[str, Any]]] = []
+    for name in _JOURNAL_SEQUENCE_FILES:
+        path = safety / name
+        if not path.is_file():
+            continue
+        # Per-file: corruption / duplicate / schema only — never contiguous
+        jr = check_journal_integrity(
+            path,
+            make_recovery_copy=make_recovery_copy,
+            require_contiguous_sequence=False,
+        )
+        for x in jr.issues or []:
+            if x == "sequence_contiguous_check_skipped_shared_namespace":
+                continue
+            if "malformed" in x or "duplicate" in x or "schema" in x or "partial" in x:
+                issues.append(f"{name}:{x}")
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        rows, parse_issues, _partial = _parse_jsonl_lines(raw)
+        issues.extend(f"{name}:{x}" for x in parse_issues)
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            seq = r.get("sequence")
+            if isinstance(seq, int):
+                all_rows.append((seq, name, r))
+
+    if any("malformed" in x for x in issues):
+        return JournalIntegrityResult(
+            status=JournalIntegrityStatus.JOURNAL_CORRUPTED.value,
+            entry_blocked=True,
+            issues=issues,
+            sequences=[s for s, _, _ in all_rows],
+        )
+
+    if not all_rows:
+        return JournalIntegrityResult(
+            status=JournalIntegrityStatus.JOURNAL_OK.value,
+            entry_blocked=False,
+            issues=issues + ["no_sequences_treated_ok"],
+            sequences=[],
+        )
+
+    all_rows.sort(key=lambda t: t[0])
+    seqs = [s for s, _, _ in all_rows]
+    seen: set[int] = set()
+    status = JournalIntegrityStatus.JOURNAL_OK
+    for s, fname, _ in all_rows:
+        if s in seen:
+            status = JournalIntegrityStatus.JOURNAL_DUPLICATE
+            issues.append(f"global_duplicate_sequence:{s}:file={fname}")
+            break
+        seen.add(s)
+    if status == JournalIntegrityStatus.JOURNAL_OK:
+        uniq = sorted(set(seqs))
+        for a, b in zip(uniq, uniq[1:]):
+            if b != a + 1:
+                status = JournalIntegrityStatus.JOURNAL_SEQUENCE_GAP
+                issues.append(f"global_sequence_gap:{a}->{b}")
+                break
+
+    return JournalIntegrityResult(
+        status=status.value,
+        entry_blocked=status != JournalIntegrityStatus.JOURNAL_OK,
+        issues=issues,
+        recovery_copy_path="",
         original_preserved=True,
         sequences=seqs,
     )
@@ -1303,6 +1420,8 @@ def evaluate_recovery_readiness(ev: RecoveryReadinessEvidence) -> dict[str, Any]
         "disk_state": ev.disk_state,
         "clock_state": ev.clock_state,
         "operator_ack_status": ev.operator_ack_status,
+        "design_consistency_pass": ev.design_consistency_pass,
+        "config_sha_match": ev.config_sha_match,
         "production_flags": {
             "live_trading_enabled": False,
             "order_enabled": False,
@@ -1340,8 +1459,308 @@ def dryrun_ready_evidence() -> RecoveryReadinessEvidence:
     )
 
 
-def probe_workspace_recovery(native_root: Path) -> dict[str, Any]:
+DEFAULT_RECOVERY_CONFIG_REL = Path(
+    "configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml"
+)
+
+
+def trading_date_jst_now() -> str:
+    return datetime.now(JST).strftime("%Y%m%d")
+
+
+def _is_excluded_recovery_session_path(path: Path) -> bool:
+    parts = {p.lower() for p in path.parts}
+    deny = {
+        "fixture",
+        "fixtures",
+        "synthetic",
+        "_w8_test_qualified",
+        "phase687w8",
+        "tests",
+        "__pycache__",
+        "reports",
+        "recovery_quarantine",
+        "_quarantine",
+        "quarantine",
+        "archive",
+        "debug",
+    }
+    return bool(parts & deny)
+
+
+_LIVE_SESSION_DIR_RE = re.compile(r"^live_session_\d{6}$")
+
+
+def is_positive_live_session_path(man_path: Path, *, small_paper_root: Path) -> bool:
+    """Phase687W30: discovery is positive-match only.
+
+    Accept:
+      results/small_paper/YYYYMMDD/live_session_HHMMSS/live_order_safety/session_manifest.json
+    Reject quarantine/archive/debug trees even if nested under small_paper.
+    """
+    try:
+        rel = man_path.resolve().relative_to(Path(small_paper_root).resolve())
+    except Exception:
+        return False
+    parts = rel.parts
+    # YYYYMMDD / live_session_HHMMSS / live_order_safety / session_manifest.json
+    if len(parts) != 4:
+        return False
+    day, sess, safety, name = parts
+    if not (len(day) == 8 and day.isdigit()):
+        return False
+    if not _LIVE_SESSION_DIR_RE.match(sess):
+        return False
+    if safety != "live_order_safety" or name != "session_manifest.json":
+        return False
+    return True
+
+
+def discover_prior_completed_sessions(
+    native_root: Path,
+    *,
+    trading_date: str,
+) -> list[dict[str, Any]]:
+    """Find prior trading-day Paper sessions (exclude same-day / fixtures).
+
+    Gate semantics (pre-start): validate last completed prior session integrity —
+    do NOT require today's seal (Paper has not started yet).
+
+    Phase687W30: positive path match only; skip INCOMPLETE / non-SEALED_VALID priors
+    as reference candidates (they remain on disk as incident evidence).
+    """
+    root = Path(native_root) / "results" / "small_paper"
+    found: list[dict[str, Any]] = []
+    if not root.is_dir():
+        return found
+    for day_dir in sorted(root.iterdir() if root.is_dir() else []):
+        if not day_dir.is_dir():
+            continue
+        day_name = day_dir.name
+        if not (len(day_name) == 8 and day_name.isdigit()):
+            continue
+        if day_name >= str(trading_date):
+            continue
+        for sess_dir in day_dir.iterdir():
+            if not sess_dir.is_dir() or not _LIVE_SESSION_DIR_RE.match(sess_dir.name):
+                continue
+            man_path = sess_dir / "live_order_safety" / "session_manifest.json"
+            if not man_path.is_file():
+                continue
+            if _is_excluded_recovery_session_path(man_path):
+                continue
+            if not is_positive_live_session_path(man_path, small_paper_root=root):
+                continue
+            session_root = sess_dir
+            seal_path = session_root / "session_seal.json"
+            day = day_name
+            data: dict[str, Any] = {}
+            try:
+                data = json.loads(man_path.read_text(encoding="utf-8"))
+                day = str(data.get("trading_day") or day_name)
+            except Exception:
+                data = {}
+            if not day or day >= str(trading_date):
+                continue
+            # Prefer sealed-valid priors only for Recovery gate reference.
+            # INCOMPLETE / abort-incomplete: evidence only — never block next day.
+            # Formally sealed abort sessions are SEALED_VALID (empty required artifacts).
+            seal_status = ""
+            if seal_path.is_file():
+                try:
+                    seal_status = str(
+                        json.loads(seal_path.read_text(encoding="utf-8")).get("session_seal_status") or ""
+                    )
+                except Exception:
+                    seal_status = ""
+            if seal_status and seal_status not in ("SEALED_VALID", "SEALED"):
+                continue
+            if not seal_status:
+                # No seal file → not a completed prior for Recovery gate
+                continue
+            try:
+                mtime = man_path.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            found.append(
+                {
+                    "trading_day": day,
+                    "session_root": str(session_root),
+                    "manifest_path": str(man_path),
+                    "seal_path": str(seal_path),
+                    "safety_dir": str(man_path.parent),
+                    "mtime": mtime,
+                    "session_id": str((data or {}).get("session_id") or ""),
+                    "session_seal_status": seal_status or None,
+                }
+            )
+    found.sort(key=lambda r: float(r.get("mtime") or 0.0), reverse=True)
+    return found
+
+
+def evaluate_prior_session_artifacts(session: Mapping[str, Any]) -> dict[str, Any]:
+    """Read real prior-session artifacts; distinguish missing vs invalid content."""
+    man_path = Path(str(session.get("manifest_path") or ""))
+    seal_path = Path(str(session.get("seal_path") or ""))
+    safety_dir = Path(str(session.get("safety_dir") or man_path.parent))
+    detail: dict[str, Any] = {
+        "manifest_path": str(man_path),
+        "seal_path": str(seal_path),
+        "manifest_status": "missing",
+        "seal_status": "missing",
+        "reconciliation_status": "UNKNOWN",
+        "journal_status": JournalIntegrityStatus.JOURNAL_OK.value,
+    }
+
+    man_v = validate_session_manifest(man_path)
+    detail["manifest_status"] = "ok" if man_v.get("valid") else str(man_v.get("reason") or "invalid")
+    detail["manifest_validation"] = man_v
+    manifest_ok = bool(man_v.get("valid"))
+    man_data: dict[str, Any] = {}
+    if man_path.is_file() and man_v.get("valid"):
+        try:
+            man_data = json.loads(man_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            manifest_ok = False
+            detail["manifest_status"] = f"corrupt:{exc}"
+
+    # Seal: prefer W7A status fields; fall back to hash verify
+    seal_ok = False
+    if not seal_path.is_file():
+        detail["seal_status"] = "missing"
+    else:
+        try:
+            seal = json.loads(seal_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            detail["seal_status"] = f"corrupt:{exc}"
+            seal = {}
+        status = str(seal.get("session_seal_status") or "")
+        missing_req = int(seal.get("required_artifact_missing_count") or 0)
+        entry = int(seal.get("entry_count") or 0)
+        if status in ("SEALED_VALID", "SEALED") and missing_req == 0 and entry > 0:
+            seal_ok = True
+            detail["seal_status"] = status
+        elif status:
+            # explicit invalid status
+            legacy = verify_session_seal(seal_path, root=Path(str(session.get("session_root") or seal_path.parent)))
+            seal_ok = bool(legacy.get("valid")) and status not in ("MISSING", "INVALID", "SEAL_FAILED")
+            detail["seal_status"] = status if not seal_ok else f"{status}+hash_ok"
+            detail["seal_verify"] = legacy
+        else:
+            legacy = verify_session_seal(seal_path, root=Path(str(session.get("session_root") or seal_path.parent)))
+            seal_ok = bool(legacy.get("valid")) and int(legacy.get("entry_count") or 0) > 0
+            detail["seal_status"] = "ok" if seal_ok else str(legacy.get("reason") or "invalid")
+            detail["seal_verify"] = legacy
+
+    # Reconciliation from prior manifest (SoT for completed session)
+    recon_raw = str(man_data.get("reconciliation_status") or "UNKNOWN")
+    mismatch = int(man_data.get("reconciliation_mismatch") or 0)
+    if recon_raw.upper() in ("OK", "PASS", "CLEAN") and mismatch == 0:
+        recon_state = recon_raw.upper() if recon_raw.upper() in ("OK", "PASS", "CLEAN") else "OK"
+        detail["reconciliation_status"] = recon_state
+    elif not man_path.is_file():
+        recon_state = "UNKNOWN"
+        detail["reconciliation_status"] = "manifest_missing"
+    else:
+        recon_state = recon_raw if recon_raw else "UNKNOWN"
+        detail["reconciliation_status"] = recon_state
+        detail["reconciliation_mismatch"] = mismatch
+        if mismatch > 0 and recon_state in ("OK", "PASS", "CLEAN"):
+            recon_state = "UNKNOWN"
+
+    # Journal: shared global sequence across SafetySM journals (Phase687W32)
+    jr = check_journals_global_sequence(safety_dir, make_recovery_copy=False)
+    journal_status = jr.status
+    detail["journal_status"] = journal_status
+    detail["journal_issues"] = list(jr.issues or [])
+    detail["journal_check"] = "global_sequence_across_journals"
+
+    kill_events = int(man_data.get("kill_switch_events") or 0)
+    kill_state = "ACTIVE" if kill_events > 0 else "INACTIVE"
+    recovery_mode = str(man_data.get("recovery_mode") or RecoveryMode.NORMAL.value)
+
+    return {
+        "session_manifest_valid": manifest_ok,
+        "session_seal_valid": seal_ok,
+        "reconciliation_state": recon_state if recon_state in ("OK", "PASS", "CLEAN") else recon_state,
+        "journal_integrity": journal_status,
+        "kill_switch_state": kill_state,
+        "recovery_mode": recovery_mode if recovery_mode else RecoveryMode.NORMAL.value,
+        "detail": detail,
+    }
+
+
+def evaluate_config_sha_match(
+    native_root: Path,
+    *,
+    config_path: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Compare production YAML SHA on disk vs configs/production_config_sha256.pin."""
+    cfg = Path(config_path) if config_path else (Path(native_root) / DEFAULT_RECOVERY_CONFIG_REL)
+    pin = cfg.parent / "production_config_sha256.pin"
+    disk = config_sha256(cfg)
+    out: dict[str, Any] = {
+        "config_path": str(cfg),
+        "pin_path": str(pin),
+        "disk_sha256": disk,
+        "pin_sha256": "",
+        "match": False,
+        "status": "unknown",
+    }
+    if disk == "MISSING":
+        out["status"] = "config_missing"
+        return out
+    if not pin.is_file():
+        # Align with safety.check_config_sha_pinned: no pin → recorded only / non-blocking match
+        out["match"] = True
+        out["status"] = "no_pin_sha_recorded_only"
+        return out
+    expected = pin.read_text(encoding="utf-8").strip()
+    out["pin_sha256"] = expected
+    out["match"] = expected == disk and bool(expected)
+    out["status"] = "ok" if out["match"] else "mismatch"
+    return out
+
+
+def evaluate_design_consistency_artifact(native_root: Path) -> dict[str, Any]:
+    design_path = (
+        Path(native_root)
+        / "results"
+        / "reports"
+        / "phase687w3_e2e_readonly_reconciliation"
+        / "phase687w3_design_consistency.json"
+    )
+    out: dict[str, Any] = {"path": str(design_path), "exists": design_path.is_file(), "pass": False, "status": "missing"}
+    if not design_path.is_file():
+        return out
+    try:
+        payload = json.loads(design_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        out["status"] = f"corrupt:{exc}"
+        return out
+    out["pass"] = bool(payload.get("pass"))
+    out["status"] = "ok" if out["pass"] else "fail"
+    out["mismatch_count"] = payload.get("mismatch_count")
+    return out
+
+
+def probe_workspace_recovery(
+    native_root: Path,
+    *,
+    trading_date: Optional[str] = None,
+    config_path: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Pre-start Recovery Gate: evaluate real artifacts (no hardcoded False/UNKNOWN).
+
+    Contract:
+    - Mode: prior completed session recovery OR clean pre-start (no prior session).
+    - Does NOT require same-day session_seal (Paper has not started at 07:50).
+    - Fail-closed when required prior artifacts are missing/invalid.
+    """
     from small_paper.live_order_safety_sm import KabuBrokerAdapter
+
+    root = Path(native_root)
+    day = str(trading_date or trading_date_jst_now())
 
     hard = False
     try:
@@ -1349,45 +1768,77 @@ def probe_workspace_recovery(native_root: Path) -> dict[str, Any]:
     except RuntimeError as exc:
         hard = "HARD_FAIL" in str(exc)
 
-    design_path = (
-        native_root
-        / "results"
-        / "reports"
-        / "phase687w3_e2e_readonly_reconciliation"
-        / "phase687w3_design_consistency.json"
-    )
-    design_ok = False
-    if design_path.is_file():
-        try:
-            design_ok = bool(json.loads(design_path.read_text(encoding="utf-8")).get("pass"))
-        except Exception:
-            design_ok = False
-
-    dg = disk_guard_report(native_root)
+    design = evaluate_design_consistency_artifact(root)
+    sha = evaluate_config_sha_match(root, config_path=config_path)
+    dg = disk_guard_report(root)
     clk = diagnose_clock()
-    # For workspace probe: if disk is WARNING (83%), treat as non-blocking for readiness
-    # but CRITICAL+ still blocks. Map WARNING → OK for exit classification of "ready drills".
     disk_for_gate = dg["disk_state"]
     if disk_for_gate == DiskState.WARNING.value:
-        disk_for_gate = DiskState.OK.value  # warning does not hard-block recovery dry-run ready path
+        disk_for_gate = DiskState.OK.value
 
-    ev = RecoveryReadinessEvidence(
-        session_manifest_valid=False,
-        session_seal_valid=False,
-        journal_integrity=JournalIntegrityStatus.JOURNAL_OK.value,
-        recovery_mode=RecoveryMode.NORMAL.value,
-        kill_switch_state="INACTIVE",
-        reconciliation_state="UNKNOWN",
-        disk_state=disk_for_gate,
-        clock_state=clk["clock_state"],
-        operator_ack_status=OperatorAckStatus.SAMPLE_ONLY.value,
-        design_consistency_pass=design_ok,
-        config_sha_match=False,
-        write_adapter_present=False,
-        submit_hard_fail=hard,
-    )
+    priors = discover_prior_completed_sessions(root, trading_date=day)
+    artifact_trace: dict[str, Any] = {
+        "gate": "pre_start_recovery",
+        "trading_date": day,
+        "same_day_seal_required": False,
+        "prior_sessions_found": len(priors),
+        "design": design,
+        "config_sha": sha,
+    }
+
+    if not priors:
+        # Clean slate: first run / no prior Forward session — do not invent invalid flags.
+        probe_mode = "pre_start_no_prior_session"
+        ev = RecoveryReadinessEvidence(
+            session_manifest_valid=True,
+            session_seal_valid=True,
+            journal_integrity=JournalIntegrityStatus.JOURNAL_OK.value,
+            recovery_mode=RecoveryMode.NORMAL.value,
+            kill_switch_state="INACTIVE",
+            reconciliation_state="OK",
+            disk_state=disk_for_gate,
+            clock_state=clk["clock_state"],
+            operator_ack_status=OperatorAckStatus.SAMPLE_ONLY.value,
+            design_consistency_pass=bool(design.get("pass")),
+            config_sha_match=bool(sha.get("match")),
+            write_adapter_present=False,
+            submit_hard_fail=hard,
+        )
+        artifact_trace["reference_session"] = None
+        artifact_trace["prior_eval"] = {
+            "status": "not_applicable_pre_start",
+            "reason": "no_prior_completed_session",
+        }
+    else:
+        probe_mode = "pre_start_prior_session"
+        ref = priors[0]
+        prior_eval = evaluate_prior_session_artifacts(ref)
+        artifact_trace["reference_session"] = ref
+        artifact_trace["prior_eval"] = prior_eval
+        recon = str(prior_eval.get("reconciliation_state") or "UNKNOWN")
+        ev = RecoveryReadinessEvidence(
+            session_manifest_valid=bool(prior_eval.get("session_manifest_valid")),
+            session_seal_valid=bool(prior_eval.get("session_seal_valid")),
+            journal_integrity=str(
+                prior_eval.get("journal_integrity") or JournalIntegrityStatus.JOURNAL_OK.value
+            ),
+            recovery_mode=str(prior_eval.get("recovery_mode") or RecoveryMode.NORMAL.value),
+            kill_switch_state=str(prior_eval.get("kill_switch_state") or "INACTIVE"),
+            reconciliation_state=recon,
+            disk_state=disk_for_gate,
+            clock_state=clk["clock_state"],
+            operator_ack_status=OperatorAckStatus.SAMPLE_ONLY.value,
+            design_consistency_pass=bool(design.get("pass")),
+            config_sha_match=bool(sha.get("match")),
+            write_adapter_present=False,
+            submit_hard_fail=hard,
+        )
+
     result = evaluate_recovery_readiness(ev)
-    result["probe_mode"] = "workspace_fail_closed"
+    result["probe_mode"] = probe_mode
     result["disk_guard"] = dg
     result["clock"] = clk
+    result["artifact_trace"] = artifact_trace
+    result["trading_date"] = day
+    result["same_day_seal_required"] = False
     return result

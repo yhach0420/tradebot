@@ -7,10 +7,12 @@ Does not mutate strategy flags, YAML, or run_paper_trade.bat internals.
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -386,6 +388,22 @@ def qualify_session_artifacts(
 
     seal_ok = len(failures) == 0
     path_obj = Path(snapshot_path) if snapshot_path else Path(".")
+    # Phase687W30: invalid Paper sessions (register_failed etc.) never count as normal/forward days
+    try:
+        session_root = path_obj
+        if path_obj.name == "soak_session_snapshot.json" and path_obj.parent.name == "live_order_safety":
+            session_root = path_obj.parent.parent
+        summary_path = session_root / "small_paper_summary.json"
+        if summary_path.is_file():
+            from small_paper.session_validity import classify_session_validity
+
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            validity = classify_session_validity(summary)
+            if not validity.get("include_in_strategy_metrics", True):
+                failures = list(failures) + [f"INVALID_SESSION:{validity.get('session_validity')}"]
+                seal_ok = False
+    except Exception:
+        pass
     bucket, bucket_reason = classify_session_bucket(path_obj, snap=snap_d, manifest=man_d)
     forward_failures = list(failures)
     if bucket != "forward":
@@ -598,6 +616,8 @@ class PaperTradeCheckedRunner:
         allow_paper_without_capture: bool = False,
         capture_synthetic: bool = False,
         skip_capture_wait: bool = False,
+        demo_push_e2e: bool = False,
+        comm_fault_e2e: bool = False,
     ) -> None:
         self.repo_root = Path(repo_root)
         self.native_root = Path(native_root)
@@ -609,9 +629,26 @@ class PaperTradeCheckedRunner:
         self.skip_w4s = skip_w4s
         self.no_pause = no_pause
         self.allow_paper_without_capture = allow_paper_without_capture
+        self.demo_push_e2e = bool(demo_push_e2e)
+        self.comm_fault_e2e = bool(comm_fault_e2e)
+        if self.demo_push_e2e:
+            os.environ["TRADEBOT_DEMO_PUSH_E2E"] = "1"
+            # Demo: no live Capture wait / no Kabu register write path
+            skip_capture_wait = True
+            skip_w4s = True
+            self.skip_w4s = True
+        if self.comm_fault_e2e:
+            os.environ["TRADEBOT_COMM_FAULT_E2E"] = "1"
+            skip_capture_wait = True
+            skip_w4s = True
+            self.skip_w4s = True
         # Test harness: skip_paper implies synthetic capture + operator-stop finalize
-        self.capture_synthetic = bool(capture_synthetic or skip_paper)
-        self.skip_capture_wait = bool(skip_capture_wait or skip_paper)
+        self.capture_synthetic = bool(
+            capture_synthetic or skip_paper or self.demo_push_e2e or self.comm_fault_e2e
+        )
+        self.skip_capture_wait = bool(
+            skip_capture_wait or skip_paper or self.demo_push_e2e or self.comm_fault_e2e
+        )
         self.steps: list[StepResult] = []
         self.paper_call_count = 0
         self.w4s_call_count = 0
@@ -632,6 +669,14 @@ class PaperTradeCheckedRunner:
         self.kabu_readonly_status = "UNKNOWN"
         self.universe_prebuild: dict[str, Any] = {}
         self._step_total = 17
+        # Phase687W16 — owned Capture child only (never foreign/orphan-by-name)
+        self._owned_capture = None  # OwnedCaptureProcess | None
+        self._cleanup_done = False
+        self._cleanup_result: Optional[dict[str, Any]] = None
+        self._shutdown_reason = "normal_exit"
+        self._signal_handlers_installed = False
+        self.demo_push_summary: dict[str, Any] = {}
+        self.comm_fault_summary: dict[str, Any] = {}
 
     def _env(self) -> dict[str, str]:
         try:
@@ -1048,8 +1093,91 @@ class PaperTradeCheckedRunner:
 
     # ── Paper ───────────────────────────────────────────────────────────────
 
+    def step_start_demo_push_e2e(self) -> int:
+        """Phase687W20: demo PUSH certification via formal push-replay ingest (no live orders)."""
+        started = time.time()
+        os.environ["TRADEBOT_DEMO_PUSH_E2E"] = "1"
+        cmd = self._py(
+            "-m",
+            "small_paper.demo_push_runtime_path",
+            "--demo-push-e2e",
+            "--repo-root",
+            str(self.repo_root),
+            "--native-root",
+            str(self.native_root),
+        )
+        self.paper_call_count += 1
+        code, out, err = self.run_command(cmd, self._env(), self.native_root)
+        self.paper_exit_code = int(code)
+        self.demo_push_summary = {"stdout_tail": (out or "")[-2000:], "stderr_tail": (err or "")[-1000:]}
+        try:
+            from small_paper.demo_push_runtime_path import report_dir
+
+            summary_path = report_dir(self.native_root) / "final_summary.json"
+            if summary_path.is_file():
+                self.demo_push_summary.update(json.loads(summary_path.read_text(encoding="utf-8")))
+        except Exception as exc:
+            self.demo_push_summary["summary_load_error"] = f"{type(exc).__name__}:{exc}"
+        self._record(
+            "paper_trade",
+            8,
+            cmd,
+            exit_code=code,
+            started=started,
+            stdout=out,
+            stderr=err,
+            result="PASS" if code == 0 else "FAIL",
+            blocked_reason="" if code == 0 else "demo_push_e2e non-zero",
+        )
+        return code
+
+    def step_start_comm_fault_e2e(self) -> int:
+        """Phase687W21: Kabu communication fault injection & recovery certification."""
+        started = time.time()
+        os.environ["TRADEBOT_COMM_FAULT_E2E"] = "1"
+        cmd = self._py(
+            "-m",
+            "small_paper.comm_fault_runtime_path",
+            "--comm-fault-e2e",
+            "--repo-root",
+            str(self.repo_root),
+            "--native-root",
+            str(self.native_root),
+        )
+        self.paper_call_count += 1
+        code, out, err = self.run_command(cmd, self._env(), self.native_root)
+        self.paper_exit_code = int(code)
+        self.comm_fault_summary = {
+            "stdout_tail": (out or "")[-2000:],
+            "stderr_tail": (err or "")[-1000:],
+        }
+        try:
+            from small_paper.comm_fault_runtime_path import report_dir
+
+            report_path = report_dir(self.native_root) / "phase687w21_report.json"
+            if report_path.is_file():
+                self.comm_fault_summary.update(json.loads(report_path.read_text(encoding="utf-8")))
+        except Exception as exc:
+            self.comm_fault_summary["summary_load_error"] = f"{type(exc).__name__}:{exc}"
+        self._record(
+            "paper_trade",
+            8,
+            cmd,
+            exit_code=code,
+            started=started,
+            stdout=out,
+            stderr=err,
+            result="PASS" if code == 0 else "FAIL",
+            blocked_reason="" if code == 0 else "comm_fault_e2e non-zero",
+        )
+        return code
+
     def step_start_paper(self) -> int:
         self._print_step(8, 8, "Starting Paper", "")
+        if self.comm_fault_e2e:
+            return self.step_start_comm_fault_e2e()
+        if self.demo_push_e2e:
+            return self.step_start_demo_push_e2e()
         if self.skip_paper:
             started = time.time()
             self._record(
@@ -1066,11 +1194,14 @@ class PaperTradeCheckedRunner:
             self._block("paper_trade", 1, f"missing {self.paper_bat}", "Restore run_paper_trade.bat")
             self.paper_exit_code = 1
             return 1
-        # Feed pause with newline; call once; wait for completion; no retry
+        # Feed pause with newline; call once; wait for completion; no retry.
+        # Windows: pass a *string* so _default_run uses shell=True.
+        # A list form ["cmd","/c", 'echo.| call "path" ...'] is broken because
+        # subprocess.list2cmdline wraps the /c body and turns " into \" — cmd then
+        # fails with "is not recognized as an internal or external command".
         started = time.time()
-        # cmd.exe: echo. | call bat & exit /b %ERRORLEVEL%
         bat = str(self.paper_bat)
-        cmdline = f'cmd /c "echo.| call \\"{bat}\\" & exit /b %ERRORLEVEL%"'
+        cmdline = f'echo.| call "{bat}" & exit /b %ERRORLEVEL%'
         self.paper_call_count += 1
         code, out, err = self.run_command(cmdline, self._env(), self.repo_root)
         self.paper_exit_code = int(code)
@@ -1320,7 +1451,7 @@ class PaperTradeCheckedRunner:
         print(f"status: {c.get('status') or 'UNKNOWN'}")
         print(f"pid: {c.get('pid')}")
         print(f"symbols: {c.get('symbols_label', '?/?')}")
-        print(f"topology: {c.get('topology', 'PASSIVE_DUAL_WEBSOCKET')}")
+        print(f"topology: {c.get('topology', 'SINGLE_INGRESS_LOCAL_FANOUT')}")
         print(f"output: {c.get('output')}")
         print("Paper dependency: NONE")
 
@@ -1487,8 +1618,20 @@ class PaperTradeCheckedRunner:
             result="PASS" if ok else "FAIL",
             blocked_reason="" if ok else str(coord.get("reason") or "registration_coordination_failed"),
         )
-        self._print_step(6, self._step_total, "Registration", step.result)
-        self.capture["registration"] = coord
+        self._print_step(6, self._step_total, "Registration plan", step.result)
+        # Explicit: coordination only — runtime PUT is Paper-owned (Phase687W31)
+        if ok:
+            print(
+                f"  [{6}/{self._step_total}] REGISTRATION_COORDINATION_READY "
+                f"(Runtime register......PENDING)",
+                flush=True,
+            )
+        self.capture["registration"] = {
+            **coord,
+            "coordination_only": True,
+            "runtime_register": "PENDING",
+            "display_status": "REGISTRATION_COORDINATION_READY" if ok else "FAIL",
+        }
         self.capture["symbols_label"] = f"{coord.get('expected_count', 0)}/50"
         if not ok:
             self._block("registration_coordination", 1, step.blocked_reason, "Fix registration coordination (≤50, lock, no race).")
@@ -1496,7 +1639,23 @@ class PaperTradeCheckedRunner:
 
     def step_start_capture(self) -> bool:
         started = time.time()
-        from small_paper.market_capture_sidecar import spawn_sidecar_process, wait_capture_online
+        from small_paper.market_capture_sidecar import (
+            capture_day_dir,
+            spawn_sidecar_process,
+            wait_capture_online,
+        )
+        from small_paper.capture_child_cleanup import prepare_day_dir_operator_stop_for_spawn
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        # Phase687W18: archive stale operator_stop.flag before owned spawn
+        day_dir = capture_day_dir(self.native_root, self.trading_date)
+        spawn_started_at = datetime.now(ZoneInfo("Asia/Tokyo"))
+        stop_prep = prepare_day_dir_operator_stop_for_spawn(
+            day_dir,
+            spawn_started_at=spawn_started_at,
+        )
+        self.capture["operator_stop_prep"] = stop_prep
 
         spawn = spawn_sidecar_process(
             native_root=self.native_root,
@@ -1505,6 +1664,11 @@ class PaperTradeCheckedRunner:
             synthetic_events=80 if self.capture_synthetic else 0,
             python_exe=self.python_exe,
         )
+        # Track owned PID immediately (even if wait fails) so finally can stop our child.
+        if int(spawn.get("pid") or 0) > 0:
+            from small_paper.capture_child_cleanup import record_owned_from_spawn
+
+            self._owned_capture = record_owned_from_spawn(spawn, native_root=self.native_root)
         wait = wait_capture_online(
             self.native_root,
             self.trading_date,
@@ -1517,7 +1681,7 @@ class PaperTradeCheckedRunner:
                 "pid": wait.get("pid") or spawn.get("pid"),
                 "status": wait.get("status") or ("CAPTURE_ONLINE" if ok else "CAPTURE_START_FAILED"),
                 "output": wait.get("output") or spawn.get("output"),
-                "topology": "PASSIVE_DUAL_WEBSOCKET",
+                "topology": "SINGLE_INGRESS_LOCAL_FANOUT",
                 "spawn": spawn,
                 "wait": wait,
             }
@@ -1603,7 +1767,15 @@ class PaperTradeCheckedRunner:
         started = time.time()
         out = Path(self.capture.get("output") or "")
         if out.is_dir() and self.skip_capture_wait:
-            (out / "operator_stop.flag").write_text("stop\n", encoding="utf-8")
+            from small_paper.capture_child_cleanup import request_graceful_stop
+
+            pid = int(self.capture.get("pid") or 0)
+            request_graceful_stop(
+                out,
+                session_id=str(self.capture.get("session_id") or ""),
+                pid=pid,
+                reason="skip_capture_wait",
+            )
             deadline = time.time() + 15
             while time.time() < deadline:
                 if (out / "capture_seal.json").is_file():
@@ -1751,143 +1923,351 @@ class PaperTradeCheckedRunner:
         log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return log_path, json_path
 
-    def run(self) -> int:
+    def _install_signal_handlers(self) -> None:
+        if self._signal_handlers_installed:
+            return
+        self._signal_handlers_installed = True
         try:
-            from small_paper.env_loader import ensure_repo_dotenv, log_webhook_configured
-
-            st = ensure_repo_dotenv(repo_root=self.repo_root)
-            log_webhook_configured(st)
+            atexit.register(self._atexit_cleanup)
         except Exception:
             pass
-        self.trading_date = trading_date_jst()
-        self._print_banner()
+        # Pytest owns SIGINT; finally/atexit still cover synthetic cleanup.
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return
 
-        # Phase687W9/W15B order:
-        # 1 JST date (done) → 2 disk → 3 kabu readonly → 4 universe prebuild → 5 universe resolve
-        # → 6 registration → 7 capture start → … → paper path → capture finalize
-        if not self.step_disk_guard():
-            self._print_blocked()
-            self.write_logs()
-            return int((self.blocked or {}).get("exit_code") or 1)
-        if not self.step_kabu_readonly():
-            self._print_blocked()
-            self.write_logs()
-            return int((self.blocked or {}).get("exit_code") or 1)
-        if not self.step_universe_prebuild():
-            self._print_blocked()
-            self.write_logs()
-            return int((self.blocked or {}).get("exit_code") or 1)
-        if not self.step_universe_resolve():
-            self._print_blocked()
-            self.write_logs()
-            return int((self.blocked or {}).get("exit_code") or 1)
-        if not self.step_registration_coordination():
-            self._print_blocked()
-            self.write_logs()
-            return int((self.blocked or {}).get("exit_code") or 1)
-        if not self.step_start_capture():
-            self._print_blocked()
-            self.write_logs()
-            return int((self.blocked or {}).get("exit_code") or 1)
+        def _on_signal(signum, frame):  # noqa: ANN001
+            self._shutdown_reason = "signal"
+            try:
+                self.cleanup_owned_capture(reason="signal")
+            except Exception:
+                pass
+            if signum == getattr(signal, "SIGINT", None):
+                raise KeyboardInterrupt()
+            raise SystemExit(128 + int(signum or 0))
 
-        # Paper path — failures must NOT stop capture
-        paper_path_ok = True
-        if not self.step_cache_prebuild():
-            paper_path_ok = False
-            self._paper_block_but_capture_continues("cache_prebuild")
-        elif not self.step_preflight():
-            paper_path_ok = False
-            self._paper_block_but_capture_continues("preflight")
-        elif not self.step_smoke():
-            paper_path_ok = False
-            self._paper_block_but_capture_continues("smoke")
-        elif not self.step_recovery():
-            paper_path_ok = False
-            self._paper_block_but_capture_continues("recovery")
-        elif not self.step_design_consistency():
-            paper_path_ok = False
-            self._paper_block_but_capture_continues("design_consistency")
-        else:
-            self.step_production_enablement_info()
-            if not self.step_safety_flags():
-                paper_path_ok = False
-                self._paper_block_but_capture_continues("safety_flags")
+        for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+            sig = getattr(signal, name, None)
+            if sig is None:
+                continue
+            try:
+                signal.signal(sig, _on_signal)
+            except (ValueError, OSError):
+                pass
 
-        paper_code = 1
-        paper_ok = False
-        if paper_path_ok:
-            paper_code = self.step_start_paper()
-            paper_ok = paper_code == 0
-            self.step_post_session(paper_ok=paper_ok)
-            self._print_post()
-            self._print_finish()
-        else:
-            self.paper_exit_code = int((self.blocked or {}).get("exit_code") or 1)
-            self.post_session = {
-                "result": "PAPER_BLOCKED",
-                "w4s_verdict": "NOT_RUN",
-                "sessions_collected": 0,
-                "counted_as_forward_session": False,
-                "actual_submit": 0,
-                "actual_cancel": 0,
-                "paper_blocked_capture_continues": True,
-            }
+    def _atexit_cleanup(self) -> None:
+        if self._cleanup_done:
+            return
+        try:
+            self.cleanup_owned_capture(reason="atexit_orphan")
+        except Exception:
+            pass
 
-        # Capture continues to scheduled end (tests: operator_stop via skip_capture_wait)
-        self.step_capture_finalize_verify()
+    def cleanup_owned_capture(self, reason: Optional[str] = None) -> dict[str, Any]:
+        """Idempotent owned-Capture stop. Never kills foreign processes."""
+        from small_paper.capture_child_cleanup import (
+            cleanup_owned_capture,
+            write_cleanup_artifact,
+        )
 
-        if self.paper_call_count > 1 or self.w4s_call_count > 1:
-            self.verdict = VERDICT_POST
-        elif not paper_path_ok:
-            # Paper blocked but capture may still be healthy
-            if self.capture.get("started") and not self.capture.get("override_used"):
-                self.verdict = VERDICT_PRECHECK
-            else:
-                self.verdict = VERDICT_PRECHECK
-        elif self.skip_w4s:
-            self.verdict = VERDICT_POST
-            self.post_session["counted_as_forward_session"] = False
-            self.post_session["counted_as_normal_session"] = False
-            if self.post_session.get("w4s_verdict") != "NOT_RUN":
-                self.post_session["w4s_verdict"] = "NOT_RUN"
-            self.post_session["sessions_collected"] = 0
-        elif not paper_ok:
-            self.verdict = VERDICT_POST
-        elif not self.post_session.get("counted_as_forward_session"):
-            self.verdict = VERDICT_POST
-        elif self.post_session.get("result") != "OK":
-            self.verdict = VERDICT_POST
-        elif self.post_session.get("actual_submit", 0) or self.post_session.get("actual_cancel", 0):
-            self.verdict = VERDICT_POST
-        else:
-            self.verdict = VERDICT_READY
-
-        payload_extra = {
-            "capture": self.capture,
-            "universe_prebuild": self.universe_prebuild,
-            "paper_blocked_capture_continues": self.paper_blocked_capture_continues,
+        continue_skips = {
+            "paper_blocked_capture_continues",
+            "capture_continuing_until_scheduled_end",
         }
-        self.write_logs()
-        # attach capture into last json if present
-        try:
-            logs = sorted((LOG_DIR).glob("checked_runner_*.json"), key=lambda p: p.stat().st_mtime)
-            if logs:
-                last = logs[-1]
-                data = json.loads(last.read_text(encoding="utf-8"))
-                data.update(payload_extra)
-                last.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        except Exception:
-            pass
+        if self._cleanup_done and self._cleanup_result is not None:
+            prev = dict(self._cleanup_result)
+            # Honor intentional continue: atexit / duplicate must not kill deferred Capture.
+            if prev.get("skipped") and str(prev.get("skip_reason") or "") in continue_skips:
+                prev["duplicate_cleanup"] = True
+                return prev
+            dup = cleanup_owned_capture(
+                self._owned_capture,
+                reason=str(reason or self._shutdown_reason or "duplicate_cleanup"),
+                paper_blocked_capture_continues=bool(self.paper_blocked_capture_continues),
+                continuing_until_scheduled_end=bool(self.capture.get("continuing_until")),
+                seal_pass=bool(self.capture.get("seal_pass")),
+                skip_capture_wait=bool(self.skip_capture_wait),
+                graceful_timeout_sec=2.0,
+                terminate_timeout_sec=1.0,
+            )
+            out = dup.to_dict()
+            out["duplicate_cleanup"] = True
+            self._cleanup_result = out
+            return out
 
-        if self.verdict == VERDICT_CAPTURE_REQUIRED:
-            return 1
-        if self.verdict == VERDICT_READY and paper_ok:
-            return 0
-        if paper_ok and self.verdict == VERDICT_POST:
-            return 2
-        if not paper_path_ok:
-            return int((self.blocked or {}).get("exit_code") or 1)
-        return paper_code or 1
+        why = str(reason or self._shutdown_reason or "normal_exit")
+        self._shutdown_reason = why
+        result = cleanup_owned_capture(
+            self._owned_capture,
+            reason=why,
+            paper_blocked_capture_continues=bool(self.paper_blocked_capture_continues),
+            continuing_until_scheduled_end=bool(self.capture.get("continuing_until")),
+            seal_pass=bool(self.capture.get("seal_pass")),
+            skip_capture_wait=bool(self.skip_capture_wait),
+        )
+        self._cleanup_done = True
+        self._cleanup_result = result.to_dict()
+        self.capture["child_cleanup"] = dict(self._cleanup_result)
+        try:
+            write_cleanup_artifact(self.native_root, self.trading_date, result)
+        except OSError:
+            pass
+        return dict(self._cleanup_result)
+
+    def run(self) -> int:
+        self._shutdown_reason = "normal_exit"
+        self._install_signal_handlers()
+        exit_code = 1
+        try:
+            try:
+                from small_paper.env_loader import ensure_repo_dotenv, log_webhook_configured
+
+                st = ensure_repo_dotenv(repo_root=self.repo_root)
+                log_webhook_configured(st)
+            except Exception:
+                pass
+            self.trading_date = trading_date_jst()
+            self._print_banner()
+
+            # Phase687W9/W15B order:
+            # 1 JST date (done) → 2 disk → 3 kabu readonly → 4 universe prebuild → 5 universe resolve
+            # → 6 registration → 7 capture start → … → paper path → capture finalize
+            if not self.step_disk_guard():
+                self._print_blocked()
+                self.write_logs()
+                exit_code = int((self.blocked or {}).get("exit_code") or 1)
+                return exit_code
+            if not self.step_kabu_readonly():
+                self._print_blocked()
+                self.write_logs()
+                exit_code = int((self.blocked or {}).get("exit_code") or 1)
+                return exit_code
+            if not self.step_universe_prebuild():
+                self._print_blocked()
+                self.write_logs()
+                exit_code = int((self.blocked or {}).get("exit_code") or 1)
+                return exit_code
+            if not self.step_universe_resolve():
+                self._print_blocked()
+                self.write_logs()
+                exit_code = int((self.blocked or {}).get("exit_code") or 1)
+                return exit_code
+            # Demo / Comm-fault E2E: skip Kabu register write (submit/register forbidden)
+            if self.demo_push_e2e or self.comm_fault_e2e:
+                started = time.time()
+                skip_label = "SKIPPED_COMM_FAULT_E2E" if self.comm_fault_e2e else "SKIPPED_DEMO_PUSH_E2E"
+                self._record(
+                    "registration",
+                    6,
+                    skip_label,
+                    exit_code=0,
+                    started=started,
+                    result="PASS",
+                    info_only=True,
+                )
+                self._print_step(
+                    6,
+                    self._step_total,
+                    "Registration",
+                    "SKIP(comm-fault)" if self.comm_fault_e2e else "SKIP(demo)",
+                )
+            elif not self.step_registration_coordination():
+                self._print_blocked()
+                self.write_logs()
+                exit_code = int((self.blocked or {}).get("exit_code") or 1)
+                return exit_code
+            if self.demo_push_e2e or self.comm_fault_e2e:
+                # Capture ingest happens inside certification harness (temp workspace)
+                started = time.time()
+                cap_label = (
+                    "COMM_FAULT_CAPTURE_DEFERRED" if self.comm_fault_e2e else "DEMO_CAPTURE_INGEST_DEFERRED"
+                )
+                self._record(
+                    "capture_sidecar",
+                    7,
+                    cap_label,
+                    exit_code=0,
+                    started=started,
+                    result="PASS",
+                    info_only=True,
+                )
+                self.capture["started"] = True
+                self.capture["status"] = "COMM_FAULT_DEFERRED" if self.comm_fault_e2e else "DEMO_DEFERRED"
+                self._print_step(
+                    7,
+                    self._step_total,
+                    "Capture sidecar",
+                    "COMM_FAULT" if self.comm_fault_e2e else "DEMO",
+                )
+            elif not self.step_start_capture():
+                self._print_blocked()
+                self.write_logs()
+                exit_code = int((self.blocked or {}).get("exit_code") or 1)
+                return exit_code
+
+            # Paper path — failures must NOT stop capture (live continue-to-15:35 policy)
+            paper_path_ok = True
+            if not self.step_cache_prebuild():
+                paper_path_ok = False
+                self._paper_block_but_capture_continues("cache_prebuild")
+            elif not self.step_preflight():
+                paper_path_ok = False
+                self._paper_block_but_capture_continues("preflight")
+            elif not self.step_smoke():
+                paper_path_ok = False
+                self._paper_block_but_capture_continues("smoke")
+            elif not self.step_recovery():
+                paper_path_ok = False
+                self._paper_block_but_capture_continues("recovery")
+            elif not self.step_design_consistency():
+                paper_path_ok = False
+                self._paper_block_but_capture_continues("design_consistency")
+            else:
+                self.step_production_enablement_info()
+                if not self.step_safety_flags():
+                    paper_path_ok = False
+                    self._paper_block_but_capture_continues("safety_flags")
+
+            paper_code = 1
+            paper_ok = False
+            if paper_path_ok:
+                paper_code = self.step_start_paper()
+                paper_ok = paper_code == 0
+                if self.comm_fault_e2e:
+                    self.post_session = {
+                        "result": "COMM_FAULT_E2E_OK" if paper_ok else "COMM_FAULT_E2E_FAIL",
+                        "w4s_verdict": "NOT_RUN",
+                        "sessions_collected": 0,
+                        "counted_as_forward_session": False,
+                        "actual_submit": 0,
+                        "actual_cancel": 0,
+                        "comm_fault_e2e": True,
+                        "comm_fault_verdict": (self.comm_fault_summary or {}).get("verdict"),
+                    }
+                    self._print_post()
+                    self._print_finish()
+                elif self.demo_push_e2e:
+                    self.post_session = {
+                        "result": "DEMO_PUSH_E2E_OK" if paper_ok else "DEMO_PUSH_E2E_FAIL",
+                        "w4s_verdict": "NOT_RUN",
+                        "sessions_collected": 0,
+                        "counted_as_forward_session": False,
+                        "actual_submit": 0,
+                        "actual_cancel": 0,
+                        "demo_push_e2e": True,
+                        "demo_verdict": (self.demo_push_summary or {}).get("verdict"),
+                    }
+                    self._print_post()
+                    self._print_finish()
+                else:
+                    self.step_post_session(paper_ok=paper_ok)
+                    self._print_post()
+                    self._print_finish()
+            else:
+                self.paper_exit_code = int((self.blocked or {}).get("exit_code") or 1)
+                self.post_session = {
+                    "result": "PAPER_BLOCKED",
+                    "w4s_verdict": "NOT_RUN",
+                    "sessions_collected": 0,
+                    "counted_as_forward_session": False,
+                    "actual_submit": 0,
+                    "actual_cancel": 0,
+                    "paper_blocked_capture_continues": True,
+                }
+
+            # Capture continues to scheduled end (tests: operator_stop via skip_capture_wait)
+            if self.demo_push_e2e or self.comm_fault_e2e:
+                started = time.time()
+                fin_label = (
+                    "COMM_FAULT_NO_LIVE_CAPTURE_FINALIZE"
+                    if self.comm_fault_e2e
+                    else "DEMO_NO_LIVE_CAPTURE_FINALIZE"
+                )
+                self._record(
+                    "capture_finalize",
+                    17,
+                    fin_label,
+                    exit_code=0,
+                    started=started,
+                    result="PASS",
+                    info_only=True,
+                )
+                self._print_step(
+                    17,
+                    self._step_total,
+                    "Capture finalize",
+                    "COMM_FAULT" if self.comm_fault_e2e else "DEMO",
+                )
+            else:
+                self.step_capture_finalize_verify()
+
+            if self.paper_call_count > 1 or self.w4s_call_count > 1:
+                self.verdict = VERDICT_POST
+            elif (self.demo_push_e2e or self.comm_fault_e2e) and paper_ok:
+                self.verdict = VERDICT_READY
+            elif not paper_path_ok:
+                if self.capture.get("started") and not self.capture.get("override_used"):
+                    self.verdict = VERDICT_PRECHECK
+                else:
+                    self.verdict = VERDICT_PRECHECK
+            elif self.skip_w4s:
+                self.verdict = VERDICT_POST
+                self.post_session["counted_as_forward_session"] = False
+                self.post_session["counted_as_normal_session"] = False
+                if self.post_session.get("w4s_verdict") != "NOT_RUN":
+                    self.post_session["w4s_verdict"] = "NOT_RUN"
+                self.post_session["sessions_collected"] = 0
+            elif not paper_ok:
+                self.verdict = VERDICT_POST
+            elif not self.post_session.get("counted_as_forward_session"):
+                self.verdict = VERDICT_POST
+            elif self.post_session.get("result") != "OK":
+                self.verdict = VERDICT_POST
+            elif self.post_session.get("actual_submit", 0) or self.post_session.get("actual_cancel", 0):
+                self.verdict = VERDICT_POST
+            else:
+                self.verdict = VERDICT_READY
+
+            payload_extra = {
+                "capture": self.capture,
+                "universe_prebuild": self.universe_prebuild,
+                "paper_blocked_capture_continues": self.paper_blocked_capture_continues,
+            }
+            self.write_logs()
+            try:
+                logs = sorted((LOG_DIR).glob("checked_runner_*.json"), key=lambda p: p.stat().st_mtime)
+                if logs:
+                    last = logs[-1]
+                    data = json.loads(last.read_text(encoding="utf-8"))
+                    data.update(payload_extra)
+                    last.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            except Exception:
+                pass
+
+            if self.verdict == VERDICT_CAPTURE_REQUIRED:
+                exit_code = 1
+            elif self.verdict == VERDICT_READY and paper_ok:
+                exit_code = 0
+            elif paper_ok and self.verdict == VERDICT_POST:
+                exit_code = 2
+            elif not paper_path_ok:
+                exit_code = int((self.blocked or {}).get("exit_code") or 1)
+            else:
+                exit_code = paper_code or 1
+            return exit_code
+        except KeyboardInterrupt:
+            self._shutdown_reason = "keyboard_interrupt"
+            print("\n[CHECKED RUNNER] KeyboardInterrupt — stopping owned Capture sidecar")
+            exit_code = 130
+            return exit_code
+        except Exception as exc:
+            self._shutdown_reason = "exception"
+            print(f"\n[CHECKED RUNNER] Exception — stopping owned Capture sidecar: {type(exc).__name__}: {exc}")
+            raise
+        finally:
+            try:
+                self.cleanup_owned_capture(reason=self._shutdown_reason)
+            except Exception as cleanup_exc:
+                print(f"[CHECKED RUNNER] cleanup error: {type(cleanup_exc).__name__}: {cleanup_exc}")
 
 
 def existing_paper_bat_sha256(path: Path = DEFAULT_PAPER_BAT) -> str:
@@ -1912,21 +2292,48 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument("--capture-synthetic", action="store_true", help="Test-only synthetic capture sidecar")
     parser.add_argument("--skip-capture-wait", action="store_true", help="Test-only: operator-stop capture instead of 15:35 wait")
+    parser.add_argument(
+        "--demo-push-e2e",
+        action="store_true",
+        help="Phase687W20: demo PUSH full runtime path (fail-closed; also TRADEBOT_DEMO_PUSH_E2E=1)",
+    )
+    parser.add_argument(
+        "--comm-fault-e2e",
+        action="store_true",
+        help="Phase687W21: Kabu comm fault injection & recovery (fail-closed; also TRADEBOT_COMM_FAULT_E2E=1)",
+    )
     parser.add_argument("--repo-root", type=str, default=str(REPO_ROOT))
     parser.add_argument("--native-root", type=str, default=str(NATIVE_ROOT))
     parser.add_argument("--paper-bat", type=str, default=str(DEFAULT_PAPER_BAT))
     args = parser.parse_args(list(argv) if argv is not None else None)
 
+    demo = bool(args.demo_push_e2e) or str(os.environ.get("TRADEBOT_DEMO_PUSH_E2E", "")).strip() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    comm_fault = bool(args.comm_fault_e2e) or str(
+        os.environ.get("TRADEBOT_COMM_FAULT_E2E", "")
+    ).strip() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    harness = demo or comm_fault
     runner = PaperTradeCheckedRunner(
         repo_root=Path(args.repo_root),
         native_root=Path(args.native_root),
         paper_bat=Path(args.paper_bat),
         skip_paper=bool(args.skip_paper),
-        skip_w4s=bool(args.skip_w4s),
+        skip_w4s=bool(args.skip_w4s) or harness,
         no_pause=bool(args.no_pause),
         allow_paper_without_capture=bool(args.allow_paper_without_capture),
         capture_synthetic=bool(args.capture_synthetic),
-        skip_capture_wait=bool(args.skip_capture_wait),
+        skip_capture_wait=bool(args.skip_capture_wait) or harness,
+        demo_push_e2e=demo,
+        comm_fault_e2e=comm_fault,
     )
     code = runner.run()
     if not args.no_pause:

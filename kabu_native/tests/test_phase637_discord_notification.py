@@ -194,7 +194,7 @@ class Phase637DiscordNotificationTests(unittest.TestCase):
             max_concurrent_positions=3,
         )
         detail = "\n".join(format_discord_summary_lines(canonical))
-        self.assertIn("trade_count:", detail)
+        self.assertIn("取引数:", detail)
         self.assertNotIn("PBv2 Summary", detail)
         self.assertNotIn("Today's Insight", detail)
 
@@ -237,17 +237,20 @@ class Phase637DiscordNotificationTests(unittest.TestCase):
         notifier = SmallPaperDiscordNotifier(cfg, profile="p", entry_profile="e")
         events = self._sample_events()
         summary = self._sample_summary(events)
-        fields = notifier._production_summary_fields(events=events, summary=summary)
-        assert fields is not None
-        names = [f["name"] for f in fields]
-        self.assertIn("詳細", names)
-        self.assertIn("PBv2 Summary", names)
-        self.assertIn("Rise5 Shadow Summary", names)
-        self.assertIn("Today's Insight", names)
-        self.assertIn("System Health", names)
-        # Phase490 observability blocks are replaced by Phase637 operator sections.
-        self.assertNotIn("Symbol Attribution", names)
-        self.assertNotIn("Runtime Health", names)
+        # Phase687W25C: Discord Summary is compact embed; operator sections stay in JSONL
+        embed = notifier._production_summary_embed(events=events, summary=summary)
+        assert embed is not None
+        self.assertTrue(str(embed["title"]).startswith("【"))
+        self.assertIn("取引数:", embed["description"])
+        names = [f["name"] for f in embed.get("fields") or []]
+        self.assertIn("内訳", names)
+        self.assertNotIn("PBv2 Summary", names)
+        self.assertNotIn("Rise5 Shadow Summary", names)
+        self.assertNotIn("Today's Insight", names)
+        self.assertNotIn("System Health", names)
+        blob = str(embed)
+        self.assertNotIn("session_id", blob)
+        self.assertNotIn("observer only", blob)
 
 
 if __name__ == "__main__":

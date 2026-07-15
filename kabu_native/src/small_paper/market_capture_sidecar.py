@@ -24,7 +24,7 @@ from small_paper.market_capture_registration import (
     resolve_universe_symbols,
     trading_date_jst,
 )
-from small_paper.market_capture_topology import TOPOLOGY_PASSIVE_DUAL
+from small_paper.market_capture_topology import TOPOLOGY_PASSIVE_DUAL, TOPOLOGY_SINGLE_INGRESS
 from small_paper.market_capture_writer import SCHEMA_VERSION, WRITER_VERSION, MarketCaptureWriter, mask_secrets
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -52,6 +52,23 @@ CAPTURE_DEGRADED = "CAPTURE_DEGRADED"
 CAPTURE_REGISTRATION_MISMATCH = "CAPTURE_REGISTRATION_MISMATCH"
 CAPTURE_DISCONNECTED = "CAPTURE_DISCONNECTED"
 CAPTURE_WRITE_FAILED = "CAPTURE_WRITE_FAILED"
+# Phase687W24 — distinguish process liveness from data receipt
+CAPTURE_STARTING = "CAPTURE_STARTING"
+CAPTURE_READY_FOR_FANOUT = "CAPTURE_READY_FOR_FANOUT"
+CAPTURE_SOCKET_OPEN_NO_PUSH = "CAPTURE_SOCKET_OPEN_NO_PUSH"
+CAPTURE_RECEIVING = "CAPTURE_RECEIVING"
+CAPTURE_WRITING = "CAPTURE_WRITING"
+CAPTURE_STALE = "CAPTURE_STALE"
+CAPTURE_FAILED = "CAPTURE_FAILED"
+
+# Statuses that mean "sidecar process ready for Paper to start" (not data ONLINE)
+CAPTURE_WAIT_OK_STATUSES = (
+    CAPTURE_READY_FOR_FANOUT,
+    CAPTURE_RECEIVING,
+    CAPTURE_WRITING,
+    CAPTURE_DEGRADED,
+    CAPTURE_STALE,
+)
 
 PAPER_PATH_FORBIDDEN = (
     "results/small_paper",
@@ -215,6 +232,12 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def _format_capture_notify_body(**kwargs: Any) -> str:
+    from notify.discord_notification_formatter import format_capture_status_body
+
+    return format_capture_status_body(kwargs)
+
+
 def notify_capture(kind: str, body: str, *, capture_session_id: str = "", trading_date: str = "") -> bool:
     """Market Capture Discord via router. No legacy trade-notify fallback. Fail-open."""
     try:
@@ -224,17 +247,20 @@ def notify_capture(kind: str, body: str, *, capture_session_id: str = "", tradin
     except Exception:
         pass
     try:
-        from notify.discord_notification_formatter import (
-            format_capture_degraded,
-            format_capture_finished,
-            format_capture_started,
-        )
         from notify.discord_notification_model import Severity
         from notify.discord_notification_router import get_router
 
         # body already formatted by callers; keep kind as event type
-        severity = Severity.WARNING if "DEGRADED" in kind else Severity.INFO
-        state = "degraded" if "DEGRADED" in kind else ("finished" if "FINISHED" in kind else "started")
+        severity = (
+            Severity.WARNING
+            if ("DEGRADED" in kind or "ERROR" in kind or "WARNING" in kind or "STALE" in kind)
+            else Severity.INFO
+        )
+        state = (
+            "degraded"
+            if ("DEGRADED" in kind or "ERROR" in kind)
+            else ("finished" if "FINISHED" in kind else "started")
+        )
         router = get_router(NATIVE_ROOT)
         content = f"{kind}\n{body}"[:1800]
         outcome = router.publish_capture(
@@ -256,7 +282,7 @@ class MarketCaptureSidecar:
         *,
         native_root: Path,
         trading_date: Optional[str] = None,
-        topology: str = TOPOLOGY_PASSIVE_DUAL,
+        topology: str = TOPOLOGY_SINGLE_INGRESS,
         synthetic: bool = False,
         synthetic_events: int = 0,
         restart_count: int = 0,
@@ -273,6 +299,9 @@ class MarketCaptureSidecar:
         self.operator_stop_check = operator_stop_check
         self.finalize_at_end = finalize_at_end
         self.poll_sec = poll_sec
+        # Phase687W18: ignore operator_stop.flag written before this process started
+        self.process_started_at = datetime.now(JST)
+        self._ignored_stale_stop = False
 
         self.out_dir = capture_day_dir(self.native_root, self.trading_date)
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -293,8 +322,11 @@ class MarketCaptureSidecar:
         self.generation_id = ""
         self.registered_symbols: list[str] = []
         self.writer: Optional[MarketCaptureWriter] = None
-        self.status = CAPTURE_ONLINE
+        self.status = CAPTURE_STARTING
         self.priority_set = False
+        self._fanout_server = None  # CaptureFanoutIngestServer | None
+        self._on_message_count = 0
+        self._last_push_mono: Optional[float] = None
         self._metrics = {
             "cpu_avg": 0.0,
             "cpu_max": 0.0,
@@ -325,6 +357,8 @@ class MarketCaptureSidecar:
             "pid": os.getpid(),
             "topology": self.topology,
             "event_count": self.writer.stats.written if self.writer else 0,
+            "on_message_count": self._on_message_count,
+            "bytes_written": self.writer.stats.bytes_written if self.writer else 0,
             "dropped_event_count": self.writer.stats.dropped if self.writer else 0,
             "disconnect_count": self.disconnect_count,
             "updated_at": _iso(),
@@ -392,7 +426,19 @@ class MarketCaptureSidecar:
         if self.stop:
             return True
         if self.operator_stop_check and (self.out_dir / OPERATOR_STOP).is_file():
-            return True
+            from small_paper.capture_child_cleanup import classify_operator_stop_for_process
+
+            decision = classify_operator_stop_for_process(
+                self.out_dir / OPERATOR_STOP,
+                process_started_at=self.process_started_at,
+                process_session_id=str(self.session_id or ""),
+            )
+            if decision.get("action") == "stop":
+                return True
+            # stale / malformed / foreign → ignore (do not stop)
+            if decision.get("classification") in ("stale", "malformed", "foreign_session") and not self._ignored_stale_stop:
+                self._ignored_stale_stop = True
+            # fall through — do not treat as stop
         # Live sessions finalize at 15:35 JST. Synthetic/test stays until operator_stop
         # so harnesses can run after the cash-session close.
         if not self.synthetic and _now() >= scheduled_end_dt(self.trading_date):
@@ -443,12 +489,23 @@ class MarketCaptureSidecar:
             if len(self.seen_hashes) > 200_000:
                 # bound memory
                 self.seen_hashes = set(list(self.seen_hashes)[-50_000:])
-        ok = self.writer.enqueue(payload, mono_ns=mono)
+        try:
+            ok = self.writer.enqueue(payload, mono_ns=mono)
+        except Exception as exc:
+            self.status = CAPTURE_FAILED
+            self.write_status(last_error=f"writer_enqueue:{type(exc).__name__}")
+            raise
         self._event_lat_ms.append((time.perf_counter() - t0) * 1000.0)
         if len(self._event_lat_ms) > 2000:
             self._event_lat_ms = self._event_lat_ms[-1000:]
+        self._on_message_count += 1
+        self._last_push_mono = time.monotonic()
         if not ok and self.writer.stats.status == "DEGRADED":
             self.status = CAPTURE_DEGRADED
+        elif int(self.writer.stats.bytes_written or 0) > 0 or int(self.writer.stats.written or 0) > 0:
+            self.status = CAPTURE_WRITING
+        else:
+            self.status = CAPTURE_RECEIVING
         sym = str(payload.get("Symbol") or payload.get("symbol") or "")
         if sym:
             self.symbols_seen.add(sym)
@@ -483,7 +540,19 @@ class MarketCaptureSidecar:
             self.registration_mismatch_count += 1
             self.status = CAPTURE_REGISTRATION_MISMATCH
         elif self.status == CAPTURE_REGISTRATION_MISMATCH and man.get("status") in ("MATCH", "PLANNED_FOLLOWER"):
-            self.status = CAPTURE_ONLINE
+            # Never claim ONLINE without PUSH — restore based on writer/message progress
+            if int(self.writer.stats.written if self.writer else 0) > 0:
+                self.status = CAPTURE_WRITING
+            elif self._on_message_count > 0:
+                self.status = CAPTURE_RECEIVING
+            elif str(self.topology).upper() in (
+                TOPOLOGY_SINGLE_INGRESS,
+                "PAPER_FANOUT",
+                "SINGLE_INGRESS_LOCAL_FANOUT",
+            ):
+                self.status = CAPTURE_READY_FOR_FANOUT
+            else:
+                self.status = CAPTURE_SOCKET_OPEN_NO_PUSH
 
     def run_synthetic_loop(self) -> None:
         n = self.synthetic_events or 100
@@ -528,6 +597,23 @@ class MarketCaptureSidecar:
                 except asyncio.TimeoutError:
                     self.write_heartbeat()
                     self._follow_registration()
+                    # Stale: socket open but no PUSH for extended market-hours window
+                    if (
+                        self.status == CAPTURE_SOCKET_OPEN_NO_PUSH
+                        and is_market_session_jst()
+                        and self._last_push_mono is None
+                    ):
+                        # keep SOCKET_OPEN_NO_PUSH; escalate to STALE after 120s open idle
+                        # (tracked via first_event_at absence + process uptime via reconnect)
+                        pass
+                    elif (
+                        self._last_push_mono is not None
+                        and (time.monotonic() - self._last_push_mono) > 120.0
+                        and is_market_session_jst()
+                        and self.status in (CAPTURE_RECEIVING, CAPTURE_WRITING, CAPTURE_ONLINE)
+                    ):
+                        self.status = CAPTURE_STALE
+                        self.write_status(websocket_status="STALE", last_error="no_push_120s")
                     continue
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8", errors="replace")
@@ -538,40 +624,108 @@ class MarketCaptureSidecar:
                 self._follow_registration()
 
     def run_live_loop(self) -> None:
-        """Attempt live PUSH; on failure record disconnect and idle until end (no Paper exception)."""
+        """Live PUSH follower with reconnect backoff (Phase687W21).
+
+        On disconnect: record event, mark DISCONNECTED/RECONNECTING, retry WS.
+        Never raises into Paper. Stops on scheduled end / operator_stop.
+        """
         import asyncio
 
-        connected = False
-        last_err = ""
-        try:
-            from api.push_client import KabuNativePushClient
-            from api.rest_client import KabuNativeRestClient, default_base_url
+        backoff = max(1.0, float(self.poll_sec))
+        max_backoff = 30.0
+        while not self._should_stop():
+            connected = False
+            last_err = ""
+            try:
+                from api.push_client import KabuNativePushClient
+                from api.rest_client import KabuNativeRestClient, default_base_url
 
-            rest = KabuNativeRestClient(default_base_url())
-            token = rest.issue_token_from_env()
-            push = KabuNativePushClient(rest, token)
-            # Passive dual: Sidecar does NOT register/unregister — follower only
-            connected = True
-            asyncio.run(self._async_consume_push(push.websocket_url))
-        except Exception as exc:
-            last_err = type(exc).__name__
-            self.disconnect_count += 1
-            if self.writer:
-                self.writer.append_disconnect(
-                    {
-                        "at": _iso(),
-                        "error": last_err,
-                        "connected": connected,
-                        "market_session": is_market_session_jst(),
-                    }
-                )
-            if is_market_session_jst():
-                self.status = CAPTURE_DISCONNECTED
+                if self.disconnect_count:
+                    self.status = "CAPTURE_RECONNECTING"
+                    self.write_status(websocket_status="RECONNECTING", last_error="")
+                    self.write_heartbeat()
+
+                rest = KabuNativeRestClient(default_base_url())
+                token = rest.issue_token_from_env()
+                push = KabuNativePushClient(rest, token)
+                # Passive dual: Sidecar does NOT register/unregister — follower only
+                connected = True
+                if self.disconnect_count:
+                    self.reconnect_count += 1
+                # Phase687W24: socket open ≠ ONLINE (PUSH required).
+                self.status = CAPTURE_SOCKET_OPEN_NO_PUSH
+                self.write_status(websocket_status="OPEN_NO_PUSH", last_error="")
+                backoff = max(1.0, float(self.poll_sec))  # reset after successful connect
+                asyncio.run(self._async_consume_push(push.websocket_url))
+                # Clean consumer exit (stop requested)
+                break
+            except Exception as exc:
+                last_err = type(exc).__name__
+                self.disconnect_count += 1
+                if self.writer:
+                    self.writer.append_disconnect(
+                        {
+                            "at": _iso(),
+                            "error": last_err,
+                            "connected": connected,
+                            "market_session": is_market_session_jst(),
+                            "reconnect_count": self.reconnect_count,
+                        }
+                    )
+                if is_market_session_jst():
+                    self.status = CAPTURE_DISCONNECTED
+                # Brief idle with heartbeats, then retry (no silent hang)
+                deadline = time.monotonic() + min(backoff, max_backoff)
+                while not self._should_stop() and time.monotonic() < deadline:
+                    self.write_heartbeat()
+                    self.write_status(websocket_status="DISCONNECTED", last_error=last_err)
+                    self._follow_registration()
+                    time.sleep(max(1.0, self.poll_sec))
+                backoff = min(max_backoff, backoff * 1.5)
+                continue
+
+    def run_fanout_ingest_loop(self) -> None:
+        """Phase687W24: Paper is sole Kabu WS; Capture ingests via localhost fan-out."""
+        from small_paper.paper_capture_fanout import CaptureFanoutIngestServer, fanout_port
+
+        assert self.writer is not None
+        self.status = CAPTURE_READY_FOR_FANOUT
+        self.write_status(ingress="paper_fanout", fanout_port=fanout_port())
+        self.write_heartbeat()
+
+        def _on(payload: dict[str, Any]) -> None:
+            self._on_payload(payload)
+
+        server = CaptureFanoutIngestServer(on_payload=_on, port=fanout_port())
+        self._fanout_server = server
+        server.start()
+        try:
             while not self._should_stop():
                 self.write_heartbeat()
-                self.write_status(websocket_status="DISCONNECTED", last_error=last_err)
+                self.write_status(
+                    ingress="paper_fanout",
+                    fanout_port=fanout_port(),
+                    on_message_count=self._on_message_count,
+                    fanout_stats={
+                        "messages": server.stats.messages,
+                        "enqueue_ok": server.stats.enqueue_ok,
+                        "parse_errors": server.stats.parse_errors,
+                        "accepted_connections": server.stats.accepted_connections,
+                    },
+                )
                 self._follow_registration()
-                time.sleep(max(1.0, self.poll_sec))
+                # Stale if we had traffic then stopped during market hours
+                if (
+                    self._last_push_mono is not None
+                    and (time.monotonic() - self._last_push_mono) > 120.0
+                    and is_market_session_jst()
+                    and self.status in (CAPTURE_RECEIVING, CAPTURE_WRITING)
+                ):
+                    self.status = CAPTURE_STALE
+                time.sleep(max(0.5, float(self.poll_sec)))
+        finally:
+            server.stop()
+            self._fanout_server = None
 
     def build_summary(self) -> dict[str, Any]:
         st = self.writer.snapshot_stats() if self.writer else {}
@@ -580,6 +734,8 @@ class MarketCaptureSidecar:
         dropped = int(st.get("dropped") or 0)
         if self.status == CAPTURE_REGISTRATION_MISMATCH:
             capture_status = CAPTURE_REGISTRATION_MISMATCH
+        elif self.status == CAPTURE_FAILED or self.status == CAPTURE_WRITE_FAILED:
+            capture_status = CAPTURE_WRITE_FAILED
         elif dropped or st.get("status") == "DEGRADED":
             capture_status = CAPTURE_DEGRADED
         elif self.disconnect_count and total_events == 0 and is_market_session_jst():
@@ -597,6 +753,10 @@ class MarketCaptureSidecar:
             "symbols_seen": sorted(self.symbols_seen),
             "symbols_seen_count": len(self.symbols_seen),
             "first_event_at": self.first_event_at,
+            "on_message_count": self._on_message_count,
+            "topology": self.topology,
+            "fanout_messages": getattr(getattr(self, "_fanout_server", None), "stats", None)
+            and getattr(self._fanout_server.stats, "messages", 0),
             "last_event_at": self.last_event_at,
             "disconnect_count": self.disconnect_count,
             "reconnect_count": self.reconnect_count,
@@ -717,6 +877,9 @@ class MarketCaptureSidecar:
             )
 
         started_at = _iso()
+        # Refresh stop-flag baseline so only flags created after this run are honored
+        self.process_started_at = datetime.now(JST)
+        self._ignored_stale_stop = False
         end_at = scheduled_end_dt(self.trading_date).isoformat(timespec="seconds")
 
         # Registration follower — read manifest only; never unregister_all / never overwrite SoT
@@ -744,13 +907,23 @@ class MarketCaptureSidecar:
                 pass
         self.writer.start()
 
-        self.status = CAPTURE_ONLINE
+        uses_fanout = str(self.topology).upper() in (
+            TOPOLOGY_SINGLE_INGRESS,
+            "PAPER_FANOUT",
+            "SINGLE_INGRESS_LOCAL_FANOUT",
+        )
+        self.status = CAPTURE_READY_FOR_FANOUT if uses_fanout else CAPTURE_STARTING
         self.write_manifest(started_at=started_at, scheduled_end_at=end_at)
         self.write_status()
         self.write_heartbeat()
         notify_capture(
-            "[MARKET CAPTURE STARTED]",
-            f"date: {self.trading_date}\nsymbols: {len(self.registered_symbols)}\ntopology: {self.topology}\npid: {os.getpid()}\noutput: {self.out_dir}",
+            "[CAPTURE]",
+            _format_capture_notify_body(
+                status="CAPTURE_READY_FOR_FANOUT",
+                topology=self.topology,
+                written=0,
+                symbols=len(self.registered_symbols),
+            ),
             capture_session_id=self.session_id,
             trading_date=self.trading_date,
         )
@@ -767,15 +940,27 @@ class MarketCaptureSidecar:
         try:
             if self.synthetic:
                 self.run_synthetic_loop()
+            elif str(self.topology).upper() in (
+                TOPOLOGY_SINGLE_INGRESS,
+                "PAPER_FANOUT",
+                "SINGLE_INGRESS_LOCAL_FANOUT",
+            ):
+                self.run_fanout_ingest_loop()
             else:
-                # Prefer live; if env forces idle (tests), synthetic_events path already handled
+                # Legacy PASSIVE_DUAL (known incompatible with kabu PUSH delivery)
                 self.run_live_loop()
         except Exception as exc:
-            self.status = CAPTURE_WRITE_FAILED
+            self.status = CAPTURE_FAILED
             self.write_status(error=type(exc).__name__, traceback=traceback.format_exc()[-500:])
             notify_capture(
-                "[MARKET CAPTURE DEGRADED]",
-                f"reason: {type(exc).__name__}\ndisconnects: {self.disconnect_count}\ndrops: {self.writer.stats.dropped if self.writer else 0}\nlast_event: {self.last_event_at}\nPaper status: UNKNOWN",
+                "[CAPTURE ERROR]",
+                _format_capture_notify_body(
+                    status="CAPTURE_FAILED",
+                    topology=self.topology,
+                    reason=type(exc).__name__,
+                    drops=self.writer.stats.dropped if self.writer else 0,
+                    paper_status="NONE",
+                ),
                 capture_session_id=self.session_id,
                 trading_date=self.trading_date,
             )
@@ -797,8 +982,17 @@ class MarketCaptureSidecar:
             self.write_status(final=True)
             self.write_heartbeat()
             notify_capture(
-                "[MARKET CAPTURE FINISHED]",
-                f"events: {summary.get('total_events')}\nsymbols: {summary.get('symbols_seen_count')}\ndrops: {summary.get('dropped_event_count')}\ndisconnects: {summary.get('disconnect_count')}\nstatus: {summary.get('capture_status')}\nseal: {bool(seal)}",
+                "[CAPTURE]",
+                _format_capture_notify_body(
+                    status=str(summary.get("capture_status") or "FINISHED"),
+                    topology=self.topology,
+                    written=summary.get("total_events"),
+                    received=summary.get("on_message_count") or summary.get("total_events"),
+                    bytes_written=summary.get("total_bytes"),
+                    drops=summary.get("dropped_event_count"),
+                    symbols=summary.get("symbols_seen_count"),
+                    seal=bool(seal),
+                ),
                 capture_session_id=self.session_id,
                 trading_date=self.trading_date,
             )
@@ -815,6 +1009,7 @@ def spawn_sidecar_process(
     python_exe: Optional[str] = None,
     extra_args: Optional[Sequence[str]] = None,
     supervised: Optional[bool] = None,
+    topology: str = TOPOLOGY_SINGLE_INGRESS,
 ) -> dict[str, Any]:
     """Start sidecar (optionally supervised) in a new Windows process group.
 
@@ -826,6 +1021,7 @@ def spawn_sidecar_process(
     data_root = Path(native_root)
     code_root = NATIVE_ROOT if (NATIVE_ROOT / "src" / "small_paper").is_dir() else data_root
     use_supervisor = (not synthetic) if supervised is None else bool(supervised)
+    topo = str(topology or TOPOLOGY_SINGLE_INGRESS)
 
     if use_supervisor:
         cmd = [
@@ -836,6 +1032,8 @@ def spawn_sidecar_process(
             str(data_root),
             "--trading-date",
             trading_date,
+            "--topology",
+            topo,
         ]
     else:
         cmd = [
@@ -846,6 +1044,8 @@ def spawn_sidecar_process(
             str(data_root),
             "--trading-date",
             trading_date,
+            "--topology",
+            topo,
         ]
     if synthetic:
         cmd.append("--synthetic")
@@ -927,13 +1127,12 @@ def wait_capture_online(
                 last = {}
             st = str(last.get("capture_status") or "")
             pid = last.get("pid")
-            if st in (CAPTURE_ONLINE, CAPTURE_DEGRADED, CAPTURE_NO_MARKET_EVENTS) or st.startswith("CAPTURE_"):
+            # Phase687W24: process-ready statuses only. SOCKET_OPEN_NO_PUSH / STARTING ≠ ready.
+            if st in CAPTURE_WAIT_OK_STATUSES:
                 if pid and _pid_alive(int(pid)):
                     age = None
                     if hb_path.is_file():
                         try:
-                            hb = json.loads(hb_path.read_text(encoding="utf-8"))
-                            # freshness via file mtime
                             age = time.time() - hb_path.stat().st_mtime
                         except Exception:
                             age = None
@@ -963,7 +1162,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--synthetic-events", type=int, default=100)
     parser.add_argument("--restart-count", type=int, default=0)
     parser.add_argument("--no-finalize", action="store_true")
-    parser.add_argument("--topology", type=str, default=TOPOLOGY_PASSIVE_DUAL)
+    parser.add_argument("--topology", type=str, default=TOPOLOGY_SINGLE_INGRESS)
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if int(args.restart_count) > MAX_AUTO_RESTARTS:

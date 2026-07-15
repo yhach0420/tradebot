@@ -1,7 +1,11 @@
-"""Phase687W11A — Paper must not unregister_all while Capture Sidecar owns the day.
+"""Phase687W11A/W31 — Paper vs Capture kabu registration ownership.
 
-Capture Sidecar continues until 15:35 JST. Paper AM/PM exit/reconnect must not
-clear the shared Kabu PUSH registration list while live capture is active.
+SINGLE_INGRESS_LOCAL_FANOUT:
+  Paper owns Kabu Station registration (WebSocket ingress).
+  Capture is a localhost fanout consumer — never registration owner.
+
+Do not treat CAPTURE_READY_FOR_FANOUT / RECEIVING / WRITING via paper_fanout
+as registration owners. Status strings alone are insufficient.
 """
 
 from __future__ import annotations
@@ -17,12 +21,25 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from small_paper.market_capture_topology import TOPOLOGY_PASSIVE_DUAL, TOPOLOGY_SINGLE_INGRESS
+
 JST = ZoneInfo("Asia/Tokyo")
 log = logging.getLogger("kabu_native.registration_lifetime")
 
 HEARTBEAT_FRESH_SEC = 90.0
 LIVE_PROVENANCE = "LIVE_KABU_PUSH_CAPTURE"
 AUDIT_REASON = "PAPER_UNREGISTER_DEFERRED_CAPTURE_ACTIVE"
+
+# Topologies where Capture consumes Paper fanout and must NOT own Station register.
+_FANOUT_CONSUMER_TOPOLOGIES = frozenset(
+    {
+        TOPOLOGY_SINGLE_INGRESS,
+        "SINGLE_INGRESS_LOCAL_FANOUT",
+        "PAPER_FANOUT",
+        "SINGLE_INGRESS",
+    }
+)
+_FANOUT_INGRESS = frozenset({"paper_fanout", "local_fanout", "PAPER_FANOUT", "LOCAL_FANOUT"})
 
 
 @dataclass
@@ -50,12 +67,6 @@ class CaptureActiveDecision:
 
 
 def _pid_alive(pid: int) -> bool:
-    """Return True if *pid* appears alive.
-
-    On Windows, ``os.kill(pid, 0)`` is *not* a liveness probe — signal 0 is
-    ``CTRL_C_EVENT`` and will interrupt the current process group. Use
-    ``OpenProcess`` instead (same pattern as market_capture_sidecar).
-    """
     if pid <= 0:
         return False
     if sys.platform == "win32":
@@ -94,10 +105,51 @@ def _parse_iso(ts: str) -> Optional[datetime]:
     if not ts:
         return None
     try:
-        # support ...+09:00 and naive
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def _topology_of(*sources: Mapping[str, Any]) -> str:
+    for src in sources:
+        if not src:
+            continue
+        for key in ("topology", "capture_topology", "push_topology"):
+            val = str(src.get(key) or "").strip()
+            if val:
+                return val.upper()
+    return ""
+
+
+def _ingress_of(*sources: Mapping[str, Any]) -> str:
+    for src in sources:
+        if not src:
+            continue
+        for key in ("ingress", "push_ingress", "capture_ingress"):
+            val = str(src.get(key) or "").strip()
+            if val:
+                return val
+    return ""
+
+
+def capture_is_fanout_consumer(
+    *,
+    topology: str = "",
+    ingress: str = "",
+    cap_status: str = "",
+) -> bool:
+    """True when Capture is localhost fanout consumer (Paper owns Station register)."""
+    topo = str(topology or "").upper()
+    ing = str(ingress or "").strip()
+    if topo in {t.upper() for t in _FANOUT_CONSUMER_TOPOLOGIES}:
+        return True
+    if ing in _FANOUT_INGRESS or "fanout" in ing.lower():
+        return True
+    # READY_FOR_FANOUT without PASSIVE_DUAL direct ingress ⇒ consumer posture
+    st = str(cap_status or "")
+    if "READY_FOR_FANOUT" in st and TOPOLOGY_PASSIVE_DUAL.upper() not in topo:
+        return True
+    return False
 
 
 def is_live_capture_registration_owner_active(
@@ -107,12 +159,12 @@ def is_live_capture_registration_owner_active(
     now: Optional[datetime] = None,
     heartbeat_fresh_sec: float = HEARTBEAT_FRESH_SEC,
 ) -> CaptureActiveDecision:
-    """Return whether live Capture Sidecar currently owns registration for the day."""
+    """Return whether Capture currently owns Kabu Station registration.
+
+    Phase687W31: topology + ingress decide ownership. Status alone is not enough.
+    """
     from small_paper.market_capture_registration import trading_date_jst
     from small_paper.market_capture_sidecar import (
-        CAPTURE_DEGRADED,
-        CAPTURE_ONLINE,
-        CAPTURE_REGISTRATION_MISMATCH,
         HEARTBEAT_FILE,
         MANIFEST_FILE,
         PID_FILE_NAME,
@@ -165,24 +217,11 @@ def is_live_capture_registration_owner_active(
             details={"provenance": man.get("provenance")},
         )
 
-    # registration manifest expected symbols
     from small_paper.market_capture_registration import read_registration_manifest
 
     reg = read_registration_manifest(Path(native_root))
     symbols = list(reg.get("registered_symbols") or man.get("registered_symbols") or [])
     n = len(symbols)
-    if n < 1 or n > 50:
-        return CaptureActiveDecision(
-            False,
-            "expected_symbols_out_of_range",
-            trading_date=day,
-            capture_session_id=str(man.get("capture_session_id") or ""),
-            details={"symbol_count": n},
-        )
-    if not reg and not (day_dir / "registration_manifest.json").is_file():
-        # allow capture-day copy
-        if not symbols:
-            return CaptureActiveDecision(False, "registration_manifest_missing", trading_date=day)
 
     pid = 0
     try:
@@ -192,6 +231,81 @@ def is_live_capture_registration_owner_active(
         pid = int(man.get("pid") or status.get("pid") or hb.get("pid") or 0)
     if not pid:
         pid = int(man.get("pid") or status.get("pid") or hb.get("pid") or 0)
+
+    cap_status = str(status.get("capture_status") or hb.get("status") or "")
+    topology = _topology_of(status, man, hb, reg)
+    ingress = _ingress_of(status, man, hb, reg)
+    base_details = {
+        "symbol_count": n,
+        "day_dir": str(day_dir),
+        "topology": topology or None,
+        "ingress": ingress or None,
+        "capture_status": cap_status or None,
+    }
+
+    # Phase687W31 primary rule: fanout consumer never owns Station register.
+    if capture_is_fanout_consumer(topology=topology, ingress=ingress, cap_status=cap_status):
+        return CaptureActiveDecision(
+            False,
+            "paper_owns_register_fanout_consumer",
+            trading_date=day,
+            capture_session_id=str(man.get("capture_session_id") or ""),
+            pid=pid or None,
+            capture_status=cap_status,
+            details=base_details,
+        )
+
+    # Explicit non-owner statuses (still require topology check above first).
+    if "READY_FOR_FANOUT" in cap_status or "PLANNED_FOLLOWER" in cap_status:
+        return CaptureActiveDecision(
+            False,
+            f"capture_not_registration_owner:{cap_status or 'empty'}",
+            trading_date=day,
+            capture_session_id=str(man.get("capture_session_id") or ""),
+            pid=pid or None,
+            capture_status=cap_status,
+            details=base_details,
+        )
+
+    applied = status.get("applied")
+    if applied is None:
+        applied = man.get("applied")
+    if applied is None:
+        applied = reg.get("applied")
+    verified = status.get("registration_verified")
+    if verified is None:
+        verified = man.get("registration_verified")
+    if verified is None:
+        verified = reg.get("registration_verified")
+
+    # Legacy PASSIVE_DUAL direct socket: owner only if Capture actually applied register.
+    topo_u = topology.upper()
+    is_passive_dual = TOPOLOGY_PASSIVE_DUAL.upper() in topo_u or topo_u == "PASSIVE_DUAL"
+    if not is_passive_dual:
+        # Unknown / missing topology with live Capture → Paper remains register SoT
+        # unless Capture explicitly applied a direct-socket registration.
+        if applied is not True:
+            return CaptureActiveDecision(
+                False,
+                "capture_not_direct_ingress_owner",
+                trading_date=day,
+                capture_session_id=str(man.get("capture_session_id") or ""),
+                pid=pid or None,
+                capture_status=cap_status,
+                details={**base_details, "applied": applied, "registration_verified": verified},
+            )
+
+    if applied is not True:
+        return CaptureActiveDecision(
+            False,
+            "capture_registration_not_applied",
+            trading_date=day,
+            capture_session_id=str(man.get("capture_session_id") or ""),
+            pid=pid or None,
+            capture_status=cap_status,
+            details={**base_details, "applied": applied, "registration_verified": verified},
+        )
+
     if not _pid_alive(pid):
         return CaptureActiveDecision(
             False,
@@ -199,9 +313,10 @@ def is_live_capture_registration_owner_active(
             trading_date=day,
             capture_session_id=str(man.get("capture_session_id") or ""),
             pid=pid or None,
+            capture_status=cap_status,
+            details=base_details,
         )
 
-    # heartbeat freshness (mtime or payload at)
     hb_path = day_dir / HEARTBEAT_FILE
     age = None
     if hb_path.is_file():
@@ -216,7 +331,7 @@ def is_live_capture_registration_owner_active(
             trading_date=day,
             capture_session_id=str(man.get("capture_session_id") or ""),
             pid=pid,
-            details={"heartbeat_age_sec": age, "fresh_sec": heartbeat_fresh_sec},
+            details={**base_details, "heartbeat_age_sec": age, "fresh_sec": heartbeat_fresh_sec},
         )
 
     sched = _parse_iso(str(man.get("scheduled_end_at") or ""))
@@ -232,33 +347,27 @@ def is_live_capture_registration_owner_active(
                 trading_date=day,
                 capture_session_id=str(man.get("capture_session_id") or ""),
                 pid=pid,
-                details={"scheduled_end_at": man.get("scheduled_end_at")},
+                details={**base_details, "scheduled_end_at": man.get("scheduled_end_at")},
             )
 
-    cap_status = str(status.get("capture_status") or hb.get("status") or "")
-    ok_statuses = {CAPTURE_ONLINE, CAPTURE_DEGRADED, CAPTURE_REGISTRATION_MISMATCH, "ONLINE", "DEGRADED"}
-    # Also accept empty status if heartbeat fresh + pid alive (startup race)
-    if cap_status and cap_status not in ok_statuses and not cap_status.startswith("CAPTURE_ONLINE"):
-        # FINISHED / COMPLETE → inactive
-        if "COMPLETE" in cap_status or "FINISHED" in cap_status or "NO_MARKET" in cap_status:
-            return CaptureActiveDecision(
-                False,
-                f"capture_status={cap_status}",
-                trading_date=day,
-                capture_session_id=str(man.get("capture_session_id") or ""),
-                pid=pid,
-                capture_status=cap_status,
-            )
+    if n < 1 or n > 50:
+        return CaptureActiveDecision(
+            False,
+            "expected_symbols_out_of_range",
+            trading_date=day,
+            capture_session_id=str(man.get("capture_session_id") or ""),
+            details={**base_details, "symbol_count": n},
+        )
 
     return CaptureActiveDecision(
         True,
-        "capture_active",
+        "capture_passive_dual_direct_owner",
         trading_date=day,
         capture_session_id=str(man.get("capture_session_id") or ""),
         registration_generation=str(man.get("registration_generation") or reg.get("generation_id") or ""),
         pid=pid,
-        capture_status=cap_status or CAPTURE_ONLINE,
-        details={"symbol_count": n, "day_dir": str(day_dir)},
+        capture_status=cap_status,
+        details={**base_details, "applied": applied, "registration_verified": verified},
     )
 
 

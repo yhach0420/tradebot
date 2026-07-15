@@ -1,0 +1,9 @@
+[PAPER TRADE] starting...
+[PAPER TRADE] repo=C:\Users\yhach\Documents\tradebotfile
+[PAPER TRADE] PYTHONPATH=kabu_native\src
+[PAPER TRADE] preflight: live ENTRY pipeline
+[PREFLIGHT] live pipeline ok
+[PAPER TRADE] preflight: production startup smoke test
+[SMOKE] production startup ok (kabu_native/configs/small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml)
+[PAPER TRADE] command:
+python kabu_native/scripts/run_core10_dynamic40_am_pm_daily_runner.py --universe-mode core10-dynamic40-price-risk-filter-shadow --enable-intraday-refresh --exit-policy-shadow trailing-mfe

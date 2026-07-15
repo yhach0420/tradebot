@@ -36,6 +36,8 @@ from small_paper.reject_reasons import (
     is_entry_blocked_discord_notify_reason,
 )
 from small_paper.entry_pipeline_stages import (
+    ObserverCloseOnPush,
+    SAME_PUSH_REENTRY_AFTER_NO_PROGRESS_EXIT,
     Stage0NormalizedPayload,
     Stage1FreshnessResult,
     Stage2PBv2Result,
@@ -3110,18 +3112,27 @@ def _stage0_normalize_payload(
     )
 
 
-def _observer_open_position_tick(ctx: _PushPipelineContext, norm: Stage0NormalizedPayload) -> None:
+def _observer_open_position_tick(
+    ctx: _PushPipelineContext, norm: Stage0NormalizedPayload
+) -> Optional[ObserverCloseOnPush]:
     """Held-position tick dispatch (EXIT hot path). Runs between Stage0 and Stage1.
 
     Not an ENTRY stage; kept as a separate step so the original execution order
     is preserved exactly (Phase629 moved this code verbatim).
+
+    Phase687W22B: returns close metadata for the current message_index when an
+    EXIT occurs on this symbol (used only to skip same-PUSH re-ENTRY after
+    no_progress_exit). No durable/global cooloff state.
     """
+    from small_paper.observer_position_tracker import OBSERVER_EXIT
+
     sym = norm.symbol
     trade = norm.trade
     payload = norm.payload
     enriched = norm.enriched
     msg_i = norm.msg_i
     bucket = norm.bucket
+    close_info: Optional[ObserverCloseOnPush] = None
     if ctx.observer and ctx.observer.has_open(sym):
         price = payload.get("CurrentPrice")
         obs_events = ctx.observer.on_tick(
@@ -3142,6 +3153,89 @@ def _observer_open_position_tick(ctx: _PushPipelineContext, norm: Stage0Normaliz
             profile=ctx.config.profile,
             config=ctx.config,
         )
+        for ev in obs_events:
+            if getattr(ev, "kind", None) != OBSERVER_EXIT:
+                continue
+            ctx_map = getattr(ev, "context", None) or {}
+            reason = str(ctx_map.get("exit_reason") or "")
+            close_info = ObserverCloseOnPush(
+                closed_symbol=str(getattr(ev, "symbol", "") or sym),
+                close_reason=reason,
+                close_message_index=int(msg_i),
+                close_event_time=str(
+                    ctx_map.get("exit_time") or ctx_map.get("timestamp") or _now_iso()
+                ),
+            )
+            break
+    return close_info
+
+
+def _should_skip_same_push_reentry_after_no_progress(
+    close_info: Optional[ObserverCloseOnPush],
+    *,
+    symbol: str,
+    message_index: int,
+) -> bool:
+    """True when no_progress EXIT and ENTRY would share the same message_index."""
+    if close_info is None:
+        return False
+    if str(close_info.close_reason) != "no_progress_exit":
+        return False
+    if str(close_info.closed_symbol) != str(symbol):
+        return False
+    return int(close_info.close_message_index) == int(message_index)
+
+
+def _record_same_push_reentry_skip(
+    ctx: _PushPipelineContext,
+    norm: Stage0NormalizedPayload,
+    close_info: ObserverCloseOnPush,
+) -> None:
+    """Audit-only reject row; does not run Stage1–5 / gate / observer register."""
+    from research.exposure_gate import GateDecision
+
+    trade = norm.trade
+    decision = GateDecision(
+        accept=False,
+        reason=SAME_PUSH_REENTRY_AFTER_NO_PROGRESS_EXIT,
+        continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
+        quality_tier="",
+    )
+    row = _event_from_gate(
+        event_type="rejected",
+        trade=trade,
+        decision=decision,
+        source=ctx.source,
+        message_index=norm.msg_i,
+        current_price=norm.payload.get("CurrentPrice"),
+    )
+    row["final_reject_reason"] = SAME_PUSH_REENTRY_AFTER_NO_PROGRESS_EXIT
+    row["gate_reject_reason"] = SAME_PUSH_REENTRY_AFTER_NO_PROGRESS_EXIT
+    row["same_push_reentry_skip"] = True
+    row["closed_symbol"] = close_info.closed_symbol
+    row["close_reason"] = close_info.close_reason
+    row["close_message_index"] = close_info.close_message_index
+    row["close_event_time"] = close_info.close_event_time
+    ctx.state.events.append(row)
+    ctx.writer.append_event(row)
+    _record_bucket(ctx.state, "rejected")
+    # Count for session diagnostics (optional attr; never required for correctness)
+    try:
+        n = int(getattr(ctx.state, "same_push_reentry_skip_count", 0) or 0)
+        setattr(ctx.state, "same_push_reentry_skip_count", n + 1)
+    except Exception:
+        pass
+    # Discord Summary audit only — does not affect trading
+    try:
+        from pathlib import Path
+
+        from small_paper.daily_symbol_discord_state import get_daily_symbol_state
+
+        get_daily_symbol_state(
+            native_root=Path(__file__).resolve().parents[2]
+        ).record_same_push_suppression(str(close_info.closed_symbol or ""))
+    except Exception:
+        pass
 
 
 def _stage1_evaluate_freshness(
@@ -4240,7 +4334,14 @@ def _process_push_payload(
         return
     if trace.enabled:
         trace.symbol = norm.symbol
-    _observer_open_position_tick(ctx, norm)
+    close_info = _observer_open_position_tick(ctx, norm)
+    if _should_skip_same_push_reentry_after_no_progress(
+        close_info, symbol=norm.symbol, message_index=norm.msg_i
+    ):
+        # Phase687W22B Part A: EXIT already dispatched; skip Stage1+ ENTRY on this PUSH.
+        assert close_info is not None
+        _record_same_push_reentry_skip(ctx, norm, close_info)
+        return
     trace.start("stage1_freshness")
     fresh = _stage1_evaluate_freshness(ctx, norm)
     if ol is not None:
@@ -6126,12 +6227,19 @@ def run_live_dry_run(
             screening_label = "PM Screening" if sk == "pm" else "AM Screening"
             watch_syms = sorted({str(sym) for sym, _, _ in symbols})
             day_stamp = datetime.now(JST).strftime("%Y%m%d")
+            # Phase687W31: before runtime register — prepared only, not SCREENING success
             discord.notify_universe_screening(
-                session_label=screening_label,
+                session_label=f"UNIVERSE PREPARED ({screening_label})",
                 watch_symbols=watch_syms,
                 day_stamp=day_stamp,
+                status="登録: 未実施 / Paper: 未稼働",
                 generated_at=datetime.now(JST).isoformat(timespec="milliseconds"),
             )
+            state._pending_screening_notify = {
+                "session_label": screening_label,
+                "watch_symbols": watch_syms,
+                "day_stamp": day_stamp,
+            }
 
     entry_eligible: Optional[set[str]] = {t[0] for t in symbols} if enable_intraday_refresh else None
     day_compact = datetime.now(JST).strftime("%Y%m%d")
@@ -6351,7 +6459,12 @@ def run_live_dry_run(
             from api.kabu_register import register_symbols_cleared
             # Phase242b logs
             register_called = True
-            register_symbols_cleared(push, specs)
+            register_symbols_cleared(
+                push,
+                specs,
+                native_root=native_root,
+                trading_date=datetime.now(JST).strftime("%Y%m%d"),
+            )
             code_to_symbol.clear()
             for row in merged:
                 sym = _norm(str(row.get("symbol") or ""))
@@ -6547,8 +6660,20 @@ def run_live_dry_run(
         try:
             from api.kabu_register import format_register_failure_message, register_symbols_cleared
 
-            reg_meta = register_symbols_cleared(push, sym_specs)
+            reg_meta = register_symbols_cleared(
+                push,
+                sym_specs,
+                native_root=native_root,
+                trading_date=datetime.now(JST).strftime("%Y%m%d"),
+            )
             state.session_ready_ts = _now_iso()
+            try:
+                (output_dir / "register_api_trace.json").write_text(
+                    json.dumps(reg_meta, ensure_ascii=False, indent=2, default=str) + "\n",
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
             try:
                 from small_paper.market_capture_registration import notify_registration_refresh
                 from small_paper.market_capture_sidecar import capture_day_dir
@@ -6564,24 +6689,51 @@ def run_live_dry_run(
                 )
             except Exception:
                 pass
-            if reg_meta.get("recovered_from_register_limit"):
+            if reg_meta.get("recovered_from_register_limit") and reg_meta.get("register_recovered"):
                 writer.append_error(
                     {
                         "event_time": _now_iso(),
                         "error_type": "register_limit_recovered",
-                        "message": "register 4002006 recovered after unregister/all retry",
+                        "message": "register 4002006 recovered after unregister/all + readback retry",
                         "symbol_count": len(sym_specs),
                         "steps": reg_meta.get("steps"),
                     }
                 )
                 if discord and discord.active:
+                    from small_paper.session_validity import format_register_recovered_discord_lines
+
+                    # PUSH confirmation happens after messages; interim wait notice only
                     discord.notify_error(
                         operation="register",
-                        message=(
-                            "register limit 4002006 — cleared via unregister/all and succeeded on retry"
+                        message="\n".join(
+                            format_register_recovered_discord_lines(
+                                registered=int(reg_meta.get("symbol_count") or len(sym_specs)),
+                                expected=len(sym_specs),
+                                push_receiving=False,
+                            )
                         ),
-                        extra={"symbol_count": len(sym_specs)},
+                        extra={"symbol_count": len(sym_specs), "register_recovered": True},
                     )
+            # Phase687W31: official AM/PM Screening only after runtime register success
+            pending = getattr(state, "_pending_screening_notify", None)
+            if pending and discord and discord.active:
+                try:
+                    discord.notify_universe_screening(
+                        session_label=str(pending.get("session_label") or "AM Screening"),
+                        watch_symbols=list(pending.get("watch_symbols") or []),
+                        day_stamp=str(pending.get("day_stamp") or ""),
+                        status="completed",
+                        generated_at=datetime.now(JST).isoformat(timespec="milliseconds"),
+                    )
+                except Exception:
+                    pass
+                state._pending_screening_notify = None
+            print(
+                f"[PAPER TRADE] Runtime registration...PASS "
+                f"{int(reg_meta.get('symbol_count') or len(sym_specs))}/{len(sym_specs)}"
+                + (" (reused)" if reg_meta.get("reused_existing") else ""),
+                flush=True,
+            )
         except Exception as e:
             _log_api_error("register", e)
             fail_msg = format_register_failure_message(e, symbol_count=len(sym_specs))
@@ -6594,9 +6746,27 @@ def run_live_dry_run(
                 }
             )
             if discord and discord.active:
+                from small_paper.session_validity import format_paper_not_running_discord_lines
+
                 discord.notify_error(
                     operation="register",
-                    message=fail_msg,
+                    message="\n".join(
+                        format_paper_not_running_discord_lines(
+                            stop_point="register",
+                            push=0,
+                            gate=0,
+                            capture_status="待機中",
+                        )
+                        + [
+                            "原因: Kabu銘柄登録失敗",
+                            f"登録状態: ?/{len(sym_specs)}",
+                            "PUSH: 未開始",
+                            "ENTRY評価: 未開始",
+                            "損益: 無効",
+                            "Paper session: INVALID_REGISTER_FAILED",
+                            fail_msg,
+                        ]
+                    ),
                     extra={"symbol_count": len(sym_specs), "stop_reason": "register_failed"},
                 )
             _request_stop("register_failed")
@@ -6606,6 +6776,58 @@ def run_live_dry_run(
         last_hb = start
         msg_i = 0
         last_eval: dict[str, float] = {}
+        stall_notified = False
+
+        def _maybe_notify_data_path_stalled() -> None:
+            nonlocal stall_notified
+            if stall_notified or not full_session:
+                return
+            # Off-hours: do not treat waiting as stall
+            try:
+                if sched.is_before_session() or sched.is_after_session():
+                    return
+            except Exception:
+                pass
+            elapsed = time.monotonic() - start
+            push_n = int(getattr(state, "push_messages", 0) or 0)
+            gate_n = int(getattr(state, "gate_evaluations", 0) or 0)
+            hb_n = int(getattr(state, "heartbeat_count", 0) or 0)
+            stalled = False
+            reason = ""
+            if elapsed >= 60.0 and push_n <= 0:
+                stalled, reason = True, "PUSH 0 for 60s"
+            elif elapsed >= 120.0 and gate_n <= 0:
+                stalled, reason = True, "gate_evaluations 0 for 120s"
+            elif elapsed >= 60.0 and hb_n <= 0:
+                stalled, reason = True, "heartbeat 0 for 60s"
+            if not stalled:
+                return
+            stall_notified = True
+            writer.append_error(
+                {
+                    "event_time": _now_iso(),
+                    "error_type": "PAPER_DATA_PATH_STALLED",
+                    "message": reason,
+                    "push_messages": push_n,
+                    "gate_evaluations": gate_n,
+                    "heartbeat_count": hb_n,
+                }
+            )
+            if discord and discord.active:
+                from small_paper.session_validity import format_paper_not_running_discord_lines
+
+                discord.notify_error(
+                    operation="paper_data_path",
+                    message="\n".join(
+                        ["【PAPER_DATA_PATH_STALLED】", reason]
+                        + format_paper_not_running_discord_lines(
+                            stop_point="data_path",
+                            push=push_n,
+                            gate=gate_n,
+                        )
+                    ),
+                    extra={"stop_reason": "PAPER_DATA_PATH_STALLED"},
+                )
 
         def _should_stop() -> bool:
             if state.stop_requested:
@@ -6665,6 +6887,7 @@ def run_live_dry_run(
 
         try:
             while not _should_stop():
+                _maybe_notify_data_path_stalled()
                 _maybe_intraday_refresh()
                 _maybe_am_pm_force_close()
                 if _should_stop():
@@ -6676,6 +6899,7 @@ def run_live_dry_run(
                     async for payload in push.iter_messages(recv_poll_sec=poll_interval_sec):
                         if _should_stop():
                             break
+                        _maybe_notify_data_path_stalled()
                         # Phase170: refresh check must run during streaming,
                         # not only between reconnect cycles.
                         _maybe_intraday_refresh()
@@ -6684,6 +6908,13 @@ def run_live_dry_run(
                             last_hb = time.monotonic()
                         if not isinstance(payload, dict):
                             continue
+                        # Phase687W24: fail-open fan-out to Capture (single Kabu WS ingress)
+                        try:
+                            from small_paper.paper_capture_fanout import fanout_push_payload
+
+                            fanout_push_payload(payload)
+                        except Exception:
+                            pass
                         sym = _symbol_from_push(payload, code_to_symbol)
                         if not sym:
                             continue
@@ -6781,6 +7012,7 @@ def run_live_dry_run(
         )
     )
     # Phase687W4S: persist SafetySM soak snapshot (no strategy change)
+    # Phase687W32: do NOT seal here — summary/events/journals must be final first.
     try:
         bridge = getattr(state, "live_order_safety_bridge", None)
         if bridge is not None:
@@ -6797,7 +7029,6 @@ def run_live_dry_run(
                     or e.get("is_structural_exit")
                 ),
             )
-            # Phase687W7A: finalize manifest + full session seal (hash only; no secrets)
             try:
                 import json as _json
 
@@ -6808,7 +7039,6 @@ def run_live_dry_run(
 
                 safety_dir = output_dir / "live_order_safety"
                 man_path = safety_dir / "session_manifest.json"
-                # duplicate finalize: skip if already sealed
                 already = False
                 if man_path.is_file():
                     try:
@@ -6816,7 +7046,6 @@ def run_live_dry_run(
                         already = bool(prev.get("sealed")) and prev.get("session_seal_status") in (
                             "SEALED",
                             "SEALED_VALID",
-                            "INCOMPLETE",
                         )
                     except Exception:
                         already = False
@@ -6861,9 +7090,8 @@ def run_live_dry_run(
                         kill_switch_events=1 if getattr(eng, "kill_switch", False) else 0,
                         journal_sequence_end=seq_end,
                         snapshot_completeness="COMPLETE",
-                        session_seal_status="SEALED",
+                        session_seal_status="PENDING_SEAL",
                     )
-                    # Disk / growth metadata must be on manifest BEFORE seal (W7A2: no post-seal rewrite)
                     if man_path.is_file():
                         man = _json.loads(man_path.read_text(encoding="utf-8"))
                         man["disk_usage_end"] = disk_usage_pct(output_dir)
@@ -6875,17 +7103,6 @@ def run_live_dry_run(
                         except Exception:
                             pass
                         man_path.write_text(_json.dumps(man, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                    # Phase687W7A2: session-root seal is SoT; propagate into soak snapshot.
-                    # Do not rewrite session_manifest.json after seal (circular invalidation).
-                    from small_paper.w4s_seal_propagation import finalize_session_seal_propagation
-
-                    prop = finalize_session_seal_propagation(
-                        output_dir,
-                        safety_dir=safety_dir,
-                        session_id=str(getattr(bridge, "session_id", "") or ""),
-                    )
-                    # Seal status for operators lives on session_seal.json + soak snapshot (SoT copy)
-                    _ = prop
             except Exception:
                 pass
     except Exception:
@@ -6959,6 +7176,12 @@ def run_live_dry_run(
     if discord:
         summary.update(discord_notify_summary_fields(discord))
     try:
+        from small_paper.session_validity import classify_session_validity
+
+        summary.update(classify_session_validity(summary))
+    except Exception:
+        pass
+    try:
         # Phase687W10A: after Shadow finalize + canonical — RESEARCH_SHADOW AM/PM hook
         notify_discord_session_end(
             discord,
@@ -6992,9 +7215,103 @@ def run_live_dry_run(
         summary=summary,
         pos_fields=pos_fields,
     )
+    # Phase687W32: single seal point AFTER all required artifacts are final and closed.
+    # Never rewrite seal-target files after this (summary included).
+    try:
+        from small_paper.operational_recovery import finalize_session_manifest
+        from small_paper.stateful_journal_recovery import ensure_required_seal_artifacts
+        from small_paper.w4s_seal_propagation import finalize_session_seal_propagation
+
+        bridge = getattr(state, "live_order_safety_bridge", None)
+        safety_dir = output_dir / "live_order_safety"
+        safety_dir.mkdir(parents=True, exist_ok=True)
+        # Refresh soak with final accepted/exit counts after summarize
+        if bridge is not None:
+            try:
+                from small_paper.live_order_runtime_bridge import write_soak_session_snapshot
+
+                write_soak_session_snapshot(
+                    bridge,
+                    output_dir=safety_dir,
+                    canonical_entry_count=len(state.accepted_rows),
+                    canonical_exit_count=sum(
+                        1
+                        for e in state.events
+                        if str(e.get("event") or e.get("kind") or "") in ("OBSERVER_EXIT", "exit")
+                        or e.get("is_structural_exit")
+                    ),
+                )
+            except Exception:
+                pass
+        ensure_required_seal_artifacts(output_dir, safety_dir=safety_dir)
+        # Ensure manifest exists even on early abort without prior finalize
+        man_path = safety_dir / "session_manifest.json"
+        if not man_path.is_file():
+            try:
+                finalize_session_manifest(
+                    safety_dir,
+                    canonical_entry_count=len(state.accepted_rows),
+                    canonical_exit_count=0,
+                    safety_sm_signal_count=0,
+                    intent_count=0,
+                    submit_count=0,
+                    cancel_count=0,
+                    reservation_leak=0,
+                    reconciliation_mismatch=0,
+                    kill_switch_events=0,
+                    journal_sequence_end=0,
+                    snapshot_completeness="COMPLETE",
+                    session_seal_status="PENDING_SEAL",
+                )
+            except Exception:
+                pass
+        seal_path = output_dir / "session_seal.json"
+        need_seal = True
+        if seal_path.is_file():
+            try:
+                prev_seal = json.loads(seal_path.read_text(encoding="utf-8"))
+                if (
+                    prev_seal.get("session_seal_status") == "SEALED_VALID"
+                    and prev_seal.get("finalize_locked")
+                ):
+                    need_seal = False
+            except Exception:
+                need_seal = True
+        if need_seal:
+            # Delete stale INCOMPLETE seal so reseal is clean
+            if seal_path.is_file():
+                try:
+                    prev_seal = json.loads(seal_path.read_text(encoding="utf-8"))
+                    if prev_seal.get("session_seal_status") != "SEALED_VALID":
+                        seal_path.unlink(missing_ok=True)
+                        safety_seal = safety_dir / "session_seal.json"
+                        if safety_seal.is_file():
+                            safety_seal.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            prop = finalize_session_seal_propagation(
+                output_dir,
+                safety_dir=safety_dir,
+                session_id=str(getattr(bridge, "session_id", "") or output_dir.name),
+                skip_if_locked=True,
+            )
+            # In-memory only — never rewrite sealed small_paper_summary.json / journals
+            summary["session_seal_propagation"] = {
+                "pass": bool(prop.get("pass")),
+                "seal_propagation_status": prop.get("seal_propagation_status"),
+            }
+            if seal_path.is_file():
+                try:
+                    seal_obj = json.loads(seal_path.read_text(encoding="utf-8"))
+                    summary["session_seal_status"] = seal_obj.get("session_seal_status")
+                except Exception:
+                    pass
+    except Exception as exc:
+        log.warning("post-finalize seal failed: %s", exc)
     try:
         from small_paper.am_pm_summary_preservation import preserve_session_summary_at_end
 
+        # Copies to small_paper_summary_{am|pm}.json only — not a seal required artifact
         preserved = preserve_session_summary_at_end(
             output_dir,
             session_cfg=session_cfg,
@@ -7014,6 +7331,10 @@ def run_live_dry_run(
     day_stamp = datetime.now(JST).strftime("%Y%m%d")
     _write_phase335_lite_board_shadow_reports(state, repo_root=repo_root, day_stamp=day_stamp)
     _organize_daily_artifacts_safe(repo_root, day_stamp)
+    try:
+        summary["pilot_exit_code"] = pilot_process_exit_code(summary)
+    except Exception:
+        summary["pilot_exit_code"] = 0 if str(summary.get("stop_reason") or "") != "register_failed" else 2
     return PilotRunResult(
         output_dir=output_dir,
         summary=summary,
@@ -7021,6 +7342,20 @@ def run_live_dry_run(
         accepted=state.accepted_rows,
         rejects=state.reject_rows,
     )
+
+
+def pilot_process_exit_code(summary: Mapping[str, Any] | None) -> int:
+    """Phase687W31: register_failed / invalid sessions must not exit 0."""
+    s = summary or {}
+    reason = str(s.get("stop_reason") or "")
+    validity = str(s.get("session_validity") or "")
+    if reason == "register_failed" or validity == "INVALID_REGISTER_FAILED":
+        return 2
+    if validity.startswith("INVALID_"):
+        return 2
+    if s.get("include_in_strategy_metrics") is False and reason:
+        return 2
+    return 0
 
 
 def _observer_stats_dict(observer: Optional[ObserverPositionTracker]) -> Optional[dict[str, Any]]:

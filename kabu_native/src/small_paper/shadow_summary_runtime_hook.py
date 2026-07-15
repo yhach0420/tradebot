@@ -306,6 +306,46 @@ def _enqueue_inner(
     if "actual total" in low or "canonical total" in low:
         content = content.replace("actual total", "[redacted]").replace("Actual total", "[redacted]")
 
+    # Phase687W25C-R2: only enabled shadows with today's count > 0
+    from small_paper.discord_message_builder import (
+        audit_discord_shadow_inventory,
+        build_shadow_observation_embed_payload,
+        collect_active_shadow_observations,
+        embed_to_discord_payload,
+    )
+
+    active = collect_active_shadow_observations(summary)
+    inventory_audit = audit_discord_shadow_inventory(summary)
+    if not active:
+        router.audit.record_event(
+            {
+                "status": "SKIPPED",
+                "category": NotificationCategory.RESEARCH_SHADOW.value,
+                "reason": "NO_ACTIVE_SHADOW_FOR_DISCORD",
+                "ownership": OWNERSHIP,
+                "am_pm": am_pm,
+                "inventory": inventory_audit,
+            }
+        )
+        return {
+            "status": "SKIPPED_NO_ACTIVE_SHADOW",
+            "queued": False,
+            "am_pm": am_pm,
+            "inventory": inventory_audit,
+        }
+
+    shadow_embed = build_shadow_observation_embed_payload(
+        {
+            "shadow_name": ", ".join(r["name"] for r in active),
+            "blocks": sum(int(r.get("count") or 0) for r in active),
+            "delta_yen": " / ".join(f"{r['name']}={r['delta']}" for r in active),
+            "active_shadows": active,
+        },
+        am_pm=am_pm,
+    )
+    embed_body = embed_to_discord_payload(shadow_embed, content="")
+    discord_embeds = list(embed_body.get("embeds") or [])
+
     # Stable once-per AM/PM identity; full key includes hash for UPDATE detection.
     stable_key = f"{day}|{sid}|{am_pm.upper()}|{SHADOW_NAME_COMPOSITE}"
     dedupe_key = f"{stable_key}|{art_hash}"
@@ -356,8 +396,9 @@ def _enqueue_inner(
         category=NotificationCategory.RESEARCH_SHADOW,
         severity=Severity.INFO,
         event_type=f"SHADOW_SUMMARY_{am_pm.upper()}",
-        title=f"[SHADOW SUMMARY - {am_pm.upper()}]",
-        content=content,
+        title=str(shadow_embed.get("title") or "[SHADOW OBSERVATION]"),
+        content="",
+        embeds=discord_embeds,
         trading_date=day,
         session_id=sid,
         am_pm=am_pm.upper(),
@@ -371,6 +412,9 @@ def _enqueue_inner(
             "artifact_hash": art_hash,
             "full_dedupe_key": dedupe_key,
             "auto_resend": False,
+            "shadow_text_audit": content[:500],
+            "active_shadows": active,
+            "inventory": inventory_audit,
         },
     )
     # Ensure payload_hash used by dedupe.record is the artifact hash

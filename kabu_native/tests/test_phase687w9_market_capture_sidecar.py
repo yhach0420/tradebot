@@ -141,59 +141,71 @@ def test_generation_change_recorded(tmp_path: Path):
 
 def test_sidecar_separate_pid_and_seal(tmp_path: Path):
     day = "20990101"
-    # pre-seed registration
-    coordinate_registration(
-        tmp_path,
-        day,
-        expected_symbols=[str(7200 + i) for i in range(50)],
-        apply_register=False,
-        test_mode=True,
-    )
-    spawn = spawn_sidecar_process(
-        native_root=tmp_path,
-        trading_date=day,
-        synthetic=True,
-        synthetic_events=40,
-    )
-    assert spawn["pid"] != os.getpid()
-    wait = wait_capture_online(tmp_path, day, timeout_sec=20)
-    assert wait["ok"] is True
-    out = capture_day_dir(tmp_path, day)
-    # Wait until at least one event is captured before operator stop (avoid race)
-    deadline = time.time() + 15
-    while time.time() < deadline:
-        st_path = out / "capture_status.json"
-        if st_path.is_file():
-            try:
-                st = json.loads(st_path.read_text(encoding="utf-8"))
-                if int(st.get("event_count") or 0) > 0:
-                    break
-            except Exception:
-                pass
-        time.sleep(0.1)
-    # operator stop
-    (out / "operator_stop.flag").write_text("stop\n", encoding="utf-8")
-    deadline = time.time() + 20
-    while time.time() < deadline and not (out / "capture_seal.json").is_file():
-        time.sleep(0.2)
-    assert (out / "capture_seal.json").is_file()
-    seal = json.loads((out / "capture_seal.json").read_text(encoding="utf-8"))
-    assert seal.get("seal_pass") is True
-    assert seal.get("paper_session_seal") is False
-    summary = json.loads((out / "capture_summary.json").read_text(encoding="utf-8"))
-    assert summary["total_events"] > 0
-    assert summary["actual_submit"] == 0
-    assert summary["actual_cancel"] == 0
-    # separate output root
-    assert "market_capture" in str(out).replace("\\", "/")
-    assert "results/small_paper" not in str(out).replace("\\", "/")
-    # double start blocked
-    sc = MarketCaptureSidecar(native_root=tmp_path, trading_date=day, synthetic=True, synthetic_events=5)
-    # if first still holding pid briefly after seal, release should have happened
-    time.sleep(0.5)
-    code = sc.run()
-    # either runs ok (first exited) or pid conflict 2
-    assert code in (0, 2)
+    owned = None
+    try:
+        # pre-seed registration
+        coordinate_registration(
+            tmp_path,
+            day,
+            expected_symbols=[str(7200 + i) for i in range(50)],
+            apply_register=False,
+            test_mode=True,
+        )
+        spawn = spawn_sidecar_process(
+            native_root=tmp_path,
+            trading_date=day,
+            synthetic=True,
+            synthetic_events=40,
+        )
+        from small_paper.capture_child_cleanup import cleanup_owned_capture, record_owned_from_spawn, query_process
+
+        owned = record_owned_from_spawn(spawn, native_root=tmp_path)
+        assert spawn["pid"] != os.getpid()
+        wait = wait_capture_online(tmp_path, day, timeout_sec=20)
+        assert wait["ok"] is True
+        out = capture_day_dir(tmp_path, day)
+        # Wait until at least one event is captured before operator stop (avoid race)
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            st_path = out / "capture_status.json"
+            if st_path.is_file():
+                try:
+                    st = json.loads(st_path.read_text(encoding="utf-8"))
+                    if int(st.get("event_count") or 0) > 0:
+                        break
+                except Exception:
+                    pass
+            time.sleep(0.1)
+        # operator stop
+        (out / "operator_stop.flag").write_text("stop\n", encoding="utf-8")
+        deadline = time.time() + 20
+        while time.time() < deadline and not (out / "capture_seal.json").is_file():
+            time.sleep(0.2)
+        assert (out / "capture_seal.json").is_file()
+        seal = json.loads((out / "capture_seal.json").read_text(encoding="utf-8"))
+        assert seal.get("seal_pass") is True
+        assert seal.get("paper_session_seal") is False
+        summary = json.loads((out / "capture_summary.json").read_text(encoding="utf-8"))
+        assert summary["total_events"] > 0
+        assert summary["actual_submit"] == 0
+        assert summary["actual_cancel"] == 0
+        # separate output root
+        assert "market_capture" in str(out).replace("\\", "/")
+        assert "results/small_paper" not in str(out).replace("\\", "/")
+        # double start blocked
+        sc = MarketCaptureSidecar(native_root=tmp_path, trading_date=day, synthetic=True, synthetic_events=5)
+        # if first still holding pid briefly after seal, release should have happened
+        time.sleep(0.5)
+        code = sc.run()
+        # either runs ok (first exited) or pid conflict 2
+        assert code in (0, 2)
+    finally:
+        if owned is not None:
+            from small_paper.capture_child_cleanup import cleanup_owned_capture, query_process
+
+            owned.synthetic = True
+            cleanup_owned_capture(owned, reason="test_teardown", skip_capture_wait=True)
+            assert not query_process(owned.pid).get("exists")
 
 
 def test_dual_ws_probe_compatible():

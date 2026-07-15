@@ -35,6 +35,20 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+# Phase687W22B — same-PUSH re-entry skip after no_progress_exit (mainline)
+SAME_PUSH_REENTRY_AFTER_NO_PROGRESS_EXIT = "same_push_reentry_after_no_progress_exit"
+
+
+@dataclass
+class ObserverCloseOnPush:
+    """Close that occurred on the current message_index (per-push only; no durable state)."""
+
+    closed_symbol: str
+    close_reason: str
+    close_message_index: int
+    close_event_time: str = ""
+
+
 @dataclass
 class Stage0NormalizedPayload:
     """Stage0 output: normalized push payload + candidate trade.

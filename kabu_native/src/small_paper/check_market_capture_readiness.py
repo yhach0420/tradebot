@@ -27,7 +27,7 @@ from small_paper.market_capture_sidecar import (
     STATUS_FILE,
     capture_day_dir,
 )
-from small_paper.market_capture_topology import TOPOLOGY_PASSIVE_DUAL
+from small_paper.market_capture_topology import TOPOLOGY_PASSIVE_DUAL, TOPOLOGY_SINGLE_INGRESS
 
 JST = ZoneInfo("Asia/Tokyo")
 NATIVE_ROOT = Path(__file__).resolve().parents[2]
@@ -103,7 +103,7 @@ def check_market_capture_readiness(
         heartbeat_age = round(time.time() - hb_path.stat().st_mtime, 3)
 
     ws_status = str(status_obj.get("websocket_status") or ("CONNECTED" if status_obj.get("capture_status") == CAPTURE_ONLINE else "UNKNOWN"))
-    topology = str(status_obj.get("topology") or TOPOLOGY_PASSIVE_DUAL)
+    topology = str(status_obj.get("topology") or TOPOLOGY_SINGLE_INGRESS)
     event_count = int(status_obj.get("event_count") or 0)
     disconnect_count = int(status_obj.get("disconnect_count") or 0)
     dropped = int(status_obj.get("dropped_event_count") or 0)

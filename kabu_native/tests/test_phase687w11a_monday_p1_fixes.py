@@ -37,6 +37,9 @@ def _write_live_capture_day(
     status: str = "CAPTURE_ONLINE",
     n_symbols: int = 50,
     scheduled_end_at: str = "2099-01-01T15:35:00+09:00",
+    topology: str = "PASSIVE_DUAL_WEBSOCKET",
+    ingress: str = "kabu_direct",
+    applied: bool = True,
 ) -> Path:
     from small_paper.market_capture_sidecar import (
         HEARTBEAT_FILE,
@@ -62,13 +65,38 @@ def _write_live_capture_day(
         "pid": use_pid,
         "registered_symbols": symbols,
         "registration_generation": "gen-test-1",
+        "topology": topology,
+        "ingress": ingress,
+        "applied": applied,
+        "registration_verified": applied,
     }
     (day / MANIFEST_FILE).write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
     (day / STATUS_FILE).write_text(
-        json.dumps({"capture_status": status, "pid": use_pid}, indent=2) + "\n", encoding="utf-8"
+        json.dumps(
+            {
+                "capture_status": status,
+                "pid": use_pid,
+                "topology": topology,
+                "ingress": ingress,
+                "applied": applied,
+                "registration_verified": applied,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
     )
     (day / HEARTBEAT_FILE).write_text(
-        json.dumps({"pid": use_pid, "status": status, "at": "2099-01-01T10:00:00+09:00"}, indent=2)
+        json.dumps(
+            {
+                "pid": use_pid,
+                "status": status,
+                "at": "2099-01-01T10:00:00+09:00",
+                "topology": topology,
+                "ingress": ingress,
+            },
+            indent=2,
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -80,6 +108,9 @@ def _write_live_capture_day(
                 "registered_symbols": symbols,
                 "generation_id": "gen-test-1",
                 "trading_date": trading_date,
+                "topology": topology,
+                "applied": applied,
+                "registration_verified": applied,
             },
             indent=2,
         )

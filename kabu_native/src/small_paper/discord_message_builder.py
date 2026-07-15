@@ -38,15 +38,16 @@ EXTENDED_REASON_JA: dict[str, str] = {
 SCORE_TOKEN_JA: dict[str, str] = {
     "HBRecent:no": "直近高値ブレイクなし（スコア加点）",
     "Duration:high": "継続時間が長い",
-    "Momentum:low": "モメンタムが相対的に低い（スコア加点）",
-    "Board:mid": "板のバランスが中位帯",
+    "Momentum:low": "Momentum条件成立",
+    "Board:mid": "Board mid以上",
+    "Board:high": "Board mid以上",
     "Price:high": "価格帯が高め",
     "TV:mid": "出来高増加",
 }
 
 EXIT_REASON_JA: dict[str, str] = {
-    "stop_hit": "損切りライン到達",
-    "trailing_mfe_exit": "利益確定条件到達",
+    "stop_hit": "損切り",
+    "trailing_mfe_exit": "トレーリング決済",
     "no_progress_exit": "停滞ポジション整理",
     "momentum_fade_exit": "上昇継続条件消失",
     "price_momentum_fade_exit": "上昇継続条件消失",
@@ -68,6 +69,763 @@ EXIT_REASON_JA: dict[str, str] = {
     "fade_hybrid_second_fade": "上昇継続条件消失",
     "fade_hybrid_structural_exit": "構造EXITへ移行",
 }
+
+PAPER_ONLY_FOOTER = "PAPER ONLY / 実注文なし"
+TEST_FOOTER = "表示確認用 / 実取引ではありません"
+DEFAULT_POSITION_CAP = 5
+
+# Embed colors (legacy palette)
+COLOR_ENTRY = 0x2F855A
+COLOR_EXIT = 0xC05621  # Phase687W25C-R2: all EXIT reasons share legacy orange
+COLOR_STOP = 0xE53E3E  # retained for non-EXIT callers / tests
+COLOR_TRAILING = 0x3182CE
+COLOR_NO_PROGRESS = 0xDD6B20
+COLOR_SESSION_CLOSE = 0x718096
+COLOR_CAP_BLOCKED = 0xDD6B20
+COLOR_SUMMARY = 0x805AD5
+COLOR_SHADOW = 0x718096
+
+# Freshness: legacy ENTRY/EXIT always show 鮮度 section; warn highlight when abnormal
+FRESHNESS_AGE_WARN_SEC = 10.0
+
+
+def exit_embed_color(exit_reason: str = "") -> int:
+    """Phase687W25C-R2: EXIT color is fixed legacy orange (reason ignored)."""
+    del exit_reason
+    return COLOR_EXIT
+
+
+def format_exit_pnl_embed(pnl_pct: float, pnl_yen_100: Optional[float]) -> str:
+    """Legacy-compatible EXIT pnl line (pct first, same as build_exit_detail)."""
+    return format_exit_pnl_line(pnl_pct, pnl_yen_100)
+
+
+def _freshness_abnormal(
+    *,
+    stale_trade: bool = False,
+    price_age_sec: Optional[float] = None,
+    board_age_sec: Optional[float] = None,
+    market_time_age_sec: Optional[float] = None,
+    price_freshness_source: Optional[str] = None,
+) -> bool:
+    if stale_trade:
+        return True
+    src = str(price_freshness_source or "").lower()
+    if "stale" in src:
+        return True
+    for age in (price_age_sec, board_age_sec, market_time_age_sec):
+        if age is not None:
+            try:
+                if float(age) >= FRESHNESS_AGE_WARN_SEC:
+                    return True
+            except (TypeError, ValueError):
+                pass
+    return False
+
+
+def build_entry_embed_payload(
+    *,
+    symbol: str,
+    entry_price: float,
+    slot_usage: str,
+    entry_score_v2: Optional[int],
+    data: Mapping[str, Any],
+    name_map: Optional[Mapping[str, str]] = None,
+    entry_time: Optional[str] = None,
+    stop_price: Optional[float] = None,
+    score5_candidate_ordinal: Optional[int] = None,
+    reentry_info: Optional[Mapping[str, Any]] = None,
+    test_mode: bool = False,
+) -> dict[str, Any]:
+    """Legacy ENTRY embed + times + optional same-day re-entry block (W25C-R3)."""
+    display = format_symbol_display(symbol, name_map=name_map)
+    route = resolve_entry_route(data)
+    title = f"【ENTRY】{display}"
+    if test_mode:
+        title = f"【TEST】{title}"
+    desc_lines = [
+        f"エントリー時間: {format_time_hms_jst(entry_time)}",
+        f"ENTRY価格: {_fmt_price_yen(entry_price)}",
+    ]
+    if stop_price is not None:
+        desc_lines.append(f"損切り価格: {_fmt_price_yen(stop_price)}")
+    desc_lines.extend(
+        [
+            f"保有枠: {slot_usage}",
+            f"ENTRY方式: {route}",
+        ]
+    )
+    # Same-day re-entry visibility (2nd+ only)
+    ri = dict(reentry_info or {})
+    if not ri and data.get("reentry_info"):
+        ri = dict(data.get("reentry_info") or {})  # type: ignore[arg-type]
+    if ri.get("is_reentry") and int(ri.get("entry_count_today_after") or 0) >= 2:
+        desc_lines.extend(
+            [
+                "",
+                f"本日同銘柄ENTRY: {int(ri['entry_count_today_after'])}回目",
+                f"前回EXIT: {ri.get('previous_exit_reason_ja') or humanize_exit_reason(str(ri.get('previous_exit_reason') or ''))}",
+                f"前回EXIT時刻: {ri.get('previous_exit_time_hms') or format_time_hms_jst(ri.get('previous_exit_at'))}",
+                f"前回EXITから: {ri.get('previous_exit_elapsed') or 'N/A'}",
+                f"前回EXIT価格: {_fmt_price_yen(ri.get('previous_exit_price'))}",
+            ]
+        )
+    desc_lines.extend(
+        [
+            "",
+            f"entry_score_v2: {entry_score_v2 if entry_score_v2 is not None else 'N/A'}",
+        ]
+    )
+    if score5_candidate_ordinal is not None and entry_score_v2 is not None and entry_score_v2 >= 5:
+        desc_lines.append(f"本日score5候補: {score5_candidate_ordinal}件目")
+    if route == "OR" and data.get("or_reason"):
+        desc_lines.append(f"OR理由: {data.get('or_reason')}")
+
+    reason_data = dict(data)
+    if entry_score_v2 is not None:
+        reason_data.setdefault("entry_expectancy_score_v2", entry_score_v2)
+    fields: list[dict[str, Any]] = [
+        {
+            "name": "ENTRY理由",
+            "value": format_entry_reason_block(reason_data)[:1020] or "・条件成立",
+            "inline": False,
+        }
+    ]
+    # Freshness only when abnormal (R3); avoid duplicating event_time / audit keys
+    price_age = None
+    board_age = None
+    try:
+        if data.get("price_age_sec") is not None:
+            price_age = float(data.get("price_age_sec"))
+    except (TypeError, ValueError):
+        price_age = None
+    try:
+        if data.get("board_age_sec") is not None:
+            board_age = float(data.get("board_age_sec"))
+    except (TypeError, ValueError):
+        board_age = None
+    stale = data.get("stale_trade") in (True, "true", "True", 1)
+    src = str(data.get("price_freshness_source") or data.get("price_source") or "")
+    if _freshness_abnormal(
+        stale_trade=stale,
+        price_age_sec=price_age,
+        board_age_sec=board_age,
+        price_freshness_source=src,
+    ):
+        warn: list[str] = []
+        if price_age is not None and price_age >= FRESHNESS_AGE_WARN_SEC:
+            warn.append(f"⚠ 価格更新なし: {format_hold_duration(float(price_age) / 60.0)}")
+        if board_age is not None and board_age >= FRESHNESS_AGE_WARN_SEC:
+            warn.append(f"⚠ 板更新なし: {format_hold_duration(float(board_age) / 60.0)}")
+        if stale or "stale" in src.lower():
+            warn.append("stale tradeは警告でありrejectではない")
+        if not warn:
+            warn.append("⚠ 価格データが古い状態")
+        fields.append({"name": "警告", "value": "\n".join(warn)[:1020], "inline": False})
+    return {
+        "title": title,
+        "description": "\n".join(desc_lines)[:2048],
+        "color": COLOR_ENTRY,
+        "fields": fields,
+        "footer": TEST_FOOTER if test_mode else PAPER_ONLY_FOOTER,
+    }
+
+
+def build_exit_embed_payload(
+    *,
+    symbol: str,
+    entry_price: float,
+    exit_price: float,
+    pnl_pct: float,
+    mfe_pct: Optional[float],
+    mae_pct: Optional[float],
+    hold_minutes: float,
+    exit_reason: str,
+    pnl_yen_100: Optional[float] = None,
+    side: str = "long",
+    board_dynamic_trailing_tier: Optional[str] = None,
+    board_dynamic_trailing_activate_pct: Optional[float] = None,
+    board_dynamic_trailing_giveback_frac: Optional[float] = None,
+    name_map: Optional[Mapping[str, str]] = None,
+    entry_time: Optional[str] = None,
+    exit_time: Optional[str] = None,
+    market_time_age_sec: Optional[float] = None,
+    price_age_sec: Optional[float] = None,
+    board_age_sec: Optional[float] = None,
+    stale_trade: bool = False,
+    price_freshness_source: Optional[str] = None,
+    session_close: bool = False,
+    position_cap_mode: bool = False,
+    symbol_pnl_yen_100_today: Optional[float] = None,
+    test_mode: bool = False,
+) -> dict[str, Any]:
+    """Legacy EXIT embed + times + same-day symbol cumulative (W25C-R3)."""
+    yen = resolve_pnl_yen_100(
+        entry_price=entry_price,
+        exit_price=exit_price,
+        side=side,
+        pnl_yen_100=pnl_yen_100,
+    )
+    display = format_symbol_display(symbol, name_map=name_map)
+    title = f"【EXIT】{display}"
+    if test_mode:
+        title = f"【TEST】{title}"
+    desc_lines = [
+        f"エントリー時間: {format_time_hms_jst(entry_time)}",
+        f"EXIT時間: {format_time_hms_jst(exit_time)}",
+        f"ENTRY価格: {_fmt_price_yen(entry_price)}",
+        f"EXIT価格: {_fmt_price_yen(exit_price)}",
+        format_exit_pnl_line(pnl_pct, yen).replace("円(100株)", "円（100株）"),
+    ]
+    if symbol_pnl_yen_100_today is not None:
+        try:
+            cum = float(symbol_pnl_yen_100_today)
+            sign = "+" if cum >= 0 else ""
+            desc_lines.append(f"本日同銘柄累計: {sign}{int(round(cum)):,}円（100株換算）")
+        except (TypeError, ValueError):
+            pass
+    desc_lines.extend(
+        [
+            f"保有時間: {format_hold_duration(hold_minutes)}",
+            f"EXIT理由: {humanize_exit_reason(exit_reason)}",
+            "",
+            f"最大含み益 MFE: {_fmt_na(mfe_pct, digits=2)}%",
+            f"最大逆行 MAE: {_fmt_na(mae_pct, digits=2)}%",
+        ]
+    )
+    if "trailing_mfe" in str(exit_reason or ""):
+        desc_lines.extend(
+            format_board_dynamic_trailing_lines(
+                board_dynamic_trailing_tier=board_dynamic_trailing_tier,
+                board_dynamic_trailing_activate_pct=board_dynamic_trailing_activate_pct,
+                board_dynamic_trailing_giveback_frac=board_dynamic_trailing_giveback_frac,
+            )
+        )
+    if position_cap_mode and session_close:
+        desc_lines.append("Session close: CAP枠解放")
+    fields: list[dict[str, Any]] = []
+    # Abnormal freshness only
+    if _freshness_abnormal(
+        stale_trade=stale_trade,
+        price_age_sec=price_age_sec,
+        board_age_sec=board_age_sec,
+        market_time_age_sec=market_time_age_sec,
+        price_freshness_source=price_freshness_source,
+    ):
+        lag = market_time_age_sec if market_time_age_sec is not None else price_age_sec
+        warn_lines: list[str] = []
+        if lag is not None:
+            warn_lines.append(f"⚠ 価格更新なし: {format_hold_duration(float(lag) / 60.0)}")
+        if stale_trade or (price_freshness_source and "stale" in str(price_freshness_source).lower()):
+            warn_lines.append("stale tradeは警告でありrejectではない")
+        if is_stop_low_mfe_exit(exit_reason, mfe_pct):
+            warn_lines.append(f"⚠ stop_low_mfe: MFE<{STOP_LOW_MFE_THRESHOLD_PCT:.1f}% at stop")
+        if warn_lines:
+            fields.append({"name": "警告", "value": "\n".join(warn_lines)[:1020], "inline": False})
+    return {
+        "title": title,
+        "description": "\n".join(desc_lines)[:2048],
+        "color": COLOR_EXIT,
+        "fields": fields,
+        "footer": TEST_FOOTER if test_mode else PAPER_ONLY_FOOTER,
+    }
+
+
+def build_cap_blocked_embed_payload(
+    *,
+    symbol: str,
+    entry_score_v2: Optional[int],
+    data: Mapping[str, Any],
+    active_positions: int,
+    position_cap: int,
+    name_map: Optional[Mapping[str, str]] = None,
+    block_reason: str = REJECT_MAX_CONCURRENT,
+    test_mode: bool = False,
+) -> dict[str, Any]:
+    display = format_symbol_display(symbol, name_map=name_map)
+    route = resolve_entry_route(data)
+    title = f"【CAP BLOCKED】{display}"
+    if test_mode:
+        title = f"【TEST】{title}"
+    bullets = build_entry_reason_bullets(data)
+    reason_block = "\n".join(f"・{b}" for b in bullets) if bullets else "・（なし）"
+    desc = "\n".join(
+        [
+            "ENTRY条件成立",
+            f"方式: {route}",
+            f"保有: {active_positions} / {int(position_cap) if position_cap else DEFAULT_POSITION_CAP}",
+            "見送り理由: 保有上限到達",
+            f"score: {entry_score_v2 if entry_score_v2 is not None else 'N/A'}",
+        ]
+    )
+    return {
+        "title": title,
+        "description": desc[:2048],
+        "color": COLOR_CAP_BLOCKED,
+        "fields": [{"name": "ENTRY理由", "value": reason_block[:1020], "inline": False}],
+        "footer": TEST_FOOTER if test_mode else PAPER_ONLY_FOOTER,
+    }
+
+
+def build_summary_embed_payload(
+    metrics: Mapping[str, Any],
+    *,
+    am_pm: str = "",
+    test_mode: bool = False,
+    day_realized_pnl_yen_100: Optional[float] = None,
+    reentry_audit: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    label = "AM PAPER SUMMARY" if str(am_pm).upper() == "AM" else (
+        "PM PAPER SUMMARY" if str(am_pm).upper() == "PM" else "PAPER SUMMARY"
+    )
+    title = f"【{label}】"
+    if test_mode:
+        title = f"【TEST】{title}"
+    validity = str(metrics.get("session_validity") or "")
+    if validity.startswith("INVALID_") or metrics.get("include_in_strategy_metrics") is False:
+        title = f"【INVALID PAPER SESSION】{title}"
+    win_c = int(metrics.get("win_count") or 0)
+    loss_c = int(metrics.get("loss_count") or 0)
+    draw_c = int(metrics.get("draw_count") or metrics.get("flat_count") or 0)
+    pf = metrics.get("profit_factor_yen_100", metrics.get("profit_factor"))
+    pf_s = format_summary_profit_factor_yen(pf)
+    if str(pf_s).lower() == "inf":
+        pf_s = "∞"
+    session_yen = _format_summary_yen_value(metrics.get("total_pnl_yen_100"))
+    session_yen = (
+        str(session_yen).replace("円(100株)", "円").replace("円（100株）", "円")
+    )
+    session_label = "AM損益" if str(am_pm).upper() == "AM" else (
+        "PM損益" if str(am_pm).upper() == "PM" else "セッション損益"
+    )
+    desc_lines = []
+    if validity.startswith("INVALID_") or metrics.get("include_in_strategy_metrics") is False:
+        from small_paper.session_validity import format_invalid_session_discord_lines, classify_session_validity
+
+        v = metrics if metrics.get("discord_banner") else classify_session_validity(metrics)
+        desc_lines.extend(format_invalid_session_discord_lines(v))
+        desc_lines.append("")
+    desc_lines.append(f"{session_label}: {session_yen}")
+    day_yen = day_realized_pnl_yen_100
+    if day_yen is None:
+        day_yen = metrics.get("day_total_pnl_yen_100")
+    if day_yen is not None:
+        try:
+            dv = float(day_yen)
+            sign = "+" if dv >= 0 else ""
+            desc_lines.append(f"本日累計: {sign}{int(round(dv)):,}円")
+        except (TypeError, ValueError):
+            pass
+    desc_lines.extend(
+        [
+            "",
+            f"取引数: {metrics.get('trade_count', 0)}",
+            f"勝 / 負 / 引分: {win_c} / {loss_c} / {draw_c}",
+            f"PF: {pf_s}",
+        ]
+    )
+    fields: list[dict[str, Any]] = []
+    audit = dict(reentry_audit or {})
+    if not audit and isinstance(metrics.get("reentry_audit"), Mapping):
+        audit = dict(metrics.get("reentry_audit") or {})  # type: ignore[arg-type]
+    if audit:
+        fields.append(
+            {
+                "name": "再ENTRY監査",
+                "value": "\n".join(
+                    [
+                        f"同一銘柄再ENTRY: {int(audit.get('same_symbol_reentry_count') or 0)}件",
+                        f"停滞EXIT後再ENTRY: {int(audit.get('reentry_after_no_progress_count') or 0)}件",
+                        f"same-PUSH抑止: {int(audit.get('same_push_suppression_count') or 0)}件",
+                    ]
+                )[:1020],
+                "inline": False,
+            }
+        )
+    stop_n = metrics.get("stop_count", "N/A")
+    np_n = metrics.get("no_progress_exit_count", metrics.get("stagnation_exit_count"))
+    lower = [f"STOP: {stop_n}"]
+    if np_n is not None:
+        lower.append(f"停滞EXIT: {np_n}")
+    lower.extend(
+        [
+            f"Best: {_canonical_trade_display(metrics, 'best_trade')}",
+            f"Worst: {_canonical_trade_display(metrics, 'worst_trade')}",
+            f"最大保有: {metrics.get('max_concurrent', 0)} / {metrics.get('max_concurrent_cap', DEFAULT_POSITION_CAP)}",
+        ]
+    )
+    fields.append({"name": "内訳", "value": "\n".join(lower)[:1020], "inline": False})
+    return {
+        "title": title,
+        "description": "\n".join(desc_lines)[:2048],
+        "color": COLOR_SUMMARY,
+        "fields": fields,
+        "footer": TEST_FOOTER if test_mode else PAPER_ONLY_FOOTER,
+    }
+
+
+def build_shadow_observation_embed_payload(
+    data: Mapping[str, Any],
+    *,
+    am_pm: str = "",
+    test_mode: bool = False,
+) -> dict[str, Any]:
+    """Active Shadow observation card (no actual PnL). Heading: 【SHADOW OBSERVATION】."""
+    title = "【SHADOW OBSERVATION】"
+    if am_pm:
+        title = f"【SHADOW OBSERVATION - {str(am_pm).upper()}】"
+    if test_mode:
+        title = f"【TEST】{title}"
+    blocks = data.get("blocks")
+    if blocks is None:
+        blocks = data.get("block_count")
+    if blocks is None:
+        blocks = data.get("candidates")
+    delta = data.get("delta_yen")
+    if delta is None:
+        delta = data.get("hypothetical_pnl")
+    name = data.get("shadow_name") or "N/A"
+    # Multi-shadow body: list of active rows if provided
+    active_rows = data.get("active_shadows")
+    if isinstance(active_rows, Sequence) and active_rows and not isinstance(active_rows, (str, bytes)):
+        lines = []
+        for row in active_rows:
+            if not isinstance(row, Mapping):
+                continue
+            pf = row.get("pf_delta")
+            pf_s = "N/A" if pf in (None, "") else str(pf)
+            lines.extend(
+                [
+                    f"名称: {row.get('name')}",
+                    f"対象件数: {row.get('count', 0)}",
+                    f"block件数: {row.get('block_count', row.get('count', 0))}",
+                    f"delta円: {row.get('delta', 'N/A')}",
+                    f"PF差: {pf_s}",
+                    "判定: observation only",
+                    "",
+                ]
+            )
+        desc = "\n".join(lines).rstrip()
+    else:
+        pf = data.get("pf_delta")
+        desc = "\n".join(
+            [
+                f"名称: {name}",
+                f"対象件数: {blocks if blocks is not None else 'N/A'}",
+                f"block件数: {data.get('block_count', blocks if blocks is not None else 'N/A')}",
+                f"delta円: {delta if delta is not None else 'N/A'}",
+                f"PF差: {pf if pf is not None else 'N/A'}",
+                "判定: observation only",
+            ]
+        )
+    return {
+        "title": title,
+        "description": desc[:2048],
+        "color": COLOR_SHADOW,
+        "fields": [],
+        "footer": TEST_FOOTER if test_mode else "observation only / RESEARCH",
+    }
+
+
+# Runtime Discord Shadow catalog (formatter inventory vs enabled+count filter)
+DISCORD_SHADOW_INVENTORY: tuple[dict[str, str], ...] = (
+    {
+        "name": "Rise5",
+        "enabled_key": "pbv2_rise5_shadow_enabled",
+        "count_key": "pbv2_rise5_shadow_block_count",
+        "delta_key": "pbv2_rise5_shadow_net_effect_yen",
+    },
+    {
+        "name": "Flat-band",
+        "enabled_key": "pbv2_flat_band_shadow_enabled",
+        "count_key": "pbv2_flat_band_shadow_block_count",
+        "delta_key": "pbv2_flat_band_shadow_net_effect_yen",
+    },
+    {
+        "name": "PullbackMisread",
+        "enabled_key": "pullback_misread_guard_shadow_enabled",
+        "count_key": "pullback_misread_guard_shadow_blocked_count",
+        "delta_key": "pullback_misread_guard_shadow_delta_yen",
+    },
+    {
+        "name": "BoardDynamic",
+        "enabled_key": "board_dynamic_shadow_enabled",
+        "count_key": "board_dynamic_shadow_exit_count",
+        "delta_key": "board_dynamic_shadow_total_delta_yen",
+    },
+    {
+        "name": "EXIT monitor",
+        "enabled_key": "exit_shadow_monitor_enabled",
+        "count_key": "exit_shadow_monitor_event_count",
+        "delta_key": "shadow_exit_t3_delta",
+    },
+)
+
+
+def _shadow_target_count(summary: Mapping[str, Any], spec: Mapping[str, str]) -> int:
+    """evaluable_count / target_count / trade_count / block count — any >= 1."""
+    keys = [
+        spec.get("count_key") or "",
+        spec.get("enabled_key", "").replace("_enabled", "_evaluable_count"),
+        spec.get("enabled_key", "").replace("_enabled", "_target_count"),
+        spec.get("enabled_key", "").replace("_enabled", "_trade_count"),
+        spec.get("enabled_key", "").replace("_enabled", "_block_count"),
+    ]
+    best = 0
+    for k in keys:
+        if not k:
+            continue
+        best = max(best, _as_int(summary.get(k)))
+    # explicit alternate keys
+    name = spec.get("name")
+    if name == "BoardDynamic":
+        best = max(
+            best,
+            _as_int(summary.get("board_dynamic_shadow_exit_count")),
+            _as_int(summary.get("board_dynamic_shadow_improved_count")),
+        )
+    if name == "EXIT monitor":
+        best = max(best, _as_int(summary.get("exit_shadow_monitor_event_count")))
+        if summary.get("shadow_exit_t3_delta") is not None or summary.get("shadow_exit_t2_delta") is not None:
+            best = max(best, 1)
+    return best
+
+
+def collect_active_shadow_observations(
+    summary: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """enabled=true AND today's target/evaluable/trade/block count >= 1. No actual PnL."""
+    active: list[dict[str, Any]] = []
+    for spec in DISCORD_SHADOW_INVENTORY:
+        if not summary.get(spec["enabled_key"]):
+            continue
+        count = _shadow_target_count(summary, spec)
+        if count <= 0:
+            continue
+        delta = summary.get(spec["delta_key"])
+        if spec["name"] == "EXIT monitor" and delta is None:
+            delta = summary.get("shadow_exit_t2_delta")
+        # Hide outcome-mapping-unavailable zero-delta masquerading as measured
+        if delta is not None:
+            try:
+                if float(delta) == 0.0 and summary.get(
+                    f"{spec['enabled_key'].replace('_enabled', '')}_outcome_mapping_unavailable"
+                ):
+                    continue
+            except (TypeError, ValueError):
+                pass
+        pf_key = spec["enabled_key"].replace("_enabled", "_pf_delta")
+        active.append(
+            {
+                "name": spec["name"],
+                "count": count,
+                "block_count": _as_int(summary.get(spec["count_key"])) or count,
+                "delta": _yen_display(delta) if delta is not None else "N/A",
+                "pf_delta": summary.get(pf_key),
+                "enabled_key": spec["enabled_key"],
+            }
+        )
+    return active
+
+
+def audit_discord_shadow_inventory(
+    summary: Mapping[str, Any],
+    *,
+    runtime_enabled: Optional[Mapping[str, bool]] = None,
+) -> dict[str, Any]:
+    """Compare formatter inventory vs runtime enabled flags and active filter."""
+    active_names = {r["name"] for r in collect_active_shadow_observations(summary)}
+    rows: list[dict[str, Any]] = []
+    hidden: list[dict[str, Any]] = []
+    for spec in DISCORD_SHADOW_INVENTORY:
+        enabled_summary = bool(summary.get(spec["enabled_key"]))
+        enabled_runtime = None
+        if runtime_enabled is not None:
+            enabled_runtime = bool(runtime_enabled.get(spec["enabled_key"]))
+        count = _shadow_target_count(summary, spec)
+        visible = spec["name"] in active_names
+        reason = ""
+        if not enabled_summary:
+            reason = "disabled"
+        elif count <= 0:
+            reason = "target_count_zero"
+        elif not visible:
+            reason = "filtered_outcome_or_inactive"
+        rows.append(
+            {
+                "name": spec["name"],
+                "enabled_key": spec["enabled_key"],
+                "enabled_in_summary": enabled_summary,
+                "enabled_in_runtime": enabled_runtime,
+                "count": count,
+                "discord_visible": visible,
+                "hidden_reason": "" if visible else reason,
+            }
+        )
+        if not visible:
+            hidden.append({"name": spec["name"], "reason": reason or "not_displayed"})
+    visible = [r for r in rows if r["discord_visible"]]
+    mismatched = [
+        r
+        for r in rows
+        if runtime_enabled is not None
+        and r["enabled_in_runtime"] is not None
+        and r["enabled_in_summary"] != r["enabled_in_runtime"]
+    ]
+    return {
+        "inventory": rows,
+        "visible_count": len(visible),
+        "visible_names": [r["name"] for r in visible],
+        "hidden": hidden,
+        "mismatched_runtime": mismatched,
+        "verdict": "SHADOW_INVENTORY_OUTDATED" if mismatched else "SHADOW_INVENTORY_OK",
+    }
+
+
+def write_shadow_inventory_csvs(
+    summary: Mapping[str, Any],
+    *,
+    out_dir: Any,
+    runtime_enabled: Optional[Mapping[str, bool]] = None,
+) -> dict[str, Any]:
+    """Write enabled / displayed / hidden shadow inventory CSVs for R3 audit."""
+    from pathlib import Path
+    import csv
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    audit = audit_discord_shadow_inventory(summary, runtime_enabled=runtime_enabled)
+    active = collect_active_shadow_observations(summary)
+
+    enabled_path = out / "enabled_shadow_inventory.csv"
+    with enabled_path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(
+            f,
+            fieldnames=["name", "enabled_key", "enabled_in_summary", "enabled_in_runtime", "count"],
+        )
+        w.writeheader()
+        for row in audit["inventory"]:
+            if row["enabled_in_summary"] or row.get("enabled_in_runtime"):
+                w.writerow(
+                    {
+                        "name": row["name"],
+                        "enabled_key": row["enabled_key"],
+                        "enabled_in_summary": row["enabled_in_summary"],
+                        "enabled_in_runtime": row["enabled_in_runtime"],
+                        "count": row["count"],
+                    }
+                )
+
+    displayed_path = out / "displayed_shadow_inventory.csv"
+    with displayed_path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["name", "count", "block_count", "delta", "pf_delta"])
+        w.writeheader()
+        for row in active:
+            w.writerow(
+                {
+                    "name": row["name"],
+                    "count": row["count"],
+                    "block_count": row.get("block_count"),
+                    "delta": row.get("delta"),
+                    "pf_delta": row.get("pf_delta"),
+                }
+            )
+
+    hidden_path = out / "hidden_shadow_reason.csv"
+    with hidden_path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["name", "reason"])
+        w.writeheader()
+        for row in audit.get("hidden") or []:
+            w.writerow(row)
+
+    return {
+        "audit": audit,
+        "enabled_path": str(enabled_path),
+        "displayed_path": str(displayed_path),
+        "hidden_path": str(hidden_path),
+    }
+
+
+def embed_to_discord_payload(embed: Mapping[str, Any], *, content: str = "") -> dict[str, Any]:
+    """Build Discord webhook JSON (content empty for production cards)."""
+    body = {
+        "embeds": [
+            {
+                "title": str(embed.get("title") or "")[:256],
+                "description": str(embed.get("description") or "")[:2048],
+                "color": int(embed.get("color") or COLOR_ENTRY),
+                "fields": list(embed.get("fields") or [])[:25],
+                "footer": {"text": str(embed.get("footer") or PAPER_ONLY_FOOTER)[:2048]},
+            }
+        ]
+    }
+    if content:
+        body["content"] = str(content)[:1800]
+    return body
+
+
+def _fmt_na(v: Any, *, digits: Optional[int] = None) -> str:
+    if v is None or v == "":
+        return "N/A"
+    if digits is None:
+        return str(v)
+    try:
+        return f"{float(v):.{digits}f}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _fmt_price_yen(v: Any) -> str:
+    if v is None or v == "":
+        return "N/A"
+    try:
+        f = float(v)
+        if abs(f - round(f)) < 1e-9:
+            return f"{int(round(f))}円"
+        return f"{f:.1f}円"
+    except (TypeError, ValueError):
+        return f"{v}円"
+
+
+def format_hold_duration(hold_minutes: float) -> str:
+    total_sec = max(0, int(round(float(hold_minutes) * 60.0)))
+    mins, secs = divmod(total_sec, 60)
+    if mins >= 60:
+        hours, mins = divmod(mins, 60)
+        return f"{hours}時間{mins:02d}分{secs:02d}秒"
+    return f"{mins}分{secs:02d}秒"
+
+
+def resolve_entry_route(data: Mapping[str, Any]) -> str:
+    raw = str(data.get("entry_type") or data.get("entry_route") or data.get("entry_pool") or "").strip()
+    up = raw.upper()
+    if "OR" in up:
+        return "OR"
+    if up in ("PBV2", "PB_V2", "PULLBACK_V2", "PBV2"):
+        return "PBv2"
+    if not raw:
+        return "PBv2"
+    return raw
+
+
+def resolve_momentum_label(data: Mapping[str, Any]) -> str:
+    tok = _feature_token("Momentum", data)
+    if tok and ":" in tok:
+        return tok.split(":", 1)[1]
+    for key in ("momentum_band", "momentum_label", "Momentum"):
+        if data.get(key) not in (None, ""):
+            return str(data.get(key))
+    return "N/A"
+
+
+def resolve_board_label(data: Mapping[str, Any]) -> str:
+    tok = _feature_token("Board", data)
+    if tok and ":" in tok:
+        return tok.split(":", 1)[1]
+    for key in ("board_band", "board_label", "Board"):
+        if data.get(key) not in (None, ""):
+            return str(data.get(key))
+    return "N/A"
 
 
 def _fmt_num(v: Any, *, digits: int = 2) -> str:
@@ -170,7 +928,9 @@ def humanize_exit_reason(reason: str) -> str:
     if "fade" in r.lower():
         return "上昇継続条件消失"
     if "trailing_mfe" in r:
-        return "利益確定条件到達"
+        return "トレーリング決済"
+    if r in ("stop_hit", "hard_stop"):
+        return "損切り"
     return "決済条件を満たした"
 
 
@@ -209,6 +969,24 @@ def build_entry_reason_bullets(data: Mapping[str, Any]) -> list[str]:
             if ja and ja not in lines:
                 lines.append(ja)
 
+    # Explicit reason tokens from notify payload / preview
+    raw_tokens = data.get("entry_reason_tokens") or data.get("reason_tokens") or []
+    if isinstance(raw_tokens, str):
+        raw_tokens = [t.strip() for t in raw_tokens.split(";") if t.strip()]
+    for token in raw_tokens:
+        ja = SCORE_TOKEN_JA.get(str(token))
+        if not ja:
+            # allow already-Japanese or Board mid以上 style labels
+            t = str(token)
+            if t in ("Board mid以上", "Board:mid", "Board mid"):
+                ja = "Board条件成立"
+            elif t.startswith("Momentum"):
+                ja = "Momentum条件成立"
+            else:
+                ja = t if any("\u3040" <= c <= "\u30ff" or "\u4e00" <= c <= "\u9fff" for c in t) else ""
+        if ja and ja not in lines:
+            lines.append(ja)
+
     if not lines:
         q = data.get("continuation_quality_score")
         if q is not None:
@@ -221,8 +999,13 @@ def build_entry_reason_bullets(data: Mapping[str, Any]) -> list[str]:
 
 def format_entry_reason_block(data: Mapping[str, Any]) -> str:
     bullets = build_entry_reason_bullets(data)
+    v2 = _int_score(data.get("entry_expectancy_score_v2") or data.get("entry_score_v2"))
+    if v2 is not None and "score閾値到達" not in bullets and "score_v2閾値到達" not in bullets:
+        bullets.append("score閾値到達")
+    # normalize legacy phrasing
+    bullets = [b.replace("score_v2閾値到達", "score閾値到達").replace("Board mid以上", "Board条件成立") for b in bullets]
     body = "\n".join(f"・{b}" for b in bullets)
-    return f"{body}\nENTRY条件を満たしたためエントリー"
+    return body
 
 
 def format_entry_deferred_reason_block() -> str:
@@ -368,67 +1151,42 @@ def build_entry_detail(
     sent_time: Optional[str] = None,
     sequence_id: Optional[int] = None,
 ) -> str:
+    del stop_price, sent_time, sequence_id  # kept for call-site compat; not shown in operator body
     display = format_symbol_display(symbol, name_map=name_map)
+    route = resolve_entry_route(data)
+    momentum = resolve_momentum_label(data)
+    board = resolve_board_label(data)
     lines = [
-        f"銘柄: {display}",
+        display,
+        f"エントリー時間: {format_time_hms_jst(entry_time)}",
+        f"価格: {_fmt_price_yen(entry_price)}",
+        f"方式: {route}",
+        f"score_v2: {entry_score_v2 if entry_score_v2 is not None else 'N/A'}",
+        f"Momentum: {momentum}",
+        f"Board: {board}",
+        f"保有: {slot_usage}",
     ]
-    append_discord_delivery_audit_lines(
-        lines,
-        event_time=entry_time,
-        sent_time=sent_time or str(data.get("discord_sent_ts") or ""),
-        session_id=str(data.get("session_id") or "") or None,
-        position_id=str(data.get("position_id") or "") or None,
-        sequence_id=sequence_id,
-    )
-    lines.extend(
-        [
-        f"ENTRY価格: {_fmt_num(entry_price)}",
-        f"損切り価格: {_fmt_num(stop_price)}",
-        f"保有枠: {slot_usage}",
-        f"entry_score_v2: {entry_score_v2 if entry_score_v2 is not None else '—'}",
-        ]
-    )
     if score5_candidate_ordinal is not None and entry_score_v2 is not None and entry_score_v2 >= 5:
         lines.append(f"本日score5候補: {score5_candidate_ordinal}件目")
-    scan_id = data.get("scan_id")
-    if scan_id:
-        lines.append(f"scan_id: {scan_id}")
-    data_source = data.get("data_source") or data.get("entry_data_source")
-    if data_source:
-        lines.append(f"data_source: {data_source}")
-    if data.get("price_age_sec") is not None:
-        lines.append(f"price_age_sec: {_fmt_num(data.get('price_age_sec'), digits=1)}")
-    if data.get("board_age_sec") is not None:
-        lines.append(f"board_age_sec: {_fmt_num(data.get('board_age_sec'), digits=1)}")
-    if data.get("signal_to_notify_latency_ms") is not None:
-        lines.append(f"latency_ms: {int(float(data.get('signal_to_notify_latency_ms')))}")
-    if data.get("same_scan_rank"):
-        lines.append(f"same_scan_rank: {data.get('same_scan_rank')}")
-    if data.get("same_scan_candidates") is not None:
-        lines.append(f"same_scan_candidates: {data.get('same_scan_candidates')}")
-    entry_type = data.get("entry_type")
-    if entry_type:
-        lines.append(f"ENTRY_TYPE: {entry_type}")
-    cluster_guard = data.get("cluster_guard_status")
-    if cluster_guard and str(entry_type or "PBV2").strip().upper() == "PBV2":
-        lines.append(f"ClusterGuard: {cluster_guard}")
-    or_reason = data.get("or_reason")
-    if or_reason and str(entry_type or "").upper() == "OR_OVERLAY":
-        lines.append(f"OR_REASON: {or_reason}")
+    if route == "OR":
+        or_reason = data.get("or_reason")
+        if or_reason:
+            lines.append(f"OR理由: {or_reason}")
     lines.extend(
         [
+            "",
             "ENTRY理由:",
             format_entry_reason_block(data),
+            "",
+            "鮮度:",
+            f"price_age_sec: {_fmt_na(data.get('price_age_sec'), digits=1)}",
+            f"board_age_sec: {_fmt_na(data.get('board_age_sec'), digits=1)}",
+            f"price_source: {_fmt_na(data.get('price_freshness_source') or data.get('price_source'))}",
         ]
     )
-    if data.get("position_cap_mode"):
-        lines.extend(
-            [
-                "Gate model: position_cap_until_exit",
-                "Position model: observer_structural",
-                f"CAP note: max {data.get('max_concurrent_positions', '—')} open positions until structural EXIT",
-            ]
-        )
+    if data.get("stale_trade") in (True, "true", "True", 1):
+        lines.append("stale_trade: true（tag_only / 警告）")
+    lines.extend(["", PAPER_ONLY_FOOTER])
     return "\n".join(lines)
 
 
@@ -448,22 +1206,28 @@ def build_entry_cap_blocked_detail(
     reason_block = "\n".join(f"・{b}" for b in bullets) if bullets else "・（なし）"
     display = format_symbol_display(symbol, name_map=name_map)
     block_label = entry_blocked_discord_label(block_reason)
+    route = resolve_entry_route(data)
+    event_time = str(data.get("event_time") or "")
     return "\n".join(
         [
             display,
+            format_time_hms_jst(event_time) if event_time else "N/A",
             "",
             "ENTRY条件成立",
+            f"方式: {route}",
             f"active_positions: {active_positions}",
-            f"position_cap: {position_cap}",
+            f"position_cap: {int(position_cap) if position_cap else DEFAULT_POSITION_CAP}",
             "",
-            "見送り理由:",
-            block_label,
-            f"reject_reason: {block_reason}",
-            "",
-            f"entry_score_v2: {entry_score_v2 if entry_score_v2 is not None else '—'}",
+            "見送り理由: 保有上限到達" if "上限" in block_label or "cap" in block_reason.lower() or "max_concurrent" in block_reason.lower() else f"見送り理由: {block_label}",
+            f"entry_score_v2: {entry_score_v2 if entry_score_v2 is not None else 'N/A'}",
             "",
             "ENTRY理由:",
             reason_block,
+            "",
+            f"price_age_sec: {_fmt_na(data.get('price_age_sec'), digits=1)}",
+            f"board_age_sec: {_fmt_na(data.get('board_age_sec'), digits=1)}",
+            "",
+            PAPER_ONLY_FOOTER,
         ]
     )
 
@@ -501,6 +1265,31 @@ def build_entry_deferred_detail(
     return "\n".join(lines)
 
 
+def format_board_dynamic_trailing_lines(
+    *,
+    board_dynamic_trailing_tier: Optional[str] = None,
+    board_dynamic_trailing_activate_pct: Optional[float] = None,
+    board_dynamic_trailing_giveback_frac: Optional[float] = None,
+) -> list[str]:
+    """Format runtime trailing thresholds only — no hardcoded tier/activate/giveback."""
+    tier = str(board_dynamic_trailing_tier or "").strip()
+    if not tier:
+        return []
+    lines = [f"board tier: {tier}"]
+    if board_dynamic_trailing_activate_pct is not None:
+        lines.append(
+            f"activation threshold: {_fmt_na(board_dynamic_trailing_activate_pct, digits=2)}%"
+        )
+    else:
+        lines.append("activation threshold: N/A")
+    if board_dynamic_trailing_giveback_frac is not None:
+        gb_pct = int(round(float(board_dynamic_trailing_giveback_frac) * 100))
+        lines.append(f"giveback threshold: {gb_pct}%")
+    else:
+        lines.append("giveback threshold: N/A")
+    return lines
+
+
 def build_exit_detail(
     *,
     symbol: str,
@@ -516,6 +1305,7 @@ def build_exit_detail(
     board_dynamic_trailing_tier: Optional[str] = None,
     board_dynamic_trailing_activate_pct: Optional[float] = None,
     board_dynamic_trailing_giveback_frac: Optional[float] = None,
+    entry_time: Optional[str] = None,
     exit_time: Optional[str] = None,
     name_map: Optional[Mapping[str, str]] = None,
     market_time_age_sec: Optional[float] = None,
@@ -525,7 +1315,9 @@ def build_exit_detail(
     session_id: Optional[str] = None,
     position_id: Optional[str] = None,
     sequence_id: Optional[int] = None,
+    price_freshness_source: Optional[str] = None,
 ) -> str:
+    del sent_time, session_id, position_id, sequence_id
     yen = resolve_pnl_yen_100(
         entry_price=entry_price,
         exit_price=exit_price,
@@ -534,49 +1326,36 @@ def build_exit_detail(
     )
     display = format_symbol_display(symbol, name_map=name_map)
     lines = [
-        f"銘柄: {display}",
-    ]
-    append_discord_delivery_audit_lines(
-        lines,
-        event_time=exit_time,
-        sent_time=sent_time,
-        session_id=session_id,
-        position_id=position_id,
-        sequence_id=sequence_id,
-    )
-    lines.extend(
-        [
-        f"ENTRY価格: {_fmt_num(entry_price)}",
-        f"EXIT価格: {_fmt_num(exit_price)}",
+        display,
+        f"エントリー時間: {format_time_hms_jst(entry_time)}",
+        f"EXIT時間: {format_time_hms_jst(exit_time)}",
+        f"{_fmt_price_yen(entry_price)} → {_fmt_price_yen(exit_price)}",
         format_exit_pnl_line(pnl_pct, yen),
-        f"最大含み益 MFE: {_fmt_num(mfe_pct)}%",
-        f"最大逆行 MAE: {_fmt_num(mae_pct)}%",
-        f"保有時間: {int(round(hold_minutes))}分",
-        f"EXIT理由: {humanize_exit_reason(exit_reason)}",
-        ]
-    )
+        f"理由: {humanize_exit_reason(exit_reason)}",
+        f"保有時間: {format_hold_duration(hold_minutes)}",
+        f"MFE: {_fmt_na(mfe_pct, digits=2)}%",
+        f"MAE: {_fmt_na(mae_pct, digits=2)}%",
+    ]
+    if "trailing_mfe" in str(exit_reason or ""):
+        lines.extend(
+            format_board_dynamic_trailing_lines(
+                board_dynamic_trailing_tier=board_dynamic_trailing_tier,
+                board_dynamic_trailing_activate_pct=board_dynamic_trailing_activate_pct,
+                board_dynamic_trailing_giveback_frac=board_dynamic_trailing_giveback_frac,
+            )
+        )
+    lines.extend(["", "鮮度:"])
     lag = market_time_age_sec if market_time_age_sec is not None else price_age_sec
     if lag is not None:
-        lines.append(f"market_time_age_sec: {int(round(float(lag)))}秒")
+        lines.append(f"market_time_age_sec: {_fmt_na(lag, digits=1)}")
     if stale_trade:
-        lines.append("⚠ stale_trade: board timestamp lag vs accept")
+        lines.append("stale_trade: true（警告 / tag_only・rejectではない）")
+    src = price_freshness_source
+    if src:
+        lines.append(f"price_source: {src}")
     if is_stop_low_mfe_exit(exit_reason, mfe_pct):
         lines.append(f"⚠ stop_low_mfe: MFE<{STOP_LOW_MFE_THRESHOLD_PCT:.1f}% at stop")
-    if (
-        "trailing_mfe" in str(exit_reason or "")
-        and board_dynamic_trailing_tier
-    ):
-        gb_pct = (
-            int(round(float(board_dynamic_trailing_giveback_frac) * 100))
-            if board_dynamic_trailing_giveback_frac is not None
-            else None
-        )
-        lines.append(
-            "Trailing: "
-            f"{board_dynamic_trailing_tier} "
-            f"(activate {_fmt_num(board_dynamic_trailing_activate_pct)}% / "
-            f"giveback {gb_pct if gb_pct is not None else '—'}%)"
-        )
+    lines.extend(["", PAPER_ONLY_FOOTER])
     return "\n".join(lines)
 
 
@@ -622,22 +1401,50 @@ def build_universe_refresh_overview(
     removed: Sequence[str],
     watch_symbol_count: int,
     name_map: Optional[Mapping[str, str]] = None,
+    status: str = "SUCCESS",
+    core10_count: Optional[int] = None,
+    dynamic40_count: Optional[int] = None,
+    registered_count: Optional[int] = None,
+    capture_topology: str = "SINGLE_INGRESS_LOCAL_FANOUT",
 ) -> str:
     """Session + add/remove blocks (watch list sent as separate embed fields)."""
-    add_block = format_added_symbols_block(added, name_map=name_map)
-    rem_block = format_removed_symbols_block(removed, name_map=name_map)
-    return "\n".join(
+    _ = name_map
+    st = str(status or "SUCCESS").strip().upper()
+    if st in ("COMPLETED", "OK", "PASS"):
+        st = "SUCCESS"
+    elif st not in ("SUCCESS", "FAILED"):
+        st = st or "SUCCESS"
+    reg = registered_count if registered_count is not None else watch_symbol_count
+    lines = [
+        f"時刻: {refresh_time}",
+        f"結果: {st}",
+        f"登録: {reg} / 50",
+    ]
+    if core10_count is not None:
+        lines.append(f"Core10: {core10_count}")
+    if dynamic40_count is not None:
+        lines.append(f"Dynamic40: {dynamic40_count}")
+    lines.extend(
         [
-            f"セッション: {session_label} {refresh_time}",
+            f"Capture topology: {capture_topology}",
+            "Paper継続: YES",
+            "実注文: DISABLED",
+            f"セッション: {session_label}",
             f"現在監視: {watch_symbol_count}銘柄",
-            "",
-            "追加銘柄:",
-            add_block,
-            "",
-            "削除銘柄:",
-            rem_block,
         ]
     )
+    # Only show add/remove when lists were provided (may be empty = no change)
+    lines.extend(
+        [
+            "",
+            "追加銘柄:",
+            format_added_symbols_block(added, name_map=name_map),
+            "",
+            "削除銘柄:",
+            format_removed_symbols_block(removed, name_map=name_map),
+        ]
+    )
+    return "\n".join(lines)
 
 
 def build_universe_refresh_detail(
@@ -729,7 +1536,18 @@ def _format_summary_yen_value(yen: Any) -> str:
 def _canonical_trade_display(metrics: Mapping[str, Any], key: str) -> str:
     trade = metrics.get(key)
     if isinstance(trade, Mapping):
-        return str(trade.get("display") or "—")
+        if trade.get("display"):
+            return str(trade.get("display"))
+        sym = str(trade.get("symbol") or "").strip()
+        yen = trade.get("pnl_yen_100")
+        if sym and yen is not None:
+            try:
+                y = float(yen)
+                sign = "+" if y >= 0 else ""
+                return f"{sym.replace('.T', '')} {sign}{int(round(y)):,}円".replace(",", ",")
+            except (TypeError, ValueError):
+                return sym
+        return sym or "—"
     return str(trade or "—")
 
 
@@ -947,7 +1765,7 @@ def format_freshness_semantics_v2_lines(summary: Mapping[str, Any]) -> list[str]
 
 def format_runtime_health_lines(summary: Mapping[str, Any]) -> list[str]:
     peak = int(summary.get("peak_open_slots") or summary.get("max_concurrent") or 0)
-    cap = int(summary.get("max_concurrent_positions") or summary.get("max_concurrent_cap") or 3)
+    cap = int(summary.get("max_concurrent_positions") or summary.get("max_concurrent_cap") or DEFAULT_POSITION_CAP)
     feat = summary.get("live_feature_complete_rate_pct")
     feat_s = f"{_fmt_num(feat, digits=1)}%" if feat is not None else "—"
     lines = [
@@ -1248,34 +2066,10 @@ def format_exit_summary_lines(events: Sequence[Mapping[str, Any]], summary: Mapp
 
 
 def format_shadow_summary_lines(summary: Mapping[str, Any]) -> list[str]:
-    """Phase637: key measured shadow deltas only (no speculation)."""
+    """Phase637/W25C-R2: only enabled shadows with today's count > 0."""
     lines: list[str] = []
-    if summary.get("pbv2_rise5_shadow_enabled"):
-        lines.append(
-            f"Rise5: net={_yen_display(summary.get('pbv2_rise5_shadow_net_effect_yen'))} "
-            f"block={_as_int(summary.get('pbv2_rise5_shadow_block_count'))}"
-        )
-    if summary.get("pbv2_flat_band_shadow_enabled"):
-        lines.append(
-            f"Flat-band: net={_yen_display(summary.get('pbv2_flat_band_shadow_net_effect_yen'))} "
-            f"block={_as_int(summary.get('pbv2_flat_band_shadow_block_count'))}"
-        )
-    if summary.get("pullback_misread_guard_shadow_enabled"):
-        lines.append(
-            f"PullbackMisread: Δ={_yen_display(summary.get('pullback_misread_guard_shadow_delta_yen'))} "
-            f"block={_as_int(summary.get('pullback_misread_guard_shadow_blocked_count'))}"
-        )
-    if summary.get("board_dynamic_shadow_enabled"):
-        lines.append(
-            f"BoardDynamic: Δ={_yen_display(summary.get('board_dynamic_shadow_total_delta_yen'))}"
-        )
-    if summary.get("exit_shadow_monitor_enabled"):
-        t3 = summary.get("shadow_exit_t3_delta")
-        t2 = summary.get("shadow_exit_t2_delta")
-        if t3 is not None or t2 is not None:
-            lines.append(
-                f"EXIT T3Δ={_yen_display(t3)} T2Δ={_yen_display(t2)}"
-            )
+    for row in collect_active_shadow_observations(summary):
+        lines.append(f"{row['name']}: 対象={row['count']} 差分={row['delta']}")
     return lines[:4]
 
 
@@ -1365,7 +2159,7 @@ def build_operator_status_embed_fields(
 def format_heartbeat_runtime_health_fields(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Extra HEARTBEAT inline fields (Phase490 C03)."""
     peak = int(summary.get("peak_open_slots") or 0)
-    cap = int(summary.get("max_concurrent_positions") or 3)
+    cap = int(summary.get("max_concurrent_positions") or DEFAULT_POSITION_CAP)
     feat = summary.get("live_feature_complete_rate_pct")
     return [
         {"name": "data_gaps", "value": str(int(summary.get("data_gap_count") or 0)), "inline": True},
@@ -1608,35 +2402,51 @@ def format_research_shadow_daily_summary_lines(
 
 def format_discord_summary_lines(metrics: Mapping[str, Any]) -> list[str]:
     """Production Discord summary from canonical_summary only (100-share yen primary)."""
+    from small_paper.session_validity import format_invalid_session_discord_lines, classify_session_validity
+
+    lines: list[str] = []
+    if metrics.get("session_validity") or metrics.get("stop_reason") == "register_failed":
+        v = metrics if metrics.get("discord_banner") else classify_session_validity(metrics)
+        lines.extend(format_invalid_session_discord_lines(v))
     watch_n = metrics.get("watch_symbols_count", metrics.get("monitored_symbol_count"))
-    watch_s = str(watch_n) if watch_n is not None else "—"
+    watch_s = str(watch_n) if watch_n is not None else "N/A"
     traded_n = metrics.get("traded_symbols_count", metrics.get("traded_symbol_count", 0))
     avg_yen = format_summary_avg_pnl_yen_100(metrics.get("avg_pnl_yen_100"))
     win_rate = metrics.get("win_rate_yen_100", metrics.get("win_rate", 0))
     pf = metrics.get("profit_factor_yen_100", metrics.get("profit_factor"))
-    return [
-        f"trade_count: {metrics.get('trade_count', 0)}",
-        f"win_rate_yen_100: {_fmt_num(float(win_rate) * 100, digits=0)}%",
-        f"profit_factor_yen_100: {format_summary_profit_factor_yen(pf)}",
-        f"total_pnl_yen_100: {_format_summary_yen_value(metrics.get('total_pnl_yen_100'))}",
-        f"avg_pnl_yen_100: {avg_yen or '—'}",
-        f"stop_rate: {_fmt_num(float(metrics.get('stop_rate', 0)) * 100, digits=0)}%",
-        f"best_trade: {_canonical_trade_display(metrics, 'best_trade')}",
-        f"worst_trade: {_canonical_trade_display(metrics, 'worst_trade')}",
-        f"max_concurrent: {metrics.get('max_concurrent', 0)}/{metrics.get('max_concurrent_cap', 3)}",
-        f"監視銘柄数: {watch_s}",
-        f"取引銘柄数: {traded_n}",
-    ]
-    if metrics.get("position_cap_mode"):
-        lines.extend(
-            [
-                "position_cap_mode: true",
-                f"position_cap_max_open: {metrics.get('position_cap_max_open', 0)}",
-                f"observer_open_max_positions: {metrics.get('observer_open_max_positions', 0)}",
-                f"gate_virtual_hold_max_slots: {metrics.get('gate_virtual_hold_max_slots', 0)}",
-                f"session_close_exit_burst_count: {metrics.get('session_close_exit_burst_count', 0)}",
-            ]
-        )
+    pf_s = format_summary_profit_factor_yen(pf)
+    if str(pf_s).lower() == "inf":
+        pf_s = "∞"
+    win_c = metrics.get("win_count")
+    loss_c = metrics.get("loss_count")
+    draw_c = metrics.get("draw_count", metrics.get("flat_count"))
+    if win_c is None and loss_c is None:
+        wl = "N/A"
+    else:
+        wl = f"{int(win_c or 0)} / {int(loss_c or 0)} / {int(draw_c or 0)}"
+    cap = int(metrics.get("max_concurrent_cap") or metrics.get("max_concurrent_positions") or DEFAULT_POSITION_CAP)
+    stop_n = metrics.get("stop_count")
+    stop_rate = metrics.get("stop_rate", 0)
+    lines.extend(
+        [
+            f"取引数: {metrics.get('trade_count', 0)}",
+            f"勝 / 負 / 引分: {wl}",
+            f"勝率: {_fmt_num(float(win_rate) * 100, digits=1)}%",
+            f"最終損益: {_format_summary_yen_value(metrics.get('total_pnl_yen_100'))}",
+            f"平均損益: {avg_yen or 'N/A'}",
+            f"PF: {pf_s}",
+            f"Gross Profit: {_format_summary_yen_value(metrics.get('gross_profit_yen_100'))}",
+            f"Gross Loss: {_format_summary_yen_value(metrics.get('gross_loss_yen_100'))}",
+            f"STOP数 / STOP率: {stop_n if stop_n is not None else 'N/A'} / {_fmt_num(float(stop_rate) * 100, digits=1)}%",
+            f"Best: {_canonical_trade_display(metrics, 'best_trade')}",
+            f"Worst: {_canonical_trade_display(metrics, 'worst_trade')}",
+            f"最大同時保有 / CAP: {metrics.get('max_concurrent', 0)} / {cap}",
+            f"監視銘柄数: {watch_s}",
+            f"取引銘柄数: {traded_n}",
+            PAPER_ONLY_FOOTER,
+        ]
+    )
+    # Explicitly never show avg_pnl_pct / total_pnl_pct aggregate
     return lines
 
 
@@ -1863,7 +2673,9 @@ def preview_payload(
     return {
         "event_tag": event_tag,
         "title": title_line,
-        "header": "\n".join(["[SMALL PAPER DRY RUN]", f"[{event_tag}]", "[NO ORDER]", title_line]),
+        "header": "\n".join(
+            ["[PAPER TRADE]", f"[{event_tag}]", "Real orders: DISABLED", title_line]
+        ),
         "detail": detail,
         "extra_fields": list(extra_fields or []),
         "color": color,

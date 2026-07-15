@@ -388,7 +388,9 @@ def main() -> int:
         )
 
     _emit_pilot_result_summary(result)
-    return 0
+    from small_paper.pilot_runner import pilot_process_exit_code
+
+    return int(pilot_process_exit_code(getattr(result, "summary", None)))
 
 
 if __name__ == "__main__":

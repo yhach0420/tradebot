@@ -47,8 +47,8 @@ class TestPhase433DiscordSymbolNameExitTime(unittest.TestCase):
             name_map={"6976.T": "太陽誘電"},
             entry_time="2026-06-17T09:12:34+09:00",
         )
-        self.assertIn("銘柄: 6976.T 太陽誘電", detail)
-        self.assertIn("時刻: 09:12:34", detail)
+        self.assertIn("6976.T 太陽誘電", detail)
+        self.assertIn("09:12:34", detail)
 
     def test_build_exit_detail_includes_symbol_name_exit_time_and_yen(self) -> None:
         detail = build_exit_detail(
@@ -64,13 +64,14 @@ class TestPhase433DiscordSymbolNameExitTime(unittest.TestCase):
             exit_time="2026-06-17T09:28:41+09:00",
             name_map={"6976.T": "太陽誘電"},
         )
-        self.assertIn("銘柄: 6976.T 太陽誘電", detail)
-        self.assertIn("EXIT時刻: 09:28:41", detail)
+        self.assertIn("6976.T 太陽誘電", detail)
+        self.assertIn("09:28:41", detail)
         self.assertIn("損益: +0.85% / +8,500円(100株)", detail)
-        self.assertIn("EXIT理由: 利益確定条件到達", detail)
+        self.assertIn("理由: トレーリング決済", detail)
 
     @patch("small_paper.discord_notifier.get_cached_symbol_name_map")
     def test_notify_entry_title_uses_display(self, mock_map) -> None:
+        from small_paper.discord_entry_delivery import DiscordPostResult, FINAL_DELIVERED
         from small_paper.discord_notifier import SmallPaperDiscordNotifier, SmallPaperDiscordConfig
 
         mock_map.return_value = {"6976.T": "太陽誘電"}
@@ -80,9 +81,10 @@ class TestPhase433DiscordSymbolNameExitTime(unittest.TestCase):
 
         def _capture(**kwargs):
             posted.append(kwargs)
-            return True
+            res = DiscordPostResult(final_result=FINAL_DELIVERED)
+            return res
 
-        notifier._post = _capture  # type: ignore[method-assign]
+        notifier._post_with_result = _capture  # type: ignore[method-assign]
         notifier.notify_entry(
             event={
                 "symbol": "6976.T",
@@ -94,8 +96,10 @@ class TestPhase433DiscordSymbolNameExitTime(unittest.TestCase):
             open_slots=2,
             session_bucket="morning",
         )
-        self.assertEqual(posted[0]["title_line"], "【ENTRY】 6976.T 太陽誘電")
-        self.assertEqual(posted[0]["fields"][2]["value"], "09:12:34")
+        self.assertEqual(posted[0]["title_line"], "【ENTRY】6976.T 太陽誘電")
+        self.assertIn("エントリー時間: 09:12:34", posted[0].get("description") or "")
+        field_names = [f["name"] for f in posted[0]["fields"]]
+        self.assertIn("ENTRY理由", field_names)
 
     @patch("small_paper.discord_notifier.get_cached_symbol_name_map")
     def test_notify_exit_title_and_detail(self, mock_map) -> None:
@@ -121,13 +125,17 @@ class TestPhase433DiscordSymbolNameExitTime(unittest.TestCase):
                 "realized_pnl_pct": 0.85,
                 "pnl_yen_100": 8500.0,
                 "hold_sec": 960.0,
+                "entry_time": "2026-06-17T09:12:34+09:00",
                 "exit_time": "2026-06-17T09:28:41+09:00",
             }
         )
-        self.assertEqual(posted[0]["title_line"], "【EXIT】 6976.T 太陽誘電")
-        detail = posted[0]["fields"][1]["value"]
-        self.assertIn("EXIT時刻: 09:28:41", detail)
-        self.assertIn("6976.T 太陽誘電", detail)
+        self.assertEqual(posted[0]["title_line"], "【EXIT】6976.T 太陽誘電")
+        desc = posted[0].get("description") or ""
+        self.assertIn("エントリー時間: 09:12:34", desc)
+        self.assertIn("EXIT時間: 09:28:41", desc)
+        self.assertIn("損益:", desc)
+        self.assertEqual(posted[0].get("color"), 0xC05621)
+        self.assertEqual(posted[0].get("footer_text"), "PAPER ONLY / 実注文なし")
 
 
 if __name__ == "__main__":

@@ -36,6 +36,10 @@ def _am_summary(**extra):
         "np_pre_entry_feature_logger_enabled": True,
         "forward_sessions": 3,
         "execution_policy_shadow_count": 1,
+        # Phase687W25C-R2: Discord posts only enabled shadows with count > 0
+        "pbv2_rise5_shadow_enabled": True,
+        "pbv2_rise5_shadow_block_count": 3,
+        "pbv2_rise5_shadow_net_effect_yen": -100,
     }
     base.update(extra)
     return base
@@ -67,8 +71,8 @@ def test_content_has_required_fields_and_no_adoption():
     text = build_shadow_summary_content(_am_summary(), am_pm="am", artifact_path="/tmp/out", artifact_hash="abc")
     assert text.startswith("[SHADOW SUMMARY - AM]")
     for needle in (
-        "shadow name:",
-        "candidates:",
+        "名称:",
+        "対象件数:",
         "hypothetical fills:",
         "hypothetical PnL yen_100:",
         "actual overlap:",
@@ -77,11 +81,22 @@ def test_content_has_required_fields_and_no_adoption():
         "source artifact:",
         "ADOPTION STATUS: NOT ADOPTED",
         "DATA COLLECTION ONLY",
+        "observation only",
     ):
         assert needle in text
     assert "採用可能" not in text
     assert "--- I/H/C ---" in text or "ihc" in text.lower() or "IHC" in text
     assert "--- Phase687 NP Logger ---" in text
+
+
+def test_inactive_shadow_skipped(tmp_path: Path):
+    summary = _am_summary(
+        pbv2_rise5_shadow_enabled=False,
+        pbv2_rise5_shadow_block_count=0,
+    )
+    out = enqueue_shadow_summary_for_session(summary, native_root=tmp_path, output_dir=tmp_path)
+    assert out.get("status") == "SKIPPED_NO_ACTIVE_SHADOW"
+    assert out.get("queued") is False
 
 
 def test_am_enqueue_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

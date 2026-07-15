@@ -45,7 +45,7 @@ def run_supervised(
     trading_date: str,
     synthetic: bool = False,
     synthetic_events: int = 100,
-    topology: str = "PASSIVE_DUAL_WEBSOCKET",
+    topology: str = "SINGLE_INGRESS_LOCAL_FANOUT",
     python_exe: Optional[str] = None,
 ) -> int:
     """Run sidecar; on abnormal exit before seal/15:35, restart once with new part."""
@@ -147,7 +147,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--trading-date", type=str, required=True)
     p.add_argument("--synthetic", action="store_true")
     p.add_argument("--synthetic-events", type=int, default=100)
-    p.add_argument("--topology", type=str, default="PASSIVE_DUAL_WEBSOCKET")
+    p.add_argument("--topology", type=str, default="SINGLE_INGRESS_LOCAL_FANOUT")
     args = p.parse_args(list(argv) if argv is not None else None)
     return run_supervised(
         native_root=Path(args.native_root),

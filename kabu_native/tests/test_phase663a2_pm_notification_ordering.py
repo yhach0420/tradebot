@@ -44,11 +44,14 @@ def test_build_entry_detail_includes_audit_fields():
         sent_time="2026-07-08T13:23:46+09:00",
         sequence_id=42,
     )
-    assert "event_time: 13:23:45" in detail
-    assert "sent_time: 13:23:46" in detail
-    assert "session_id: 20260708_pm_live_session_122537" in detail
-    assert "sequence_id: 42" in detail
-    assert "保有枠: 3→4/5" in detail
+    assert "13:23:45" in detail
+    assert "保有: 3→4/5" in detail
+    assert "PAPER ONLY" in detail
+    # Phase687W25: operator body omits raw session_id / sequence_id debug lines
+    assert "session_id:" not in detail
+    assert "sequence_id:" not in detail
+    assert "sent_time:" not in detail
+    assert "event_time:" not in detail
 
 
 def test_universe_screening_overview_includes_generated_and_sent():

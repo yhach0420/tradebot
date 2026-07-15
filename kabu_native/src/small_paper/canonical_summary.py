@@ -86,7 +86,8 @@ def is_stop_exit(row: Mapping[str, Any]) -> bool:
         reason = str(row.get(key) or "").strip()
         if reason in STOP_EXIT_REASONS:
             return True
-        if reason and humanize_exit_reason(reason) == "損切りライン到達":
+        # Display labels (legacy + Phase687W25)
+        if reason and humanize_exit_reason(reason) in ("損切りライン到達", "損切り"):
             return True
     return False
 

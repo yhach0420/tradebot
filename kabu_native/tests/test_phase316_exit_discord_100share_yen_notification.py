@@ -76,8 +76,8 @@ class TestPhase316ExitDiscordYenNotification(unittest.TestCase):
             entry_score_v2=3,
             data={"entry_expectancy_score_v2": 3},
         )
+        self.assertIn("価格:", detail)
         self.assertNotIn("円(100株)", detail)
-        self.assertIn("ENTRY価格", detail)
 
     def test_resolve_pnl_yen_100_prefers_explicit(self) -> None:
         self.assertEqual(

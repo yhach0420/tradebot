@@ -749,19 +749,26 @@ def check_daytrade_suitability_trial_config(
     if config.daytrade_suitability_rule != "volatility_liquidity_top50":
         msgs.append("daytrade_suitability_rule must be volatility_liquidity_top50")
     prior_errors: list[str] = []
+    probe_key = run_session_key
     if run_session_key:
         from small_paper.daytrade_suitability_gate import (
             build_vol_liq_threshold,
             validate_prior_only_sources,
         )
+        from small_paper.prebuild_vol_liq_startup_cache import build_run_session_key
 
+        # Align with checked-runner cache prebuild (AM default key).
+        # Ephemeral live_session_{HHMMSS=now} never matches the prebuilt cache and
+        # falls through to a multi-minute full push-tick scan — blocks Paper start.
+        day = str(run_session_key).split("/", 1)[0]
+        probe_key = build_run_session_key(date=day, session="AM")
         state = build_vol_liq_threshold(
             config,
             repo_root=repo_root,
-            run_session_key=run_session_key,
+            run_session_key=probe_key,
         )
         if state is not None:
-            prior_errors = validate_prior_only_sources(state, run_session_key=run_session_key)
+            prior_errors = validate_prior_only_sources(state, run_session_key=probe_key)
             if prior_errors:
                 msgs.extend(prior_errors)
     ok = not msgs
@@ -774,6 +781,7 @@ def check_daytrade_suitability_trial_config(
             "daytrade_suitability_rule": config.daytrade_suitability_rule,
             "policy_label": config.policy_label,
             "run_session_key": run_session_key,
+            "vol_liq_probe_key": probe_key,
             "prior_only_errors": prior_errors,
         },
     )

@@ -50,8 +50,9 @@ class DualWsProbeResult:
             "event_count_secondary": self.event_count_secondary,
             "event_divergence": self.event_divergence,
             "notes": list(self.notes),
-            "topology_preferred": TOPOLOGY_PASSIVE_DUAL,
+            "topology_preferred": TOPOLOGY_SINGLE_INGRESS,
             "official_multi_ws_guaranteed": False,
+            "phase687w24_note": "20260714 PASSIVE_DUAL observed SOCKET_OPEN with enqueued=0; prefer SINGLE_INGRESS_LOCAL_FANOUT",
         }
 
 
