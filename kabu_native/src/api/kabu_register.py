@@ -132,6 +132,30 @@ def save_paper_register_state(
     return path
 
 
+def clear_paper_register_state(native_root: Optional[Path], *, reason: str = "") -> Optional[Path]:
+    """Invalidate local register SoT after Station unregister/all (Phase687W34).
+
+    Without this, AM→PM orchestrator clear leaves paper_register_state matching the
+    next desired universe and register_symbols_cleared falsely reuses (skipped PUT)
+    while Kabu Station has RegistNum=0 → PM PUSH never starts.
+    """
+    if not native_root:
+        return None
+    path = paper_register_state_path(Path(native_root))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "trading_date": "",
+        "symbol_codes": [],
+        "symbol_count": 0,
+        "regist_num": 0,
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "cleared": True,
+        "clear_reason": reason or "station_unregister_all",
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 def format_register_failure_message(
     exc: BaseException,
     *,
@@ -481,14 +505,37 @@ def push_client_from_repo(repo_root) -> tuple[KabuNativePushClient, KabuNativeRe
     return KabuNativePushClient(rest, token), rest, token
 
 
+def resolve_native_root_for_register_state(repo_root: Path) -> Path:
+    """Map tradebotfile repo_root or kabu_native root to the SoT directory."""
+    root = Path(repo_root)
+    if (root / "kabu_native" / "src").is_dir():
+        return root / "kabu_native"
+    if (root / "src" / "api").is_dir():
+        return root
+    if (root / "runtime").is_dir():
+        return root
+    return root
+
+
 def clear_register_before_session(repo_root) -> dict[str, Any]:
     try:
-        push, _, _ = push_client_from_repo(Path(repo_root))
+        root = Path(repo_root)
+        push, _, _ = push_client_from_repo(root)
         unr = unregister_all_until_zero(push)
+        ok = bool(unr.get("ok"))
+        # Phase687W34: Station clear must invalidate local reuse SoT.
+        sot_path = None
+        if ok:
+            sot_path = clear_paper_register_state(
+                resolve_native_root_for_register_state(root),
+                reason="clear_register_before_session",
+            )
         return {
-            "ok": bool(unr.get("ok")),
-            "cleared": bool(unr.get("ok")),
+            "ok": ok,
+            "cleared": ok,
             "unregister_all": unr,
+            "paper_register_state_cleared": bool(sot_path),
+            "paper_register_state_path": str(sot_path) if sot_path else None,
             "register_limit": KABU_PUSH_REGISTER_LIMIT,
             "list_registered_symbols_api": False,
             "note": "kabu API has no GET registered-symbols; use unregister/all + RegistNum readback.",

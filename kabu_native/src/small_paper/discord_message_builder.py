@@ -2446,6 +2446,20 @@ def format_discord_summary_lines(metrics: Mapping[str, Any]) -> list[str]:
             PAPER_ONLY_FOOTER,
         ]
     )
+    # Phase687W43F: compact evaluation reachability (no per-symbol spam)
+    eval_ready = metrics.get("evaluation_ready_symbol_count")
+    eval_skip = metrics.get("evaluation_skipped_not_ready_count")
+    recovery_n = metrics.get("evaluation_recovery_triggered_count")
+    pipe_err = metrics.get("pipeline_integrity_error_count")
+    if any(x is not None for x in (eval_ready, eval_skip, recovery_n, pipe_err)):
+        lines.extend(
+            [
+                f"評価可能銘柄数: {eval_ready if eval_ready is not None else 'N/A'}",
+                f"評価未到達件数: {eval_skip if eval_skip is not None else 'N/A'}",
+                f"stale recovery評価件数: {recovery_n if recovery_n is not None else 'N/A'}",
+                f"pipeline integrity error件数: {pipe_err if pipe_err is not None else 'N/A'}",
+            ]
+        )
     # Explicitly never show avg_pnl_pct / total_pnl_pct aggregate
     return lines
 

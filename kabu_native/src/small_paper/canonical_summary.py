@@ -299,6 +299,74 @@ def validate_canonical_summary_integrity(
     return errors
 
 
+def _is_session_close_trade(row: Mapping[str, Any]) -> bool:
+    reason = str(row.get("exit_reason") or "").strip().lower()
+    if "session_close" in reason or reason in ("session_end", "morning_session_close", "afternoon_session_close"):
+        return True
+    return str(row.get("session_close") or "").lower() in ("true", "1", "yes")
+
+
+def session_close_pnl_breakdown(trades: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    close = [t for t in trades if _is_session_close_trade(t)]
+    non = [t for t in trades if not _is_session_close_trade(t)]
+    close_yen = round(sum(float(t["pnl_yen_100"]) for t in close), 2)
+    non_yen = round(sum(float(t["pnl_yen_100"]) for t in non), 2)
+    return {
+        "session_close_trade_count": len(close),
+        "session_close_pnl_yen_100": close_yen,
+        "non_session_close_trade_count": len(non),
+        "non_session_close_pnl_yen_100": non_yen,
+        "non_session_close_total_pnl_yen_100": non_yen,  # explicit alias
+    }
+
+
+def peak_concurrent_from_position_events(events: Sequence[Mapping[str, Any]]) -> int:
+    """Peak open count from immutable position_id open/close timeline.
+
+    OPEN: accepted with position_id / accept_stage=position_registered
+    CLOSE: observer_exit with same position_id (fallback: symbol FIFO if id missing)
+    """
+    open_ids: set[str] = set()
+    open_syms: dict[str, list[str]] = {}
+    peak = 0
+    # stable chronological order by event_time / entry/exit
+    def _ts(e: Mapping[str, Any]) -> str:
+        return str(
+            e.get("event_time")
+            or e.get("exit_time")
+            or e.get("entry_time")
+            or ""
+        )
+
+    for e in sorted(events, key=_ts):
+        et = str(e.get("event_type") or "")
+        if et == "accepted":
+            stage = str(e.get("accept_stage") or "")
+            pid = str(e.get("observer_position_id") or e.get("position_id") or "")
+            sym = str(e.get("symbol") or "")
+            if stage and stage != "position_registered" and not pid:
+                continue
+            if not pid:
+                # legacy rows without id: only count if we later see matching exit
+                pid = f"legacy:{sym}:{e.get('entry_time')}"
+            if pid in open_ids:
+                continue
+            open_ids.add(pid)
+            open_syms.setdefault(sym, []).append(pid)
+            peak = max(peak, len(open_ids))
+        elif et == "observer_exit":
+            pid = str(e.get("observer_position_id") or e.get("position_id") or "")
+            sym = str(e.get("symbol") or "")
+            if pid and pid in open_ids:
+                open_ids.discard(pid)
+                if sym in open_syms and pid in open_syms[sym]:
+                    open_syms[sym].remove(pid)
+            elif sym in open_syms and open_syms[sym]:
+                old = open_syms[sym].pop(0)
+                open_ids.discard(old)
+    return int(peak)
+
+
 def enrich_summary_with_canonical(
     summary: dict[str, Any],
     events: Sequence[Mapping[str, Any]],
@@ -308,20 +376,55 @@ def enrich_summary_with_canonical(
     watch_symbols_count: Optional[int] = None,
 ) -> dict[str, Any]:
     trades = collect_canonical_trades(events)
-    canonical = build_canonical_summary(
-        trades,
-        peak_open_slots=int(
+    # position_cap_mode: official max_concurrent = observer open peak, not gate peak_open_slots.
+    obs_max = summary.get("observer_open_max_positions")
+    timeline_peak = peak_concurrent_from_position_events(events)
+    if summary.get("position_cap_mode"):
+        resolved_peak = int(obs_max or timeline_peak or peak_open_slots or 0)
+    else:
+        resolved_peak = int(
             peak_open_slots
             if peak_open_slots is not None
             else summary.get("peak_open_slots")
+            or obs_max
+            or timeline_peak
             or 0
-        ),
+        )
+    canonical = build_canonical_summary(
+        trades,
+        peak_open_slots=resolved_peak,
         max_concurrent_positions=max_concurrent_positions,
         watch_symbols_count=watch_symbols_count,
+    )
+    breakdown = session_close_pnl_breakdown(trades)
+    canonical.update(breakdown)
+    canonical["max_concurrent_source"] = (
+        "observer_open_max_positions"
+        if summary.get("position_cap_mode") and obs_max
+        else "position_timeline"
     )
     errors = validate_canonical_summary_integrity(canonical, trades)
     summary["canonical_summary"] = canonical
     summary["total_pnl_pct_raw"] = canonical.get("total_pnl_pct_raw")
+
+    # Official PnL SoT = canonical (includes session_close). Avoid dual total_pnl meaning.
+    prior_top = summary.get("total_pnl_yen_100")
+    summary["canonical_trade_count"] = canonical.get("trade_count")
+    summary["canonical_total_pnl_yen_100"] = canonical.get("total_pnl_yen_100")
+    summary["canonical_profit_factor_yen_100"] = canonical.get("profit_factor_yen_100")
+    summary.update(breakdown)
+    summary["total_pnl_yen_100"] = canonical.get("total_pnl_yen_100")
+    summary["total_pnl_yen_100_source"] = "canonical_summary"
+    summary["profit_factor_yen_100"] = canonical.get("profit_factor_yen_100")
+    summary["observer_exit_count_with_pnl"] = canonical.get("trade_count")
+    if prior_top is not None and _as_float(prior_top) != _as_float(canonical.get("total_pnl_yen_100")):
+        summary["deprecated_non_canonical_total_pnl_yen_100"] = prior_top
+        summary["total_pnl_yen_100_deprecated_note"] = (
+            "Pre-fix top-level total_pnl excluded session_close or used a stale event snapshot. "
+            "Official value is canonical_total_pnl_yen_100 / total_pnl_yen_100 (source=canonical_summary)."
+        )
+    summary["peak_concurrent_from_position_timeline"] = timeline_peak
+
     if errors:
         summary["summary_integrity_error"] = {"errors": errors}
         log.error(

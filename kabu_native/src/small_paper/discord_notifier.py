@@ -1344,11 +1344,28 @@ class SmallPaperDiscordNotifier:
         if not embed:
             return False
         event_tag, _legacy_title = summary_notification_labels(summary)
-        dedupe_key = "daily_summary"
+        # Phase687W34: day-scoped keys — persistent DedupeStore never expires SENT,
+        # so bare "daily_summary" from a prior day blocked all later AM/PM Summaries.
+        day = str(
+            summary.get("trading_date")
+            or summary.get("day_stamp")
+            or summary.get("output_date")
+            or ""
+        ).replace("-", "")[:8]
+        if not day:
+            try:
+                from datetime import datetime as _dt
+                from zoneinfo import ZoneInfo as _ZI
+
+                day = _dt.now(_ZI("Asia/Tokyo")).strftime("%Y%m%d")
+            except Exception:
+                day = "unknown"
         if event_tag == "AM Summary":
-            dedupe_key = "am_summary"
+            dedupe_key = f"am_summary|{day}"
         elif event_tag == "PM Summary":
-            dedupe_key = "pm_summary"
+            dedupe_key = f"pm_summary|{day}"
+        else:
+            dedupe_key = f"daily_summary|{day}"
         return self._post(
             event_tag=event_tag,
             title_line=str(embed["title"]),
@@ -1688,4 +1705,7 @@ def observer_tracker_config_from_pilot(config: Any) -> Any:
         exit_shadow_monitor_enabled=bool(getattr(config, "exit_shadow_monitor_enabled", False)),
         exit_shadow_monitor_t2_enabled=bool(getattr(config, "exit_shadow_monitor_t2_enabled", True)),
         exit_shadow_monitor_t3_enabled=bool(getattr(config, "exit_shadow_monitor_t3_enabled", True)),
+        flat_weak_range_shadow_enabled=bool(
+            getattr(config, "flat_weak_range_shadow_enabled", False)
+        ),
     )

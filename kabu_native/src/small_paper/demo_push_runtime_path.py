@@ -679,11 +679,21 @@ def audit_production_contamination(*, native_root: Path, demo_ws: Path) -> dict[
 
 
 def list_demo_related_processes() -> list[dict[str, Any]]:
+    """List leftover *demo* Paper/Capture processes only (Phase687W46A).
+
+    Intentionally does NOT match production ``run_small_paper_pilot --source live``
+    (e.g. AM→PM wait). Those are outside demo lifecycle and must not trigger
+    ORPHAN_PROCESS_REMAINS.
+    """
     if sys.platform != "win32":
         return []
+    # Narrow match: demo workspace / e2e flag / push-replay child — not bare pilot.
     ps = (
         "Get-CimInstance Win32_Process | "
-        "Where-Object { $_.CommandLine -match 'demo_push|push-replay|run_small_paper_pilot' } | "
+        "Where-Object { "
+        "$_.CommandLine -match 'demo_push_e2e|TRADEBOT_DEMO_PUSH_E2E|push_replay_demo|"
+        "demo_push_runtime_path|_capture_ingest_child|_paper_replay_child|push-replay' "
+        "} | "
         "Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress"
     )
     try:
@@ -699,7 +709,17 @@ def list_demo_related_processes() -> list[dict[str, Any]]:
         if not raw or raw.lower() == "null":
             return []
         data = json.loads(raw)
-        return [data] if isinstance(data, dict) else list(data or [])
+        rows = [data] if isinstance(data, dict) else list(data or [])
+        # Drop the scanner / listing helpers themselves.
+        out: list[dict[str, Any]] = []
+        for p in rows:
+            cl = str(p.get("CommandLine") or "")
+            if "list_demo_related_processes" in cl:
+                continue
+            if "Get-CimInstance Win32_Process" in cl and "demo_push" in cl:
+                continue
+            out.append(p)
+        return out
     except Exception as exc:
         return [{"error": str(exc)}]
 

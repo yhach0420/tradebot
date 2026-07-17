@@ -2,8 +2,8 @@
 
 Daily forward shadow for Phase408 corrected boundary policy (Stack C / position_cap_mode).
 
-- generated_at: 2026-07-15T12:39:07+09:00
-- day_count: 15
+- generated_at: 2026-07-17T15:24:16+09:00
+- day_count: 17
 - verdict: adoption_review_allowed
 - adoption_review_allowed: False
 

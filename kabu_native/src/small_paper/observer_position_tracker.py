@@ -77,6 +77,8 @@ class ObserverTrackerConfig:
     exit_shadow_monitor_enabled: bool = False
     exit_shadow_monitor_t2_enabled: bool = True
     exit_shadow_monitor_t3_enabled: bool = True
+    # Forward-shadow persistence flags (logging only; no ENTRY/EXIT decision impact)
+    flat_weak_range_shadow_enabled: bool = False
 
     def uses_combined_structural_exit(self) -> bool:
         return self.structural_exit_policy in (
@@ -195,6 +197,12 @@ class ObserverPositionTracker:
     def has_open(self, symbol: str) -> bool:
         p = self._positions.get(symbol)
         return p is not None and not p.closed
+
+    def position_id_for(self, symbol: str) -> Optional[str]:
+        p = self._positions.get(symbol)
+        if p is None or p.closed:
+            return None
+        return str(p.position_id or "") or None
 
     def open_symbols(self) -> list[str]:
         return sorted(sym for sym, p in self._positions.items() if not p.closed)
@@ -445,6 +453,13 @@ class ObserverPositionTracker:
                     "pbv2_flat_band_variant",
                     "pbv2_flat_band_shadow_apply_pool",
                     "flat_band_and_rise5_shadow_block",
+                    # Phase687W43B-FIX: persist FWR accept → position → exit
+                    "flat_weak_range_shadow_candidate",
+                    "flat_weak_range_shadow_block",
+                    "flat_weak_range_shadow_reason",
+                    "pretrend_shape",
+                    "flat_subclass",
+                    "breakout_class",
                     "day_high_distance_pct",
                     "entry_momentum_score",
                     "near_day_high_low_momentum_dynamic40_guard_blocked",
@@ -493,12 +508,17 @@ class ObserverPositionTracker:
                     "readiness_microsequence_ok",
                     "readiness_price_history_insufficient",
                     "readiness_same_symbol_entry_count_today",
+                    "position_id",
+                    "observer_position_id",
                 )
                 if k in trade
             },
                 **ts_fields,
             },
         )
+        # Always stamp immutable position id onto entry_shadow for exit join.
+        self._positions[sym].entry_shadow["position_id"] = position_id
+        self._positions[sym].entry_shadow["observer_position_id"] = position_id
         if self.board_exit_shadow is not None:
             self.board_exit_shadow.register_position(
                 position_id=position_id,
@@ -1077,7 +1097,14 @@ class ObserverPositionTracker:
                 flat_weak_range_shadow_enabled,
             )
 
-            if flat_weak_range_shadow_enabled(self.cfg):
+            # Persist FWR when enabled on tracker cfg OR already stamped on entry_shadow
+            # (accept-time computation). Logging-only; does not change EXIT decision.
+            fwr_on_shadow = str(
+                (pos.entry_shadow or {}).get("flat_weak_range_shadow_candidate") or ""
+            ).lower() in ("true", "1", "yes")
+            if flat_weak_range_shadow_enabled(self.cfg) or fwr_on_shadow or (
+                (pos.entry_shadow or {}).get("flat_weak_range_shadow_candidate") is True
+            ):
                 fwr_exit = enrich_exit_flat_weak_range_shadow_fields(
                     pos.entry_shadow,
                     entry_price=pos.entry_price,
@@ -1085,6 +1112,8 @@ class ObserverPositionTracker:
                     exit_reason=reason,
                 )
                 full.update(fwr_exit)
+            full["position_id"] = pos.position_id
+            full["observer_position_id"] = pos.position_id
             from small_paper.readiness_forward_shadow import (
                 enrich_exit_readiness_shadow_fields,
                 readiness_shadow_any_enabled,

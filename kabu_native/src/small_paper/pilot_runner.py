@@ -245,6 +245,9 @@ EVENT_FIELDS = (
     "blocked_winner",
     "blocked_loser",
     "blocked_big_winner",
+    "position_id",
+    "observer_position_id",
+    "accept_stage",
     "universe_slot",
     "universe_bucket",
     "source_bucket",
@@ -707,6 +710,12 @@ def _default_live_order_dry_run_session(config: Any) -> Any:
     return LiveOrderDryRunSession(position_cap=cap, entry_timeout_sec=timeout)
 
 
+def _default_entry_stage_counters() -> Any:
+    from small_paper.entry_execution_integrity import EntryStageCounters
+
+    return EntryStageCounters()
+
+
 @dataclass
 class _LiveRunState:
     started_mono: float
@@ -791,6 +800,7 @@ class _LiveRunState:
     event_stale_reject_count: int = 0
     board_stale_reject_count: int = 0
     trade_stale_tag_count: int = 0
+    evaluation_reachability_summary: dict[str, Any] = field(default_factory=dict)
     session_momentum_samples: list[float] = field(default_factory=list)
     session_order_book_imbalance_samples: list[float] = field(default_factory=list)
     extended_entry_shadow: Any = field(default_factory=_default_extended_shadow_counters)
@@ -828,6 +838,7 @@ class _LiveRunState:
     observer_tracker: Any = None
     observer_session_id: Optional[str] = None
     or_overlay: Any = None
+    entry_stage_counters: Any = field(default_factory=_default_entry_stage_counters)
 
 
 def _init_position_cap_tracking(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
@@ -1362,8 +1373,13 @@ def _observer_exit_event_row(
     for key in EVENT_FIELDS:
         if key in row:
             continue
-        if key in ctx and ctx.get(key) not in (None, ""):
-            row[key] = ctx.get(key)
+        if key not in ctx:
+            continue
+        val = ctx.get(key)
+        # Persist booleans/zeros (FWR block=False, actual_pnl=0) — only skip None/"".
+        if val is None or val == "":
+            continue
+        row[key] = val
     return row
 
 
@@ -1984,6 +2000,8 @@ class _PushPipelineContext:
     latency_trace: Optional[Any] = None
     extension_bus: Optional[Any] = None
     stage_profiler: Optional[Any] = None
+    # Phase687W43F: readiness / recovery evaluation tracker (no PBv2 condition changes)
+    evaluation_reachability: Optional[Any] = None
 
 
 def _latency_trace(ctx: _PushPipelineContext) -> Optional[Any]:
@@ -2741,31 +2759,253 @@ def _execute_accepted_entry(
             ctx.writer.append_np_pre_entry_features(np_row)
         except Exception:
             pass
-    ctx.state.events.append(acc)
-    ctx.writer.append_event(acc)
-    ctx.state.accepted_rows.append(dict(trade))
-    _record_bucket(ctx.state, "accepted")
+    _finalize_accepted_entry_stages(
+        ctx,
+        sym=sym,
+        trade=trade,
+        decision=decision,
+        payload=payload,
+        enriched=enriched,
+        acc=acc,
+        scan_meta=scan_meta,
+        bucket=bucket,
+        score5_ord=score5_ord,
+        msg_i=msg_i,
+        slot_before=slot_before,
+        slot_after=slot_after,
+    )
+
+
+def _record_entry_stage(
+    ctx: _PushPipelineContext,
+    *,
+    decision_id: str,
+    stage: str,
+    symbol: str,
+    event_time: str,
+    position_id: str = "",
+    current_price: Any = None,
+    entry_price: Any = None,
+    validation_result: str = "",
+    failure_reason: str = "",
+    extra: Optional[Mapping[str, Any]] = None,
+) -> None:
+    from small_paper.entry_execution_integrity import stage_event_row
+
+    counters = getattr(ctx.state, "entry_stage_counters", None)
+    if counters is not None and not counters.record(decision_id, stage):
+        return
+    session_key = ""
     if ctx.observer:
-        try:
-            entry_px = float(payload.get("CurrentPrice") or 0)
-        except (TypeError, ValueError):
-            entry_px = 0.0
-        accept_clock = str(acc.get("event_time") or _now_iso())
-        trade["accepted_at"] = accept_clock
-        trade["accepted_event_time"] = accept_clock
-        acc["accepted_at"] = accept_clock
-        acc["accepted_event_time"] = accept_clock
-        if trade.get("market_entry_time") in (None, ""):
-            trade["market_entry_time"] = trade.get("entry_time")
-        if trade.get("current_price_time") in (None, ""):
-            trade["current_price_time"] = trade.get("market_entry_time") or trade.get("entry_time")
-        acc["market_entry_time"] = trade.get("market_entry_time")
-        acc["current_price_time"] = trade.get("current_price_time")
-        if ctx.observer and ctx.observer.session_id:
-            acc["session_id"] = ctx.observer.session_id
-            acc["session_kind"] = ctx.observer.session_kind
-            trade["session_id"] = ctx.observer.session_id
-            trade["session_kind"] = ctx.observer.session_kind
+        session_key = str(getattr(ctx.observer, "session_id", "") or "")
+    row = stage_event_row(
+        decision_id=decision_id,
+        stage=stage,
+        symbol=symbol,
+        event_time=event_time,
+        session_key=session_key,
+        position_id=position_id,
+        current_price=current_price,
+        entry_price=entry_price,
+        validation_result=validation_result,
+        failure_reason=failure_reason,
+        extra=extra,
+    )
+    ctx.state.events.append(row)
+    try:
+        ctx.writer.append_event(row)
+    except Exception:
+        pass
+
+
+def _emit_entry_aborted_audit(
+    ctx: _PushPipelineContext,
+    *,
+    acc: Mapping[str, Any],
+    decision_id: str,
+    reason: str,
+) -> None:
+    """Record [ENTRY ABORTED] audit — never sends official Discord ENTRY."""
+    audit = {
+        "timestamp": _now_iso(),
+        "notification_type": "ENTRY_ABORTED",
+        "official_entry": False,
+        "decision_id": decision_id,
+        "position_id": acc.get("position_id") or "",
+        "symbol": acc.get("symbol"),
+        "abort_reason": reason,
+        "delivery_result": "not_sent_official_entry",
+        "final_result": "aborted",
+        "event_time": acc.get("event_time") or acc.get("entry_time"),
+    }
+    try:
+        ctx.writer.append_discord_entry_delivery(audit)
+    except Exception:
+        pass
+    try:
+        ctx.writer.append_live_order_event(
+            {
+                "timestamp": _now_iso(),
+                "event_type": "ORDER_INTENT_SKIPPED_INVALID_ENTRY_PAYLOAD",
+                "symbol": acc.get("symbol"),
+                "decision_id": decision_id,
+                "abort_reason": reason,
+                "side": "ENTRY",
+            }
+        )
+    except Exception:
+        pass
+
+
+def _finalize_accepted_entry_stages(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: dict[str, Any],
+    decision: Any,
+    payload: Mapping[str, Any],
+    enriched: Mapping[str, Any],
+    acc: dict[str, Any],
+    scan_meta: Optional[Mapping[str, Any]],
+    bucket: str,
+    score5_ord: Optional[int],
+    msg_i: int,
+    slot_before: int,
+    slot_after: int,
+) -> None:
+    """gate_accepted → validate → position_registered → official_entry → Discord/order.
+
+    Phase687W43B-FIX2: blocks Ghost accept (null price) from Discord ENTRY / order paths.
+    """
+    from small_paper.entry_execution_integrity import (
+        STAGE_ACCEPT_ABORTED,
+        STAGE_EXECUTION_PAYLOAD_VALIDATED,
+        STAGE_GATE_ACCEPTED,
+        STAGE_OFFICIAL_ENTRY,
+        STAGE_POSITION_REGISTERED,
+        STAGE_QUEUE_SELECTED,
+        is_official_entry_ready,
+        make_decision_id,
+        validate_execution_payload,
+    )
+
+    accept_clock = str(acc.get("event_time") or _now_iso())
+    trade["accepted_at"] = accept_clock
+    trade["accepted_event_time"] = accept_clock
+    acc["accepted_at"] = accept_clock
+    acc["accepted_event_time"] = accept_clock
+    if trade.get("market_entry_time") in (None, ""):
+        trade["market_entry_time"] = trade.get("entry_time")
+    if trade.get("current_price_time") in (None, ""):
+        trade["current_price_time"] = trade.get("market_entry_time") or trade.get("entry_time")
+    acc["market_entry_time"] = trade.get("market_entry_time")
+    acc["current_price_time"] = trade.get("current_price_time")
+    if ctx.observer and ctx.observer.session_id:
+        acc["session_id"] = ctx.observer.session_id
+        acc["session_kind"] = ctx.observer.session_kind
+        trade["session_id"] = ctx.observer.session_id
+        trade["session_kind"] = ctx.observer.session_kind
+
+    decision_id = make_decision_id(
+        symbol=sym,
+        entry_time=trade.get("entry_time") or accept_clock,
+        message_index=msg_i,
+        scan_id=(scan_meta or {}).get("scan_id"),
+    )
+    acc["decision_id"] = decision_id
+    trade["decision_id"] = decision_id
+    # Idempotent: same decision_id must not re-emit Discord / position / order.
+    counters = getattr(ctx.state, "entry_stage_counters", None)
+    if counters is not None:
+        seen = getattr(counters, "_seen_stage_keys", set())
+        if f"{decision_id}|{STAGE_OFFICIAL_ENTRY}" in seen or (
+            f"{decision_id}|{STAGE_ACCEPT_ABORTED}" in seen
+        ):
+            acc["accept_stage"] = "duplicate_decision_skipped"
+            acc["duplicate_decision_skip"] = True
+            acc["position_registered"] = f"{decision_id}|{STAGE_OFFICIAL_ENTRY}" in seen
+            acc["official_entry"] = f"{decision_id}|{STAGE_OFFICIAL_ENTRY}" in seen
+            return
+    acc["accept_stage"] = STAGE_GATE_ACCEPTED
+    acc["position_registered"] = False
+    acc["official_entry"] = False
+    _record_entry_stage(
+        ctx,
+        decision_id=decision_id,
+        stage=STAGE_GATE_ACCEPTED,
+        symbol=sym,
+        event_time=accept_clock,
+        current_price=payload.get("CurrentPrice"),
+        entry_price=trade.get("entry_price"),
+    )
+
+    validation = validate_execution_payload(
+        symbol=sym,
+        trade=trade,
+        payload=payload,
+        event_time=accept_clock,
+        quantity=trade.get("quantity") or 100,
+        side=trade.get("side") or "2",
+        session_entry_allowed=True,
+    )
+    acc.update(validation.to_fields())
+    if not validation.ok:
+        acc["accept_stage"] = STAGE_ACCEPT_ABORTED
+        acc["accept_aborted"] = True
+        acc["ghost_accept_reason"] = acc.get("failure_reason") or "execution_payload_invalid"
+        _record_entry_stage(
+            ctx,
+            decision_id=decision_id,
+            stage=STAGE_ACCEPT_ABORTED,
+            symbol=sym,
+            event_time=accept_clock,
+            current_price=payload.get("CurrentPrice"),
+            entry_price=trade.get("entry_price"),
+            validation_result="failed",
+            failure_reason=acc.get("failure_reason") or "",
+        )
+        ctx.state.events.append(acc)
+        ctx.writer.append_event(acc)
+        ctx.state.accepted_rows.append(dict(trade))
+        _record_bucket(ctx.state, "accepted")
+        _emit_entry_aborted_audit(
+            ctx,
+            acc=acc,
+            decision_id=decision_id,
+            reason=str(acc.get("failure_reason") or "execution_payload_invalid"),
+        )
+        return
+
+    acc["accept_stage"] = STAGE_EXECUTION_PAYLOAD_VALIDATED
+    acc["current_price"] = validation.current_price
+    acc["entry_price"] = validation.entry_price
+    trade["current_price"] = validation.current_price
+    trade["entry_price"] = validation.entry_price
+    entry_px = float(validation.entry_price or 0.0)
+    _record_entry_stage(
+        ctx,
+        decision_id=decision_id,
+        stage=STAGE_EXECUTION_PAYLOAD_VALIDATED,
+        symbol=sym,
+        event_time=accept_clock,
+        current_price=validation.current_price,
+        entry_price=validation.entry_price,
+        validation_result="ok",
+    )
+    if scan_meta:
+        acc["accept_stage"] = STAGE_QUEUE_SELECTED
+        _record_entry_stage(
+            ctx,
+            decision_id=decision_id,
+            stage=STAGE_QUEUE_SELECTED,
+            symbol=sym,
+            event_time=accept_clock,
+            current_price=validation.current_price,
+            entry_price=validation.entry_price,
+            extra={"scan_id": (scan_meta or {}).get("scan_id")},
+        )
+
+    if ctx.observer:
         if entry_px > 0 and ctx.observer.has_open(sym):
             overlap_events = ctx.observer.close_for_overlap(
                 symbol=sym,
@@ -2795,20 +3035,115 @@ def _execute_accepted_entry(
             from small_paper.observer_entry_time import observer_entry_fields
 
             acc.update(observer_entry_fields(trade, payload=enriched))
+            pid = ctx.observer.position_id_for(sym)
+            if pid:
+                acc["position_id"] = pid
+                acc["observer_position_id"] = pid
+                acc["position_registered"] = True
+                acc["accept_stage"] = STAGE_POSITION_REGISTERED
+                trade["position_id"] = pid
+                trade["observer_position_id"] = pid
+                _record_entry_stage(
+                    ctx,
+                    decision_id=decision_id,
+                    stage=STAGE_POSITION_REGISTERED,
+                    symbol=sym,
+                    event_time=accept_clock,
+                    position_id=pid,
+                    current_price=validation.current_price,
+                    entry_price=validation.entry_price,
+                )
+            else:
+                acc["accept_stage"] = STAGE_ACCEPT_ABORTED
+                acc["accept_aborted"] = True
+                acc["ghost_accept_reason"] = "register_entry_did_not_open_position"
+        elif ctx.observer.has_open(sym):
+            acc["accept_stage"] = STAGE_ACCEPT_ABORTED
+            acc["accept_aborted"] = True
+            acc["ghost_accept_reason"] = "observer_still_open_after_overlap_path"
         _record_observer_open_peak(ctx)
         if ctx.config.position_cap_mode:
             slot_after = _active_cap_count(ctx)
             acc["position_slot_after"] = slot_after
+    else:
+        # No observer tracker (non-paper-observer modes): validated payload alone
+        # may proceed with synthetic position_id — Paper AM/PM always has observer.
+        pid = f"no_observer:{decision_id}"
+        acc["position_id"] = pid
+        acc["observer_position_id"] = pid
+        acc["position_registered"] = True
+        acc["accept_stage"] = STAGE_POSITION_REGISTERED
+        trade["position_id"] = pid
+        _record_entry_stage(
+            ctx,
+            decision_id=decision_id,
+            stage=STAGE_POSITION_REGISTERED,
+            symbol=sym,
+            event_time=accept_clock,
+            position_id=pid,
+            current_price=validation.current_price,
+            entry_price=validation.entry_price,
+            extra={"no_observer_mode": True},
+        )
+
+    if acc.get("accept_aborted") or not acc.get("position_registered"):
+        if not acc.get("accept_aborted"):
+            acc["accept_stage"] = STAGE_ACCEPT_ABORTED
+            acc["accept_aborted"] = True
+            acc["ghost_accept_reason"] = acc.get("ghost_accept_reason") or "position_not_registered"
+        _record_entry_stage(
+            ctx,
+            decision_id=decision_id,
+            stage=STAGE_ACCEPT_ABORTED,
+            symbol=sym,
+            event_time=accept_clock,
+            current_price=validation.current_price,
+            entry_price=validation.entry_price,
+            validation_result="failed",
+            failure_reason=str(acc.get("ghost_accept_reason") or ""),
+        )
+        ctx.state.events.append(acc)
+        ctx.writer.append_event(acc)
+        ctx.state.accepted_rows.append(dict(trade))
+        _record_bucket(ctx.state, "accepted")
+        _emit_entry_aborted_audit(
+            ctx,
+            acc=acc,
+            decision_id=decision_id,
+            reason=str(acc.get("ghost_accept_reason") or "position_not_registered"),
+        )
+        return
+
+    # Official entry path
+    acc["official_entry"] = True
+    acc["accept_stage"] = STAGE_OFFICIAL_ENTRY
+    _record_entry_stage(
+        ctx,
+        decision_id=decision_id,
+        stage=STAGE_OFFICIAL_ENTRY,
+        symbol=sym,
+        event_time=accept_clock,
+        position_id=str(acc.get("position_id") or ""),
+        current_price=validation.current_price,
+        entry_price=validation.entry_price,
+    )
+    ctx.state.events.append(acc)
+    ctx.writer.append_event(acc)
+    ctx.state.accepted_rows.append(dict(trade))
+    _record_bucket(ctx.state, "accepted")
     ctx.writer.append_position_row(
         {
             "symbol": trade.get("symbol"),
             "entry_time": trade.get("entry_time"),
             "exit_time": trade.get("exit_time"),
             "open_slots_after": slot_after,
+            "position_id": acc.get("position_id"),
+            "decision_id": decision_id,
         },
         fields=ctx.pos_fields,
     )
-    if ctx.discord and ctx.discord.active:
+
+    if ctx.discord and ctx.discord.active and is_official_entry_ready(acc):
         import time
         from small_paper.discord_entry_delivery import FINAL_DELIVERED
 
@@ -2828,12 +3163,18 @@ def _execute_accepted_entry(
         acc["entry_delivery_result"] = entry_res.final_result
         acc["entry_delivery_failure_classification"] = entry_res.failure_classification
         acc["entry_notify_retry_count"] = entry_res.retry_count
+        acc["notification_type"] = "ENTRY"
+        acc["official_entry_notification"] = True
         if entry_res.final_result == FINAL_DELIVERED:
             acc["discord_sent_ts"] = entry_res.sent_time
             acc["entry_delivery_http_status"] = entry_res.http_status
             if entry_res.discord_message_id:
                 acc["discord_message_id"] = entry_res.discord_message_id
-    _maybe_record_live_order_pipeline_entry(ctx, sym=sym, trade=trade, payload=payload, acc=acc, scan_meta=scan_meta)
+
+    # Order / dry-run only after official_entry + validated payload
+    _maybe_record_live_order_pipeline_entry(
+        ctx, sym=sym, trade=trade, payload=payload, acc=acc, scan_meta=scan_meta
+    )
     _maybe_record_live_order_wiring_entry(
         ctx, sym=sym, trade=trade, payload=payload, acc=acc, scan_meta=scan_meta
     )
@@ -2946,6 +3287,93 @@ def _replay_reference_now(
     if raw is None or str(raw).strip() == "":
         return None
     return parse_kabu_time(raw, fallback=datetime.now(JST))
+
+
+def _ensure_evaluation_reachability(ctx: _PushPipelineContext) -> Any:
+    from small_paper.evaluation_reachability import EvaluationReachabilityTracker
+
+    if ctx.evaluation_reachability is None:
+        ctx.evaluation_reachability = EvaluationReachabilityTracker()
+    try:
+        ctx.state._evaluation_reachability_tracker = ctx.evaluation_reachability  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    return ctx.evaluation_reachability
+
+
+def _reachability_update_from_push(
+    ctx: _PushPipelineContext,
+    payload: Mapping[str, Any],
+    *,
+    symbol: str,
+    reference_now: Optional[datetime] = None,
+    feature_complete: bool = False,
+) -> None:
+    """Always update per-symbol price/board/history readiness (even if eval throttled)."""
+    tracker = _ensure_evaluation_reachability(ctx)
+    ring = ctx.symbol_price_ring.get(symbol) or []
+    hist_ticks = len(ring)
+    tracker.update_from_payload(
+        symbol,
+        payload,
+        reference_now=reference_now,
+        feature_complete=feature_complete,
+        history_ticks=hist_ticks,
+        min_history_ticks=int(getattr(ctx.feature_bridge, "min_ticks_for_complete", 3) or 3),
+    )
+
+
+def _throttled_state_only_push(
+    ctx: _PushPipelineContext,
+    payload: Mapping[str, Any],
+    *,
+    symbol: str,
+) -> None:
+    """Phase687W43F: update rings/features/readiness without candidate evaluation."""
+    from small_paper.extended_entry_shadow import append_price_tick, tick_ts_from_payload
+
+    try:
+        px_tick = float(payload.get("CurrentPrice") or 0)
+    except (TypeError, ValueError):
+        px_tick = 0.0
+    if px_tick > 0:
+        ring = ctx.symbol_price_ring.setdefault(symbol, [])
+        append_price_tick(ring, ts=tick_ts_from_payload(payload), px=px_tick)
+    feature_complete = False
+    try:
+        snap = ctx.feature_bridge.update(symbol, payload)
+        feature_complete = bool(getattr(snap, "live_feature_complete", False))
+    except Exception:
+        pass
+    ref = _replay_reference_now(ctx, payload)
+    _reachability_update_from_push(
+        ctx,
+        payload,
+        symbol=symbol,
+        reference_now=ref,
+        feature_complete=feature_complete,
+    )
+    _sync_reachability_summary(ctx)
+
+
+def _sync_reachability_summary(
+    ctx: _PushPipelineContext, *, finalize: bool = False
+) -> None:
+    tracker = getattr(ctx, "evaluation_reachability", None)
+    if tracker is None:
+        return
+    ctx.state.evaluation_reachability_summary = tracker.summary_fields(finalize=finalize)
+    elig = ctx.entry_eligible_symbols
+    if elig is not None:
+        ctx.state.evaluation_reachability_summary["universe_active_symbol_count"] = int(len(elig))
+    # Candidate / accept counts for Discord summary (from existing state)
+    ctx.state.evaluation_reachability_summary["candidate_count"] = int(
+        sum(1 for e in ctx.state.events if e.get("event_type") == "candidate")
+    )
+    ctx.state.evaluation_reachability_summary["gate_accepted_count"] = int(len(ctx.state.accepted_rows))
+    ctx.state.evaluation_reachability_summary["official_entry_count"] = int(
+        sum(1 for r in ctx.state.accepted_rows if r.get("position_registered") or r.get("official_entry"))
+    )
 
 
 def _stage0_normalize_payload(
@@ -3312,6 +3740,21 @@ def _stage1_evaluate_freshness(
         freshness = compute_entry_freshness(
             enriched, pipeline_source=ctx.source, reference_now=ref_now
         )
+        # Phase687W43F: use carried-forward last board/price times (thresholds unchanged)
+        try:
+            from small_paper.evaluation_reachability import merge_freshness_snapshot_with_state
+
+            tracker = _ensure_evaluation_reachability(ctx)
+            ov = tracker.freshness_overrides(sym)
+            freshness = merge_freshness_snapshot_with_state(
+                freshness,
+                last_price_update_ts=ov.get("last_price_update_ts"),
+                last_board_update_ts=ov.get("last_board_update_ts"),
+                reference_now=ref_now,
+                tracker=tracker,
+            )
+        except Exception:
+            pass
         trade["entry_data_source"] = freshness.data_source
         trade["price_age_sec"] = freshness.price_age_sec
         trade["board_age_sec"] = freshness.board_age_sec
@@ -4334,6 +4777,18 @@ def _process_push_payload(
         return
     if trace.enabled:
         trace.symbol = norm.symbol
+    # Phase687W43F: readiness after Stage0 state/history update (never before)
+    try:
+        feat_ok = bool((norm.enriched or {}).get("live_feature_complete"))
+        _reachability_update_from_push(
+            ctx,
+            norm.enriched or payload,
+            symbol=norm.symbol,
+            reference_now=_replay_reference_now(ctx, norm.enriched or payload),
+            feature_complete=feat_ok,
+        )
+    except Exception:
+        pass
     close_info = _observer_open_position_tick(ctx, norm)
     if _should_skip_same_push_reentry_after_no_progress(
         close_info, symbol=norm.symbol, message_index=norm.msg_i
@@ -4347,6 +4802,30 @@ def _process_push_payload(
     if ol is not None:
         ol.mark_freshness_end()
     trace.end("stage1_freshness", note=fresh.pre_gate_reason or (fresh.stale_reason or ""))
+    # Phase687W43F: record evaluation attempt / recovery consumption
+    try:
+        import time as _time
+
+        tracker = _ensure_evaluation_reachability(ctx)
+        cycle = getattr(ctx, "_current_evaluation_cycle_id", None) or f"{norm.symbol}:{msg_i}"
+        market_ts = float(eval_mono) if eval_mono is not None else None
+        stale_rej = bool(fresh.stale_reason)
+        st = tracker.get(norm.symbol)
+        tracker.mark_evaluated(
+            norm.symbol,
+            now_mono=_time.monotonic(),
+            market_ts=market_ts,
+            cycle_id=str(cycle),
+            fresh_ok=not stale_rej and fresh.short_circuit_decision is None,
+            stale_reject=stale_rej,
+            price_state_updated_at=getattr(st, "price_state_updated_at", None),
+            board_state_updated_at=getattr(st, "board_state_updated_at", None),
+            history_updated_at=getattr(st, "history_ready_at", None),
+            feature_computed_at=getattr(st, "history_ready_at", None),
+        )
+        _sync_reachability_summary(ctx)
+    except Exception:
+        pass
     pbv2: Optional[Stage2PBv2Result] = None
     if fresh.short_circuit_decision is None:
         trace.start("stage2_pbv2")
@@ -4566,6 +5045,19 @@ def _attach_canonical_summary_fields(
     )
 
 
+def _entry_stage_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    counters = getattr(state, "entry_stage_counters", None)
+    if counters is None:
+        return {"accepted_count_source": "gate_accepted"}
+    out = counters.summary_fields()
+    # Keep legacy accepted_count; clarify it is gate-level.
+    out["accepted_count_note"] = (
+        "accepted_count remains gate_accepted_count for compatibility; "
+        "use position_registered_count / official_entry_count for official ENTRY metrics"
+    )
+    return out
+
+
 def _build_push_replay_summary(
     *,
     config: SmallPaperPilotConfig,
@@ -4659,6 +5151,7 @@ def _build_push_replay_summary(
     base.update(_or_overlay_summary_fields(config, state))
     base.update(_observer_exit_pnl_summary_fields(state.events))
     base.update(_entry_stop_reject_logging_summary_fields(state))
+    base.update(_entry_stage_summary_fields(state))
     base.update(
         _position_cap_summary_for_session(
             config=config,
@@ -4703,6 +5196,16 @@ def _legacy_live_order_hooks_enabled(config: SmallPaperPilotConfig) -> bool:
     return not live_order_adapter_enabled(config)
 
 
+def _entry_order_path_allowed(acc: Mapping[str, Any]) -> bool:
+    from small_paper.entry_execution_integrity import is_official_entry_ready
+
+    if acc.get("accept_aborted"):
+        return False
+    if not bool(acc.get("execution_payload_validated")):
+        return False
+    return is_official_entry_ready(acc)
+
+
 def _maybe_record_live_order_pipeline_entry(
     ctx: _PushPipelineContext,
     *,
@@ -4712,6 +5215,8 @@ def _maybe_record_live_order_pipeline_entry(
     acc: Mapping[str, Any],
     scan_meta: Optional[Mapping[str, Any]] = None,
 ) -> None:
+    if not _entry_order_path_allowed(acc):
+        return
     try:
         from small_paper.live_order_adapter import live_order_adapter_enabled, process_paper_entry
 
@@ -4757,6 +5262,8 @@ def _maybe_record_live_capital_check_entry(
     payload: Mapping[str, Any],
     acc: Mapping[str, Any],
 ) -> None:
+    if not _entry_order_path_allowed(acc):
+        return
     try:
         from small_paper.live_capital_manager import capital_manager_enabled, check_entry_capital_on_paper_accept
         from small_paper.live_order_dry_run_adapter import _paper_trade_id
@@ -4807,6 +5314,8 @@ def _maybe_record_live_order_entry(
     payload: Mapping[str, Any],
     acc: Mapping[str, Any],
 ) -> None:
+    if not _entry_order_path_allowed(acc):
+        return
     try:
         from small_paper.live_order_dry_run_adapter import dry_run_adapter_enabled, on_paper_entry_accepted
 
@@ -4845,6 +5354,8 @@ def _maybe_record_live_order_wiring_entry(
     acc: Mapping[str, Any],
     scan_meta: Optional[Mapping[str, Any]] = None,
 ) -> None:
+    if not _entry_order_path_allowed(acc):
+        return
     try:
         from small_paper.live_order_api_wiring import process_entry_wiring, wiring_enabled
 
@@ -4885,23 +5396,26 @@ def _maybe_record_live_order_safety_entry(
     acc: dict[str, Any],
 ) -> None:
     """Phase687W4: actual accepted ENTRY → SafetySM dry-run intent (no real submit)."""
+    if not _entry_order_path_allowed(acc):
+        return
     try:
         from small_paper.live_order_runtime_bridge import ENTRY_SOURCE_ACTUAL, safety_sm_enabled
+        from small_paper.entry_execution_integrity import finite_positive
 
         bridge = getattr(ctx.state, "live_order_safety_bridge", None)
         if bridge is None or not safety_sm_enabled(ctx.config):
             return
-        entry_px = float(
-            trade.get("entry_price")
-            or payload.get("AskPrice")
-            or payload.get("CurrentPrice")
-            or 0.0
-        )
-        if entry_px <= 0:
+        # No AskPrice/CalcPrice fallback — only validated CurrentPrice/entry_price.
+        entry_px = finite_positive(acc.get("validated_entry_price"))
+        if entry_px is None:
+            entry_px = finite_positive(trade.get("entry_price"))
+        if entry_px is None:
+            entry_px = finite_positive(payload.get("CurrentPrice"))
+        if entry_px is None or entry_px <= 0:
             return
-        position_id = str(trade.get("entry_time") or trade.get("position_id") or acc.get("entry_time") or "")
+        position_id = str(acc.get("position_id") or trade.get("position_id") or "")
         if not position_id:
-            position_id = f"{sym}:{acc.get('accepted_at') or ''}"
+            return
         bridge.on_actual_entry(
             symbol=sym,
             price=entry_px,
@@ -5353,18 +5867,40 @@ def run_push_replay_dry_run(
         msg_i += 1
         if streaming_push_replay:
             push_rows = msg_i
-        if poll_interval_sec > 0:
-            ts = _parse_recorded_at_ts(recorded_at)
-            prev = last_eval_ts.get(sym)
-            if prev is not None and (ts - prev) < poll_interval_sec:
-                continue
-            last_eval_ts[sym] = ts
         push_payload = dict(payload)
         if recorded_at:
             push_payload["recorded_at"] = recorded_at
+        replay_mono = _parse_recorded_at_ts(recorded_at) if recorded_at else None
+        # Phase687W43F: state update when throttled; full Stage0 only when evaluating
+        try:
+            tracker = _ensure_evaluation_reachability(ctx)
+            ref = _replay_reference_now(ctx, push_payload)
+            _reachability_update_from_push(
+                ctx, push_payload, symbol=sym, reference_now=ref
+            )
+            ts = float(replay_mono) if replay_mono else 0.0
+            do_eval, _skip, cycle_id = tracker.should_evaluate(
+                sym,
+                now_mono=ts if ts else time.monotonic(),
+                market_ts=ts if ts else None,
+                poll_interval_sec=float(poll_interval_sec or 0),
+                ring_only_warmup=False,
+            )
+            if not do_eval:
+                _throttled_state_only_push(ctx, push_payload, symbol=sym)
+                continue
+            ctx._current_evaluation_cycle_id = cycle_id  # type: ignore[attr-defined]
+            if ts:
+                last_eval_ts[sym] = ts
+        except Exception:
+            if poll_interval_sec > 0:
+                ts = _parse_recorded_at_ts(recorded_at)
+                prev = last_eval_ts.get(sym)
+                if prev is not None and (ts - prev) < poll_interval_sec:
+                    continue
+                last_eval_ts[sym] = ts
         # Phase629A: drive entry-scan batch windows from market time so Stage
         # call overhead cannot change flush boundaries / accepted counts.
-        replay_mono = _parse_recorded_at_ts(recorded_at) if recorded_at else None
         _process_push_payload(
             ctx,
             push_payload,
@@ -5396,6 +5932,10 @@ def run_push_replay_dry_run(
 
     runtime_sec = time.monotonic() - state.started_mono
     positions = _build_positions_snapshot(state.accepted_rows, gate)
+    try:
+        _sync_reachability_summary(ctx, finalize=True)
+    except Exception:
+        pass
     summary = _build_push_replay_summary(
         config=replay_config,
         state=state,
@@ -5826,6 +6366,19 @@ def _build_live_summary(
         },
         **{k: session_cfg[k] for k in ("duration_sec", "poll_interval_sec", "session_start", "session_end") if k in session_cfg},
     }
+    # Phase687W34: AM/PM Summary + Shadow hooks require am_pm_session on summary
+    # (live_session_config already has it; previously omitted → daily_summary forever-DEDUPED).
+    if session_cfg.get("am_pm_session"):
+        summary["am_pm_session"] = dict(session_cfg.get("am_pm_session") or {})
+    if session_cfg.get("universe_mode"):
+        summary.setdefault("universe_mode", session_cfg.get("universe_mode"))
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
+
+        summary.setdefault("trading_date", _dt.now(_ZI("Asia/Tokyo")).strftime("%Y%m%d"))
+    except Exception:
+        pass
     summary.update(_policy_summary_extras(config))
     summary.update(_symbol_cooloff_summary_fields(gate, state))
     summary.update(_daytrade_suitability_summary_fields(gate, state))
@@ -5860,9 +6413,34 @@ def _build_live_summary(
     summary.update(_flat_weak_range_forward_shadow_summary_fields(state))
     summary.update(_entry_expectancy_score_summary_fields(state))
     summary.update(_freshness_semantics_v2_summary_fields(config, state))
+    # Phase687W43F evaluation reachability metrics
+    ers = dict(getattr(state, "evaluation_reachability_summary", None) or {})
+    if ers:
+        summary["evaluation_reachability"] = ers
+        summary["universe_active_symbol_count"] = ers.get("universe_active_symbol_count")
+        summary["push_received_symbol_count"] = ers.get("push_received_symbol_count")
+        summary["price_ready_symbol_count"] = ers.get("price_ready_symbol_count")
+        summary["board_ready_symbol_count"] = ers.get("board_ready_symbol_count")
+        summary["history_ready_symbol_count"] = ers.get("history_ready_symbol_count")
+        summary["feature_ready_symbol_count"] = ers.get("feature_ready_symbol_count")
+        summary["evaluation_ready_symbol_count"] = ers.get("evaluation_ready_symbol_count")
+        summary["evaluation_attempted_count"] = ers.get("evaluation_attempted_count")
+        summary["evaluation_skipped_not_ready_count"] = ers.get("evaluation_skipped_not_ready_count")
+        summary["evaluation_skipped_stale_count"] = ers.get("evaluation_skipped_stale_count")
+        summary["evaluation_recovery_triggered_count"] = ers.get("evaluation_recovery_triggered_count")
+        summary["pipeline_integrity_error_count"] = ers.get("pipeline_integrity_error_count")
+        summary["false_board_stale_prevented_count"] = ers.get("false_board_stale_prevented_count")
+        summary["ready_transition_count"] = ers.get("ready_transition_count")
+        summary["ready_transition_missing_evaluation_count"] = ers.get(
+            "ready_transition_missing_evaluation_count"
+        )
+        summary["recovery_missing_evaluation_count"] = ers.get("recovery_missing_evaluation_count")
+        summary["ready_evaluation_coverage"] = ers.get("ready_evaluation_coverage")
+        summary["recovery_evaluation_coverage"] = ers.get("recovery_evaluation_coverage")
     summary.update(_or_overlay_summary_fields(config, state))
     summary.update(_observer_exit_pnl_summary_fields(state.events))
     summary.update(_entry_stop_reject_logging_summary_fields(state))
+    summary.update(_entry_stage_summary_fields(state))
     summary.update(
         _position_cap_summary_for_session(
             config=config,
@@ -6483,6 +7061,16 @@ def run_live_dry_run(
             )
             removed = sorted(set(before_syms) - set(after_syms)) if before_syms and after_syms else []
             added = sorted(set(after_syms) - set(before_syms)) if before_syms and after_syms else []
+            # Phase687W43F: keep history/readiness for continuing symbols; warmup only new
+            try:
+                tracker = _ensure_evaluation_reachability(pipeline_ctx)
+                continuing = set(after_syms) - set(added)
+                tracker.mark_subscribed(set(after_syms), continuing=continuing)
+                if removed:
+                    tracker.mark_unsubscribed(set(removed))
+                _sync_reachability_summary(pipeline_ctx)
+            except Exception:
+                pass
             state.intraday_refresh_done = True
             state.intraday_refresh_count += 1
             state.intraday_refresh_completed_count += 1
@@ -6776,58 +7364,146 @@ def run_live_dry_run(
         last_hb = start
         msg_i = 0
         last_eval: dict[str, float] = {}
-        stall_notified = False
+        from small_paper.data_path_stall_monitor import (
+            DataPathStallMonitor,
+            StallMonitorConfig,
+            format_process_dead_discord_message,
+            format_stall_discord_message,
+            format_stall_recovered_discord_message,
+        )
+        from small_paper.session_schedule import session_bucket as _session_bucket
+
+        data_path_monitor = DataPathStallMonitor(
+            StallMonitorConfig(
+                heartbeat_sec=float(heartbeat_sec),
+                startup_grace_sec=60.0,
+                observe_window_sec=60.0,
+            )
+        )
+        data_path_monitor.reset(start_mono=start)
+
+        def _capture_status_for_stall() -> str:
+            try:
+                from pathlib import Path as _Path
+
+                root = _Path(native_root) if native_root else None
+                if root is None:
+                    return "不明"
+                # Prefer same-day capture_status under data/market_capture/YYYYMMDD
+                day = _now_iso()[:10].replace("-", "")
+                candidates = [
+                    root / "data" / "market_capture" / day / "capture_status.json",
+                    root / "runtime" / "market_capture_status.json",
+                ]
+                for p in candidates:
+                    if not p.is_file():
+                        continue
+                    import json as _json
+
+                    o = _json.loads(p.read_text(encoding="utf-8"))
+                    return str(o.get("capture_status") or o.get("status") or "不明")
+            except Exception:
+                return "不明"
+            return "不明"
 
         def _maybe_notify_data_path_stalled() -> None:
-            nonlocal stall_notified
-            if stall_notified or not full_session:
+            if not full_session:
                 return
-            # Off-hours: do not treat waiting as stall
             try:
-                if sched.is_before_session() or sched.is_after_session():
-                    return
+                in_market = bool(sched.is_in_session())
             except Exception:
-                pass
-            elapsed = time.monotonic() - start
+                in_market = True
+            try:
+                in_entry = _session_bucket() in ("morning", "afternoon")
+            except Exception:
+                in_entry = True
             push_n = int(getattr(state, "push_messages", 0) or 0)
             gate_n = int(getattr(state, "gate_evaluations", 0) or 0)
             hb_n = int(getattr(state, "heartbeat_count", 0) or 0)
-            stalled = False
-            reason = ""
-            if elapsed >= 60.0 and push_n <= 0:
-                stalled, reason = True, "PUSH 0 for 60s"
-            elif elapsed >= 120.0 and gate_n <= 0:
-                stalled, reason = True, "gate_evaluations 0 for 120s"
-            elif elapsed >= 60.0 and hb_n <= 0:
-                stalled, reason = True, "heartbeat 0 for 60s"
-            if not stalled:
-                return
-            stall_notified = True
-            writer.append_error(
-                {
-                    "event_time": _now_iso(),
-                    "error_type": "PAPER_DATA_PATH_STALLED",
-                    "message": reason,
-                    "push_messages": push_n,
-                    "gate_evaluations": gate_n,
-                    "heartbeat_count": hb_n,
-                }
+            snap = data_path_monitor.evaluate(
+                mono=time.monotonic(),
+                push_messages=push_n,
+                gate_evaluations=gate_n,
+                heartbeat_count=hb_n,
+                in_market_hours=in_market,
+                in_entry_hours=in_entry,
+                process_alive=True,
             )
-            if discord and discord.active:
-                from small_paper.session_validity import format_paper_not_running_discord_lines
-
-                discord.notify_error(
-                    operation="paper_data_path",
-                    message="\n".join(
-                        ["【PAPER_DATA_PATH_STALLED】", reason]
-                        + format_paper_not_running_discord_lines(
-                            stop_point="data_path",
-                            push=push_n,
-                            gate=gate_n,
-                        )
-                    ),
-                    extra={"stop_reason": "PAPER_DATA_PATH_STALLED"},
+            if snap.notify_process_dead:
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "error_type": "PAPER_DATA_PATH_STALLED",
+                        "message": snap.reason,
+                        "monitor_state": snap.state.value,
+                        "push_messages": push_n,
+                        "gate_evaluations": gate_n,
+                        "heartbeat_count": hb_n,
+                        "heartbeat_age_sec": snap.heartbeat_age_sec,
+                        "push_delta": snap.push_delta,
+                        "gate_delta": snap.gate_delta,
+                    }
                 )
+                if discord and discord.active:
+                    discord.notify_error(
+                        operation="paper_data_path",
+                        message=format_process_dead_discord_message(
+                            capture_status=_capture_status_for_stall()
+                        ),
+                        extra={"stop_reason": "PAPER_PROCESS_DEAD"},
+                    )
+                return
+            if snap.notify_stalled:
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "error_type": "PAPER_DATA_PATH_STALLED",
+                        "message": snap.reason,
+                        "monitor_state": snap.state.value,
+                        "push_messages": push_n,
+                        "gate_evaluations": gate_n,
+                        "heartbeat_count": hb_n,
+                        "heartbeat_age_sec": snap.heartbeat_age_sec,
+                        "push_delta": snap.push_delta,
+                        "gate_delta": snap.gate_delta,
+                    }
+                )
+                if discord and discord.active:
+                    discord.notify_error(
+                        operation="paper_data_path",
+                        message=format_stall_discord_message(
+                            heartbeat_age_sec=snap.heartbeat_age_sec,
+                            push_delta=snap.push_delta,
+                            gate_delta=snap.gate_delta,
+                            process_alive=snap.process_alive,
+                            capture_status=_capture_status_for_stall(),
+                        ),
+                        extra={"stop_reason": "PAPER_DATA_PATH_STALLED"},
+                    )
+                return
+            if snap.notify_recovered:
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "error_type": "PAPER_DATA_PATH_RECOVERED",
+                        "message": "push_or_gate_increment_resumed",
+                        "monitor_state": snap.state.value,
+                        "push_messages": push_n,
+                        "gate_evaluations": gate_n,
+                        "heartbeat_count": hb_n,
+                        "push_delta": snap.push_delta,
+                        "gate_delta": snap.gate_delta,
+                    }
+                )
+                if discord and discord.active:
+                    discord.notify_error(
+                        operation="paper_data_path_recovered",
+                        message=format_stall_recovered_discord_message(
+                            push_delta=snap.push_delta,
+                            gate_delta=snap.gate_delta,
+                        ),
+                        extra={"stop_reason": "PAPER_DATA_PATH_RECOVERED"},
+                    )
 
         def _should_stop() -> bool:
             if state.stop_requested:
@@ -6925,8 +7601,39 @@ def run_live_dry_run(
                             except Exception as e:
                                 _log_api_error("push_recorder", e)
                         ev_now = time.monotonic()
-                        if sym in last_eval and (ev_now - last_eval[sym]) < poll_interval_sec:
-                            continue
+                        # Phase687W43F: always update state; throttle only evaluation
+                        try:
+                            from small_paper.pre_session_warmup import ring_only_warmup_active
+
+                            ring_only = ring_only_warmup_active(
+                                config=config, am_pm_policy=am_pm_policy, now=datetime.now(JST)
+                            )
+                            if ring_only:
+                                _warmup_ring_only_push(
+                                    pipeline_ctx, payload, msg_i, symbol=sym
+                                )
+                                continue
+                            tracker = _ensure_evaluation_reachability(pipeline_ctx)
+                            # Timestamp/readiness peek only — avoid double ring/feature update
+                            _reachability_update_from_push(
+                                pipeline_ctx, payload, symbol=sym, reference_now=datetime.now(JST)
+                            )
+                            do_eval, _skip_reason, cycle_id = tracker.should_evaluate(
+                                sym,
+                                now_mono=ev_now,
+                                market_ts=None,
+                                poll_interval_sec=float(poll_interval_sec or 0),
+                                ring_only_warmup=False,
+                            )
+                            if not do_eval:
+                                _throttled_state_only_push(
+                                    pipeline_ctx, payload, symbol=sym
+                                )
+                                continue
+                            pipeline_ctx._current_evaluation_cycle_id = cycle_id  # type: ignore[attr-defined]
+                        except Exception:
+                            if sym in last_eval and (ev_now - last_eval[sym]) < poll_interval_sec:
+                                continue
                         last_eval[sym] = ev_now
                         _process_payload(payload, msg_i)
                 except asyncio.CancelledError:
@@ -6967,6 +7674,16 @@ def run_live_dry_run(
 
     runtime_sec = time.monotonic() - state.started_mono
     positions = _build_positions_snapshot(state.accepted_rows, gate)
+    # Finalize W43F reachability counters (pending ready/recovery → missing if unevaluated)
+    try:
+        from small_paper.evaluation_reachability import EvaluationReachabilityTracker
+
+        # Find tracker via last pipeline context stored on state if present
+        ers_tracker = getattr(state, "_evaluation_reachability_tracker", None)
+        if isinstance(ers_tracker, EvaluationReachabilityTracker):
+            state.evaluation_reachability_summary = ers_tracker.summary_fields(finalize=True)
+    except Exception:
+        pass
     summary = _build_live_summary(
         config=config,
         state=state,
@@ -7321,6 +8038,30 @@ def run_live_dry_run(
             summary["am_pm_summary_preserved_path"] = str(preserved)
     except Exception as exc:
         log.warning("am_pm summary preservation failed: %s", exc)
+    # Phase687W38: research multi-day board dataset append (fail-open; no strategy impact)
+    try:
+        from research.board_entry_dataset_append import maybe_append_session_board_dataset
+
+        summary["board_entry_dataset_append"] = maybe_append_session_board_dataset(
+            native_root=native_root,
+            session_dir=output_dir,
+            summary=summary,
+        )
+    except Exception as exc:
+        log.warning("board_entry_dataset append failed: %s", exc)
+        summary["board_entry_dataset_append"] = {"status": "ERROR", "error": str(exc)}
+    # Phase687W43: research pre-entry market state append (fail-open; no strategy impact)
+    try:
+        from research.pre_entry_market_state import maybe_append_session_market_state
+
+        summary["pre_entry_market_state_append"] = maybe_append_session_market_state(
+            native_root=native_root,
+            session_dir=output_dir,
+            summary=summary,
+        )
+    except Exception as exc:
+        log.warning("pre_entry_market_state append failed: %s", exc)
+        summary["pre_entry_market_state_append"] = {"status": "ERROR", "error": str(exc)}
     _write_quality_top_debug(output_dir, state.events)
     _write_phase396_artifacts_safe(
         repo_root,
