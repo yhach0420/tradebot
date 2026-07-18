@@ -203,6 +203,12 @@ def main() -> int:
     session_stamp = datetime.now(JST).strftime("%H%M%S")
     source = args.source or config.default_source
 
+    # Phase687W58: live Paper path defaults Forward observers ON (replay/tests unchanged)
+    if source == "live":
+        from small_paper.forward_observer_defaults import ensure_paper_forward_observer_env
+
+        ensure_paper_forward_observer_env()
+
     if not args.skip_safety:
         from small_paper.pilot_env import load_pilot_environment, log_pilot_env_status
 

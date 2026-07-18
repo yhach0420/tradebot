@@ -46,6 +46,11 @@ def _bootstrap() -> tuple[Path, Path]:
 def main() -> int:
     repo_root, native_root = _bootstrap()
 
+    # Phase687W58: Paper Runtime → Forward observers default ON (respect explicit 0)
+    from small_paper.forward_observer_defaults import ensure_paper_forward_observer_env
+
+    ensure_paper_forward_observer_env()
+
     from runner.am_pm_daily_runner import (
         ENTRY_GUARD_SHADOW_YAML,
         SHADOW_PILOT_YAML,

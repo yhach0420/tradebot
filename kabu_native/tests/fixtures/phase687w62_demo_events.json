@@ -1,0 +1,105 @@
+{
+  "trading_date": "2026-07-20",
+  "scenarios": {
+    "A": {
+      "symbol": "7203.T",
+      "position_id": "DEMO-POS-001",
+      "entry_price": 2800,
+      "exit_price": 2842,
+      "entry_time": "2026-07-20T09:12:00+09:00",
+      "exit_time": "2026-07-20T09:28:00+09:00",
+      "exit_reason": "board_dynamic_trailing",
+      "pnl_yen_100": 4200,
+      "pnl_pct": 1.5,
+      "session": "am"
+    },
+    "B": {
+      "symbol": "6758.T",
+      "position_id": "DEMO-POS-002",
+      "entry_price": 3000,
+      "exit_price": 2964,
+      "entry_time": "2026-07-20T09:35:00+09:00",
+      "exit_time": "2026-07-20T09:38:30+09:00",
+      "exit_reason": "hard_stop",
+      "stop_hit": true,
+      "pnl_yen_100": -3600,
+      "pnl_pct": -1.2,
+      "session": "am"
+    },
+    "C": {
+      "symbol": "9984.T",
+      "accept_id": "DEMO-ACC-003",
+      "official_entry": false,
+      "abort_reason": "registration_failed",
+      "time": "2026-07-20T09:44:00+09:00",
+      "session": "am"
+    },
+    "D": {
+      "symbol": "8306.T",
+      "gate_pass": false,
+      "reject_reason": "flat_band_mainline",
+      "time": "2026-07-20T10:03:00+09:00",
+      "session": "am"
+    },
+    "E": {
+      "symbol": "8035.T",
+      "position_id": "DEMO-POS-004",
+      "entry_price": 25000,
+      "exit_price": 25125,
+      "entry_time": "2026-07-20T13:05:00+09:00",
+      "exit_time": "2026-07-20T13:26:00+09:00",
+      "exit_reason": "board_dynamic_trailing",
+      "pnl_yen_100": 12500,
+      "pnl_pct": 0.5,
+      "session": "pm"
+    }
+  },
+  "observers": {
+    "cost_aware": {
+      "enabled": true,
+      "selection_cycles": 2,
+      "candidates": 3,
+      "official_entry_match": 0,
+      "official_entry_mismatch": 2,
+      "n_closed": 2,
+      "stop_risk_reject": 1,
+      "never_filled": 0,
+      "later_fill": 1,
+      "shadow_pnl_yen_100": 5800,
+      "runtime_pnl_yen_100": 0,
+      "delta_yen": 5800
+    },
+    "flat_weak_range": {
+      "enabled": true,
+      "candidates": 3,
+      "would_block": 2,
+      "would_keep": 1,
+      "completed": 2,
+      "blocked_losers": 2,
+      "blocked_winners": 0,
+      "delta_yen": 4600
+    },
+    "pullback_misread": {
+      "enabled": true,
+      "hits": 2,
+      "would_block": 1,
+      "completed": 1,
+      "blocked_losers": 1,
+      "blocked_winners": 0,
+      "delta_yen": 1500
+    },
+    "pullback_volume": {
+      "enabled": true,
+      "hits": 5,
+      "eligible": 5,
+      "recorded": 5,
+      "volume_high_n": 2,
+      "volume_mid_n": 1,
+      "volume_low_n": 2,
+      "volume_high": {"n": 2, "healthy_rate": 1.0, "collapse_rate": 0.0},
+      "volume_mid": {"n": 1},
+      "volume_low": {"n": 2, "healthy_rate": 0.0, "collapse_rate": 1.0},
+      "board_volume": {"board_down_vol_low": {"n": 2}}
+    }
+  }
+}

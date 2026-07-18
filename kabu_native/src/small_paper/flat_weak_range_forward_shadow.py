@@ -239,6 +239,10 @@ class _BucketStats:
     mfe0_shadow: int = 0
 
 
+def _sym_entry_key(symbol: str, entry_time: str) -> str:
+    return f"{symbol}|{entry_time}"
+
+
 @dataclass
 class FlatWeakRangeForwardShadowCounters:
     flat_weak_range_shadow_target_count: int = 0
@@ -255,9 +259,15 @@ class FlatWeakRangeForwardShadowCounters:
     no_progress_count_shadow: int = 0
     mfe0_count_actual: int = 0
     mfe0_count_shadow: int = 0
+    exit_join_count: int = 0
+    exit_join_miss_count: int = 0
     _actual_yens: list[float] = field(default_factory=list)
     _shadow_yens: list[float] = field(default_factory=list)
     _buckets: dict[str, _BucketStats] = field(default_factory=dict)
+    # Phase687W59: immutable join books (not FIFO)
+    _open_by_position_id: dict[str, dict[str, Any]] = field(default_factory=dict)
+    _open_by_sym_entry: dict[str, dict[str, Any]] = field(default_factory=dict)
+    _exited_keys: set[str] = field(default_factory=set)
 
     def _bucket(self, name: str) -> _BucketStats:
         if name not in self._buckets:
@@ -276,16 +286,106 @@ class FlatWeakRangeForwardShadowCounters:
             bucket.block_count += 1
         else:
             self.flat_weak_range_shadow_kept_count += 1
+        snap = {
+            "flat_weak_range_shadow_candidate": True,
+            "flat_weak_range_shadow_block": blocked,
+            "flat_weak_range_shadow_reason": fields.get("flat_weak_range_shadow_reason") or "",
+            "minutes_from_open": fields.get("minutes_from_open"),
+            "session_kind": fields.get("session_kind"),
+            "symbol": str(fields.get("symbol") or ""),
+            "entry_time": str(fields.get("entry_time") or ""),
+            "decision_id": str(fields.get("decision_id") or fields.get("candidate_id") or ""),
+        }
+        pid = str(fields.get("position_id") or fields.get("observer_position_id") or "")
+        if pid:
+            self._open_by_position_id[pid] = snap
+        sk = _sym_entry_key(snap["symbol"], snap["entry_time"])
+        if snap["symbol"] and snap["entry_time"]:
+            self._open_by_sym_entry[sk] = snap
+        elif snap["decision_id"]:
+            self._open_by_sym_entry[f"decision|{snap['decision_id']}"] = snap
+
+    def bind_position(
+        self,
+        *,
+        position_id: str,
+        symbol: str,
+        entry_time: str,
+        decision_id: str = "",
+    ) -> None:
+        """Bind immutable position_id after official register (accept may precede id)."""
+        pid = str(position_id or "")
+        if not pid:
+            return
+        sk = _sym_entry_key(str(symbol or ""), str(entry_time or ""))
+        snap = self._open_by_sym_entry.get(sk)
+        if snap is None and decision_id:
+            snap = self._open_by_sym_entry.get(f"decision|{decision_id}")
+        if snap is None:
+            return
+        bound = dict(snap)
+        bound["position_id"] = pid
+        bound["symbol"] = str(symbol or snap.get("symbol") or "")
+        bound["entry_time"] = str(entry_time or snap.get("entry_time") or "")
+        self._open_by_position_id[pid] = bound
+        if bound["symbol"] and bound["entry_time"]:
+            self._open_by_sym_entry[_sym_entry_key(bound["symbol"], bound["entry_time"])] = bound
+
+    def _lookup_open(self, row: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+        pid = str(row.get("position_id") or row.get("observer_position_id") or "")
+        if pid and pid in self._open_by_position_id:
+            return self._open_by_position_id.get(pid)
+        sk = _sym_entry_key(str(row.get("symbol") or ""), str(row.get("entry_time") or ""))
+        if sk in self._open_by_sym_entry:
+            return self._open_by_sym_entry.get(sk)
+        did = str(row.get("decision_id") or row.get("candidate_id") or "")
+        if did:
+            return self._open_by_sym_entry.get(f"decision|{did}")
+        return None
 
     def record_exit(self, row: Mapping[str, Any]) -> None:
-        if not _bool(row.get("flat_weak_range_shadow_candidate")):
+        open_snap = self._lookup_open(row)
+        candidate = _bool(row.get("flat_weak_range_shadow_candidate"))
+        if not candidate and open_snap is not None:
+            # W59 join fix: EXIT row missing FWR fields → recover from open book
+            candidate = _bool(open_snap.get("flat_weak_range_shadow_candidate"))
+            row = {
+                **dict(row),
+                "flat_weak_range_shadow_candidate": open_snap.get("flat_weak_range_shadow_candidate"),
+                "flat_weak_range_shadow_block": open_snap.get("flat_weak_range_shadow_block"),
+                "flat_weak_range_shadow_reason": open_snap.get("flat_weak_range_shadow_reason"),
+                "minutes_from_open": row.get("minutes_from_open") or open_snap.get("minutes_from_open"),
+                "session_kind": row.get("session_kind") or open_snap.get("session_kind"),
+            }
+        if not candidate:
+            self.exit_join_miss_count += 1
             return
-        delta = _float(row.get("delta_yen")) or 0.0
-        shadow_yen = _float(row.get("shadow_pnl_yen_100")) or 0.0
+        pid = str(row.get("position_id") or row.get("observer_position_id") or "")
+        sk = _sym_entry_key(str(row.get("symbol") or ""), str(row.get("entry_time") or ""))
+        dedupe = pid or sk
+        if dedupe and dedupe in self._exited_keys:
+            return
+        if dedupe:
+            self._exited_keys.add(dedupe)
+        self.exit_join_count += 1
+        delta = _float(row.get("delta_yen"))
+        shadow_yen = _float(row.get("shadow_pnl_yen_100"))
         actual_yen = _float(row.get("actual_pnl_yen_100"))
-        if actual_yen is None:
-            actual_yen = round(shadow_yen - delta, 2)
         blocked = _bool(row.get("flat_weak_range_shadow_block"))
+        if actual_yen is None or shadow_yen is None:
+            # recompute from prices when join recovered without enrich fields
+            ep = _float(row.get("entry_price"))
+            xp = _float(row.get("exit_price") or row.get("current_price"))
+            if ep is not None and xp is not None and ep > 0:
+                from replay.pnl_yen import compute_pnl_yen_100
+
+                actual_yen = round(compute_pnl_yen_100(ep, xp), 2)
+                shadow_yen = 0.0 if blocked else actual_yen
+                delta = round(shadow_yen - actual_yen, 2)
+        if actual_yen is None:
+            actual_yen = round((shadow_yen or 0.0) - (delta or 0.0), 2)
+        if shadow_yen is None:
+            shadow_yen = 0.0 if blocked else actual_yen
         bucket = self._bucket(_session_bucket(row))
         self.actual_total_pnl_yen_100 = round(self.actual_total_pnl_yen_100 + actual_yen, 2)
         self.shadow_total_pnl_yen_100 = round(self.shadow_total_pnl_yen_100 + shadow_yen, 2)
@@ -325,6 +425,10 @@ class FlatWeakRangeForwardShadowCounters:
             if not blocked:
                 self.mfe0_count_shadow += 1
                 bucket.mfe0_shadow += 1
+        if pid:
+            self._open_by_position_id.pop(pid, None)
+        if sk:
+            self._open_by_sym_entry.pop(sk, None)
 
     def summary_fields(self) -> dict[str, Any]:
         n = self.flat_weak_range_shadow_target_count
@@ -341,6 +445,9 @@ class FlatWeakRangeForwardShadowCounters:
             "flat_weak_range_shadow_target_count": self.flat_weak_range_shadow_target_count,
             "flat_weak_range_shadow_block_count": self.flat_weak_range_shadow_block_count,
             "flat_weak_range_shadow_kept_count": self.flat_weak_range_shadow_kept_count,
+            "flat_weak_range_shadow_completed": self.exit_join_count,
+            "flat_weak_range_shadow_exit_join_count": self.exit_join_count,
+            "flat_weak_range_shadow_exit_join_miss_count": self.exit_join_miss_count,
             "flat_weak_range_shadow_actual_total_pnl_yen_100": self.actual_total_pnl_yen_100,
             "flat_weak_range_shadow_total_pnl_yen_100": self.shadow_total_pnl_yen_100,
             "flat_weak_range_shadow_delta_yen": delta,
@@ -382,7 +489,8 @@ def format_flat_weak_range_shadow_discord_lines(summary: Mapping[str, Any]) -> l
         "FlatWeak+Range Shadow:",
         (
             f"target={summary.get('flat_weak_range_shadow_target_count', 0)} "
-            f"block={summary.get('flat_weak_range_shadow_block_count', 0)}"
+            f"block={summary.get('flat_weak_range_shadow_block_count', 0)} "
+            f"completed={summary.get('flat_weak_range_shadow_completed', 0)}"
         ),
         (
             f"blocked W/L: {summary.get('flat_weak_range_shadow_blocked_winners', 0)}/"

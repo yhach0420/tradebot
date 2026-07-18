@@ -819,6 +819,8 @@ class _LiveRunState:
     pullback_misread_entry_guard_shadow: Any = field(
         default_factory=_default_pullback_misread_entry_guard_shadow_counters
     )
+    pullback_volume_forward: Any = None
+    forward_observers_startup_notified: bool = False
     pbv2_rise5_shadow: Any = field(default_factory=_default_pbv2_rise5_shadow_counters)
     pbv2_flat_band_shadow: Any = field(default_factory=_default_pbv2_flat_band_shadow_counters)
     flat_weak_range_forward_shadow: Any = field(
@@ -1423,6 +1425,14 @@ def _log_and_dispatch_observer_events(
                 pb_counters = getattr(state, "pullback_misread_entry_guard_shadow", None)
                 if pb_counters is not None:
                     pb_counters.record_exit(row)
+                try:
+                    pv = getattr(state, "pullback_volume_forward", None)
+                    if pv is not None and getattr(pv, "enabled", False):
+                        from small_paper.pullback_volume_forward_logger import note_runtime_exit
+
+                        note_runtime_exit(pv, row)
+                except Exception:
+                    pass
                 rise5_counters = getattr(state, "pbv2_rise5_shadow", None)
                 if rise5_counters is not None:
                     rise5_counters.record_exit(row)
@@ -1521,6 +1531,32 @@ def _extended_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
     if counters is None:
         return {}
     return counters.summary_fields()
+
+
+def _cost_aware_entry_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    """Observe-only; empty unless COST_AWARE_ENTRY_SHADOW=1."""
+    try:
+        from small_paper.cost_aware_entry_shadow import (
+            finalize_never_filled,
+            shadow_enabled,
+            summarize_state,
+        )
+
+        if not shadow_enabled():
+            return {}
+        st = getattr(state, "cost_aware_entry_shadow", None)
+        if st is None:
+            return {
+                "cost_aware_entry_shadow": {
+                    "enabled": True,
+                    "selection_cycles": 0,
+                    "np_in_decision": False,
+                }
+            }
+        finalize_never_filled(st)
+        return {"cost_aware_entry_shadow": summarize_state(st)}
+    except Exception:
+        return {}
 
 
 def _post_entry_forward_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
@@ -1821,6 +1857,120 @@ def _high_drift_pullback_guard_summary_fields(
     out["high_drift_pullback_reject_count"] = state.high_drift_pullback_reject_count
     out["high_drift_pullback_reject_symbols"] = sorted(state.high_drift_pullback_reject_symbols)
     return out
+
+
+def _notify_forward_observers_startup_once(
+    state: _LiveRunState,
+    discord: Optional[SmallPaperDiscordNotifier],
+    config: Any = None,
+) -> None:
+    """Phase687W59: one-shot [TRADEBOT PAPER START]. Fail-open; never blocks Paper."""
+    if getattr(state, "forward_observers_startup_notified", False):
+        return
+    try:
+        from small_paper.discord_current_system_summary import (
+            build_runtime_status,
+            render_paper_start_lines,
+        )
+        from small_paper.forward_observer_defaults import forward_observer_status_block
+
+        status = build_runtime_status(config)
+        lines = render_paper_start_lines(status)
+        state.forward_observers_startup_notified = True
+        if discord is None or not getattr(discord, "active", False):
+            return
+        discord.notify_forward_observers_startup(lines=lines)
+        block = forward_observer_status_block(config)
+        if block.get("warning"):
+            try:
+                discord.notify_error(
+                    operation="forward_observers",
+                    message=str(block["warning"]),
+                    extra={
+                        "cost_aware": block.get("cost_aware_entry_shadow_enabled"),
+                        "pullback_volume": block.get("pullback_volume_forward_enabled"),
+                    },
+                )
+            except Exception:
+                pass
+    except Exception:
+        state.forward_observers_startup_notified = True
+
+
+def _ensure_pullback_volume_forward(state: _LiveRunState, config: Any = None) -> Any:
+    """Phase687W57 observe-only logger; fail-open; never affects GateDecision."""
+    st = getattr(state, "pullback_volume_forward", None)
+    if st is not None:
+        return st
+    try:
+        from small_paper.pullback_volume_forward_logger import (
+            PullbackVolumeForwardState,
+            logger_enabled,
+        )
+
+        enabled = logger_enabled(getattr(config, "__dict__", None) if config is not None else None)
+        # also accept config mapping-like
+        if not enabled and isinstance(config, dict):
+            enabled = logger_enabled(config)
+        st = PullbackVolumeForwardState(enabled=enabled)
+        if enabled:
+            from datetime import datetime as _dt
+            from zoneinfo import ZoneInfo as _ZI
+
+            st.trading_date = _dt.now(_ZI("Asia/Tokyo")).strftime("%Y%m%d")
+        state.pullback_volume_forward = st
+        return st
+    except Exception:
+        return None
+
+
+def _pullback_volume_forward_on_push(
+    ctx: "_PushPipelineContext",
+    *,
+    symbol: str,
+    payload: Mapping[str, Any],
+    px_tick: float,
+) -> None:
+    """Observe-only volume/imbalance ring + path labels. Never touches GateDecision."""
+    try:
+        pv = _ensure_pullback_volume_forward(ctx.state, ctx.config)
+        if pv is None or not getattr(pv, "enabled", False):
+            return
+        from small_paper.board_imbalance_shadow import compute_entry_order_book_imbalance_field
+        from small_paper.extended_entry_shadow import tick_ts_from_payload
+        from small_paper.pullback_volume_forward_logger import note_push, update_price_path
+
+        ts = tick_ts_from_payload(payload)
+        try:
+            epoch = float(ts)
+        except (TypeError, ValueError):
+            epoch = datetime.now(JST).timestamp()
+        imb_fields = compute_entry_order_book_imbalance_field(payload=payload)
+        note_push(
+            pv,
+            symbol=symbol,
+            payload={**dict(payload), **imb_fields},
+            event_epoch=epoch,
+        )
+        if px_tick > 0:
+            update_price_path(pv, symbol=symbol, price=px_tick, event_epoch=epoch)
+    except Exception:
+        pass
+
+
+def _pullback_volume_forward_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    st = getattr(state, "pullback_volume_forward", None)
+    if st is None:
+        return {}
+    try:
+        from small_paper.pullback_volume_forward_logger import aggregate_rows
+
+        block = st.summary_block()
+        if st.rows:
+            block.update(aggregate_rows(list(st.rows.values())))
+        return {"pullback_volume_forward": block}
+    except Exception:
+        return {}
 
 
 def _pullback_misread_entry_guard_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
@@ -2558,6 +2708,21 @@ def _execute_accepted_entry(
         pb_shadow = compute_pullback_misread_guard_fields(trade)
         trade.update(pb_shadow)
         ctx.state.pullback_misread_entry_guard_shadow.record_accept(pb_shadow)
+        try:
+            pv = _ensure_pullback_volume_forward(ctx.state, ctx.config)
+            if pv is not None and getattr(pv, "enabled", False):
+                from small_paper.pullback_volume_forward_logger import build_entry_row
+
+                build_entry_row(
+                    pv,
+                    {**trade, **pb_shadow},
+                    official_entry=True,
+                    official_reject=False,
+                    session=str(getattr(ctx.state, "session_kind", "") or ""),
+                    trading_date=str(getattr(pv, "trading_date", "") or ""),
+                )
+        except Exception:
+            pass
         from small_paper.near_day_high_low_momentum_dynamic40_entry_guard import (
             compute_near_day_high_low_momentum_guard_fields,
         )
@@ -2647,7 +2812,7 @@ def _execute_accepted_entry(
         trade.update(fwr_shadow)
         fwr_counters = getattr(ctx.state, "flat_weak_range_forward_shadow", None)
         if fwr_counters is not None:
-            fwr_counters.record_accept(fwr_shadow)
+            fwr_counters.record_accept({**trade, **fwr_shadow})
     from small_paper.readiness_forward_shadow import (
         compute_readiness_shadow_fields,
         readiness_shadow_any_enabled,
@@ -2855,6 +3020,30 @@ def _emit_entry_aborted_audit(
         )
     except Exception:
         pass
+    # One Discord alert per decision_id (fail-open); never official ENTRY.
+    try:
+        seen = getattr(ctx.state, "_entry_aborted_discord_ids", None)
+        if seen is None:
+            seen = set()
+            ctx.state._entry_aborted_discord_ids = seen
+        if decision_id and decision_id in seen:
+            return
+        if decision_id:
+            seen.add(decision_id)
+        discord = getattr(ctx, "discord", None)
+        if discord is None or not getattr(discord, "active", False):
+            return
+        from small_paper.discord_current_system_summary import render_entry_aborted_lines
+
+        stage = str(acc.get("accept_stage") or "execution_payload_validation")
+        lines = render_entry_aborted_lines(acc, reason=reason, stage=stage)
+        discord.notify_error(
+            operation="ENTRY_ABORTED",
+            message="\n".join(lines),
+            extra={"decision_id": decision_id, "official_entry": False},
+        )
+    except Exception:
+        pass
 
 
 def _finalize_accepted_entry_stages(
@@ -3043,6 +3232,17 @@ def _finalize_accepted_entry_stages(
                 acc["accept_stage"] = STAGE_POSITION_REGISTERED
                 trade["position_id"] = pid
                 trade["observer_position_id"] = pid
+                try:
+                    fwr_counters = getattr(ctx.state, "flat_weak_range_forward_shadow", None)
+                    if fwr_counters is not None and hasattr(fwr_counters, "bind_position"):
+                        fwr_counters.bind_position(
+                            position_id=pid,
+                            symbol=sym,
+                            entry_time=str(trade.get("entry_time") or acc.get("entry_time") or ""),
+                            decision_id=str(decision_id or ""),
+                        )
+                except Exception:
+                    pass
                 _record_entry_stage(
                     ctx,
                     decision_id=decision_id,
@@ -3185,9 +3385,38 @@ def _finalize_accepted_entry_stages(
     _maybe_record_live_order_entry(ctx, sym=sym, trade=trade, payload=payload, acc=acc)
 
 
+def _cost_aware_shadow_on_scan_flush(ctx: _PushPipelineContext, flush: Any) -> None:
+    """Observe-only selection cycle (all noted symbols). Fail-open. Default OFF."""
+    try:
+        from small_paper.cost_aware_entry_shadow import (
+            finalize_never_filled,
+            run_selection_cycle,
+            shadow_enabled,
+            summarize_state,
+        )
+
+        if not shadow_enabled(getattr(ctx, "config", None)):
+            return
+        st = getattr(ctx.state, "cost_aware_entry_shadow", None)
+        if st is None:
+            return
+        official = [str(c.symbol) for c in (getattr(flush, "accepted", None) or [])]
+        run_selection_cycle(
+            st,
+            scan_id=str(getattr(flush, "scan_id", "") or ""),
+            trading_date=str(getattr(ctx.state, "trading_date", "") or ""),
+            official_accepted_symbols=official,
+        )
+        ctx.state.cost_aware_entry_shadow_summary = summarize_state(st)
+    except Exception:
+        pass
+
+
 def _process_scan_flush(ctx: _PushPipelineContext, flush: Any) -> None:
     from research.exposure_gate import GateDecision
     import time as _time
+
+    _cost_aware_shadow_on_scan_flush(ctx, flush)
 
     ol = getattr(ctx.state, "order_latency_dryrun", None)
     flush_start = _time.monotonic() if ol is not None else 0.0
@@ -3462,6 +3691,7 @@ def _stage0_normalize_payload(
                 current_price=px_tick,
                 prev_close=_as_float(payload.get("PreviousClose")),
             )
+        _pullback_volume_forward_on_push(ctx, symbol=sym, payload=payload, px_tick=px_tick)
 
     snapshot = ctx.feature_bridge.update(sym, payload)
     slm_guard = getattr(ctx.gate, "stop_low_mfe_guard", None)
@@ -4028,6 +4258,31 @@ def _stage6_record_candidate(
                 board_stale=bool(getattr(freshness_decision, "board_stale", False)),
                 trade_stale=bool(getattr(freshness_decision, "trade_stale", False)),
             )
+            # cost_aware_entry_shadow: note every Watch50 eval (not only official accept)
+            try:
+                from small_paper.cost_aware_entry_shadow import (
+                    CostAwareShadowState,
+                    note_symbol_eval,
+                    shadow_enabled,
+                )
+
+                if shadow_enabled(getattr(ctx, "config", None)):
+                    st = getattr(ctx.state, "cost_aware_entry_shadow", None)
+                    if st is None:
+                        st = CostAwareShadowState()
+                        ctx.state.cost_aware_entry_shadow = st
+                    trade_for_shadow = dict(trade)
+                    if payload.get("CurrentPrice") is not None:
+                        trade_for_shadow.setdefault("CurrentPrice", payload.get("CurrentPrice"))
+                    note_symbol_eval(
+                        st,
+                        scan_id=str(scan_id or ""),
+                        symbol=str(sym),
+                        trade=trade_for_shadow,
+                        official_accept=bool(decision.accept),
+                    )
+            except Exception:
+                pass
             if bus is not None:
                 bus.on_post_eval(
                     ctx,
@@ -4228,6 +4483,21 @@ def _stage6_record_reject(
         pb_counters = getattr(ctx.state, "pullback_misread_entry_guard_shadow", None)
         if pb_counters is not None:
             pb_counters.record_reject_candidate(pb_fields)
+        try:
+            pv = _ensure_pullback_volume_forward(ctx.state, ctx.config)
+            if pv is not None and getattr(pv, "enabled", False):
+                from small_paper.pullback_volume_forward_logger import build_entry_row
+
+                build_entry_row(
+                    pv,
+                    {**trade, **pb_fields},
+                    official_entry=False,
+                    official_reject=True,
+                    session=str(getattr(ctx.state, "session_kind", "") or ""),
+                    trading_date=str(getattr(pv, "trading_date", "") or ""),
+                )
+        except Exception:
+            pass
         ctx.writer.append_error(
             {
                 "event_kind": PB_LOG_EVENT_KIND,
@@ -4702,6 +4972,7 @@ def _warmup_ring_only_push(
                 current_price=px_tick,
                 prev_close=_as_float(payload.get("PreviousClose")),
             )
+        _pullback_volume_forward_on_push(ctx, symbol=sym, payload=payload, px_tick=px_tick)
 
 
 def _process_push_payload(
@@ -5037,9 +5308,13 @@ def _attach_canonical_summary_fields(
 ) -> dict[str, Any]:
     from small_paper.canonical_summary import enrich_summary_with_canonical
 
+    peak_hint = summary.get("observer_open_max_positions")
+    if peak_hint is None:
+        peak_hint = summary.get("peak_open_slots")
     return enrich_summary_with_canonical(
         summary,
         events,
+        peak_open_slots=int(peak_hint) if peak_hint is not None else None,
         max_concurrent_positions=config.max_concurrent_positions,
         watch_symbols_count=watch_symbols_count,
     )
@@ -5119,6 +5394,8 @@ def _build_push_replay_summary(
     if getattr(config, "low_liquidity_shadow_enabled", False):
         base["low_liquidity_shadow_reject_count"] = state.low_liquidity_shadow_reject_count
     base.update(_extended_shadow_summary_fields(state))
+    base.update(_cost_aware_entry_shadow_summary_fields(state))
+    base.update(_pullback_volume_forward_summary_fields(state))
     base.update(_post_entry_forward_shadow_summary_fields(state))
     base.update(_classic_momentum_forward_shadow_summary_fields(state))
     base.update(_vwap_shadow_summary_fields(state))
@@ -6388,6 +6665,8 @@ def _build_live_summary(
         summary["low_liquidity_shadow_reject_count"] = state.low_liquidity_shadow_reject_count
     summary.update(_intraday_refresh_summary_fields(state))
     summary.update(_extended_shadow_summary_fields(state))
+    summary.update(_cost_aware_entry_shadow_summary_fields(state))
+    summary.update(_pullback_volume_forward_summary_fields(state))
     summary.update(_post_entry_forward_shadow_summary_fields(state))
     summary.update(_classic_momentum_forward_shadow_summary_fields(state))
     summary.update(_vwap_shadow_summary_fields(state))
@@ -6800,6 +7079,8 @@ def run_live_dry_run(
                 error_logger=_discord_error_logger,
                 delivery_audit=_entry_delivery_audit,
             )
+        # Phase687W58: one-shot Forward observer status (Paper live only)
+        _notify_forward_observers_startup_once(state, discord, config)
         if discord is not None and discord.active and am_pm_policy is not None:
             sk = str(getattr(am_pm_policy, "kind", "am")).lower()
             screening_label = "PM Screening" if sk == "pm" else "AM Screening"
@@ -8062,6 +8343,17 @@ def run_live_dry_run(
     except Exception as exc:
         log.warning("pre_entry_market_state append failed: %s", exc)
         summary["pre_entry_market_state_append"] = {"status": "ERROR", "error": str(exc)}
+    # Phase687W57: Pullback Volume Forward logger finalize (observe-only)
+    try:
+        pv = getattr(state, "pullback_volume_forward", None)
+        if pv is not None and getattr(pv, "enabled", False):
+            from small_paper.pullback_volume_forward_logger import finalize_session
+
+            summary["pullback_volume_forward_finalize"] = finalize_session(pv)
+            summary.update(_pullback_volume_forward_summary_fields(state))
+    except Exception as exc:
+        log.warning("pullback_volume_forward finalize failed: %s", exc)
+        summary["pullback_volume_forward_finalize"] = {"status": "ERROR", "error": str(exc)}
     _write_quality_top_debug(output_dir, state.events)
     _write_phase396_artifacts_safe(
         repo_root,

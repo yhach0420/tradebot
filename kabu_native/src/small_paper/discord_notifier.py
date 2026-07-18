@@ -594,12 +594,22 @@ class SmallPaperDiscordNotifier:
         retry_attempt: int = 0,
     ) -> DiscordPostResult:
         sym = str(event.get("symbol") or "")
-        entry_px = event.get("current_price") or payload.get("CurrentPrice")
+        # Official ENTRY price only: validated entry_price first; never invent 0円
+        entry_px = (
+            event.get("entry_price")
+            or event.get("validated_entry_price")
+            or event.get("current_price")
+            or payload.get("CurrentPrice")
+        )
         try:
-            entry_f = float(entry_px) if entry_px is not None else 0.0
+            entry_f = float(entry_px) if entry_px is not None and str(entry_px).strip() != "" else None
         except (TypeError, ValueError):
-            entry_f = 0.0
-        stop_px, _ = _stop_take(entry_f, self.cfg.hard_stop_pct) if entry_f > 0 else (0.0, 0.0)
+            entry_f = None
+        if entry_f is None or entry_f <= 0:
+            entry_f = None
+        stop_px, _ = (
+            _stop_take(entry_f, self.cfg.hard_stop_pct) if entry_f is not None else (None, None)
+        )
         merged: dict[str, Any] = {**dict(payload), **dict(event)}
         if entry_signal_mono is not None and notify_mono is not None:
             merged["signal_to_notify_latency_ms"] = round(
@@ -1097,6 +1107,33 @@ class SmallPaperDiscordNotifier:
             position_cap_mode=bool(self.cfg.position_cap_mode),
             symbol_pnl_yen_100_today=symbol_cum,
         )
+        # Phase687W59: Forward tags only when present (research context; no false zeros)
+        try:
+            from small_paper.discord_current_system_summary import extract_exit_forward_tags
+
+            tags = extract_exit_forward_tags(context)
+            if tags:
+                fields = list(embed.get("fields") or [])
+                fields.append(
+                    {
+                        "name": "Forward tags",
+                        "value": "\n".join(tags)[:1020],
+                        "inline": False,
+                    }
+                )
+                embed["fields"] = fields
+                obs_t = context.get("observer_entry_time") or context.get("entry_time")
+                age = context.get("market_time_age_sec")
+                extra = []
+                if obs_t:
+                    extra.append(f"observer entry time: {obs_t}")
+                if age is not None:
+                    extra.append(f"market time age: {age}s")
+                if extra:
+                    desc = str(embed.get("description") or "")
+                    embed["description"] = (desc + "\n" + "\n".join(extra))[:2048]
+        except Exception:
+            pass
         return self._post(
             event_tag="EXIT",
             title_line=str(embed["title"]),
@@ -1296,11 +1333,26 @@ class SmallPaperDiscordNotifier:
         except Exception:
             day_yen = canonical.get("total_pnl_yen_100")
             reentry_audit = None
+        research_highlights = None
+        if str(am_pm or "").upper() not in ("AM", "PM"):
+            # Phase687W60: Daily TODAY'S RESEARCH (fail-open; never blocks summary)
+            try:
+                from small_paper.discord_current_system_summary import (
+                    build_daily_research_highlights,
+                )
+
+                research_highlights = build_daily_research_highlights(summary)
+            except Exception:
+                research_highlights = [
+                    "=== TODAY'S RESEARCH ===",
+                    "research highlight unavailable",
+                ]
         return build_summary_embed_payload(
             canonical,
             am_pm=am_pm,
             day_realized_pnl_yen_100=day_yen,
             reentry_audit=reentry_audit,
+            research_highlights=research_highlights,
         )
 
     def _production_summary_fields(
@@ -1496,6 +1548,37 @@ class SmallPaperDiscordNotifier:
             fields=fields,
             color=0xE53E3E,
             dedupe_key=f"error|{operation}",
+        )
+
+    def notify_forward_observers_startup(self, *, lines: Sequence[str]) -> bool:
+        """Phase687W59: one-shot [TRADEBOT PAPER START] (observe-only status)."""
+        body = "\n".join(str(x) for x in lines if str(x).strip() or x == "")
+        if not body.strip():
+            return False
+        # Embed field limit ~1024; keep overflow in description via multi-field chunks
+        chunks: list[str] = []
+        cur: list[str] = []
+        n = 0
+        for ln in body.splitlines():
+            if n + len(ln) + 1 > 900 and cur:
+                chunks.append("\n".join(cur))
+                cur = [ln]
+                n = len(ln) + 1
+            else:
+                cur.append(ln)
+                n += len(ln) + 1
+        if cur:
+            chunks.append("\n".join(cur))
+        fields = [
+            {"name": f"part{i+1}" if i else "status", "value": c[:1020], "inline": False}
+            for i, c in enumerate(chunks[:6])
+        ]
+        return self._post(
+            event_tag="INFO",
+            title_line="TRADEBOT PAPER START",
+            fields=fields,
+            color=0x718096,
+            dedupe_key="forward_observers_startup",
         )
 
 

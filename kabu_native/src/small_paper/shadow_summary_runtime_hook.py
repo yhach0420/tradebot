@@ -175,6 +175,22 @@ def build_shadow_summary_content(
     artifact_path: str = "",
     artifact_hash: str = "",
 ) -> str:
+    # Phase687W59: fixed-order Observer / Cost-Aware / FWR / Pullback / Volume / Completeness
+    try:
+        from small_paper.discord_current_system_summary import build_shadow_summary_structured
+
+        structured = build_shadow_summary_structured(summary, am_pm=am_pm)
+        text = str(structured.get("discord_text") or "")
+        if artifact_path:
+            text = text.rstrip() + f"\nsource artifact: {artifact_path}\n"
+        if artifact_hash:
+            text = text.rstrip() + f"\nartifact_hash: {artifact_hash}\n"
+        assert "採用可能" not in text
+        if text.strip():
+            return text
+    except Exception as exc:
+        log.warning("W59 shadow summary render failed (fallback): %s", exc)
+
     data = collect_shadow_sections(summary)
     title = f"[SHADOW SUMMARY - {am_pm.upper()}]"
     base = format_shadow_summary(

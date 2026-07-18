@@ -143,9 +143,23 @@ def build_entry_embed_payload(
     title = f"【ENTRY】{display}"
     if test_mode:
         title = f"【TEST】{title}"
+    try:
+        from small_paper.discord_current_system_summary import (
+            render_entry_quantity_line,
+            resolve_entry_quantity,
+        )
+
+        qty = resolve_entry_quantity(data, config=None)
+        # Paper lot default when payload omits qty (official ENTRY must show a qty line)
+        if qty is None:
+            qty = resolve_entry_quantity(data, config={"paper_quantity": 100})
+        qty_line = render_entry_quantity_line(qty)
+    except Exception:
+        qty_line = "qty: n/a"
     desc_lines = [
         f"エントリー時間: {format_time_hms_jst(entry_time)}",
         f"ENTRY価格: {_fmt_price_yen(entry_price)}",
+        qty_line,
     ]
     if stop_price is not None:
         desc_lines.append(f"損切り価格: {_fmt_price_yen(stop_price)}")
@@ -374,6 +388,7 @@ def build_summary_embed_payload(
     test_mode: bool = False,
     day_realized_pnl_yen_100: Optional[float] = None,
     reentry_audit: Optional[Mapping[str, Any]] = None,
+    research_highlights: Optional[Sequence[str]] = None,
 ) -> dict[str, Any]:
     label = "AM PAPER SUMMARY" if str(am_pm).upper() == "AM" else (
         "PM PAPER SUMMARY" if str(am_pm).upper() == "PM" else "PAPER SUMMARY"
@@ -399,6 +414,12 @@ def build_summary_embed_payload(
         "PM損益" if str(am_pm).upper() == "PM" else "セッション損益"
     )
     desc_lines = []
+    # Phase687W60: Daily only — TODAY'S RESEARCH before Actual metrics
+    is_daily = str(am_pm or "").upper() not in ("AM", "PM")
+    hl = list(research_highlights or [])
+    if is_daily and hl:
+        desc_lines.extend(hl)
+        desc_lines.append("")
     if validity.startswith("INVALID_") or metrics.get("include_in_strategy_metrics") is False:
         from small_paper.session_validity import format_invalid_session_discord_lines, classify_session_validity
 
@@ -451,7 +472,11 @@ def build_summary_embed_payload(
         [
             f"Best: {_canonical_trade_display(metrics, 'best_trade')}",
             f"Worst: {_canonical_trade_display(metrics, 'worst_trade')}",
-            f"最大保有: {metrics.get('max_concurrent', 0)} / {metrics.get('max_concurrent_cap', DEFAULT_POSITION_CAP)}",
+            (
+                f"ピーク保有 / CAP: "
+                f"{metrics.get('max_concurrent', 0)} / "
+                f"{metrics.get('max_concurrent_cap', DEFAULT_POSITION_CAP)}"
+            ),
         ]
     )
     fields.append({"name": "内訳", "value": "\n".join(lower)[:1020], "inline": False})
@@ -780,6 +805,9 @@ def _fmt_price_yen(v: Any) -> str:
         return "N/A"
     try:
         f = float(v)
+        # Do not display fabricated 0円 for missing official ENTRY price
+        if f <= 0:
+            return "N/A"
         if abs(f - round(f)) < 1e-9:
             return f"{int(round(f))}円"
         return f"{f:.1f}円"
@@ -1156,10 +1184,23 @@ def build_entry_detail(
     route = resolve_entry_route(data)
     momentum = resolve_momentum_label(data)
     board = resolve_board_label(data)
+    try:
+        from small_paper.discord_current_system_summary import (
+            render_entry_quantity_line,
+            resolve_entry_quantity,
+        )
+
+        qty = resolve_entry_quantity(data, config=None)
+        if qty is None:
+            qty = resolve_entry_quantity(data, config={"paper_quantity": 100})
+        qty_line = render_entry_quantity_line(qty)
+    except Exception:
+        qty_line = "qty: n/a"
     lines = [
         display,
         f"エントリー時間: {format_time_hms_jst(entry_time)}",
         f"価格: {_fmt_price_yen(entry_price)}",
+        qty_line,
         f"方式: {route}",
         f"score_v2: {entry_score_v2 if entry_score_v2 is not None else 'N/A'}",
         f"Momentum: {momentum}",
@@ -1764,7 +1805,15 @@ def format_freshness_semantics_v2_lines(summary: Mapping[str, Any]) -> list[str]
 
 
 def format_runtime_health_lines(summary: Mapping[str, Any]) -> list[str]:
-    peak = int(summary.get("peak_open_slots") or summary.get("max_concurrent") or 0)
+    # Prefer observer peak / canonical peak over gate peak_open_slots (often 0 in CAP mode)
+    canon = summary.get("canonical_summary") if isinstance(summary.get("canonical_summary"), dict) else {}
+    peak = int(
+        summary.get("observer_open_max_positions")
+        or canon.get("max_concurrent")
+        or summary.get("max_concurrent")
+        or summary.get("peak_open_slots")
+        or 0
+    )
     cap = int(summary.get("max_concurrent_positions") or summary.get("max_concurrent_cap") or DEFAULT_POSITION_CAP)
     feat = summary.get("live_feature_complete_rate_pct")
     feat_s = f"{_fmt_num(feat, digits=1)}%" if feat is not None else "—"
@@ -2184,6 +2233,18 @@ def format_research_shadow_daily_summary_lines(
     operator status sections to keep the Discord message one-screen readable.
     """
     lines: list[str] = []
+    try:
+        from small_paper.cost_aware_entry_shadow_hook import format_cost_aware_entry_shadow_lines
+
+        lines.extend(format_cost_aware_entry_shadow_lines(summary))
+    except Exception:
+        pass
+    try:
+        from small_paper.pullback_volume_forward_logger import format_discord_lines
+
+        lines.extend(format_discord_lines(summary))
+    except Exception:
+        pass
     sector = summary.get("sector_heat_forward_shadow")
     if isinstance(sector, Mapping):
         lines.append("SectorHeat Forward Shadow:")
@@ -2440,7 +2501,7 @@ def format_discord_summary_lines(metrics: Mapping[str, Any]) -> list[str]:
             f"STOP数 / STOP率: {stop_n if stop_n is not None else 'N/A'} / {_fmt_num(float(stop_rate) * 100, digits=1)}%",
             f"Best: {_canonical_trade_display(metrics, 'best_trade')}",
             f"Worst: {_canonical_trade_display(metrics, 'worst_trade')}",
-            f"最大同時保有 / CAP: {metrics.get('max_concurrent', 0)} / {cap}",
+            f"ピーク保有 / CAP: {metrics.get('max_concurrent', 0)} / {cap}",
             f"監視銘柄数: {watch_s}",
             f"取引銘柄数: {traded_n}",
             PAPER_ONLY_FOOTER,
@@ -2460,6 +2521,23 @@ def format_discord_summary_lines(metrics: Mapping[str, Any]) -> list[str]:
                 f"pipeline integrity error件数: {pipe_err if pipe_err is not None else 'N/A'}",
             ]
         )
+    # Phase687W59: ENTRY integrity + delivery (Actual only; no Shadow PnL mix-in)
+    try:
+        from small_paper.discord_current_system_summary import render_canonical_integrity_lines
+
+        if any(
+            metrics.get(k) is not None
+            for k in (
+                "entry_integrity",
+                "discord_delivery",
+                "official_entry_count",
+                "ghost_accept_count",
+                "entry_aborted_count",
+            )
+        ):
+            lines.extend(render_canonical_integrity_lines(metrics))
+    except Exception:
+        pass
     # Explicitly never show avg_pnl_pct / total_pnl_pct aggregate
     return lines
 
