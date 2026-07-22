@@ -454,6 +454,8 @@ def _terminate_pid(pid: int) -> bool:
                 ["taskkill", "/PID", str(int(pid)), "/T"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             return r.returncode == 0 or not _pid_alive(pid)
@@ -473,6 +475,8 @@ def _kill_pid(pid: int) -> bool:
                 ["taskkill", "/PID", str(int(pid)), "/T", "/F"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             return r.returncode == 0 or not _pid_alive(pid)

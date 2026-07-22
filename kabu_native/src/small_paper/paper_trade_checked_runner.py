@@ -578,23 +578,18 @@ def _default_run(
     env: Mapping[str, str],
     cwd: Path,
 ) -> tuple[int, str, str]:
+    run_kw: dict[str, Any] = {
+        "cwd": str(cwd),
+        "env": dict(env),
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
     if isinstance(cmd, str):
-        proc = subprocess.run(
-            cmd,
-            cwd=str(cwd),
-            env=dict(env),
-            shell=True,
-            capture_output=True,
-            text=True,
-        )
+        proc = subprocess.run(cmd, shell=True, **run_kw)
     else:
-        proc = subprocess.run(
-            list(cmd),
-            cwd=str(cwd),
-            env=dict(env),
-            capture_output=True,
-            text=True,
-        )
+        proc = subprocess.run(list(cmd), **run_kw)
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
@@ -862,6 +857,59 @@ class PaperTradeCheckedRunner:
 
     def step_preflight(self) -> bool:
         started = time.time()
+        # Phase687W70: retention integrity before any live Paper spawn (no auto-delete).
+        try:
+            from small_paper.data_retention_guard import check_retention_integrity, format_retention_console
+
+            ret = check_retention_integrity(root=self.native_root)
+            print(format_retention_console(ret), flush=True)
+            if not ret.ok:
+                step = self._record(
+                    "preflight",
+                    4,
+                    ["retention_guard"],
+                    exit_code=2,
+                    started=started,
+                    stdout=format_retention_console(ret),
+                    stderr=ret.code,
+                    blocked_reason=ret.code,
+                )
+                self._print_step(4, 8, "Preflight", step.result)
+                self._block(
+                    "preflight",
+                    2,
+                    ret.code,
+                    "Restore missing sessions from archive or rebuild retention baseline after approved recovery.",
+                )
+                return False
+            # Phase687W71: external D sync — never block solely because D is missing.
+            try:
+                from small_paper.external_backup import check_external_sync_status, status_as_dict
+
+                ext_status = check_external_sync_status(native=self.native_root, sync_if_connected=True)
+                print(
+                    f"[EXTERNAL_BACKUP] code={ext_status.code} d_connected={ext_status.d_connected} "
+                    f"unsynced={len(ext_status.unsynced)} blocks_start={ext_status.blocks_start}",
+                    flush=True,
+                )
+                _ = status_as_dict(ext_status)  # structured status available for future logging
+            except Exception as ext_exc:
+                print(f"[EXTERNAL_BACKUP] warn: sync check failed: {ext_exc}", flush=True)
+        except Exception as exc:
+            step = self._record(
+                "preflight",
+                4,
+                ["retention_guard"],
+                exit_code=2,
+                started=started,
+                stdout="",
+                stderr=str(exc),
+                blocked_reason="retention_guard_exception",
+            )
+            self._print_step(4, 8, "Preflight", step.result)
+            self._block("preflight", 2, "retention_guard_exception", str(exc))
+            return False
+
         script = self.native_root / "scripts" / "check_live_pipeline_preflight.py"
         cmd = self._py(str(script))
         code, out, err = self.run_command(cmd, self._env(), self.native_root)

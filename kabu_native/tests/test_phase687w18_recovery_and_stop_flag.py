@@ -59,7 +59,7 @@ def _write_prior_session(
     native: Path,
     *,
     day: str = "20260710",
-    session_id: str = "PRIOR1",
+    session_id: str = "081239",
     recon: str = "OK",
     mismatch: int = 0,
     seal_status: str = "SEALED_VALID",
@@ -69,6 +69,7 @@ def _write_prior_session(
     omit_seal: bool = False,
     corrupt_seal: bool = False,
 ) -> dict[str, Path]:
+    """session_id must match live_session_\\d{6} (Phase687W30 positive path)."""
     root = native / "results" / "small_paper" / day / f"live_session_{session_id}"
     safety = root / "live_order_safety"
     safety.mkdir(parents=True, exist_ok=True)
@@ -165,13 +166,32 @@ def test_recovery_manifest_missing_blocks(tmp_path: Path):
 
 
 def test_recovery_seal_invalid_blocks(tmp_path: Path):
+    """SEALED_VALID label with missing required artifacts → seal eval fails → blocks.
+
+    Phase687W30: status string INVALID is skipped at discovery (evidence only).
+    Gate still blocks when a discovered prior has SEALED_VALID but missing_required>0.
+    """
+    _design(tmp_path, ok=True)
+    cfg = _pin_config(tmp_path, match=True)
+    _write_prior_session(tmp_path, seal_status="SEALED_VALID", seal_entries=0, missing_required=3)
+    result = probe_workspace_recovery(tmp_path, trading_date="20260713", config_path=cfg)
+    assert result["probe_mode"] == "pre_start_prior_session"
+    assert result["session_seal_valid"] is False
+    assert any(b["code"] == "SESSION_SEAL_INVALID" for b in result["blockers"])
+    assert result["exit_code"] == 2
+
+
+def test_recovery_invalid_seal_status_skipped_not_blocking(tmp_path: Path):
+    """W30: explicit INVALID seal status is not selected as prior reference."""
     _design(tmp_path, ok=True)
     cfg = _pin_config(tmp_path, match=True)
     _write_prior_session(tmp_path, seal_status="INVALID", seal_entries=0, missing_required=3)
     result = probe_workspace_recovery(tmp_path, trading_date="20260713", config_path=cfg)
-    assert result["session_seal_valid"] is False
-    assert any(b["code"] == "SESSION_SEAL_INVALID" for b in result["blockers"])
-    assert result["exit_code"] == 2
+    assert result["probe_mode"] == "pre_start_no_prior_session"
+    assert result["session_seal_valid"] is True  # N/A clean slate
+    codes = {b["code"] for b in result["blockers"]}
+    assert "SESSION_SEAL_INVALID" not in codes
+    assert result["exit_code"] == 0 or "SUBMIT_HARD_FAIL_MISSING" in codes
 
 
 def test_recovery_reconciliation_ng_blocks(tmp_path: Path):
@@ -197,7 +217,7 @@ def test_recovery_0750_no_same_day_seal_required(tmp_path: Path):
     cfg = _pin_config(tmp_path, match=True)
     # Same-day incomplete session must NOT be selected as prior
     today = "20260713"
-    _write_prior_session(tmp_path, day=today, session_id="TODAY", omit_seal=True)
+    _write_prior_session(tmp_path, day=today, session_id="122500", omit_seal=True)
     result = probe_workspace_recovery(tmp_path, trading_date=today, config_path=cfg)
     assert result["same_day_seal_required"] is False
     assert result["probe_mode"] == "pre_start_no_prior_session"
@@ -236,7 +256,14 @@ def test_stale_flag_allows_new_capture(tmp_path: Path):
         assert wait["ok"] is True
         # still online briefly (not immediately sealed by stale flag)
         st = json.loads((out / "capture_status.json").read_text(encoding="utf-8"))
-        assert st.get("capture_status") in ("CAPTURE_ONLINE", "CAPTURE_NO_MARKET_EVENTS", "CAPTURE_COMPLETE")
+        assert st.get("capture_status") in (
+            "CAPTURE_ONLINE",
+            "CAPTURE_NO_MARKET_EVENTS",
+            "CAPTURE_COMPLETE",
+            "CAPTURE_READY_FOR_FANOUT",  # Phase687 fanout topology ready state
+            "CAPTURE_RECEIVING",
+            "CAPTURE_WRITING",
+        )
         assert st.get("final") is not True or st.get("capture_status") != "CAPTURE_ONLINE"
     finally:
         cleanup_owned_capture(owned, reason="test_teardown", skip_capture_wait=True)

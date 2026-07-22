@@ -732,6 +732,20 @@ class _LiveRunState:
     api_error_count: int = 0
     consecutive_api_errors: int = 0
     reconnect_count: int = 0
+    # Phase675: WS lifecycle / freeze recovery (ops; no trading logic change)
+    recv_timeout_count: int = 0
+    consecutive_recv_timeouts: int = 0
+    last_push_at: Optional[str] = None
+    last_push_mono: Optional[float] = None
+    last_message_at: Optional[str] = None
+    websocket_state: str = "init"
+    reconnect_attempt: int = 0
+    reconnect_succeeded_mono: Optional[float] = None
+    lifecycle_watcher_ticks: int = 0
+    # Phase722: DEGRADED on silence — wait for scheduled force_close; do not early-stop.
+    websocket_degraded: bool = False
+    silence_degraded_logged: bool = False
+    entry_blocked_degraded: bool = False
     stale_tick_count: int = 0
     data_gap_count: int = 0
     peak_open_slots: int = 0
@@ -1459,6 +1473,16 @@ def _log_and_dispatch_observer_events(
                             writer.append_np_pre_entry_outcomes(outcome)
                         except Exception:
                             pass
+                try:
+                    from small_paper.cost_aware_entry_v2_shadow import note_exit as note_v2_exit
+                    from small_paper.cost_aware_entry_v2_shadow import shadow_enabled as v2_on
+
+                    if v2_on(config) and state is not None:
+                        st_v2 = getattr(state, "cost_aware_entry_v2_shadow", None)
+                        if st_v2 is not None:
+                            note_v2_exit(st_v2, row)
+                except Exception:
+                    pass
                 score_counters = getattr(state, "entry_expectancy_score_shadow", None)
                 if score_counters is not None:
                     score_counters.record_exit(row)
@@ -1536,8 +1560,12 @@ def _extended_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
 def _cost_aware_entry_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
     """Observe-only; empty unless COST_AWARE_ENTRY_SHADOW=1."""
     try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
         from small_paper.cost_aware_entry_shadow import (
             finalize_never_filled,
+            finalize_open_positions,
             shadow_enabled,
             summarize_state,
         )
@@ -1551,10 +1579,113 @@ def _cost_aware_entry_shadow_summary_fields(state: _LiveRunState) -> dict[str, A
                     "enabled": True,
                     "selection_cycles": 0,
                     "np_in_decision": False,
-                }
+                },
+                "cost_aware_entry_shadow_enabled": True,
+                "cost_aware_shadow_entries_proxy": 0,
+                "cost_aware_delta_proxy": None,
+                "cost_aware_status": "ENABLED_NO_STATE",
             }
         finalize_never_filled(st)
-        return {"cost_aware_entry_shadow": summarize_state(st)}
+        # Phase678: never leave virtual opens after session summary
+        if getattr(st, "open_shadow", None):
+            force_close = None
+            am_pm = getattr(state, "am_pm_policy", None)
+            if am_pm is not None and getattr(am_pm, "force_close", None):
+                from small_paper.session_schedule import parse_hhmm
+
+                JST = ZoneInfo("Asia/Tokyo")
+                day = getattr(state, "trading_date", None) or datetime.now(JST).strftime("%Y%m%d")
+                try:
+                    y, m, d = int(str(day)[:4]), int(str(day)[4:6]), int(str(day)[6:8])
+                    hhmm = parse_hhmm(am_pm.force_close)
+                    force_close = datetime(y, m, d, hhmm.hour, hhmm.minute, tzinfo=JST)
+                except Exception:
+                    force_close = datetime.now(JST)
+            else:
+                force_close = datetime.now(ZoneInfo("Asia/Tokyo"))
+            finalize_open_positions(
+                st,
+                force_close_time=force_close,
+                trading_date=str(getattr(state, "trading_date", "") or ""),
+                is_freeze_recovery=bool(getattr(state, "session_force_close_done", False)),
+            )
+        block = summarize_state(st)
+        # Phase722: flatten Discord inventory keys (single source from nested block).
+        rt = block.get("runtime_compatible_pnl")
+        sh = block.get("pnl_after_5bps_30m")
+        delta = None
+        if isinstance(rt, (int, float)) and isinstance(sh, (int, float)):
+            delta = round(float(sh) - float(rt), 2)
+        return {
+            "cost_aware_entry_shadow": block,
+            "cost_aware_entry_shadow_enabled": bool(block.get("enabled", True)),
+            "cost_aware_shadow_entries_proxy": int(block.get("shadow_entries") or 0),
+            "cost_aware_delta_proxy": delta,
+            "cost_aware_status": str(block.get("status") or ""),
+            "cost_aware_runtime_compatible_pnl": rt,
+            "cost_aware_shadow_pnl_after_5bps": sh,
+        }
+    except Exception:
+        return {}
+
+
+def _cost_aware_entry_v2_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    """Observe-only V2; never contributes to mainline / canonical PnL."""
+    try:
+        from small_paper.cost_aware_entry_v2_shadow import (
+            shadow_enabled_with_source,
+            summarize_state,
+        )
+
+        enabled, src = shadow_enabled_with_source()
+        if not enabled:
+            return {
+                "cost_aware_entry_v2_shadow": {
+                    "enabled": False,
+                    "enabled_source": src,
+                    "observe_only": True,
+                    "mainline_pnl_included": False,
+                    "canonical_pnl_mixed": False,
+                    "primary_arm": "H_board_ts",
+                    "secondary_arm": "I_price_board",
+                    "evaluated_candidates": 0,
+                    "submit": 0,
+                    "cancel": 0,
+                    "live_order": 0,
+                },
+                "cost_aware_entry_v2_shadow_enabled": False,
+            }
+        st = getattr(state, "cost_aware_entry_v2_shadow", None)
+        if st is None:
+            return {
+                "cost_aware_entry_v2_shadow": {
+                    "enabled": True,
+                    "enabled_source": src,
+                    "observe_only": True,
+                    "mainline_pnl_included": False,
+                    "canonical_pnl_mixed": False,
+                    "primary_arm": "H_board_ts",
+                    "secondary_arm": "I_price_board",
+                    "evaluated_candidates": 0,
+                    "board_feature_available": 0,
+                    "board_feature_missing": 0,
+                    "fail_open_count": 0,
+                    "warmup_count": 0,
+                    "submit": 0,
+                    "cancel": 0,
+                    "live_order": 0,
+                },
+                "cost_aware_entry_v2_shadow_enabled": True,
+            }
+        st.enabled = True
+        st.enabled_source = src
+        block = summarize_state(st)
+        # Persist by_key snapshot for Daily merge (optional)
+        block["by_key"] = {k: dict(v) for k, v in st.by_key.items()}
+        return {
+            "cost_aware_entry_v2_shadow": block,
+            "cost_aware_entry_v2_shadow_enabled": True,
+        }
     except Exception:
         return {}
 
@@ -2924,6 +3055,64 @@ def _execute_accepted_entry(
             ctx.writer.append_np_pre_entry_features(np_row)
         except Exception:
             pass
+        # Cost-Aware V2 Shadow: observe-only note at ACCEPT with causal NP features
+        try:
+            from small_paper.cost_aware_entry_v2_shadow import (
+                CostAwareV2ShadowState,
+                note_accepted_candidate,
+                shadow_enabled_with_source,
+            )
+
+            enabled, src = shadow_enabled_with_source(getattr(ctx, "config", None))
+            if enabled:
+                st_v2 = getattr(ctx.state, "cost_aware_entry_v2_shadow", None)
+                if st_v2 is None:
+                    st_v2 = CostAwareV2ShadowState(enabled=True, enabled_source=src)
+                    out_dir = getattr(getattr(ctx, "writer", None), "session_dir", None) or getattr(
+                        ctx.state, "session_dir", None
+                    )
+                    if out_dir is not None:
+                        st_v2.session_dir = str(out_dir)
+                    ctx.state.cost_aware_entry_v2_shadow = st_v2
+                note_accepted_candidate(
+                    st_v2,
+                    symbol=str(sym),
+                    trade={**trade, **{k: np_row.get(k) for k in np_row}},
+                    np_row=np_row,
+                    session=str(getattr(ctx.state, "am_pm_kind", "") or ""),
+                    position_id=str(acc.get("position_id") or trade.get("position_id") or ""),
+                    entry_time=str(acc.get("entry_time") or trade.get("entry_time") or ""),
+                    entry_price=acc.get("entry_price") or trade.get("entry_price"),
+                )
+        except Exception:
+            pass
+    else:
+        # NP logger off: still record V2 accept as fail-open (board feature missing)
+        try:
+            from small_paper.cost_aware_entry_v2_shadow import (
+                CostAwareV2ShadowState,
+                note_accepted_candidate,
+                shadow_enabled_with_source,
+            )
+
+            enabled, src = shadow_enabled_with_source(getattr(ctx, "config", None))
+            if enabled:
+                st_v2 = getattr(ctx.state, "cost_aware_entry_v2_shadow", None)
+                if st_v2 is None:
+                    st_v2 = CostAwareV2ShadowState(enabled=True, enabled_source=src)
+                    ctx.state.cost_aware_entry_v2_shadow = st_v2
+                note_accepted_candidate(
+                    st_v2,
+                    symbol=str(sym),
+                    trade=trade,
+                    np_row=None,
+                    session=str(getattr(ctx.state, "am_pm_kind", "") or ""),
+                    position_id=str(acc.get("position_id") or trade.get("position_id") or ""),
+                    entry_time=str(acc.get("entry_time") or trade.get("entry_time") or ""),
+                    entry_price=acc.get("entry_price") or trade.get("entry_price"),
+                )
+        except Exception:
+            pass
     _finalize_accepted_entry_stages(
         ctx,
         sym=sym,
@@ -3917,6 +4106,23 @@ def _stage1_evaluate_freshness(
 
     stale_reason: Optional[str] = None
     policy: Optional[AmPmSessionPolicy] = ctx.am_pm_policy
+    # Phase722: while WS DEGRADED, block new ENTRY only (EXIT path still active).
+    if bool(getattr(ctx.state, "entry_blocked_degraded", False) or getattr(ctx.state, "websocket_degraded", False)):
+        from research.exposure_gate import GateDecision
+
+        decision = GateDecision(
+            accept=False,
+            reason="push_degraded_entry_block",
+            continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
+            quality_tier="",
+        )
+        ref_now = _replay_reference_now(ctx, enriched) or datetime.now(JST)
+        return Stage1FreshnessResult(
+            ref_now=ref_now,
+            stale_reason=stale_reason,
+            pre_gate_reason="push_degraded_entry_block",
+            short_circuit_decision=decision,
+        )
     if policy is not None and not policy.entry_allowed_now():
         from research.exposure_gate import GateDecision
 
@@ -4283,6 +4489,7 @@ def _stage6_record_candidate(
                     )
             except Exception:
                 pass
+            # Stage6: Cost-Aware V2 notes at ACCEPT only (see accept path).
             if bus is not None:
                 bus.on_post_eval(
                     ctx,
@@ -5395,6 +5602,7 @@ def _build_push_replay_summary(
         base["low_liquidity_shadow_reject_count"] = state.low_liquidity_shadow_reject_count
     base.update(_extended_shadow_summary_fields(state))
     base.update(_cost_aware_entry_shadow_summary_fields(state))
+    base.update(_cost_aware_entry_v2_shadow_summary_fields(state))
     base.update(_pullback_volume_forward_summary_fields(state))
     base.update(_post_entry_forward_shadow_summary_fields(state))
     base.update(_classic_momentum_forward_shadow_summary_fields(state))
@@ -6666,6 +6874,7 @@ def _build_live_summary(
     summary.update(_intraday_refresh_summary_fields(state))
     summary.update(_extended_shadow_summary_fields(state))
     summary.update(_cost_aware_entry_shadow_summary_fields(state))
+    summary.update(_cost_aware_entry_v2_shadow_summary_fields(state))
     summary.update(_pullback_volume_forward_summary_fields(state))
     summary.update(_post_entry_forward_shadow_summary_fields(state))
     summary.update(_classic_momentum_forward_shadow_summary_fields(state))
@@ -6884,6 +7093,7 @@ def run_live_dry_run(
 ) -> PilotRunResult:
     """Live PUSH observation with exposure gate (no orders)."""
     import asyncio
+    import os
     import time
 
     from api.push_client import KabuNativePushClient
@@ -7476,6 +7686,39 @@ def run_live_dry_run(
     def _emit_heartbeat(note: str = "") -> None:
         state.heartbeat_count += 1
         runtime = time.monotonic() - state.started_mono
+        close_due = bool(am_pm_policy.force_close_due()) if am_pm_policy is not None else False
+        active_pos = int(observer.open_count()) if observer else len(gate.state.open_slots)
+        session_state = (
+            "force_close_done"
+            if state.session_force_close_done
+            else ("close_due" if close_due else (state.websocket_state or "running"))
+        )
+        try:
+            from small_paper.ws_freeze_recovery import enrich_heartbeat_fields
+
+            hb_extra = enrich_heartbeat_fields(
+                runtime_pid=os.getpid(),
+                event_loop_alive=True,
+                last_push_at=state.last_push_at,
+                last_push_mono=state.last_push_mono,
+                websocket_state=state.websocket_state,
+                reconnect_attempt=state.reconnect_attempt,
+                session_state=session_state,
+                active_positions=active_pos,
+                close_due=close_due,
+                consecutive_recv_timeouts=state.consecutive_recv_timeouts,
+                recv_timeout_count=state.recv_timeout_count,
+            )
+        except Exception:
+            hb_extra = {
+                "emitted_at": _now_iso(),
+                "runtime_pid": os.getpid(),
+                "event_loop_alive": True,
+                "last_push_at": state.last_push_at,
+                "websocket_state": state.websocket_state,
+                "active_positions": active_pos,
+                "close_due": close_due,
+            }
         hb = {
             "event_time": _now_iso(),
             "heartbeat_index": state.heartbeat_count,
@@ -7485,6 +7728,7 @@ def run_live_dry_run(
             "api_error_count": state.api_error_count,
             "open_slots": len(gate.state.open_slots),
             "note": note,
+            **hb_extra,
         }
         writer.append_heartbeat(hb)
         summary_partial = _build_live_summary(
@@ -7800,14 +8044,113 @@ def run_live_dry_run(
                 return True
             return False
 
+        from small_paper.ws_freeze_recovery import (
+            DEFAULT_LIFECYCLE_INTERVAL_SEC,
+            DEGRADED_WS_STATE,
+            PUSH_RECONNECT_SILENCE_TIMEOUT,
+            ReconnectBudget,
+            WS_RECONNECT_EXHAUSTED,
+            effective_recv_poll_sec,
+            is_lifecycle_tick,
+        )
+
+        reconnect_budget = ReconnectBudget()
+        recv_poll_eff = effective_recv_poll_sec(poll_interval_sec)
+
+        def _enter_degraded(reason: str) -> None:
+            """Phase722: DEGRADED — block ENTRY, keep OPEN, wait for scheduled force_close."""
+            state.websocket_degraded = True
+            state.entry_blocked_degraded = True
+            state.websocket_state = DEGRADED_WS_STATE
+            if not state.silence_degraded_logged:
+                state.silence_degraded_logged = True
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "error_type": reason,
+                        "reconnect_count": state.reconnect_count,
+                        "last_push_at": state.last_push_at,
+                        "action": "DEGRADED_RECONNECT_WAIT",
+                        "note": "entry blocked; positions held until scheduled session close",
+                    }
+                )
+
+        def _clear_degraded_on_push() -> None:
+            if state.websocket_degraded or state.entry_blocked_degraded:
+                state.websocket_degraded = False
+                state.entry_blocked_degraded = False
+                state.silence_degraded_logged = False
+                state.websocket_state = "receiving"
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "error_type": "push_degraded_recovered",
+                        "last_push_at": state.last_push_at,
+                        "action": "RESUME_EXIT_MONITOR",
+                    }
+                )
+
+        def _tick_lifecycle(source: str = "") -> None:
+            """WS-independent progress: close / stop / heartbeat / reconnect silence."""
+            nonlocal last_hb
+            state.lifecycle_watcher_ticks += 1
+            _maybe_notify_data_path_stalled()
+            _maybe_intraday_refresh()
+            # Scheduled force_close must run even while DEGRADED (no early Summary).
+            _maybe_am_pm_force_close()
+            if reconnect_budget.silence_exceeded(
+                last_push_mono=state.last_push_mono,
+                reconnect_succeeded_mono=state.reconnect_succeeded_mono,
+            ):
+                # Do NOT _request_stop / close_all / Summary here.
+                _enter_degraded(PUSH_RECONNECT_SILENCE_TIMEOUT)
+            if (time.monotonic() - last_hb) >= heartbeat_sec:
+                _emit_heartbeat(note=f"lifecycle:{source}")
+                last_hb = time.monotonic()
+
+        async def _lifecycle_watcher() -> None:
+            # Phase675: independent Task — does not wait for PUSH payload yield.
+            while not _should_stop():
+                try:
+                    _tick_lifecycle(source="watcher")
+                except Exception as exc:
+                    writer.append_error(
+                        {
+                            "event_time": _now_iso(),
+                            "error_type": "lifecycle_watcher_error",
+                            "message": str(exc),
+                        }
+                    )
+                await asyncio.sleep(DEFAULT_LIFECYCLE_INTERVAL_SEC)
+
         async def _reconnect_push() -> bool:
             nonlocal push, token
+            ok, reason = reconnect_budget.can_attempt()
+            if not ok:
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "error_type": WS_RECONNECT_EXHAUSTED,
+                        "reconnect_count": state.reconnect_count,
+                        "attempts_in_window": reconnect_budget.attempts_in_window,
+                        "message": reason,
+                        "action": "DEGRADED_RECONNECT_WAIT",
+                    }
+                )
+                # Phase722: do not abort pilot; wait for scheduled force_close.
+                _enter_degraded(WS_RECONNECT_EXHAUSTED)
+                state.websocket_state = "reconnect_exhausted"
+                return False
+            attempt_n = reconnect_budget.note_attempt_start()
             state.reconnect_count += 1
+            state.reconnect_attempt = attempt_n
+            state.websocket_state = "reconnecting"
             writer.append_error(
                 {
                     "event_time": _now_iso(),
                     "error_type": "reconnect",
                     "reconnect_count": state.reconnect_count,
+                    "reconnect_attempt": attempt_n,
                 }
             )
             try:
@@ -7822,47 +8165,74 @@ def run_live_dry_run(
                 )
             except Exception as e:
                 _log_api_error("unregister_all", e)
-            await asyncio.sleep(min(30.0, poll_interval_sec * 2))
+            backoff = reconnect_budget.backoff_sec(attempt_n, float(poll_interval_sec or 5.0))
+            # Bound sleep so lifecycle watcher / force_close can still progress via Task.
+            slept = 0.0
+            while slept < backoff and not state.stop_requested:
+                step = min(1.0, backoff - slept)
+                await asyncio.sleep(step)
+                slept += step
+                _tick_lifecycle(source="reconnect_backoff")
             if state.stop_requested:
                 return False
             try:
                 from api.kabu_register import register_symbols_cleared
 
-                token = rest.issue_token_from_env()
-                push = KabuNativePushClient(rest, token)
-                register_symbols_cleared(
-                    push,
-                    sym_specs,
-                    clear_first=False,
-                    native_root=native_root,
+                def _sync_register() -> None:
+                    nonlocal push, token
+                    token = rest.issue_token_from_env()
+                    push = KabuNativePushClient(rest, token)
+                    register_symbols_cleared(
+                        push,
+                        sym_specs,
+                        clear_first=False,
+                        native_root=native_root,
+                    )
+
+                await asyncio.wait_for(
+                    asyncio.to_thread(_sync_register),
+                    timeout=reconnect_budget.attempt_timeout_sec,
                 )
-                state.consecutive_api_errors = 0
-                return True
             except Exception as e:
                 _log_api_error("reconnect_register", e)
+                state.websocket_state = "reconnect_failed"
+                ok2, _reason2 = reconnect_budget.can_attempt()
+                if not ok2:
+                    _enter_degraded(WS_RECONNECT_EXHAUSTED)
                 return False
+            state.consecutive_api_errors = 0
+            state.reconnect_succeeded_mono = time.monotonic()
+            reconnect_budget.note_success(state.reconnect_succeeded_mono)
+            state.websocket_state = "receiving"
+            return True
 
+        watcher_task = asyncio.create_task(_lifecycle_watcher())
         try:
             while not _should_stop():
-                _maybe_notify_data_path_stalled()
-                _maybe_intraday_refresh()
-                _maybe_am_pm_force_close()
+                _tick_lifecycle(source="loop_top")
                 if _should_stop():
                     break
-                if (time.monotonic() - last_hb) >= heartbeat_sec:
-                    _emit_heartbeat()
-                    last_hb = time.monotonic()
+                if state.websocket_degraded and state.websocket_state in (
+                    "reconnect_exhausted",
+                    DEGRADED_WS_STATE,
+                    "reconnect_failed",
+                ):
+                    # Stay alive until scheduled force_close without busy-spinning reconnect.
+                    await asyncio.sleep(DEFAULT_LIFECYCLE_INTERVAL_SEC)
+                    continue
+                state.websocket_state = state.websocket_state if state.websocket_degraded else "receiving"
                 try:
-                    async for payload in push.iter_messages(recv_poll_sec=poll_interval_sec):
+                    async for payload in push.iter_messages(recv_poll_sec=recv_poll_eff):
                         if _should_stop():
                             break
-                        _maybe_notify_data_path_stalled()
-                        # Phase170: refresh check must run during streaming,
-                        # not only between reconnect cycles.
-                        _maybe_intraday_refresh()
-                        if (time.monotonic() - last_hb) >= heartbeat_sec:
-                            _emit_heartbeat()
-                            last_hb = time.monotonic()
+                        if is_lifecycle_tick(payload):
+                            state.recv_timeout_count += 1
+                            state.consecutive_recv_timeouts = int(
+                                payload.get("consecutive_timeouts") or 0
+                            )
+                            state.last_message_at = _now_iso()
+                            _tick_lifecycle(source="recv_timeout")
+                            continue
                         if not isinstance(payload, dict):
                             continue
                         # Phase687W24: fail-open fan-out to Capture (single Kabu WS ingress)
@@ -7876,11 +8246,27 @@ def run_live_dry_run(
                         if not sym:
                             continue
                         msg_i += 1
+                        state.push_messages = max(state.push_messages, msg_i)
+                        state.last_push_at = _now_iso()
+                        state.last_push_mono = time.monotonic()
+                        state.last_message_at = state.last_push_at
+                        if state.reconnect_succeeded_mono is not None:
+                            reconnect_budget.note_push_resumed()
+                            state.reconnect_succeeded_mono = None
+                        if state.websocket_degraded or state.entry_blocked_degraded:
+                            _clear_degraded_on_push()
                         if push_rec_local:
                             try:
                                 push_rec_local.append(sym, payload, source="live_push")
                             except Exception as e:
                                 _log_api_error("push_recorder", e)
+                        # lightweight lifecycle on real push (HB / force_close)
+                        if (time.monotonic() - last_hb) >= heartbeat_sec:
+                            _emit_heartbeat(note="push")
+                            last_hb = time.monotonic()
+                        _maybe_am_pm_force_close()
+                        if _should_stop():
+                            break
                         ev_now = time.monotonic()
                         # Phase687W43F: always update state; throttle only evaluation
                         try:
@@ -7922,15 +8308,32 @@ def run_live_dry_run(
                     break
                 except KabuNativeApiError as e:
                     _log_api_error("push_iter", e)
+                    state.websocket_state = "error"
                 except Exception as e:
                     _log_api_error("push_unexpected", e)
+                    state.websocket_state = "unexpected_close"
                 if _should_stop():
                     break
                 if state.consecutive_api_errors >= max_consecutive_api_errors:
                     break
                 if not await _reconnect_push():
+                    if state.websocket_degraded:
+                        # Stay in outer while; top-of-loop DEGRADED wait until force_close.
+                        continue
                     break
         finally:
+            watcher_task.cancel()
+            try:
+                await watcher_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+            # One last close check before leaving the event loop
+            try:
+                _maybe_am_pm_force_close()
+            except Exception:
+                pass
             if pipeline_ctx.entry_scan is not None:
                 final_flush = pipeline_ctx.entry_scan.flush_pending()
                 if final_flush is not None:
@@ -7946,7 +8349,14 @@ def run_live_dry_run(
                     path_label="session_finally",
                 )
             except Exception:
-                pass
+                # socket close failure is warning-only; finalize must continue
+                writer.append_error(
+                    {
+                        "event_time": _now_iso(),
+                        "error_type": "unregister_warning",
+                        "message": "safe_paper_unregister failed; continuing finalize",
+                    }
+                )
 
     try:
         asyncio.run(_loop())
@@ -7974,9 +8384,20 @@ def run_live_dry_run(
         runtime_sec=runtime_sec,
     )
     if observer:
+        from small_paper.ws_freeze_recovery import normalize_session_close_reason
+
         final_reason = state.stop_reason or "session_end"
-        if am_pm_policy and not state.session_force_close_done and am_pm_policy.force_close_due():
-            final_reason = am_pm_policy.force_close_reason
+        force_due = bool(am_pm_policy.force_close_due()) if am_pm_policy is not None else False
+        am_pm_reason = str(getattr(am_pm_policy, "force_close_reason", "") or "") if am_pm_policy else ""
+        if am_pm_policy and not state.session_force_close_done and force_due:
+            final_reason = am_pm_reason or final_reason
+        # Phase722: never Discord-notify with raw push_* / silence reasons.
+        final_reason = normalize_session_close_reason(
+            final_reason,
+            am_pm_force_close_reason=am_pm_reason,
+            force_close_due=force_due or bool(state.session_force_close_done),
+        )
+        state.stop_reason = final_reason
         dry_session = getattr(state, "live_order_dry_run", None)
         if dry_session is not None:
             from small_paper.live_order_dry_run_adapter import reconcile_session_positions
@@ -8180,17 +8601,27 @@ def run_live_dry_run(
     except Exception:
         pass
     try:
-        # Phase687W10A: after Shadow finalize + canonical — RESEARCH_SHADOW AM/PM hook
-        notify_discord_session_end(
-            discord,
-            events=state.events,
-            summary=summary,
-            monitored_symbol_count=monitored_n,
-            reject_rows=state.reject_rows,
-            ux_stats=state.discord_ux,
-            native_root=native_root,
-            output_dir=output_dir,
+        # Phase675 / stop-risk: Discord must not block Summary/archive/seal.
+        # Killable subprocess worker (terminate→kill); never ThreadPoolExecutor fake timeout.
+        from small_paper.bounded_side_task import run_subprocess_bounded, telemetry as side_task_telemetry
+
+        _dres = run_subprocess_bounded(
+            task="discord_session_end",
+            session_dir=output_dir,
+            timeout_sec=45.0,
+            name="discord_session_end",
+            extra={"native_root": str(native_root)},
         )
+        summary["side_task_telemetry"] = side_task_telemetry()
+        if _dres.timed_out:
+            log.warning("discord session_end notify timed out; continuing finalize")
+            summary["discord_session_end_error"] = "timeout"
+            summary["discord_session_end_timeout"] = True
+            summary["discord_session_end_pending"] = True
+        elif not _dres.ok and _dres.error:
+            log.warning("discord session_end notify failed: %s", _dres.error)
+            summary["discord_session_end_error"] = str(_dres.error)
+            summary["discord_session_end_pending"] = True
     except Exception as exc:
         log.warning("discord session_end notify failed: %s", exc)
         summary["discord_session_end_error"] = str(exc)
@@ -8213,8 +8644,98 @@ def run_live_dry_run(
         summary=summary,
         pos_fields=pos_fields,
     )
+    # Phase687W70: session-end archive copy (no source delete / no overwrite).
+    # Killable subprocess; timeout → pending retry marker under _side_task_tmp only.
+    try:
+        from small_paper.bounded_side_task import run_subprocess_bounded, telemetry as side_task_telemetry
+
+        _ares = run_subprocess_bounded(
+            task="archive_session_copy",
+            session_dir=output_dir,
+            timeout_sec=300.0,
+            name="session_archive",
+            extra={"native_root": str(native_root)},
+        )
+        summary["side_task_telemetry"] = side_task_telemetry()
+        if _ares.timed_out or not _ares.ok:
+            bak = {
+                "ok": False,
+                "errors": [_ares.error or "archive_timeout"],
+                "pending": True,
+                "timed_out": bool(_ares.timed_out),
+                "killed": bool(_ares.killed),
+                "code": "ARCHIVE_PENDING",
+                "task_id": _ares.task_id,
+            }
+        else:
+            bak = _ares.value if isinstance(_ares.value, dict) else {"ok": True, "value": _ares.value}
+        summary["session_archive_backup"] = bak
+        if not bak.get("ok"):
+            log.warning("session archive backup failed: %s", bak.get("errors"))
+        writer.write_summary(summary)
+    except Exception as exc:
+        log.warning("session archive backup error: %s", exc)
+        summary["session_archive_backup_error"] = str(exc)
+        try:
+            writer.write_summary(summary)
+        except Exception:
+            pass
+    # Phase687W71: external D:\kabudata sync after C archive (warn/pending if D missing).
+    try:
+        from small_paper.bounded_side_task import run_subprocess_bounded, telemetry as side_task_telemetry
+
+        _eres = run_subprocess_bounded(
+            task="external_backup",
+            session_dir=output_dir,
+            timeout_sec=300.0,
+            name="external_backup",
+            extra={"native_root": str(native_root)},
+        )
+        summary["side_task_telemetry"] = side_task_telemetry()
+        if _eres.timed_out:
+            ext = {
+                "ok": False,
+                "pending": True,
+                "code": "EXTERNAL_BACKUP_PENDING",
+                "error": "external_backup_timeout",
+                "session": str(Path(output_dir).name),
+                "timed_out": True,
+                "killed": bool(_eres.killed),
+                "task_id": _eres.task_id,
+            }
+        elif not _eres.ok:
+            ext = {
+                "ok": False,
+                "pending": True,
+                "code": "EXTERNAL_BACKUP_PENDING",
+                "error": str(_eres.error or "external_backup_error"),
+                "session": str(Path(output_dir).name),
+                "task_id": _eres.task_id,
+            }
+        else:
+            ext = _eres.value if isinstance(_eres.value, dict) else {"ok": True, "value": _eres.value}
+        summary["session_external_backup"] = ext
+        if ext.get("pending"):
+            log.warning("external backup pending (D not connected): %s", ext.get("session"))
+        elif not ext.get("ok") and not ext.get("skipped"):
+            log.warning("external backup failed: %s", ext)
+        writer.write_summary(summary)
+    except Exception as exc:
+        log.warning("external backup error: %s", exc)
+        summary["session_external_backup_error"] = str(exc)
+        summary["session_external_backup"] = {
+            "ok": False,
+            "pending": True,
+            "code": "EXTERNAL_BACKUP_PENDING",
+            "error": str(exc),
+        }
+        try:
+            writer.write_summary(summary)
+        except Exception:
+            pass
     # Phase687W32: single seal point AFTER all required artifacts are final and closed.
     # Never rewrite seal-target files after this (summary included).
+    # Side-task workers must not mutate sealed paths after mark_session_sealed.
     try:
         from small_paper.operational_recovery import finalize_session_manifest
         from small_paper.stateful_journal_recovery import ensure_required_seal_artifacts
@@ -8302,6 +8823,12 @@ def run_live_dry_run(
                 try:
                     seal_obj = json.loads(seal_path.read_text(encoding="utf-8"))
                     summary["session_seal_status"] = seal_obj.get("session_seal_status")
+                    if str(seal_obj.get("session_seal_status") or "") in ("SEALED_VALID", "SEALED"):
+                        from small_paper.bounded_side_task import mark_session_sealed, telemetry as side_task_telemetry
+
+                        mark_session_sealed(output_dir)
+                        summary["side_task_telemetry"] = side_task_telemetry()
+                        summary["session_sealed_for_side_tasks"] = True
                 except Exception:
                     pass
     except Exception as exc:
