@@ -18,6 +18,9 @@ _NORMAL_STOP = frozenset(
         "max_polls",
         "operator_stop",
         "keyboard_interrupt",
+        "morning_session_close",
+        "afternoon_session_close",
+        "recovery_session_close",
         "",
     }
 )

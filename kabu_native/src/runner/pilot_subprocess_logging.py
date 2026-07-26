@@ -19,6 +19,7 @@ PILOT_SOFT_OK_STOP_REASONS = frozenset(
         "session_end",
         "morning_session_close",
         "afternoon_session_close",
+        "recovery_session_close",
     }
 )
 

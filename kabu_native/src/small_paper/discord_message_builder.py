@@ -519,17 +519,34 @@ def build_shadow_observation_embed_payload(
                 continue
             pf = row.get("pf_delta")
             pf_s = "N/A" if pf in (None, "") else str(pf)
-            lines.extend(
-                [
-                    f"名称: {row.get('name')}",
-                    f"対象件数: {row.get('count', 0)}",
-                    f"block件数: {row.get('block_count', row.get('count', 0))}",
-                    f"delta円: {row.get('delta', 'N/A')}",
-                    f"PF差: {pf_s}",
-                    "判定: observation only",
-                    "",
-                ]
-            )
+            name = str(row.get("name") or "")
+            if name in ("Cost-Aware", "Cost-Aware V2"):
+                # observe-only: never label virtual entries as "block件数"
+                lines.extend(
+                    [
+                        f"名称: {name}",
+                        f"対象件数: {row.get('count', 0)}",
+                        f"仮想ENTRY件数: {row.get('virtual_entry_count', row.get('count', 0))}",
+                        f"実block件数: {row.get('real_block_count', 0)}",
+                        f"評価可能件数: {row.get('evaluable_count', row.get('count', 0))}",
+                        f"delta円: {row.get('delta', 'N/A')}",
+                        f"PF差: {pf_s}",
+                        "判定: observation only",
+                        "",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        f"名称: {row.get('name')}",
+                        f"対象件数: {row.get('count', 0)}",
+                        f"block件数: {row.get('block_count', row.get('count', 0))}",
+                        f"delta円: {row.get('delta', 'N/A')}",
+                        f"PF差: {pf_s}",
+                        "判定: observation only",
+                        "",
+                    ]
+                )
         desc = "\n".join(lines).rstrip()
     else:
         pf = data.get("pf_delta")
@@ -553,38 +570,65 @@ def build_shadow_observation_embed_payload(
 
 
 # Runtime Discord Shadow catalog (formatter inventory vs enabled+count filter)
-DISCORD_SHADOW_INVENTORY: tuple[dict[str, str], ...] = (
-    {
-        "name": "Rise5",
-        "enabled_key": "pbv2_rise5_shadow_enabled",
-        "count_key": "pbv2_rise5_shadow_block_count",
-        "delta_key": "pbv2_rise5_shadow_net_effect_yen",
-    },
-    {
-        "name": "Flat-band",
-        "enabled_key": "pbv2_flat_band_shadow_enabled",
-        "count_key": "pbv2_flat_band_shadow_block_count",
-        "delta_key": "pbv2_flat_band_shadow_net_effect_yen",
-    },
-    {
-        "name": "PullbackMisread",
-        "enabled_key": "pullback_misread_guard_shadow_enabled",
-        "count_key": "pullback_misread_guard_shadow_blocked_count",
-        "delta_key": "pullback_misread_guard_shadow_delta_yen",
-    },
-    {
-        "name": "BoardDynamic",
-        "enabled_key": "board_dynamic_shadow_enabled",
-        "count_key": "board_dynamic_shadow_exit_count",
-        "delta_key": "board_dynamic_shadow_total_delta_yen",
-    },
-    {
-        "name": "EXIT monitor",
-        "enabled_key": "exit_shadow_monitor_enabled",
-        "count_key": "exit_shadow_monitor_event_count",
-        "delta_key": "shadow_exit_t3_delta",
-    },
-)
+# Phase677: prefer registry-driven inventory; fall back to legacy 5 if import fails.
+try:
+    from small_paper.shadow_registry import discord_inventory_from_registry
+
+    _REG_INV = discord_inventory_from_registry()
+    DISCORD_SHADOW_INVENTORY: tuple[dict[str, str], ...] = tuple(
+        {
+            "name": x["name"],
+            "enabled_key": x["enabled_key"],
+            "count_key": x["count_key"],
+            "delta_key": x["delta_key"],
+        }
+        for x in _REG_INV
+    )
+except Exception:  # pragma: no cover
+    DISCORD_SHADOW_INVENTORY = (
+        {
+            "name": "Rise5",
+            "enabled_key": "pbv2_rise5_shadow_enabled",
+            "count_key": "pbv2_rise5_shadow_block_count",
+            "delta_key": "pbv2_rise5_shadow_net_effect_yen",
+        },
+        {
+            "name": "Flat-band",
+            "enabled_key": "pbv2_flat_band_shadow_enabled",
+            "count_key": "pbv2_flat_band_shadow_block_count",
+            "delta_key": "pbv2_flat_band_shadow_net_effect_yen",
+        },
+        {
+            "name": "PullbackMisread",
+            "enabled_key": "pullback_misread_guard_shadow_enabled",
+            "count_key": "pullback_misread_guard_shadow_blocked_count",
+            "delta_key": "pullback_misread_guard_shadow_delta_yen",
+        },
+        {
+            "name": "BoardDynamic",
+            "enabled_key": "board_dynamic_shadow_enabled",
+            "count_key": "board_dynamic_shadow_exit_count",
+            "delta_key": "board_dynamic_shadow_total_delta_yen",
+        },
+        {
+            "name": "EXIT monitor",
+            "enabled_key": "exit_shadow_monitor_enabled",
+            "count_key": "exit_shadow_monitor_event_count",
+            "delta_key": "shadow_exit_t3_delta",
+        },
+        {
+            "name": "Flat Weak + Range",
+            "enabled_key": "flat_weak_range_shadow_enabled",
+            "count_key": "flat_weak_range_shadow_target_count",
+            "delta_key": "flat_weak_range_shadow_delta_yen",
+        },
+        {
+            "name": "Cost-Aware",
+            "enabled_key": "cost_aware_entry_shadow_enabled",
+            "count_key": "cost_aware_evaluable_count",
+            "delta_key": "cost_aware_delta_proxy",
+        },
+    )
 
 
 def _shadow_target_count(summary: Mapping[str, Any], spec: Mapping[str, str]) -> int:
@@ -622,14 +666,37 @@ def collect_active_shadow_observations(
     """enabled=true AND today's target/evaluable/trade/block count >= 1. No actual PnL."""
     active: list[dict[str, Any]] = []
     for spec in DISCORD_SHADOW_INVENTORY:
-        if not summary.get(spec["enabled_key"]):
+        enabled = bool(summary.get(spec["enabled_key"]))
+        # Phase722: Cost-Aware may only have nested enabled until flatten; accept nested.
+        if not enabled and spec["name"] == "Cost-Aware":
+            ca = summary.get("cost_aware_entry_shadow")
+            if isinstance(ca, Mapping) and ca.get("enabled") is True:
+                enabled = True
+        if not enabled:
             continue
         count = _shadow_target_count(summary, spec)
+        if count <= 0 and spec["name"] == "Cost-Aware":
+            ca = summary.get("cost_aware_entry_shadow")
+            if isinstance(ca, Mapping):
+                count = max(
+                    _as_int(ca.get("evaluable_count")),
+                    _as_int(ca.get("n_closed")),
+                    _as_int(ca.get("shadow_entries")),
+                )
         if count <= 0:
             continue
         delta = summary.get(spec["delta_key"])
         if spec["name"] == "EXIT monitor" and delta is None:
             delta = summary.get("shadow_exit_t2_delta")
+        if spec["name"] == "Cost-Aware" and delta is None:
+            ca = summary.get("cost_aware_entry_shadow")
+            if isinstance(ca, Mapping):
+                delta = ca.get("delta_total_5bps")
+                if delta is None:
+                    rt = ca.get("runtime_compatible_pnl")
+                    sh = ca.get("pnl_after_5bps_30m")
+                    if isinstance(rt, (int, float)) and isinstance(sh, (int, float)):
+                        delta = round(float(sh) - float(rt), 2)
         # Hide outcome-mapping-unavailable zero-delta masquerading as measured
         if delta is not None:
             try:
@@ -640,14 +707,43 @@ def collect_active_shadow_observations(
             except (TypeError, ValueError):
                 pass
         pf_key = spec["enabled_key"].replace("_enabled", "_pf_delta")
+        status_note = ""
+        virtual_n = count
+        real_block_n = _as_int(summary.get(spec["count_key"])) or count
+        evaluable_n = count
+        if spec["name"] == "Cost-Aware":
+            ca = summary.get("cost_aware_entry_shadow")
+            if isinstance(ca, Mapping):
+                status_note = str(ca.get("status") or summary.get("cost_aware_status") or "")
+                virtual_n = _as_int(summary.get("cost_aware_virtual_entry_count")) or _as_int(
+                    ca.get("virtual_entry_count") or ca.get("shadow_entries")
+                )
+                real_block_n = 0  # observe-only; never reuse shadow_entries as block
+                evaluable_n = _as_int(summary.get("cost_aware_evaluable_count")) or _as_int(
+                    ca.get("evaluable_count") or ca.get("n_closed")
+                ) or virtual_n
+                count = virtual_n or evaluable_n or count
+                if summary.get(pf_key) is None:
+                    summary_pf = ca.get("pf_delta_5bps")
+                else:
+                    summary_pf = summary.get(pf_key)
+            else:
+                summary_pf = summary.get(pf_key)
+                real_block_n = 0
+        else:
+            summary_pf = summary.get(pf_key)
         active.append(
             {
                 "name": spec["name"],
                 "count": count,
-                "block_count": _as_int(summary.get(spec["count_key"])) or count,
+                "block_count": real_block_n if spec["name"] != "Cost-Aware" else 0,
+                "virtual_entry_count": virtual_n,
+                "real_block_count": 0 if spec["name"] == "Cost-Aware" else real_block_n,
+                "evaluable_count": evaluable_n,
                 "delta": _yen_display(delta) if delta is not None else "N/A",
-                "pf_delta": summary.get(pf_key),
+                "pf_delta": summary_pf,
                 "enabled_key": spec["enabled_key"],
+                "status": status_note,
             }
         )
     return active
@@ -2115,11 +2211,11 @@ def format_exit_summary_lines(events: Sequence[Mapping[str, Any]], summary: Mapp
 
 
 def format_shadow_summary_lines(summary: Mapping[str, Any]) -> list[str]:
-    """Phase637/W25C-R2: only enabled shadows with today's count > 0."""
+    """Shadow Portfolio Cleanup: ≤3 Discord PnL shadows (enabled + count>0)."""
     lines: list[str] = []
     for row in collect_active_shadow_observations(summary):
         lines.append(f"{row['name']}: 対象={row['count']} 差分={row['delta']}")
-    return lines[:4]
+    return lines[:3]
 
 
 def format_todays_insight_lines(
@@ -2184,10 +2280,9 @@ def build_operator_status_embed_fields(
     summary: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     """Phase637: one-screen operator status sections for Daily/AM/PM Summary."""
+    # Shadow Portfolio Cleanup: RETIRED Rise5 / Flat-band CF omitted from operator embeds
     sections: list[tuple[str, list[str]]] = [
         ("PBv2 Summary", format_pbv2_summary_lines(summary)),
-        ("Rise5 Shadow Summary", format_rise5_shadow_summary_lines(summary)),
-        ("Flat-band Shadow Summary", format_flat_band_shadow_summary_lines(summary)),
         ("Freshness Summary", format_freshness_summary_lines(summary)),
         ("Cluster Guard Summary", format_cluster_guard_summary_lines(summary)),
         ("Gate Dominance Summary", format_gate_dominance_summary_lines(summary)),
@@ -2237,6 +2332,12 @@ def format_research_shadow_daily_summary_lines(
         from small_paper.cost_aware_entry_shadow_hook import format_cost_aware_entry_shadow_lines
 
         lines.extend(format_cost_aware_entry_shadow_lines(summary))
+    except Exception:
+        pass
+    try:
+        from small_paper.cost_aware_entry_v2_shadow_hook import format_cost_aware_entry_v2_shadow_lines
+
+        lines.extend(format_cost_aware_entry_v2_shadow_lines(summary))
     except Exception:
         pass
     try:

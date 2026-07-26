@@ -195,10 +195,18 @@ def _payload_metrics(payload: Mapping[str, Any]) -> dict[str, Optional[float]]:
         "low": _as_float(payload.get("LowPrice")),
         "current": cur,
         "prev_close": _as_float(payload.get("PreviousClose")),
-        "bid_qty": _as_float(payload.get("BidQty")),
-        "ask_qty": _as_float(payload.get("AskQty")),
-        "bid_price": _as_float(payload.get("BidPrice")),
-        "ask_price": _as_float(payload.get("AskPrice")),
+        "bid_qty": _as_float(
+            (payload.get("Buy1") or {}).get("Qty") if isinstance(payload.get("Buy1"), dict) else payload.get("canonical_bid_qty")
+        ),
+        "ask_qty": _as_float(
+            (payload.get("Sell1") or {}).get("Qty") if isinstance(payload.get("Sell1"), dict) else payload.get("canonical_ask_qty")
+        ),
+        "bid_price": _as_float(
+            (payload.get("Buy1") or {}).get("Price") if isinstance(payload.get("Buy1"), dict) else payload.get("canonical_best_bid")
+        ),
+        "ask_price": _as_float(
+            (payload.get("Sell1") or {}).get("Price") if isinstance(payload.get("Sell1"), dict) else payload.get("canonical_best_ask")
+        ),
     }
 
 

@@ -41,9 +41,10 @@ def test_unset_non_paper_defaults_off():
 
 def test_paper_unset_defaults_on(monkeypatch):
     monkeypatch.setenv(PAPER_RUNTIME_ENV, "1")
-    assert shadow_enabled() is True
+    # Cost-Aware RETIRED → Paper default OFF; Pullback Volume LOGGER_ONLY → ON
+    assert shadow_enabled() is False
     assert logger_enabled() is True
-    assert resolve_cost_aware_entry_shadow()[1] == "default"
+    assert resolve_cost_aware_entry_shadow() == (False, "default")
     assert resolve_pullback_volume_forward()[1] == "default"
 
 
@@ -83,7 +84,7 @@ def test_run_paper_trade_bat_sets_defaults_when_undefined():
     if not bat.is_file():
         bat = Path(r"C:\Users\yhach\Documents\tradebotfile\run_paper_trade.bat")
     text = bat.read_text(encoding="utf-8", errors="ignore")
-    assert "if not defined COST_AWARE_ENTRY_SHADOW set COST_AWARE_ENTRY_SHADOW=1" in text
+    assert "if not defined COST_AWARE_ENTRY_SHADOW set COST_AWARE_ENTRY_SHADOW=0" in text
     assert "if not defined PULLBACK_VOLUME_FORWARD set PULLBACK_VOLUME_FORWARD=1" in text
 
 

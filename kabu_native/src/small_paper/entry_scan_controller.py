@@ -113,7 +113,14 @@ def _field_age_sec(
 def resolve_data_source(*, pipeline_source: str, payload: Mapping[str, Any]) -> str:
     src = str(pipeline_source or "").lower()
     if src in ("live", "push-replay", "push_replay"):
-        has_board = payload.get("BidQty") is not None or payload.get("AskQty") is not None
+        has_board = (
+            payload.get("canonical_bid_qty") is not None
+            or payload.get("canonical_ask_qty") is not None
+            or isinstance(payload.get("Buy1"), dict)
+            or isinstance(payload.get("Sell1"), dict)
+            or payload.get("kabu_bid_qty_raw") is not None
+            or payload.get("kabu_ask_qty_raw") is not None
+        )
         if has_board:
             return DATA_SOURCE_KABU_PUSH
         return DATA_SOURCE_KABU_PUSH
@@ -154,8 +161,12 @@ def compute_entry_freshness(
 
 
 def _spread_bps_from_payload(payload: Mapping[str, Any]) -> Optional[float]:
+    from small_paper.canonical_board import spread_bps_for_mode
     from universe.filters import calc_spread_bps
 
+    sb = spread_bps_for_mode(payload)
+    if sb is not None:
+        return sb
     return calc_spread_bps(payload)
 
 
@@ -180,9 +191,9 @@ def _board_fallback_eligible(
     calc = payload.get("CalcPrice")
     if calc is None or (isinstance(calc, str) and not str(calc).strip()):
         reasons.append("missing_calc_price")
-    bid = payload.get("BidPrice")
-    ask = payload.get("AskPrice")
-    if bid is None or ask is None:
+    from small_paper.canonical_board import has_board_prices
+
+    if not has_board_prices(payload):
         reasons.append("missing_bid_ask_price")
     spread = _spread_bps_from_payload(payload)
     if spread is None:

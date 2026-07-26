@@ -249,6 +249,8 @@ def evaluate_v2(
 
 @dataclass
 class CostAwareV2ShadowState:
+    join_failed_count: int = 0
+    join_failure_reasons: dict = field(default_factory=dict)
     enabled: bool = False
     enabled_source: str = "default"
     # join_key -> candidate record (deduped)
@@ -268,6 +270,7 @@ class CostAwareV2ShadowState:
     last_write_error: Optional[str] = None
     prune_count: int = 0
     state_high_watermark: int = 0
+    session_closing_excluded_count: int = 0
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
     _write_q: queue.Queue = field(default_factory=lambda: queue.Queue(maxsize=JSONL_QUEUE_MAX), repr=False, compare=False)
     _writer_thread: Optional[threading.Thread] = field(default=None, repr=False, compare=False)
@@ -502,35 +505,147 @@ def note_candidate(
     )
 
 
-def note_exit(state: CostAwareV2ShadowState, exit_row: Mapping[str, Any]) -> None:
-    """Attach EXIT for counterfactual Summary evaluation only (not used at ENTRY time)."""
-    key = join_key(
-        position_id=str(exit_row.get("position_id") or ""),
-        symbol=str(exit_row.get("symbol") or ""),
-        entry_time=str(exit_row.get("entry_time") or ""),
-    )
+def _find_pending_for_exit(
+    state: CostAwareV2ShadowState, exit_row: Mapping[str, Any]
+) -> tuple[Optional[str], Optional[dict[str, Any]], Optional[str]]:
+    """Resolve pending shadow row for an official EXIT. Returns (key, rec, fail_reason)."""
+    pid = str(exit_row.get("position_id") or "").strip()
+    sym = str(exit_row.get("symbol") or "").strip()
+    et = str(exit_row.get("entry_time") or "").strip()
+    key = join_key(position_id=pid, symbol=sym, entry_time=et)
     with state._lock:
-        rec = state.by_key.get(key)
-        if rec is None and exit_row.get("symbol") and exit_row.get("entry_time"):
-            # soft match
+        if key and key in state.by_key:
+            return key, state.by_key[key], None
+        # Alias: join_key was stored as position_id in note_accepted_candidate
+        if pid:
             for k, r in state.by_key.items():
-                if r.get("symbol") == exit_row.get("symbol") and (
-                    r.get("timestamp") or ""
-                ):
-                    if str(exit_row.get("entry_time") or "") in k or k.endswith(
-                        str(exit_row.get("entry_time") or "")
-                    ):
-                        rec = r
-                        key = k
-                        break
-        if rec is None:
-            return
+                if r.get("position_id") == pid or r.get("join_key") == pid:
+                    return k, r, None
+        # Soft: exact symbol|entry_time
+        if sym and et:
+            soft = f"{sym}|{et}"
+            if soft in state.by_key:
+                return soft, state.by_key[soft], None
+            for k, r in state.by_key.items():
+                if r.get("symbol") != sym:
+                    continue
+                if r.get("exit_status") == "closed":
+                    continue
+                # entry_time / timestamp substring or within same minute
+                cand_ts = str(r.get("timestamp") or r.get("join_key") or k)
+                if et in cand_ts or et in k or et[:16] in cand_ts:
+                    return k, r, None
+        # Soft: single pending for symbol
+        if sym:
+            pending = [
+                (k, r)
+                for k, r in state.by_key.items()
+                if r.get("symbol") == sym and r.get("exit_status") != "closed"
+            ]
+            if len(pending) == 1:
+                return pending[0][0], pending[0][1], None
+            if len(pending) > 1:
+                return None, None, "JOIN_FAILED"
+        return None, None, "NO_RUNTIME_EXIT" if not pid and not (sym and et) else "JOIN_FAILED"
+
+
+def note_exit(state: CostAwareV2ShadowState, exit_row: Mapping[str, Any]) -> bool:
+    """Attach EXIT for counterfactual Summary evaluation only (not used at ENTRY time)."""
+    key, rec, fail = _find_pending_for_exit(state, exit_row)
+    if rec is None:
+        # Only count as join failure when this exit's symbol is a V2 candidate.
+        sym = str(exit_row.get("symbol") or "")
+        with state._lock:
+            known = any(r.get("symbol") == sym for r in state.by_key.values()) if sym else False
+            if known:
+                state.join_failed_count = int(getattr(state, "join_failed_count", 0) or 0) + 1
+                reasons = getattr(state, "join_failure_reasons", None)
+                if not isinstance(reasons, dict):
+                    reasons = {}
+                    state.join_failure_reasons = reasons
+                rsn = fail or "JOIN_FAILED"
+                reasons[rsn] = int(reasons.get(rsn, 0) or 0) + 1
+        return False
+    with state._lock:
+        if rec.get("exit_status") == "closed":
+            return True
         _apply_exit_to_rec(rec, exit_row)
-        payload = {**rec, "event": "exit_join"}
+        rec["join_status"] = "CLOSED_READY"
+        rec["join_failure_reason"] = None
+        payload = {**rec, "event": "exit_join", "join_key_resolved": key}
     try:
         state.enqueue_jsonl(payload)
     except Exception:
         pass
+    return True
+
+
+def _exit_match_score(rec: Mapping[str, Any], exit_row: Mapping[str, Any]) -> int:
+    """Higher is better; 0 = no match."""
+    sym = str(exit_row.get("symbol") or "")
+    if str(rec.get("symbol") or "") != sym:
+        return 0
+    et = str(exit_row.get("entry_time") or "")
+    pid = str(exit_row.get("position_id") or "")
+    score = 1
+    if pid and pid in (str(rec.get("position_id") or ""), str(rec.get("join_key") or "")):
+        score += 100
+    if et:
+        blob = f"{rec.get('join_key')}|{rec.get('timestamp')}|{rec.get('position_id')}"
+        if et in blob:
+            score += 50
+        elif et[:16] in blob:
+            score += 20
+    return score
+
+
+def finalize_pending_exits(
+    state: CostAwareV2ShadowState,
+    exit_rows: Sequence[Mapping[str, Any]],
+    *,
+    session_force_close: bool = True,
+) -> dict[str, int]:
+    """Session-end join of official EXITs into pending V2 candidates (observe-only)."""
+    exits = [dict(r) for r in exit_rows]
+    used: set[int] = set()
+    success = 0
+    failed = 0
+    with state._lock:
+        pending_items = [
+            (k, r) for k, r in state.by_key.items() if r.get("exit_status") != "closed"
+        ]
+    for _k, rec in pending_items:
+        best_i = -1
+        best_score = 0
+        for i, er in enumerate(exits):
+            if i in used:
+                continue
+            sc = _exit_match_score(rec, er)
+            if sc > best_score:
+                best_score = sc
+                best_i = i
+        if best_i >= 0 and best_score > 0:
+            used.add(best_i)
+            _apply_exit_to_rec(rec, exits[best_i])
+            rec["join_status"] = "CLOSED_READY"
+            rec["join_failure_reason"] = None
+            success += 1
+        else:
+            failed += 1
+            reason = "NO_RUNTIME_EXIT" if session_force_close else "PENDING"
+            rec["join_status"] = reason
+            rec["join_failure_reason"] = reason
+            # Do not invent 0 yen for pending/unjoined.
+            rec["exit_status"] = "pending"
+            rec["actual_pnl_raw"] = None
+            rec["actual_pnl_5bps"] = None
+    with state._lock:
+        pending = sum(1 for _k, r in state.by_key.items() if r.get("exit_status") != "closed")
+    return {
+        "join_success_count": success,
+        "join_failed_count": failed,
+        "pending_count": pending,
+    }
 
 
 def _apply_exit_to_rec(rec: dict[str, Any], exit_row: Mapping[str, Any]) -> None:
@@ -604,16 +719,40 @@ def _arm_stats(records: Sequence[Mapping[str, Any]], arm: str) -> dict[str, Any]
         }
 
     runtime_raw = sum(float(r["actual_pnl_raw"]) for r in closed)
-    runtime_5 = sum(float(r["actual_pnl_5bps"]) for r in closed if r.get("actual_pnl_5bps") is not None)
+    runtime_5_list = [
+        float(r["actual_pnl_5bps"]) for r in closed if r.get("actual_pnl_5bps") is not None
+    ]
+    runtime_5 = sum(runtime_5_list)
     cf_raw = 0.0
-    cf_5 = 0.0
+    cf_5_list: list[float] = []
     for r in closed:
         verd = r.get(f"{arm}_verdict")
         if verd == "REJECT":
             continue
         cf_raw += float(r["actual_pnl_raw"])
         if r.get("actual_pnl_5bps") is not None:
-            cf_5 += float(r["actual_pnl_5bps"])
+            cf_5_list.append(float(r["actual_pnl_5bps"]))
+    cf_5 = sum(cf_5_list)
+
+    def _pf(yens: Sequence[float]) -> Optional[float]:
+        gp = sum(y for y in yens if y > 0)
+        gl = abs(sum(y for y in yens if y < 0))
+        if gl > 1e-12:
+            return round(gp / gl, 4)
+        if gp > 0:
+            return float("inf")
+        return None
+
+    runtime_pf = _pf(runtime_5_list) if runtime_5_list else None
+    cost_aware_pf = _pf(cf_5_list) if cf_5_list else None
+    pf_delta = None
+    if isinstance(runtime_pf, (int, float)) and isinstance(cost_aware_pf, (int, float)):
+        if math.isinf(runtime_pf) or math.isinf(cost_aware_pf):
+            pf_delta = None if math.isinf(runtime_pf) and math.isinf(cost_aware_pf) else (
+                "inf" if math.isinf(cost_aware_pf) else "-inf" if math.isinf(runtime_pf) else None
+            )
+        else:
+            pf_delta = round(float(cost_aware_pf) - float(runtime_pf), 4)
     return {
         "evaluated": n,
         "keep": keep,
@@ -631,6 +770,10 @@ def _arm_stats(records: Sequence[Mapping[str, Any]], arm: str) -> dict[str, Any]
         "runtime_pnl_5bps": round(runtime_5, 2),
         "delta_raw": round(cf_raw - runtime_raw, 2),
         "delta_5bps": round(cf_5 - runtime_5, 2),
+        "runtime_pf_5bps": runtime_pf if not (isinstance(runtime_pf, float) and math.isinf(runtime_pf)) else "inf",
+        "cost_aware_pf_5bps": cost_aware_pf if not (isinstance(cost_aware_pf, float) and math.isinf(cost_aware_pf)) else "inf",
+        "pf_delta_5bps": pf_delta,
+        "delta_eligible_count": len(closed),
     }
 
 
@@ -644,25 +787,51 @@ def summarize_state(state: CostAwareV2ShadowState) -> dict[str, Any]:
     h = _arm_stats(records, PRIMARY_ARM)
     i = _arm_stats(records, SECONDARY_ARM)
     all_fail_open = n > 0 and fail_open == n
+    closed_n = sum(1 for r in records if r.get("exit_status") == "closed" and r.get("actual_pnl_raw") is not None)
+    pending_n = n - closed_n
+    join_failed_n = sum(
+        1
+        for r in records
+        if r.get("join_failure_reason") in ("JOIN_FAILED", "NO_RUNTIME_EXIT", "NO_PRICE_PATH")
+    )
+    status = "CLOSED_READY" if n and pending_n == 0 else ("PENDING" if pending_n == n else "PARTIAL_PIPELINE")
+    if all_fail_open:
+        status = "FAIL_OPEN"
     return {
         "enabled": bool(state.enabled),
         "enabled_source": state.enabled_source,
         "observe_only": True,
         "blocks_real_entry": False,
+        "real_block_count": 0,
         "discord_entry": False,
         "mainline_pnl_included": False,
         "canonical_pnl_mixed": False,
         "primary_arm": PRIMARY_ARM,
         "secondary_arm": SECONDARY_ARM,
         "evaluated_candidates": n,
+        "evaluable_count": closed_n,
         "board_feature_available": board_ok,
         "board_feature_missing": board_miss,
         "fail_open_count": fail_open,
         "warmup_count": warmup,
-        "verdict_label": "FAIL_OPEN" if all_fail_open else ("READY" if n else "NO_CANDIDATES"),
+        "join_success_count": closed_n,
+        "join_failed_count": join_failed_n,
+        "pending_count": pending_n,
+        "delta_eligible_count": closed_n,
+        "status": status,
+        "verdict_label": "FAIL_OPEN" if all_fail_open else ("READY" if n and pending_n == 0 else ("PENDING" if n else "NO_CANDIDATES")),
         "verdict_reason": "INSUFFICIENT_BOARD_HISTORY" if all_fail_open else None,
         "H_board_ts": h,
         "I_price_board": {**i, "forward_candidate": False, "role": "secondary / non-forward"},
+        "runtime_total_raw": h.get("runtime_raw_pnl"),
+        "runtime_total_5bps": h.get("runtime_pnl_5bps"),
+        "cost_aware_total_raw": h.get("counterfactual_raw_pnl"),
+        "cost_aware_total_5bps": h.get("counterfactual_pnl_5bps"),
+        "delta_total_raw": h.get("delta_raw"),
+        "delta_total_5bps": h.get("delta_5bps"),
+        "runtime_pf_5bps": h.get("runtime_pf_5bps"),
+        "cost_aware_pf_5bps": h.get("cost_aware_pf_5bps"),
+        "pf_delta_5bps": h.get("pf_delta_5bps"),
         "board_feature": {
             "name": "f_np_imb_chg_60",
             "availability": board_ok,
@@ -686,25 +855,47 @@ def summarize_state(state: CostAwareV2ShadowState) -> dict[str, Any]:
         "prune_count": int(state.prune_count),
         "state_high_watermark": int(state.state_high_watermark),
         "state_count": n,
+        "session_closing_excluded_count": int(getattr(state, "session_closing_excluded_count", 0) or 0),
     }
 
 
-def format_discord_lines(summary: Mapping[str, Any]) -> list[str]:
+def _fmt_yen(v: Any) -> str:
+    x = _f(v)
+    if x is None:
+        return "N/A"
+    sign = "+" if x > 0 else ""
+    return f"{sign}{x:,.0f}円"
+
+
+def _fmt_pf(v: Any) -> str:
+    if v in (None, ""):
+        return "N/A"
+    if v == "inf" or (isinstance(v, float) and math.isinf(v)):
+        return "inf"
+    try:
+        return f"{float(v):.2f}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def format_discord_lines(summary: Mapping[str, Any], *, am_pm: str = "") -> list[str]:
     """Independent Discord Summary block (not ENTRY notify). Fail-open on errors upstream."""
     try:
         block = summary.get("cost_aware_entry_v2_shadow")
+        session_raw = am_pm or summary.get("am_pm") or ""
+        if not session_raw and isinstance(block, Mapping):
+            session_raw = block.get("session_kind") or ""
+        session_tag = str(session_raw or "").upper()
+        title = "[Cost-Aware V2 Shadow]"
+        if session_tag in ("AM", "PM"):
+            title = f"[Cost-Aware V2 Shadow - {session_tag}]"
         if not isinstance(block, Mapping):
-            # OFF: show minimal status if top-level flag present
             if summary.get("cost_aware_entry_v2_shadow_enabled") is False:
-                return [
-                    "[Cost-Aware V2 Shadow]",
-                    "状態: OFF / observe-only",
-                    "Primary: H_board_ts",
-                ]
+                return [title, "状態: OFF / observe-only", "Primary: H_board_ts"]
             return []
         if not block.get("enabled"):
             return [
-                "[Cost-Aware V2 Shadow]",
+                title,
                 "状態: OFF / observe-only",
                 f"Primary: {block.get('primary_arm') or PRIMARY_ARM}",
             ]
@@ -712,58 +903,45 @@ def format_discord_lines(summary: Mapping[str, Any]) -> list[str]:
         h = block.get("H_board_ts") if isinstance(block.get("H_board_ts"), Mapping) else {}
         i = block.get("I_price_board") if isinstance(block.get("I_price_board"), Mapping) else {}
         lines = [
-            "[Cost-Aware V2 Shadow]",
+            title,
             "状態: ON / observe-only",
-            f"Primary: {block.get('primary_arm') or PRIMARY_ARM}",
             f"対象候補: {block.get('evaluated_candidates') or 0}",
-            f"板特徴あり: {block.get('board_feature_available') or 0}",
-            f"板特徴なし: {block.get('board_feature_missing') or 0}",
+            f"評価可能: {block.get('evaluable_count') if block.get('evaluable_count') is not None else block.get('join_success_count') or 0}",
+            f"join成功: {block.get('join_success_count') or 0}",
+            f"join失敗: {block.get('join_failed_count') or 0}",
+            f"pending: {block.get('pending_count') or 0}",
+            "",
+            "H_board_ts:",
+            f"KEEP: {h.get('keep')}",
+            f"REJECT: {h.get('reject')}",
             f"fail-open: {block.get('fail_open_count') or 0}",
+            "",
+            "I_price_board:",
+            f"KEEP: {i.get('keep')}",
+            f"REJECT: {i.get('reject')}",
+            "",
+            f"Runtime 5bps: {_fmt_yen(block.get('runtime_total_5bps') if block.get('runtime_total_5bps') is not None else h.get('runtime_pnl_5bps'))}",
+            f"Cost-Aware 5bps: {_fmt_yen(block.get('cost_aware_total_5bps') if block.get('cost_aware_total_5bps') is not None else h.get('counterfactual_pnl_5bps'))}",
+            f"ΔPnL 5bps: {_fmt_yen(block.get('delta_total_5bps') if block.get('delta_total_5bps') is not None else h.get('delta_5bps'))}",
+            f"Runtime PF: {_fmt_pf(block.get('runtime_pf_5bps') if block.get('runtime_pf_5bps') is not None else h.get('runtime_pf_5bps'))}",
+            f"Cost-Aware PF: {_fmt_pf(block.get('cost_aware_pf_5bps') if block.get('cost_aware_pf_5bps') is not None else h.get('cost_aware_pf_5bps'))}",
+            f"PF差: {_fmt_pf(block.get('pf_delta_5bps') if block.get('pf_delta_5bps') is not None else h.get('pf_delta_5bps'))}",
+            "",
+            "判定: observation only",
         ]
         if block.get("verdict_label") == "FAIL_OPEN":
-            lines.extend(
-                [
-                    "判定: FAIL_OPEN",
-                    f"理由: {block.get('verdict_reason') or 'INSUFFICIENT_BOARD_HISTORY'}",
-                    "損益評価: N/A",
-                ]
-            )
-            return lines
-
-        def _pnl_line(arm_block: Mapping[str, Any]) -> str:
-            if arm_block.get("pnl_status") == "pending" or arm_block.get("delta_5bps") is None:
-                return "Counterfactual損益: pending"
-            d = _f(arm_block.get("delta_5bps"))
-            if d is None:
-                return "Counterfactual損益: pending"
-            sign = "+" if d >= 0 else ""
-            return f"Counterfactual損益: {sign}{d:,.0f}円（5bps Δ）"
-
-        lines.append("")
-        lines.append("H_board_ts:")
-        lines.append(f"KEEP: {h.get('keep')}")
-        lines.append(f"REJECT: {h.get('reject')}")
-        rr = h.get("reject_rate")
-        lines.append(f"Reject率: {rr * 100:.1f}%" if isinstance(rr, (int, float)) else "Reject率: n/a")
-        lines.append(f"Winner犠牲: {h.get('winner_sacrifice')}")
-        lines.append(f"STOP回避: {h.get('stop_avoided')}")
-        lines.append(f"NoProgress回避: {h.get('no_progress_avoided')}")
-        lines.append(_pnl_line(h))
-        lines.append("")
-        lines.append("I_price_board:")
-        lines.append(f"KEEP: {i.get('keep')}")
-        lines.append(f"REJECT: {i.get('reject')}")
-        rr2 = i.get("reject_rate")
-        lines.append(f"Reject率: {rr2 * 100:.1f}%" if isinstance(rr2, (int, float)) else "Reject率: n/a")
-        lines.append(f"Winner犠牲: {i.get('winner_sacrifice')}")
-        lines.append(f"STOP回避: {i.get('stop_avoided')}")
-        lines.append(f"NoProgress回避: {i.get('no_progress_avoided')}")
-        lines.append(_pnl_line(i))
-        lines.append("判定: secondary / non-forward")
-        # Discord hard limit safety: truncate rather than fail
+            lines = [
+                title,
+                "状態: ON / observe-only",
+                f"対象候補: {block.get('evaluated_candidates') or 0}",
+                "判定: FAIL_OPEN",
+                f"理由: {block.get('verdict_reason') or 'INSUFFICIENT_BOARD_HISTORY'}",
+                f"fail-open: {block.get('fail_open_count') or 0}",
+                "損益評価: N/A",
+            ]
         text = "\n".join(lines)
         if len(text) > 1800:
-            lines = lines[:24] + ["…(truncated)"]
+            lines = lines[:28] + ["…(truncated)"]
         return lines
     except Exception:
         return ["[Cost-Aware V2 Shadow]", "状態: degraded / observe-only", "Primary: H_board_ts"]

@@ -95,8 +95,10 @@ class ExtensionBus:
             self._record_extension("ExtensionPushTick", (time.monotonic() - t0) * 1000.0)
             return
         t_shadow = time.monotonic()
+        from small_paper.shadow_registry import is_shadow_runtime_enabled
+
         board_shadow = getattr(self.state, "realtime_board_exit_shadow", None)
-        if board_shadow is not None:
+        if board_shadow is not None and is_shadow_runtime_enabled("realtime_board_exit_shadow"):
             board_shadow.record_push_board_tick(symbol=symbol, payload=payload)
         from small_paper.extended_entry_shadow import tick_ts_from_payload
 
@@ -104,7 +106,7 @@ class ExtensionBus:
             px_tick = float(payload.get("CurrentPrice") or 0)
         except (TypeError, ValueError):
             px_tick = 0.0
-        if px_tick > 0:
+        if px_tick > 0 and is_shadow_runtime_enabled("classic_momentum_forward_shadow"):
             cm_shadow = getattr(self.state, "classic_momentum_forward_shadow", None)
             if cm_shadow is not None:
                 from datetime import datetime
@@ -117,6 +119,24 @@ class ExtensionBus:
                     px=px_tick,
                     day=datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d"),
                 )
+        # E1_X5 independent shadow (Paper default ON; Live forced OFF; E1_X5_FORWARD_SHADOW=0 to disable)
+        e1x5 = getattr(self.state, "e1_x5_forward_shadow", None)
+        if e1x5 is not None and getattr(e1x5, "enabled", False):
+            try:
+                from small_paper.canonical_board import best_bid_ask_for_mode
+                from datetime import datetime
+                from zoneinfo import ZoneInfo
+
+                bid, ask = best_bid_ask_for_mode(payload, mode="canonical")
+                ts = tick_ts_from_payload(payload)
+                if ts is None:
+                    ts = datetime.now(ZoneInfo("Asia/Tokyo"))
+                e1x5.on_quote(
+                    symbol=symbol, ts=ts, bid=bid, ask=ask,
+                    day=ts.strftime("%Y%m%d") if hasattr(ts, "strftime") else "",
+                )
+            except Exception:
+                pass
         self._record_extension("Shadow", (time.monotonic() - t_shadow) * 1000.0)
         self._record_extension("ExtensionPushTick", (time.monotonic() - t0) * 1000.0)
 
@@ -219,18 +239,24 @@ class ExtensionBus:
                 out.update(result)
 
         # Exit shadow monitor is finalized in _build_live_summary / _build_push_replay_summary.
-        _run_step(
-            "quality_shadow",
-            lambda: finalize_session_quality_shadow(state.accepted_rows, state.events),
-        )
-        _run_step(
-            "trading_value_shadow",
-            lambda: finalize_session_trading_value_shadow(state.accepted_rows, state.events),
-        )
-        _run_step(
-            "board_imbalance_shadow",
-            lambda: finalize_session_board_imbalance_shadow(state.accepted_rows, state.events),
-        )
+        from small_paper.shadow_registry import is_shadow_runtime_enabled
+
+        if is_shadow_runtime_enabled("quality_formula_shadow"):
+            _run_step(
+                "quality_shadow",
+                lambda: finalize_session_quality_shadow(state.accepted_rows, state.events),
+            )
+        if is_shadow_runtime_enabled("trading_value_shadow_gate"):
+            _run_step(
+                "trading_value_shadow",
+                lambda: finalize_session_trading_value_shadow(state.accepted_rows, state.events),
+            )
+        if is_shadow_runtime_enabled("board_imbalance_shadow"):
+            _run_step(
+                "board_imbalance_shadow",
+                lambda: finalize_session_board_imbalance_shadow(state.accepted_rows, state.events),
+            )
+        # Mainline component finalize retained (not a Forward Shadow count)
         _run_step(
             "entry_expectancy_score_shadow",
             lambda: finalize_session_entry_expectancy_score(state.accepted_rows, state.events),
@@ -251,7 +277,11 @@ class ExtensionBus:
         jst = ZoneInfo("Asia/Tokyo")
         day = datetime.now(jst).strftime("%Y%m%d")
         pe = getattr(state, "post_entry_forward_shadow", None)
-        if pe is not None and output_dir is not None:
+        if (
+            pe is not None
+            and output_dir is not None
+            and is_shadow_runtime_enabled("post_entry_forward_shadow")
+        ):
             def _finalize_post_entry() -> dict[str, Any]:
                 pe.finalize_session_end(ts=datetime.now(jst).timestamp(), day=day)
                 pe.write_session_csv(output_dir)
@@ -259,7 +289,11 @@ class ExtensionBus:
 
             _run_step("post_entry_forward_shadow", _finalize_post_entry)
         cm = getattr(state, "classic_momentum_forward_shadow", None)
-        if cm is not None and output_dir is not None:
+        if (
+            cm is not None
+            and output_dir is not None
+            and is_shadow_runtime_enabled("classic_momentum_forward_shadow")
+        ):
             def _finalize_classic_momentum() -> dict[str, Any]:
                 cm.finalize_session_end(ts=datetime.now(jst).timestamp(), day=day)
                 cm.write_session_csv(output_dir)

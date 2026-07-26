@@ -665,6 +665,18 @@ def _default_np_pre_entry_feature_logger_counters() -> Any:
     return NpPreEntryFeatureLoggerCounters()
 
 
+def _default_e1_x5_forward_shadow() -> Any:
+    from small_paper.e1_x5_forward_shadow import E1X5ForwardShadowSession
+
+    return E1X5ForwardShadowSession.maybe_create()
+
+
+def _default_board_imbalance_reversal_shadow() -> Any:
+    from small_paper.board_imbalance_reversal_shadow import BoardImbalanceReversalState
+
+    return BoardImbalanceReversalState.maybe_create()
+
+
 def _default_realtime_board_exit_shadow() -> Any:
     from small_paper.realtime_board_exit_shadow import RealtimeBoardExitShadowLogger
 
@@ -723,6 +735,8 @@ class _LiveRunState:
     first_gate_eval_ts: Optional[str] = None
     pre_session_warmup_ring_push_count: int = 0
     session_force_close_done: bool = False
+    # Phase723: set BEFORE close_all / CAP release / Discord / await — blocks new ENTRY.
+    entry_admission_closed: bool = False
     events: list[dict[str, Any]] = field(default_factory=list)
     accepted_rows: list[dict[str, Any]] = field(default_factory=list)
     reject_rows: list[dict[str, Any]] = field(default_factory=list)
@@ -847,6 +861,10 @@ class _LiveRunState:
     ihc_shadow_portfolio: Any = field(default_factory=_default_ihc_shadow_portfolio_counters)
     np_pre_entry_feature_logger: Any = field(default_factory=_default_np_pre_entry_feature_logger_counters)
     realtime_board_exit_shadow: Any = field(default_factory=_default_realtime_board_exit_shadow)
+    e1_x5_forward_shadow: Any = field(default_factory=_default_e1_x5_forward_shadow)
+    board_imbalance_reversal_shadow: Any = field(
+        default_factory=_default_board_imbalance_reversal_shadow
+    )
     entry_expectancy_score_shadow: Any = field(default_factory=_default_entry_expectancy_score_counters)
     discord_ux: DiscordUxSessionStats = field(default_factory=DiscordUxSessionStats)
     position_cap_stats: Any = None
@@ -1483,6 +1501,14 @@ def _log_and_dispatch_observer_events(
                             note_v2_exit(st_v2, row)
                 except Exception:
                     pass
+                try:
+                    from small_paper.board_imbalance_reversal_shadow import note_exit as note_bir_exit
+
+                    bir = getattr(state, "board_imbalance_reversal_shadow", None) if state else None
+                    if bir is not None and getattr(bir, "enabled", False):
+                        note_bir_exit(bir, row)
+                except Exception:
+                    pass
                 score_counters = getattr(state, "entry_expectancy_score_shadow", None)
                 if score_counters is not None:
                     score_counters.record_exit(row)
@@ -1561,14 +1587,17 @@ def _cost_aware_entry_shadow_summary_fields(state: _LiveRunState) -> dict[str, A
     """Observe-only; empty unless COST_AWARE_ENTRY_SHADOW=1."""
     try:
         from datetime import datetime
+        from pathlib import Path
         from zoneinfo import ZoneInfo
 
         from small_paper.cost_aware_entry_shadow import (
+            attach_runtime_compatible_to_closed_trades,
             finalize_never_filled,
             finalize_open_positions,
             shadow_enabled,
             summarize_state,
         )
+        from small_paper.cost_aware_price_path import build_symbol_price_paths, parse_ts
 
         if not shadow_enabled():
             return {}
@@ -1586,53 +1615,145 @@ def _cost_aware_entry_shadow_summary_fields(state: _LiveRunState) -> dict[str, A
                 "cost_aware_status": "ENABLED_NO_STATE",
             }
         finalize_never_filled(st)
+        JST = ZoneInfo("Asia/Tokyo")
+        day = getattr(state, "trading_date", None) or datetime.now(JST).strftime("%Y%m%d")
+        force_close = None
+        am_pm = getattr(state, "am_pm_policy", None)
+        if am_pm is not None and getattr(am_pm, "force_close", None):
+            from small_paper.session_schedule import parse_hhmm
+
+            try:
+                y, m, d = int(str(day)[:4]), int(str(day)[4:6]), int(str(day)[6:8])
+                hhmm = parse_hhmm(am_pm.force_close)
+                force_close = datetime(y, m, d, hhmm.hour, hhmm.minute, tzinfo=JST)
+            except Exception:
+                force_close = datetime.now(JST)
+        else:
+            force_close = datetime.now(JST)
+
+        # Load session events for price paths + official exits (session finalize only).
+        price_paths: dict = {}
+        official_exits: list = []
+        session_dir = getattr(state, "session_dir", None) or getattr(
+            getattr(state, "writer", None), "session_dir", None
+        )
+        events_path = Path(session_dir) / "small_paper_events.jsonl" if session_dir else None
+        if events_path is not None and events_path.is_file():
+            try:
+                events = []
+                with events_path.open(encoding="utf-8") as fh:
+                    for line in fh:
+                        if line.strip():
+                            events.append(json.loads(line))
+                price_paths = build_symbol_price_paths(events)
+                for e in events:
+                    if e.get("event_type") != "observer_exit":
+                        continue
+                    ts = parse_ts(e.get("exit_time") or e.get("event_time"))
+                    try:
+                        px = float(e.get("exit_price") or 0)
+                    except (TypeError, ValueError):
+                        px = 0.0
+                    if ts:
+                        official_exits.append(
+                            (ts, str(e.get("symbol") or ""), px, str(e.get("exit_reason") or ""))
+                        )
+            except Exception:
+                price_paths = {}
+                official_exits = []
+
         # Phase678: never leave virtual opens after session summary
         if getattr(st, "open_shadow", None):
-            force_close = None
-            am_pm = getattr(state, "am_pm_policy", None)
-            if am_pm is not None and getattr(am_pm, "force_close", None):
-                from small_paper.session_schedule import parse_hhmm
-
-                JST = ZoneInfo("Asia/Tokyo")
-                day = getattr(state, "trading_date", None) or datetime.now(JST).strftime("%Y%m%d")
-                try:
-                    y, m, d = int(str(day)[:4]), int(str(day)[4:6]), int(str(day)[6:8])
-                    hhmm = parse_hhmm(am_pm.force_close)
-                    force_close = datetime(y, m, d, hhmm.hour, hhmm.minute, tzinfo=JST)
-                except Exception:
-                    force_close = datetime.now(JST)
-            else:
-                force_close = datetime.now(ZoneInfo("Asia/Tokyo"))
             finalize_open_positions(
                 st,
                 force_close_time=force_close,
                 trading_date=str(getattr(state, "trading_date", "") or ""),
+                price_paths=price_paths or None,
                 is_freeze_recovery=bool(getattr(state, "session_force_close_done", False)),
             )
+        # Always attach runtime-compatible on closed virtual trades at session summarize.
+        if st.closed_trades:
+            enriched, _join_stats = attach_runtime_compatible_to_closed_trades(
+                st.closed_trades,
+                official_exits=official_exits,
+                price_paths=price_paths,
+                force_close_time=force_close,
+            )
+            st.closed_trades = enriched
         block = summarize_state(st)
         # Phase722: flatten Discord inventory keys (single source from nested block).
         rt = block.get("runtime_compatible_pnl")
         sh = block.get("pnl_after_5bps_30m")
-        delta = None
-        if isinstance(rt, (int, float)) and isinstance(sh, (int, float)):
+        delta = block.get("delta_total_5bps")
+        if delta is None and isinstance(rt, (int, float)) and isinstance(sh, (int, float)):
             delta = round(float(sh) - float(rt), 2)
+        pf_delta = block.get("pf_delta_5bps")
         return {
             "cost_aware_entry_shadow": block,
             "cost_aware_entry_shadow_enabled": bool(block.get("enabled", True)),
             "cost_aware_shadow_entries_proxy": int(block.get("shadow_entries") or 0),
+            "cost_aware_virtual_entry_count": int(block.get("virtual_entry_count") or block.get("shadow_entries") or 0),
+            "cost_aware_real_block_count": 0,
+            "cost_aware_evaluable_count": int(block.get("evaluable_count") or block.get("n_closed") or 0),
             "cost_aware_delta_proxy": delta,
+            "cost_aware_entry_shadow_pf_delta": pf_delta,
             "cost_aware_status": str(block.get("status") or ""),
+            "cost_aware_status_reason": block.get("status_reason"),
             "cost_aware_runtime_compatible_pnl": rt,
             "cost_aware_shadow_pnl_after_5bps": sh,
+            "cost_aware_join_success_count": block.get("join_success_count"),
+            "cost_aware_join_failed_count": block.get("join_failed_count"),
+            "cost_aware_pending_count": block.get("pending_count"),
         }
     except Exception:
         return {}
 
 
+def _e1_x5_forward_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    """Independent CAP5 observe-only; never touches PBv2 CAP / orders."""
+    try:
+        sess = getattr(state, "e1_x5_forward_shadow", None)
+        if sess is None:
+            return {
+                "e1_x5_forward_shadow_enabled": False,
+                "e1_x5_forward_shadow": {"enabled": False},
+            }
+        s = sess.summary() if hasattr(sess, "summary") else {}
+        decision = getattr(sess, "enable_decision", None)
+        return {
+            "e1_x5_forward_shadow_enabled": bool(getattr(sess, "enabled", False)),
+            "e1_x5_forward_shadow_enable_reason": (
+                decision.reason if decision is not None else s.get("enable_reason")
+            ),
+            "e1_x5_forward_shadow_trades": int(s.get("trades") or 0),
+            "e1_x5_forward_shadow_total_pnl_yen_100": s.get("total_pnl_yen_100"),
+            "e1_x5_forward_shadow_profit_factor_yen_100": s.get("profit_factor_yen_100"),
+            "e1_x5_forward_shadow_open_positions": int(s.get("open_positions") or 0),
+            "e1_x5_forward_shadow": s,
+        }
+    except Exception:
+        return {"e1_x5_forward_shadow_enabled": False}
+
+
+def _board_imbalance_reversal_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
+    try:
+        from small_paper.board_imbalance_reversal_shadow import summary_fields
+
+        st = getattr(state, "board_imbalance_reversal_shadow", None)
+        if st is None:
+            return {"board_imbalance_reversal_shadow_enabled": False}
+        return summary_fields(st)
+    except Exception:
+        return {"board_imbalance_reversal_shadow_enabled": False}
+
+
 def _cost_aware_entry_v2_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
     """Observe-only V2; never contributes to mainline / canonical PnL."""
     try:
+        from pathlib import Path
+
         from small_paper.cost_aware_entry_v2_shadow import (
+            finalize_pending_exits,
             shadow_enabled_with_source,
             summarize_state,
         )
@@ -1679,7 +1800,31 @@ def _cost_aware_entry_v2_shadow_summary_fields(state: _LiveRunState) -> dict[str
             }
         st.enabled = True
         st.enabled_source = src
+        # Session finalize: join any still-pending V2 rows from official observer exits.
+        session_dir = getattr(state, "session_dir", None) or getattr(
+            getattr(state, "writer", None), "session_dir", None
+        )
+        events_path = Path(session_dir) / "small_paper_events.jsonl" if session_dir else None
+        if events_path is not None and events_path.is_file():
+            try:
+                exit_rows = []
+                with events_path.open(encoding="utf-8") as fh:
+                    for line in fh:
+                        if not line.strip():
+                            continue
+                        e = json.loads(line)
+                        if e.get("event_type") != "observer_exit":
+                            continue
+                        exit_rows.append(e)
+                if exit_rows:
+                    finalize_pending_exits(st, exit_rows, session_force_close=True)
+            except Exception:
+                pass
         block = summarize_state(st)
+        am_pm = getattr(state, "am_pm_policy", None)
+        kind = str(getattr(am_pm, "kind", "") or getattr(state, "am_pm_kind", "") or "").upper()
+        if kind in ("AM", "PM"):
+            block["session_kind"] = kind
         # Persist by_key snapshot for Daily merge (optional)
         block["by_key"] = {k: dict(v) for k, v in st.by_key.items()}
         return {
@@ -2007,6 +2152,29 @@ def _notify_forward_observers_startup_once(
 
         status = build_runtime_status(config)
         lines = render_paper_start_lines(status)
+        try:
+            from small_paper.e1_x5_forward_shadow import (
+                emit_e1_x5_forward_shadow_startup_once,
+                resolve_e1_x5_forward_shadow_from_runtime,
+            )
+            from small_paper.shadow_registry import format_shadow_portfolio_startup_lines
+
+            e1_decision = resolve_e1_x5_forward_shadow_from_runtime(cfg=config)
+            e1_lines = emit_e1_x5_forward_shadow_startup_once(e1_decision)
+            lines = (
+                list(lines)
+                + [""]
+                + list(format_shadow_portfolio_startup_lines())
+                + [""]
+                + list(e1_lines)
+            )
+            e1x5 = getattr(state, "e1_x5_forward_shadow", None)
+            if e1x5 is not None:
+                e1x5.enable_decision = e1_decision
+                e1x5.enabled = e1_decision.enabled
+                e1x5.startup_lines = list(e1_lines)
+        except Exception:
+            pass
         state.forward_observers_startup_notified = True
         if discord is None or not getattr(discord, "active", False):
             return
@@ -2750,6 +2918,13 @@ def _execute_accepted_entry(
 ) -> None:
     from small_paper.extended_entry_shadow import compute_entry_shadow_fields, tick_ts_from_payload
 
+    # Phase723: re-check immediately before position registration.
+    if _entry_admission_closed(ctx):
+        _reject_session_closing_entry(
+            ctx, sym=sym, trade=trade, payload=payload, msg_i=msg_i, decision=decision
+        )
+        return
+
     ll_shadow = bool(getattr(ctx.config, "low_liquidity_shadow_enabled", False))
     tv_min = float(getattr(ctx.config, "low_liquidity_shadow_trading_value_min", 1e8) or 1e8)
     to_min = float(getattr(ctx.config, "low_liquidity_shadow_turnover_proxy_min", 0.002) or 0.002)
@@ -3086,6 +3261,24 @@ def _execute_accepted_entry(
                 )
         except Exception:
             pass
+        # Board Imbalance Reversal (H_board_ts TEMP_FORWARD) — independent of Cost-Aware V2
+        try:
+            from small_paper.board_imbalance_reversal_shadow import note_accepted as note_bir
+
+            bir = getattr(ctx.state, "board_imbalance_reversal_shadow", None)
+            if bir is not None and getattr(bir, "enabled", False):
+                note_bir(
+                    bir,
+                    symbol=str(sym),
+                    trade={**trade, **{k: np_row.get(k) for k in np_row}},
+                    np_row=np_row,
+                    session=str(getattr(ctx.state, "am_pm_kind", "") or ""),
+                    position_id=str(acc.get("position_id") or trade.get("position_id") or ""),
+                    entry_time=str(acc.get("entry_time") or trade.get("entry_time") or ""),
+                    entry_price=acc.get("entry_price") or trade.get("entry_price"),
+                )
+        except Exception:
+            pass
     else:
         # NP logger off: still record V2 accept as fail-open (board feature missing)
         try:
@@ -3103,6 +3296,23 @@ def _execute_accepted_entry(
                     ctx.state.cost_aware_entry_v2_shadow = st_v2
                 note_accepted_candidate(
                     st_v2,
+                    symbol=str(sym),
+                    trade=trade,
+                    np_row=None,
+                    session=str(getattr(ctx.state, "am_pm_kind", "") or ""),
+                    position_id=str(acc.get("position_id") or trade.get("position_id") or ""),
+                    entry_time=str(acc.get("entry_time") or trade.get("entry_time") or ""),
+                    entry_price=acc.get("entry_price") or trade.get("entry_price"),
+                )
+        except Exception:
+            pass
+        try:
+            from small_paper.board_imbalance_reversal_shadow import note_accepted as note_bir
+
+            bir = getattr(ctx.state, "board_imbalance_reversal_shadow", None)
+            if bir is not None and getattr(bir, "enabled", False):
+                note_bir(
+                    bir,
                     symbol=str(sym),
                     trade=trade,
                     np_row=None,
@@ -3601,9 +3811,123 @@ def _cost_aware_shadow_on_scan_flush(ctx: _PushPipelineContext, flush: Any) -> N
         pass
 
 
+REJECT_SESSION_CLOSING = "REJECT_SESSION_CLOSING"
+
+# Stop / force-close reasons that close ENTRY admission (Paper ops boundary).
+SESSION_CLOSING_STOP_REASONS = frozenset(
+    {
+        "morning_session_close",  # AM Session Close
+        "afternoon_session_close",  # PM Session Close
+        "session_end",
+        "recovery_session_close",  # Recovery Force Close
+        "signal_interrupt",  # Manual Stop (SIGINT)
+        "keyboard_interrupt",  # Manual Stop
+        "cancelled",
+        "max_consecutive_api_errors",  # Emergency Stop
+        "register_failed",  # Emergency / hard fail stop
+        "duration_elapsed",
+        "max_polls",
+        # WebSocket / comm-fault force-close paths (may normalize later)
+        "push_reconnect_silence_timeout",
+        "WS_RECONNECT_EXHAUSTED",
+        "push_unexpected",
+        "EVENT_LOOP_STALL",
+    }
+)
+
+
+def _entry_admission_closed(ctx: _PushPipelineContext) -> bool:
+    st = getattr(ctx, "state", None)
+    if st is None:
+        return False
+    if bool(getattr(st, "entry_admission_closed", False)):
+        return True
+    if bool(getattr(st, "session_force_close_done", False)):
+        return True
+    if bool(getattr(st, "stop_requested", False)):
+        # Any requested stop closes new ENTRY (manual / emergency / WS / recovery).
+        return True
+    reason = str(getattr(st, "stop_reason", "") or "")
+    if reason in SESSION_CLOSING_STOP_REASONS:
+        return True
+    if reason.endswith("session_close") or reason.startswith("push_"):
+        return True
+    return False
+
+
+def _reject_session_closing_entry(
+    ctx: _PushPipelineContext,
+    *,
+    sym: str,
+    trade: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    msg_i: int,
+    decision: Any = None,
+) -> None:
+    """Operational boundary reject — not an ENTRY-quality reject."""
+    from research.exposure_gate import GateDecision
+
+    if decision is None:
+        decision = GateDecision(
+            accept=False,
+            reason=REJECT_SESSION_CLOSING,
+            continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
+            quality_tier="",
+        )
+    rej_row = dict(trade)
+    rej_row["gate_reject_reason"] = REJECT_SESSION_CLOSING
+    rej_row["final_reject_reason"] = REJECT_SESSION_CLOSING
+    rej_row["operational_boundary_reject"] = True
+    ctx.state.reject_rows.append(rej_row)
+    rej = _event_from_gate(
+        event_type="rejected",
+        trade=trade,
+        decision=decision,
+        source=ctx.source,
+        message_index=msg_i,
+        current_price=payload.get("CurrentPrice") if isinstance(payload, Mapping) else None,
+    )
+    rej["reject_reason"] = REJECT_SESSION_CLOSING
+    rej["operational_boundary_reject"] = True
+    ctx.state.events.append(rej)
+    ctx.writer.append_event(rej)
+    _record_bucket(ctx.state, "rejected")
+    # Cost-Aware V2: close後候補は評価対象外として別記録（本線PnLに混ぜない）
+    try:
+        st_v2 = getattr(ctx.state, "cost_aware_entry_v2_shadow", None)
+        if st_v2 is not None:
+            n = int(getattr(st_v2, "session_closing_excluded_count", 0) or 0) + 1
+            setattr(st_v2, "session_closing_excluded_count", n)
+            try:
+                st_v2.enqueue_jsonl(
+                    {
+                        "event": "session_closing_excluded",
+                        "symbol": str(sym),
+                        "reason": REJECT_SESSION_CLOSING,
+                        "message_index": int(msg_i or 0),
+                    }
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def _process_scan_flush(ctx: _PushPipelineContext, flush: Any) -> None:
     from research.exposure_gate import GateDecision
     import time as _time
+
+    # Phase723: session closing — drop queued accepts; do not CAP-release re-ENTRY.
+    if _entry_admission_closed(ctx):
+        for cand in list(getattr(flush, "accepted", []) or []):
+            _reject_session_closing_entry(
+                ctx,
+                sym=str(cand.symbol),
+                trade=cand.trade,
+                payload=cand.payload,
+                msg_i=int(cand.msg_i or 0),
+            )
+        return
 
     _cost_aware_shadow_on_scan_flush(ctx, flush)
 
@@ -3889,6 +4213,15 @@ def _stage0_normalize_payload(
     enriched = ctx.feature_bridge.enrich_payload(payload, snapshot)
     if t0_push_received_at and not enriched.get("recorded_at"):
         enriched["recorded_at"] = t0_push_received_at
+    # Canonical quote normalize once at Stage0 (additive keys; raw Bid/Ask preserved).
+    from small_paper.canonical_board import attach_canonical_board
+
+    attach_canonical_board(
+        enriched,
+        payload,
+        event_id=f"{sym}:{msg_i}:{t0_push_received_at or ''}",
+        received_at=str(t0_push_received_at or enriched.get("recorded_at") or ""),
+    )
     if prof is not None:
         prof.mark("enrich_done")
     if bus is not None:
@@ -4106,6 +4439,23 @@ def _stage1_evaluate_freshness(
 
     stale_reason: Optional[str] = None
     policy: Optional[AmPmSessionPolicy] = ctx.am_pm_policy
+    # Phase723: session closing / force_close — gate evaluation前に拒否
+    if _entry_admission_closed(ctx):
+        from research.exposure_gate import GateDecision
+
+        decision = GateDecision(
+            accept=False,
+            reason=REJECT_SESSION_CLOSING,
+            continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
+            quality_tier="",
+        )
+        ref_now = _replay_reference_now(ctx, enriched) or datetime.now(JST)
+        return Stage1FreshnessResult(
+            ref_now=ref_now,
+            stale_reason=stale_reason,
+            pre_gate_reason=REJECT_SESSION_CLOSING,
+            short_circuit_decision=decision,
+        )
     # Phase722: while WS DEGRADED, block new ENTRY only (EXIT path still active).
     if bool(getattr(ctx.state, "entry_blocked_degraded", False) or getattr(ctx.state, "websocket_degraded", False)):
         from research.exposure_gate import GateDecision
@@ -5069,6 +5419,10 @@ def _stage6_record_reject(
                         entry_route=str(getattr(final, "entry_route", None) or "reject"),
                     )
                 return
+        if block_reason == REJECT_SESSION_CLOSING:
+            rej_row["operational_boundary_reject"] = True
+            rej_row["final_reject_reason"] = REJECT_SESSION_CLOSING
+            rej_row["gate_reject_reason"] = REJECT_SESSION_CLOSING
         ctx.state.reject_rows.append(rej_row)
         rej = _event_from_gate(
             event_type="rejected",
@@ -5078,6 +5432,17 @@ def _stage6_record_reject(
             message_index=msg_i,
             current_price=payload.get("CurrentPrice"),
         )
+        if block_reason == REJECT_SESSION_CLOSING:
+            rej["reject_reason"] = REJECT_SESSION_CLOSING
+            rej["operational_boundary_reject"] = True
+            # Cost-Aware V2: exclude from research evaluation pool
+            try:
+                st_v2 = getattr(ctx.state, "cost_aware_entry_v2_shadow", None)
+                if st_v2 is not None:
+                    n = int(getattr(st_v2, "session_closing_excluded_count", 0) or 0) + 1
+                    setattr(st_v2, "session_closing_excluded_count", n)
+            except Exception:
+                pass
         if _is_entry_stop_pre_gate_reason(block_reason):
             cand_ev = None
             for ev in reversed(ctx.state.events):
@@ -5098,7 +5463,10 @@ def _stage6_record_reject(
         _record_bucket(ctx.state, "rejected")
         if _is_entry_stop_pre_gate_reason(block_reason):
             ctx.state.entry_stop_reject_logging_recovered_count += 1
-        if is_entry_blocked_discord_notify_reason(block_reason):
+        # Session-closing rejects: no ENTRY Discord and no reject Discord spam.
+        if block_reason == REJECT_SESSION_CLOSING:
+            pass
+        elif is_entry_blocked_discord_notify_reason(block_reason):
             _notify_entry_blocked_discord(
                 ctx,
                 sym=sym,
@@ -5603,6 +5971,8 @@ def _build_push_replay_summary(
     base.update(_extended_shadow_summary_fields(state))
     base.update(_cost_aware_entry_shadow_summary_fields(state))
     base.update(_cost_aware_entry_v2_shadow_summary_fields(state))
+    base.update(_e1_x5_forward_shadow_summary_fields(state))
+    base.update(_board_imbalance_reversal_shadow_summary_fields(state))
     base.update(_pullback_volume_forward_summary_fields(state))
     base.update(_post_entry_forward_shadow_summary_fields(state))
     base.update(_classic_momentum_forward_shadow_summary_fields(state))
@@ -6875,6 +7245,8 @@ def _build_live_summary(
     summary.update(_extended_shadow_summary_fields(state))
     summary.update(_cost_aware_entry_shadow_summary_fields(state))
     summary.update(_cost_aware_entry_v2_shadow_summary_fields(state))
+    summary.update(_e1_x5_forward_shadow_summary_fields(state))
+    summary.update(_board_imbalance_reversal_shadow_summary_fields(state))
     summary.update(_pullback_volume_forward_summary_fields(state))
     summary.update(_post_entry_forward_shadow_summary_fields(state))
     summary.update(_classic_momentum_forward_shadow_summary_fields(state))
@@ -7188,6 +7560,7 @@ def run_live_dry_run(
 
     conn = verify_kabu_connection(repo_root)
     from small_paper.core_runtime_mode import get_core_runtime_mode, log_core_runtime_mode
+    from small_paper.market_ingress_protocol import market_ingress_v2_enabled
 
     log_core_runtime_mode(config)
     rest = KabuNativeRestClient(default_base_url())
@@ -7195,7 +7568,16 @@ def run_live_dry_run(
     from api.order_read_client import KabuOrderReadClient
 
     capital_read_client = KabuOrderReadClient(default_base_url())
-    push = KabuNativePushClient(rest, token)
+    # MARKET_INGRESS_V2: Paper does NOT own Kabu WebSocket (Ingress does).
+    ingress_v2 = market_ingress_v2_enabled()
+    push: Any = None
+    bus_bridge: Any = None
+    if not ingress_v2:
+        push = KabuNativePushClient(rest, token)
+    else:
+        from small_paper.paper_market_bus_consumer import PaperMarketBusBridge
+
+        bus_bridge = PaperMarketBusBridge(consumer_id="paper_runtime")
 
     from small_paper.symbol_cooloff import session_key_from_output_dir
 
@@ -7528,12 +7910,27 @@ def run_live_dry_run(
             from api.kabu_register import register_symbols_cleared
             # Phase242b logs
             register_called = True
-            register_symbols_cleared(
-                push,
-                specs,
-                native_root=native_root,
-                trading_date=datetime.now(JST).strftime("%Y%m%d"),
-            )
+            if ingress_v2:
+                from small_paper.ingress_control_channel import write_desired_universe
+
+                write_desired_universe(
+                    native_root,
+                    symbols=[s[0] for s in specs],
+                    position_symbols=list(open_syms or []),
+                    trading_date=datetime.now(JST).strftime("%Y%m%d"),
+                )
+                reg_meta = {
+                    "register_count": len(specs),
+                    "owner": "MARKET_INGRESS_SERVICE",
+                    "paper_register": "DISABLED",
+                }
+            else:
+                register_symbols_cleared(
+                    push,
+                    specs,
+                    native_root=native_root,
+                    trading_date=datetime.now(JST).strftime("%Y%m%d"),
+                )
             code_to_symbol.clear()
             for row in merged:
                 sym = _norm(str(row.get("symbol") or ""))
@@ -7639,7 +8036,10 @@ def run_live_dry_run(
             return
         if not am_pm_policy.force_close_due():
             return
+        # Phase723: atomic ENTRY lock BEFORE close_all / CAP release / Discord / await.
+        state.entry_admission_closed = True
         state.session_force_close_done = True
+        _request_stop(am_pm_policy.force_close_reason)
         if observer and observer.open_count() > 0:
             exit_events = observer.close_all(reason=am_pm_policy.force_close_reason)
             _log_and_dispatch_observer_events(
@@ -7652,11 +8052,12 @@ def run_live_dry_run(
                 config=config,
             )
         gate.state.open_slots = []
-        _request_stop(am_pm_policy.force_close_reason)
 
     def _request_stop(reason: str) -> None:
         state.stop_requested = True
         state.stop_reason = reason
+        # Any stop closes ENTRY admission (AM/PM close, manual stop, degraded stop).
+        state.entry_admission_closed = True
 
     def _on_signal(_sig: int, _frame: Any) -> None:
         _request_stop("signal_interrupt")
@@ -7765,7 +8166,7 @@ def run_live_dry_run(
         )
 
     async def _loop() -> None:
-        nonlocal push, token
+        nonlocal push, token, bus_bridge
 
         push_rec_local = (
             PushRecorder(native_root, trade_date) if config.live_record_push_jsonl else None
@@ -7773,12 +8174,50 @@ def run_live_dry_run(
         try:
             from api.kabu_register import format_register_failure_message, register_symbols_cleared
 
-            reg_meta = register_symbols_cleared(
-                push,
-                sym_specs,
-                native_root=native_root,
-                trading_date=datetime.now(JST).strftime("%Y%m%d"),
-            )
+            day = datetime.now(JST).strftime("%Y%m%d")
+            if ingress_v2:
+                # Ingress owns Station register; Paper publishes desired universe only.
+                from small_paper.ingress_control_channel import write_desired_universe
+
+                reg_meta = write_desired_universe(
+                    native_root,
+                    symbols=[s[0] for s in sym_specs],
+                    trading_date=day,
+                )
+                reg_meta = {
+                    **reg_meta,
+                    "owner": "MARKET_INGRESS_SERVICE",
+                    "paper_register": "DISABLED",
+                    "ok": True,
+                }
+                if bus_bridge is not None:
+                    bus_bridge.start()
+                    # Architecture boot banner
+                    try:
+                        print(
+                            "Market Data Architecture:\n"
+                            "INGRESS_V2\n\n"
+                            "WebSocket Owner:\n"
+                            "MARKET_INGRESS_SERVICE\n\n"
+                            "Runtime Market Source:\n"
+                            "LOCAL_MARKET_BUS\n\n"
+                            "Capture Source:\n"
+                            "INGRESS_RAW_WRITER\n\n"
+                            "Legacy Paper WebSocket:\n"
+                            "DISABLED\n\n"
+                            "submit/cancel/live:\n"
+                            "0/0/0",
+                            flush=True,
+                        )
+                    except Exception:
+                        pass
+            else:
+                reg_meta = register_symbols_cleared(
+                    push,
+                    sym_specs,
+                    native_root=native_root,
+                    trading_date=day,
+                )
             state.session_ready_ts = _now_iso()
             try:
                 (output_dir / "register_api_trace.json").write_text(
@@ -7791,7 +8230,6 @@ def run_live_dry_run(
                 from small_paper.market_capture_registration import notify_registration_refresh
                 from small_paper.market_capture_sidecar import capture_day_dir
 
-                day = datetime.now(JST).strftime("%Y%m%d")
                 notify_registration_refresh(
                     native_root,
                     trading_date=day,
@@ -8222,7 +8660,12 @@ def run_live_dry_run(
                     continue
                 state.websocket_state = state.websocket_state if state.websocket_degraded else "receiving"
                 try:
-                    async for payload in push.iter_messages(recv_poll_sec=recv_poll_eff):
+                    if ingress_v2:
+                        assert bus_bridge is not None
+                        _msg_iter = bus_bridge.iter_messages(recv_poll_sec=recv_poll_eff)
+                    else:
+                        _msg_iter = push.iter_messages(recv_poll_sec=recv_poll_eff)
+                    async for payload in _msg_iter:
                         if _should_stop():
                             break
                         if is_lifecycle_tick(payload):
@@ -8232,16 +8675,20 @@ def run_live_dry_run(
                             )
                             state.last_message_at = _now_iso()
                             _tick_lifecycle(source="recv_timeout")
+                            # Ingress ENTRY_BLOCK propagates via bus control envelopes
+                            if ingress_v2 and bus_bridge is not None and bus_bridge.entry_blocked:
+                                _enter_degraded(bus_bridge.entry_block_reason or "ingress_entry_block")
                             continue
                         if not isinstance(payload, dict):
                             continue
-                        # Phase687W24: fail-open fan-out to Capture (single Kabu WS ingress)
-                        try:
-                            from small_paper.paper_capture_fanout import fanout_push_payload
+                        # Legacy fanout only when Paper owns WS (V1). V2: Ingress Raw-first.
+                        if not ingress_v2:
+                            try:
+                                from small_paper.paper_capture_fanout import fanout_push_payload
 
-                            fanout_push_payload(payload)
-                        except Exception:
-                            pass
+                                fanout_push_payload(payload)
+                            except Exception:
+                                pass
                         sym = _symbol_from_push(payload, code_to_symbol)
                         if not sym:
                             continue
@@ -8279,6 +8726,8 @@ def run_live_dry_run(
                                 _warmup_ring_only_push(
                                     pipeline_ctx, payload, msg_i, symbol=sym
                                 )
+                                if ingress_v2 and bus_bridge is not None:
+                                    bus_bridge.ack_processed(payload)
                                 continue
                             tracker = _ensure_evaluation_reachability(pipeline_ctx)
                             # Timestamp/readiness peek only — avoid double ring/feature update
@@ -8296,13 +8745,25 @@ def run_live_dry_run(
                                 _throttled_state_only_push(
                                     pipeline_ctx, payload, symbol=sym
                                 )
+                                if ingress_v2 and bus_bridge is not None:
+                                    bus_bridge.ack_processed(payload)
                                 continue
                             pipeline_ctx._current_evaluation_cycle_id = cycle_id  # type: ignore[attr-defined]
                         except Exception:
                             if sym in last_eval and (ev_now - last_eval[sym]) < poll_interval_sec:
+                                if ingress_v2 and bus_bridge is not None:
+                                    bus_bridge.ack_processed(payload)
                                 continue
                         last_eval[sym] = ev_now
-                        _process_payload(payload, msg_i)
+                        if ingress_v2 and bus_bridge is not None:
+                            try:
+                                _process_payload(payload, msg_i)
+                                bus_bridge.ack_processed(payload)
+                            except Exception as proc_exc:
+                                bus_bridge.mark_process_error(type(proc_exc).__name__)
+                                _log_api_error("ingress_consumer_process", proc_exc)
+                        else:
+                            _process_payload(payload, msg_i)
                 except asyncio.CancelledError:
                     _request_stop("cancelled")
                     break
@@ -8316,12 +8777,23 @@ def run_live_dry_run(
                     break
                 if state.consecutive_api_errors >= max_consecutive_api_errors:
                     break
+                if ingress_v2:
+                    # Ingress owns reconnect; Paper waits DEGRADED until bus recovers or session close.
+                    if bus_bridge is not None and bus_bridge.entry_blocked:
+                        _enter_degraded(bus_bridge.entry_block_reason or "ingress_entry_block")
+                    await asyncio.sleep(DEFAULT_LIFECYCLE_INTERVAL_SEC)
+                    continue
                 if not await _reconnect_push():
                     if state.websocket_degraded:
                         # Stay in outer while; top-of-loop DEGRADED wait until force_close.
                         continue
                     break
         finally:
+            if ingress_v2 and bus_bridge is not None:
+                try:
+                    bus_bridge.stop()
+                except Exception:
+                    pass
             watcher_task.cancel()
             try:
                 await watcher_task
@@ -8334,10 +8806,21 @@ def run_live_dry_run(
                 _maybe_am_pm_force_close()
             except Exception:
                 pass
-            if pipeline_ctx.entry_scan is not None:
+            # Phase723: never flush queued ENTRY after session closing / CAP release.
+            if pipeline_ctx.entry_scan is not None and not (
+                state.entry_admission_closed or state.session_force_close_done or state.stop_requested
+            ):
                 final_flush = pipeline_ctx.entry_scan.flush_pending()
                 if final_flush is not None:
                     _process_scan_flush(pipeline_ctx, final_flush)
+            elif pipeline_ctx.entry_scan is not None:
+                # Drop pending without executing accepts.
+                try:
+                    dropped = pipeline_ctx.entry_scan.flush_pending()
+                    if dropped is not None:
+                        _process_scan_flush(pipeline_ctx, dropped)  # rejects via admission guard
+                except Exception:
+                    pass
             try:
                 from small_paper.registration_lifetime import safe_paper_unregister
 
@@ -8539,41 +9022,54 @@ def run_live_dry_run(
         config=config,
         watch_symbols_count=monitored_n,
     )
-    _run_sector_heat_forward_shadow_auto(
-        repo_root=repo_root,
-        output_dir=output_dir,
-        summary=summary,
-        config=config,
-        poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
-    )
-    _run_risk_sizing_forward_shadow_auto(
-        repo_root=repo_root,
-        output_dir=output_dir,
-        summary=summary,
-        config=config,
-        poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
-    )
-    _run_equity_dynamic_stop_shadow_auto(
-        repo_root=repo_root,
-        output_dir=output_dir,
-        summary=summary,
-        config=config,
-        poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
-    )
-    _run_live_config_forward_shadow_auto(
-        repo_root=repo_root,
-        output_dir=output_dir,
-        summary=summary,
-        config=config,
-        poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
-    )
-    _run_live_config_transition_shadow_auto(
-        repo_root=repo_root,
-        output_dir=output_dir,
-        summary=summary,
-        config=config,
-        poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
-    )
+    from small_paper.shadow_registry import is_shadow_runtime_enabled, shadow_portfolio_status
+
+    try:
+        summary.update(shadow_portfolio_status())
+    except Exception:
+        pass
+    # RETIRED research autos skipped (artifacts retained on disk; no runtime work)
+    if is_shadow_runtime_enabled("sector_heat_forward_shadow"):
+        _run_sector_heat_forward_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            summary=summary,
+            config=config,
+            poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
+        )
+    if is_shadow_runtime_enabled("risk_sizing_forward_shadow"):
+        _run_risk_sizing_forward_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            summary=summary,
+            config=config,
+            poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
+        )
+    if is_shadow_runtime_enabled("equity_dynamic_stop_shadow"):
+        _run_equity_dynamic_stop_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            summary=summary,
+            config=config,
+            poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
+        )
+    if is_shadow_runtime_enabled("live_config_forward_shadow"):
+        _run_live_config_forward_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            summary=summary,
+            config=config,
+            poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
+        )
+    if is_shadow_runtime_enabled("live_config_transition_shadow"):
+        _run_live_config_transition_shadow_auto(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            summary=summary,
+            config=config,
+            poll_interval_sec=float(session_cfg.get("poll_interval_sec") or poll_interval_sec),
+        )
+    # boundary research auto kept for optional offline packs only when explicitly re-enabled later
     _run_boundary_forward_shadow_auto(
         repo_root=repo_root,
         output_dir=output_dir,
@@ -8600,31 +9096,6 @@ def run_live_dry_run(
         summary.update(classify_session_validity(summary))
     except Exception:
         pass
-    try:
-        # Phase675 / stop-risk: Discord must not block Summary/archive/seal.
-        # Killable subprocess worker (terminate→kill); never ThreadPoolExecutor fake timeout.
-        from small_paper.bounded_side_task import run_subprocess_bounded, telemetry as side_task_telemetry
-
-        _dres = run_subprocess_bounded(
-            task="discord_session_end",
-            session_dir=output_dir,
-            timeout_sec=45.0,
-            name="discord_session_end",
-            extra={"native_root": str(native_root)},
-        )
-        summary["side_task_telemetry"] = side_task_telemetry()
-        if _dres.timed_out:
-            log.warning("discord session_end notify timed out; continuing finalize")
-            summary["discord_session_end_error"] = "timeout"
-            summary["discord_session_end_timeout"] = True
-            summary["discord_session_end_pending"] = True
-        elif not _dres.ok and _dres.error:
-            log.warning("discord session_end notify failed: %s", _dres.error)
-            summary["discord_session_end_error"] = str(_dres.error)
-            summary["discord_session_end_pending"] = True
-    except Exception as exc:
-        log.warning("discord session_end notify failed: %s", exc)
-        summary["discord_session_end_error"] = str(exc)
     from small_paper.core_runtime_mode import full_extension_active, get_core_runtime_mode
 
     if full_extension_active(get_core_runtime_mode(config)):
@@ -8638,12 +9109,63 @@ def run_live_dry_run(
             output_dir=output_dir,
             summary=summary,
         )
+    # Phase723: persist canonical Summary BEFORE Discord so hang/timeout cannot skip local artifacts.
     writer.finalize_batch(
         events=state.events,
         positions=positions,
         summary=summary,
         pos_fields=pos_fields,
     )
+    try:
+        # Phase675 / stop-risk: Discord must not block archive/seal (Summary already on disk).
+        # Killable subprocess worker (terminate→kill); never ThreadPoolExecutor fake timeout.
+        from small_paper.bounded_side_task import run_subprocess_bounded, telemetry as side_task_telemetry
+
+        _stop = str(getattr(state, "stop_reason", "") or summary.get("stop_reason") or "")
+        _day = str(summary.get("trading_date") or datetime.now(JST).strftime("%Y%m%d")).replace("-", "")[:8]
+        if _stop == "morning_session_close":
+            _dedupe = f"am_summary|{_day}"
+        elif _stop == "afternoon_session_close":
+            _dedupe = f"pm_summary|{_day}"
+        else:
+            _dedupe = f"session_end|{getattr(state, 'session_id', '')}|{_stop}"
+        _dres = run_subprocess_bounded(
+            task="discord_session_end",
+            session_dir=output_dir,
+            timeout_sec=60.0,
+            name="discord_session_end",
+            extra={
+                "native_root": str(native_root),
+                "summary_path": str(output_dir / "small_paper_summary.json"),
+                "events_path": str(output_dir / "small_paper_events.jsonl"),
+                "dedupe_key": _dedupe,
+                "flush_sec": 25.0,
+            },
+        )
+        summary["side_task_telemetry"] = side_task_telemetry()
+        summary["discord_session_end_dedupe_key"] = _dedupe
+        if _dres.timed_out:
+            log.warning("discord session_end notify timed out; continuing finalize")
+            summary["discord_session_end_error"] = "timeout"
+            summary["discord_session_end_timeout"] = True
+            summary["discord_session_end_pending"] = True
+        elif not _dres.ok and _dres.error:
+            log.warning("discord session_end notify failed: %s", _dres.error)
+            summary["discord_session_end_error"] = str(_dres.error)
+            summary["discord_session_end_pending"] = True
+        else:
+            summary["discord_session_end_ok"] = True
+        try:
+            writer.write_summary(summary)
+        except Exception:
+            pass
+    except Exception as exc:
+        log.warning("discord session_end notify failed: %s", exc)
+        summary["discord_session_end_error"] = str(exc)
+        try:
+            writer.write_summary(summary)
+        except Exception:
+            pass
     # Phase687W70: session-end archive copy (no source delete / no overwrite).
     # Killable subprocess; timeout → pending retry marker under _side_task_tmp only.
     try:

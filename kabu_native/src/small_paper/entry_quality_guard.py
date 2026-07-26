@@ -80,6 +80,12 @@ def compute_spread_bps_from_payload(
     *,
     entry_px: Optional[float] = None,
 ) -> Optional[float]:
+    from small_paper.canonical_board import spread_bps_for_mode
+
+    spread = spread_bps_for_mode(payload)
+    if spread is not None:
+        return round(float(spread), 4)
+    # fallback: legacy labeled abs spread, then high/low range
     spread = calc_spread_bps(payload)
     if spread is not None:
         return round(float(spread), 4)

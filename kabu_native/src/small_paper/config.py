@@ -103,7 +103,7 @@ class SmallPaperPilotConfig:
     daytrade_suitability_rule: str = "volatility_liquidity_top50"
     daytrade_suitability_lookback_sessions: str = "prior_only"
     daytrade_suitability_apply_mode: str = "reject_entry"
-    volume_gate_relaxation_shadow_enabled: bool = True
+    volume_gate_relaxation_shadow_enabled: bool = False
     live_order_dry_run_enabled: bool = True
     live_order_api_wiring_enabled: bool = True
     order_latency_dryrun_trace_enabled: bool = True
@@ -166,8 +166,8 @@ class SmallPaperPilotConfig:
     pbv2_flat_band_shadow_rise10_flat_max_pct: float = 0.5
     pbv2_flat_band_shadow_overheat_rise5_pct: float = 2.0
     pbv2_flat_band_mainline_enabled: bool = False
-    vwap_shadow_reject_enabled: bool = True
-    flat_weak_range_shadow_enabled: bool = False
+    vwap_shadow_reject_enabled: bool = False
+    flat_weak_range_shadow_enabled: bool = True
     readiness_precision_shadow_enabled: bool = False
     readiness_precision_shadow_expectancy_max: float = 2.5
     readiness_precision_shadow_require_live_incomplete: bool = True
@@ -658,7 +658,7 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
             raw.get("daytrade_suitability_apply_mode", "reject_entry")
         ),
         volume_gate_relaxation_shadow_enabled=bool(
-            raw.get("volume_gate_relaxation_shadow_enabled", True)
+            raw.get("volume_gate_relaxation_shadow_enabled", False)
         ),
         live_order_dry_run_enabled=bool(raw.get("live_order_dry_run_enabled", True)),
         live_order_api_wiring_enabled=bool(raw.get("live_order_api_wiring_enabled", True)),
@@ -772,8 +772,8 @@ def load_pilot_config(path: Path) -> SmallPaperPilotConfig:
             raw.get("pbv2_flat_band_shadow_overheat_rise5_pct", 2.0)
         ),
         pbv2_flat_band_mainline_enabled=bool(raw.get("pbv2_flat_band_mainline_enabled", False)),
-        vwap_shadow_reject_enabled=bool(raw.get("vwap_shadow_reject_enabled", True)),
-        flat_weak_range_shadow_enabled=bool(raw.get("flat_weak_range_shadow_enabled", False)),
+        vwap_shadow_reject_enabled=bool(raw.get("vwap_shadow_reject_enabled", False)),
+        flat_weak_range_shadow_enabled=bool(raw.get("flat_weak_range_shadow_enabled", True)),
         readiness_precision_shadow_enabled=bool(raw.get("readiness_precision_shadow_enabled", False)),
         readiness_precision_shadow_expectancy_max=float(
             raw.get("readiness_precision_shadow_expectancy_max", 2.5) or 2.5

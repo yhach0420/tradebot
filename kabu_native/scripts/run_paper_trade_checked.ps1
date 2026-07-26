@@ -19,6 +19,10 @@ $RepoRoot = Resolve-Path (Join-Path $NativeRoot "..")
 
 $env:PYTHONPATH = "$(Join-Path $NativeRoot 'src');$RepoRoot"
 $env:PYTHONIOENCODING = "utf-8"
+# Independent Market Ingress V2 (WS owner + Raw-first). Opt out: MARKET_INGRESS_V2=0
+if (-not $env:MARKET_INGRESS_V2 -or $env:MARKET_INGRESS_V2.Trim().Length -eq 0) {
+    $env:MARKET_INGRESS_V2 = "1"
+}
 
 # Ensure child processes inherit resolved paths even if user shell had empty PYTHONPATH
 if (-not $env:PYTHONPATH -or $env:PYTHONPATH.Trim().Length -eq 0) {

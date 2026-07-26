@@ -122,18 +122,24 @@ def run_disk_cleanup(repo_root: Path) -> dict[str, Any]:
 
     deleted: list[dict[str, Any]] = []
     freed = 0
+    # Phase687W70: refuse deletes of live session / push_jsonl / archive trees.
+    from small_paper.data_retention_guard import ProtectedDataDeleteError, forbid_protected_delete
+
     for row in plan_rows:
         p = Path(str(row["path"]))
         if not p.exists():
             continue
         sz = _dir_size_bytes(p)
         try:
+            forbid_protected_delete(p, root=kabu, reason="phase620_disk_cleanup")
             if p.is_dir():
                 shutil.rmtree(p, ignore_errors=True)
             else:
                 p.unlink(missing_ok=True)
             deleted.append({**row, "deleted": True})
             freed += sz
+        except ProtectedDataDeleteError as exc:
+            deleted.append({**row, "deleted": False, "error": str(exc)})
         except OSError as exc:
             deleted.append({**row, "deleted": False, "error": str(exc)})
 

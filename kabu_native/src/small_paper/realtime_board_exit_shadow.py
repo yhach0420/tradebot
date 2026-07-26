@@ -132,13 +132,10 @@ DELTA_FIELD_KEYS = (
 
 
 def calc_bid_ask_imbalance(payload: Mapping[str, Any]) -> float | None:
-    """PUSH top-of-book only: BidQty / (BidQty + AskQty)."""
-    bid = _as_float(payload.get("BidQty")) or 0.0
-    ask = _as_float(payload.get("AskQty")) or 0.0
-    total = bid + ask
-    if total <= 0:
-        return None
-    return bid / total
+    """PUSH top-of-book imbalance (canonical bid share; legacy = labeled BidQty share)."""
+    from small_paper.canonical_board import top_imbalance_for_mode
+
+    return top_imbalance_for_mode(payload)
 
 
 def _tick_time_from_payload(payload: Mapping[str, Any]) -> datetime:
@@ -150,11 +147,15 @@ def _tick_time_from_payload(payload: Mapping[str, Any]) -> datetime:
 
 
 def _best_bid_ask(payload: Mapping[str, Any]) -> tuple[Optional[float], Optional[float]]:
-    return _as_float(payload.get("BidPrice")), _as_float(payload.get("AskPrice"))
+    from small_paper.canonical_board import best_bid_ask_for_mode
+
+    return best_bid_ask_for_mode(payload)
 
 
 def _bid_ask_qty(payload: Mapping[str, Any]) -> tuple[Optional[float], Optional[float]]:
-    return _as_float(payload.get("BidQty")), _as_float(payload.get("AskQty"))
+    from small_paper.canonical_board import bid_ask_qty_for_mode
+
+    return bid_ask_qty_for_mode(payload)
 
 
 def _has_bid_ask_qty(payload: Mapping[str, Any]) -> bool:

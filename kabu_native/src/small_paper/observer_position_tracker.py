@@ -985,7 +985,12 @@ class ObserverPositionTracker:
             "take_was_not_exit": take_was_not_exit,
             "stop_hit": reason == "stop_hit",
             "session_close": reason
-            in ("morning_session_close", "afternoon_session_close", "session_end"),
+            in (
+                "morning_session_close",
+                "afternoon_session_close",
+                "session_end",
+                "recovery_session_close",
+            ),
             "overlap_replaced_review": reason == "overlap_replaced_review",
             "trailing_mfe_activated": bool(
                 ctx.get("trailing_mfe_active")

@@ -293,7 +293,10 @@ class ExitCandidateShadowPack:
         current_imb_r = round(float(current_imb), 6) if current_imb is not None else None
         imb_delta = _imb_delta(rec.entry_bid_ask_imbalance, current_imb_r)
         spread = calc_spread_bps(payload)
-        bid_qty = _as_float(payload.get("BidQty"))
+        from small_paper.canonical_board import bid_ask_qty_for_mode
+
+        bq, _aq = bid_ask_qty_for_mode(payload)
+        bid_qty = bq
         tick_dt = _tick_time(payload)
 
         if price > roll.session_high:

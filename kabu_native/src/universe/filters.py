@@ -126,8 +126,21 @@ def load_universe_config(path: Path) -> UniverseConfig:
 
 
 def calc_spread_bps(board: Mapping[str, Any]) -> float | None:
-    bid = _as_float(board.get("BidPrice"))
-    ask = _as_float(board.get("AskPrice"))
+    # Prefer canonical English book when attached (Stage0 / research normalize).
+    c_spread = _as_float(board.get("canonical_spread_bps"))
+    if c_spread is not None:
+        return c_spread
+    c_bid = _as_float(board.get("canonical_best_bid"))
+    c_ask = _as_float(board.get("canonical_best_ask"))
+    if c_bid is not None and c_ask is not None and c_bid > 0 and c_ask > 0:
+        mid = (c_bid + c_ask) / 2.0
+        if mid > 0:
+            return abs(c_ask - c_bid) / mid * 10000.0
+    # Last resort: reconstruct from Buy1/Sell1 (true book) rather than kabu Bid/Ask labels
+    buy1 = board.get("Buy1") if isinstance(board.get("Buy1"), Mapping) else None
+    sell1 = board.get("Sell1") if isinstance(board.get("Sell1"), Mapping) else None
+    bid = _as_float(buy1.get("Price")) if buy1 else None
+    ask = _as_float(sell1.get("Price")) if sell1 else None
     if bid is None or ask is None or bid <= 0 or ask <= 0:
         return None
     mid = (bid + ask) / 2.0

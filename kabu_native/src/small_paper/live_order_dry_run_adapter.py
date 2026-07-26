@@ -93,14 +93,10 @@ def _paper_trade_id(trade: Mapping[str, Any], symbol: str) -> str:
 
 
 def _limit_entry_price(payload: Mapping[str, Any]) -> Optional[float]:
-    try:
-        ask = float(payload.get("AskPrice") or 0)
-        if ask > 0:
-            return round(ask, 1)
-        px = float(payload.get("CurrentPrice") or 0)
-        return round(px, 1) if px > 0 else None
-    except (TypeError, ValueError):
-        return None
+    """Buy limit at canonical best ask (Sell1). Legacy mode keeps AskPrice label."""
+    from small_paper.canonical_board import buy_limit_price
+
+    return buy_limit_price(payload)
 
 
 def _exit_order_type(exit_reason: str) -> str:

@@ -124,9 +124,12 @@ def extract_board_snap(payload: Mapping[str, Any], *, ts: float) -> Optional[Boa
     px = _float(payload.get("CurrentPrice")) or 0.0
     if px <= 0 or ts <= 0:
         return None
-    imb = calc_board_imbalance(payload)
-    bid = _float(payload.get("BidQty"))
-    ask = _float(payload.get("AskQty"))
+    from small_paper.canonical_board import bid_ask_qty_for_mode, entry_imbalance_for_mode
+
+    imb = entry_imbalance_for_mode(payload)
+    if imb is None:
+        imb = calc_board_imbalance(payload)
+    bid, ask = bid_ask_qty_for_mode(payload)
     tv = _float(payload.get("TradingValue"))
     return (
         float(ts),

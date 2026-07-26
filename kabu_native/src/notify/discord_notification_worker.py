@@ -42,6 +42,7 @@ class NotificationWorker:
         queue_max: int = 2000,
         timeout_sec: float = 8.0,
         max_retries: int = 3,
+        dedupe: Any = None,
     ) -> None:
         try:
             from small_paper.env_loader import ensure_repo_dotenv
@@ -50,6 +51,7 @@ class NotificationWorker:
         except Exception:
             pass
         self.audit = audit
+        self.dedupe = dedupe
         self.queue_max = queue_max
         self.timeout_sec = timeout_sec
         self.max_retries = max_retries
@@ -72,19 +74,114 @@ class NotificationWorker:
         self._thread.start()
         self.last_status = "RUNNING"
 
-    def stop(self, *, flush_sec: float = 2.0) -> None:
-        """Graceful: wait briefly for queue drain at session finalize only."""
-        deadline = time.monotonic() + max(0.0, flush_sec)
-        while time.monotonic() < deadline and not self._q.empty():
+    def queue_depth(self) -> int:
+        try:
+            return int(self._q.qsize())
+        except Exception:
+            return 0
+
+    def stop(self, *, flush_sec: float = 2.0) -> dict[str, Any]:
+        """Drain queue then stop worker. Bounded wait — never hangs Paper finalize.
+
+        Returns flush telemetry. Remaining items after timeout are marked TIMEOUT
+        and discarded so subprocess/process can exit cleanly.
+        """
+        flush_sec = float(max(0.0, flush_sec))
+        depth0 = self.queue_depth()
+        self.audit.record_event(
+            {
+                "status": "WORKER_FLUSH_START",
+                "queue_depth": depth0,
+                "flush_sec": flush_sec,
+            }
+        )
+        deadline = time.monotonic() + flush_sec
+        timed_out = False
+        # Prefer draining before signaling stop so in-flight + queued HTTP can complete.
+        while time.monotonic() < deadline:
+            if self._q.empty():
+                # brief settle for in-flight send
+                time.sleep(0.05)
+                if self._q.empty():
+                    break
             time.sleep(0.05)
+        else:
+            timed_out = True
+
+        # Anything still queued after deadline → TIMEOUT (do not claim SENT).
+        timed_out_n = 0
+        while True:
+            try:
+                item = self._q.get_nowait()
+            except queue.Empty:
+                break
+            timed_out_n += 1
+            env = getattr(item, "envelope", None)
+            self.failed += 1
+            self.audit.record_event(
+                {
+                    "notification_id": getattr(env, "notification_id", ""),
+                    "category": getattr(env, "category", ""),
+                    "webhook_key": getattr(env, "webhook_env_key", ""),
+                    "status": "TIMEOUT",
+                    "dedupe_key": getattr(env, "dedupe_key", ""),
+                    "payload_hash": getattr(env, "payload_hash", ""),
+                    "reason": "flush_deadline_exceeded",
+                }
+            )
+            if self.dedupe is not None and getattr(env, "dedupe_key", None):
+                try:
+                    self.dedupe.record(
+                        dedupe_key=str(env.dedupe_key),
+                        status="TIMEOUT",
+                        notification_id=str(getattr(env, "notification_id", "") or ""),
+                        payload_hash=str(getattr(env, "payload_hash", "") or ""),
+                    )
+                except Exception:
+                    pass
+            try:
+                self._q.task_done()
+            except Exception:
+                pass
+
         self._stop.set()
+        join_budget = max(0.5, min(flush_sec, 5.0)) if flush_sec > 0 else 0.5
         if self._thread:
-            self._thread.join(timeout=max(0.5, flush_sec))
-        self.last_status = "STOPPED"
+            self._thread.join(timeout=join_budget)
+        alive = bool(self._thread and self._thread.is_alive())
+        remaining = self.queue_depth()
+        self.last_status = "STOPPED" if not alive else "KILLED"
+        if alive:
+            # Daemon thread may linger briefly; do not block Paper. Record explicitly.
+            self.audit.record_event(
+                {
+                    "status": "KILLED",
+                    "reason": "worker_thread_still_alive_after_join",
+                    "queue_depth": remaining,
+                }
+            )
+        self.audit.record_event(
+            {
+                "status": "WORKER_FLUSH_DONE",
+                "remaining": remaining,
+                "timed_out": timed_out or timed_out_n > 0,
+                "timed_out_count": timed_out_n,
+                "worker_alive": alive,
+            }
+        )
         try:
             self.audit.write_summary()
         except Exception:
             pass
+        return {
+            "status": self.last_status,
+            "queue_depth_start": depth0,
+            "remaining": remaining,
+            "timed_out": bool(timed_out or timed_out_n > 0),
+            "timed_out_count": timed_out_n,
+            "worker_alive": alive,
+            "flush_sec": flush_sec,
+        }
 
     def enqueue(self, envelope: NotificationEnvelope, webhook_url: str) -> dict[str, Any]:
         """Non-blocking enqueue. On overflow: keep CRITICAL, drop INFO/NOTICE."""
@@ -158,16 +255,36 @@ class NotificationWorker:
             finally:
                 self._q.task_done()
 
+    def _http_timeout(self) -> tuple[float, float]:
+        """(connect, read) timeouts — never hang forever on stuck sockets."""
+        read = float(self.timeout_sec or 8.0)
+        connect = min(5.0, max(1.0, read))
+        return (connect, read)
+
     def _send_with_retry(self, item: _QItem) -> None:
         env: NotificationEnvelope = item.envelope
         payload = env.discord_payload()
         attempt = item.attempt
         last_err = ""
+        self.audit.record_event(
+            {
+                "notification_id": env.notification_id,
+                "category": env.category,
+                "webhook_key": env.webhook_env_key,
+                "status": "SENDING",
+                "dedupe_key": env.dedupe_key,
+                "payload_hash": env.payload_hash,
+            }
+        )
         while attempt < self.max_retries:
             attempt += 1
             t0 = time.perf_counter()
             try:
-                resp = requests.post(item.webhook_url, json=payload, timeout=self.timeout_sec)
+                resp = requests.post(
+                    item.webhook_url,
+                    json=payload,
+                    timeout=self._http_timeout(),
+                )
                 latency_ms = round((time.perf_counter() - t0) * 1000, 1)
                 self.external_send_count += 1
                 if resp.status_code == 429:
@@ -192,8 +309,25 @@ class NotificationWorker:
                         "retry_count": attempt - 1,
                         "send_latency_ms": latency_ms,
                         "payload_hash": env.payload_hash,
+                        "dedupe_key": env.dedupe_key,
+                        "response_body_len": len(resp.text or ""),
+                        # Discord webhook success is typically 204 No Content (empty body).
+                        "response_body_preview": (resp.text or "")[:200],
+                        "event": "HTTP_SENT",
                     }
                 )
+                if self.dedupe is not None and env.dedupe_key:
+                    try:
+                        self.dedupe.record(
+                            dedupe_key=str(env.dedupe_key),
+                            status="SENT",
+                            notification_id=str(env.notification_id or ""),
+                            payload_hash=str(env.payload_hash or ""),
+                            severity=str(getattr(env, "severity", "") or ""),
+                            incident_state=str(getattr(env, "incident_state", "") or ""),
+                        )
+                    except Exception:
+                        pass
                 return
             except requests.Timeout:
                 last_err = "TIMEOUT"
@@ -206,17 +340,30 @@ class NotificationWorker:
                 break
         self.failed += 1
         self.last_status = "FAILED"
+        fail_status = "TIMEOUT" if last_err == "TIMEOUT" else "FAILED"
         self.audit.record_dead_letter(
             {
                 "notification_id": env.notification_id,
                 "category": env.category,
                 "webhook_key": env.webhook_env_key,
-                "status": "FAILED",
+                "status": fail_status,
                 "error_category": last_err,
                 "retry_count": attempt,
                 "payload_hash": env.payload_hash,
+                "dedupe_key": env.dedupe_key,
             }
         )
+        if self.dedupe is not None and env.dedupe_key:
+            try:
+                self.dedupe.record(
+                    dedupe_key=str(env.dedupe_key),
+                    status=fail_status,
+                    notification_id=str(env.notification_id or ""),
+                    payload_hash=str(env.payload_hash or ""),
+                    severity=str(getattr(env, "severity", "") or ""),
+                )
+            except Exception:
+                pass
 
     def status(self) -> dict[str, Any]:
         return {

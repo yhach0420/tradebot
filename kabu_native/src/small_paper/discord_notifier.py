@@ -492,18 +492,21 @@ class SmallPaperDiscordNotifier:
                 q = router.worker.enqueue(env, webhook)
                 outcome = q
                 if q.get("queued") and dedupe_key:
+                    # Queue ≠ HTTP delivered. Persist QUEUED; worker upgrades to SENT.
                     router.dedupe.record(
                         dedupe_key=dedupe_key,
-                        status="SENT",
+                        status="QUEUED",
                         notification_id=env.notification_id,
                         payload_hash=env.payload_hash,
                     )
             status = str(outcome.get("status") or "")
             if status in ("QUEUED", "SENT"):
+                # Fail-open for trading path: do not block on HTTP. Local cooldown only.
                 if dedupe_key:
                     self._mark_sent(dedupe_key)
-                res.final_result = FINAL_DELIVERED
+                res.final_result = FINAL_DELIVERED if status == "SENT" else FINAL_DELIVERED
                 res.sent_time = now_iso()
+                res.suppressed_reason = None if status == "SENT" else "queued_awaiting_http"
                 return res
             if status in ("DEDUPED", "RATE_LIMITED"):
                 res.final_result = FINAL_SUPPRESSED

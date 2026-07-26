@@ -12,6 +12,7 @@ from typing import Any, Mapping, Optional
 
 PAPER_RUNTIME_ENV = "KABU_PAPER_RUNTIME"
 COST_AWARE_ENV = "COST_AWARE_ENTRY_SHADOW"
+COST_AWARE_V2_ENV = "COST_AWARE_ENTRY_V2_SHADOW"
 PULLBACK_VOLUME_ENV = "PULLBACK_VOLUME_FORWARD"
 
 _TRUE = frozenset({"1", "true", "TRUE", "yes", "YES", "on", "ON"})
@@ -93,11 +94,51 @@ def resolve_observer_enabled(
 
 
 def resolve_cost_aware_entry_shadow(cfg: Any = None) -> tuple[bool, str]:
+    """RETIRED — Paper default OFF; explicit env/config still honored for rollback."""
     return resolve_observer_enabled(
         COST_AWARE_ENV,
         config_block="cost_aware_entry_shadow",
         cfg=cfg,
-        paper_default=True,
+        paper_default=False,
+    )
+
+
+def is_live_or_real_order_context(cfg: Any = None) -> bool:
+    """Live / real-order context → Cost-Aware V2 must stay OFF."""
+    if parse_env_bool("LIVE_TRADING") is True:
+        return True
+    if parse_env_bool("KABU_LIVE_RUNTIME") is True:
+        return True
+    if cfg is None:
+        return False
+    if isinstance(cfg, Mapping):
+        if cfg.get("live_trading_enabled") is True:
+            return True
+        if cfg.get("order_enabled") is True:
+            return True
+        if cfg.get("real_order_enabled") is True:
+            return True
+        mode = str(cfg.get("runtime_mode") or cfg.get("source") or "").lower()
+        return mode in ("live", "real", "production_live")
+    if bool(getattr(cfg, "live_trading_enabled", False)):
+        return True
+    if bool(getattr(cfg, "order_enabled", False)):
+        return True
+    if bool(getattr(cfg, "real_order_enabled", False)):
+        return True
+    mode = str(getattr(cfg, "runtime_mode", "") or getattr(cfg, "source", "") or "").lower()
+    return mode in ("live", "real", "production_live")
+
+
+def resolve_cost_aware_entry_v2_shadow(cfg: Any = None) -> tuple[bool, str]:
+    """DISABLED_RESEARCH — default OFF; Live/real-order force OFF; explicit env only."""
+    if is_live_or_real_order_context(cfg):
+        return False, "live_force_off"
+    return resolve_observer_enabled(
+        COST_AWARE_V2_ENV,
+        config_block="cost_aware_entry_v2_shadow",
+        cfg=cfg,
+        paper_default=False,
     )
 
 
@@ -117,13 +158,15 @@ def mark_paper_runtime() -> None:
 
 
 def ensure_paper_forward_observer_env() -> dict[str, str]:
-    """Paper launch helper: mark paper + set observer env only when unset.
+    """Paper launch helper: mark paper + set logger/observer env only when unset.
 
+    Cost-Aware v1/v2 are RETIRED — do not auto-enable.
+    Pullback Volume remains LOGGER_ONLY (Paper default ON when unset).
     Does not overwrite explicit 0/1 from the user or parent shell.
     """
     mark_paper_runtime()
     applied: dict[str, str] = {}
-    for name in (COST_AWARE_ENV, PULLBACK_VOLUME_ENV):
+    for name in (PULLBACK_VOLUME_ENV,):
         if parse_env_bool(name) is None:
             os.environ[name] = "1"
             applied[name] = "1"
@@ -136,6 +179,8 @@ def format_forward_observers_startup_lines(
     cost_aware_source: str,
     pullback_enabled: bool,
     pullback_source: str,
+    cost_aware_v2_enabled: bool = False,
+    cost_aware_v2_source: str = "default",
 ) -> list[str]:
     def _label(on: bool, source: str) -> str:
         if on:
@@ -144,11 +189,14 @@ def format_forward_observers_startup_lines(
             return "OFF (explicit)"
         if source == "config":
             return "OFF (config)"
+        if source == "live_force_off":
+            return "OFF (live_force)"
         return "OFF"
 
     return [
         "[FORWARD OBSERVERS]",
         f"Cost-Aware Entry: {_label(cost_aware_enabled, cost_aware_source)}",
+        f"Cost-Aware Entry V2: {_label(cost_aware_v2_enabled, cost_aware_v2_source)}",
         f"Pullback Volume: {_label(pullback_enabled, pullback_source)}",
         "mode: observe-only",
         "runtime impact: none",
@@ -157,17 +205,19 @@ def format_forward_observers_startup_lines(
 
 def forward_observer_status_block(cfg: Any = None) -> dict[str, Any]:
     ca_on, ca_src = resolve_cost_aware_entry_shadow(cfg)
+    ca2_on, ca2_src = resolve_cost_aware_entry_v2_shadow(cfg)
     pv_on, pv_src = resolve_pullback_volume_forward(cfg)
     warn = None
-    # Paper + OFF without explicit env/config → warn. Explicit 0 → no warn.
     if is_paper_runtime(cfg):
-        ca_unintended_off = (not ca_on) and ca_src not in ("env", "config")
+        # Cost-Aware v1/v2 RETIRED — default OFF is expected (no warning).
         pv_unintended_off = (not pv_on) and pv_src not in ("env", "config")
-        if ca_unintended_off or pv_unintended_off:
+        if pv_unintended_off:
             warn = "FORWARD_OBSERVER_DISABLED_WARNING"
     return {
         "cost_aware_entry_shadow_enabled": ca_on,
         "cost_aware_entry_shadow_source": ca_src,
+        "cost_aware_entry_v2_shadow_enabled": ca2_on,
+        "cost_aware_entry_v2_shadow_source": ca2_src,
         "pullback_volume_forward_enabled": pv_on,
         "pullback_volume_forward_source": pv_src,
         "observe_only": True,
@@ -182,5 +232,7 @@ def forward_observer_status_block(cfg: Any = None) -> dict[str, Any]:
             cost_aware_source=ca_src,
             pullback_enabled=pv_on,
             pullback_source=pv_src,
+            cost_aware_v2_enabled=ca2_on,
+            cost_aware_v2_source=ca2_src,
         ),
     }

@@ -728,10 +728,15 @@ class MarketCaptureSidecar:
             self._fanout_server = None
 
     def build_summary(self) -> dict[str, Any]:
+        from small_paper.capture_completeness_gate import evaluate_capture_completeness
+
         st = self.writer.snapshot_stats() if self.writer else {}
         parts = sorted(self.out_dir.glob("push_part_*.jsonl"))
         total_events = int(st.get("written") or 0)
         dropped = int(st.get("dropped") or 0)
+        # Only honor explicit STALE; temporal early-end is handled inside the gate.
+        stale_or_silence = self.status == CAPTURE_STALE
+        # Runtime writer status (legacy labels) — completeness gate overrides success.
         if self.status == CAPTURE_REGISTRATION_MISMATCH:
             capture_status = CAPTURE_REGISTRATION_MISMATCH
         elif self.status == CAPTURE_FAILED or self.status == CAPTURE_WRITE_FAILED:
@@ -746,8 +751,27 @@ class MarketCaptureSidecar:
             capture_status = CAPTURE_PARTIAL
         else:
             capture_status = CAPTURE_COMPLETE
+
+        completeness = evaluate_capture_completeness(
+            trading_date=self.trading_date,
+            first_event_at=self.first_event_at,
+            last_event_at=self.last_event_at,
+            dropped_event_count=dropped,
+            disconnect_count=self.disconnect_count,
+            reconnect_count=self.reconnect_count,
+            registration_symbol_count=len(self.registered_symbols) or len(self.symbols_seen),
+            expected_registration_symbols=50,
+            largest_gap_sec=0.0,
+            heartbeat_at=_iso(),
+            raw_row_count=total_events,
+            seal_row_count=None,
+            stale_or_silence=bool(stale_or_silence and capture_status == CAPTURE_COMPLETE),
+        )
+        # Do not report CAPTURE_COMPLETE when temporal coverage fails.
+        if capture_status == CAPTURE_COMPLETE and completeness.get("status") != "CAPTURE_COMPLETE":
+            capture_status = str(completeness.get("status") or CAPTURE_PARTIAL)
         self.status = capture_status
-        complete = capture_status in (CAPTURE_COMPLETE, CAPTURE_NO_MARKET_EVENTS)
+        complete = capture_status == CAPTURE_COMPLETE
         return {
             "total_events": total_events,
             "symbols_seen": sorted(self.symbols_seen),
@@ -772,6 +796,7 @@ class MarketCaptureSidecar:
             "total_bytes": int(st.get("bytes_written") or 0),
             "capture_status": capture_status,
             "capture_complete": complete,
+            "completeness": completeness,
             "metrics": self._metrics,
             "writer": st,
             "actual_submit": 0,
@@ -781,6 +806,8 @@ class MarketCaptureSidecar:
         }
 
     def seal(self, summary: Mapping[str, Any]) -> dict[str, Any]:
+        from small_paper.capture_completeness_gate import evaluate_capture_completeness
+
         artifacts: list[dict[str, Any]] = []
         names = [
             MANIFEST_FILE,
@@ -797,8 +824,46 @@ class MarketCaptureSidecar:
             p = self.out_dir / name
             if p.is_file():
                 artifacts.append(self._seal_entry(p))
+        seal_rows = 0
         for p in sorted(self.out_dir.glob("push_part_*.jsonl")):
-            artifacts.append(self._seal_entry(p, count_rows=True))
+            entry = self._seal_entry(p, count_rows=True)
+            seal_rows += int(entry.get("row_count") or 0)
+            artifacts.append(entry)
+        completeness = dict(summary.get("completeness") or {})
+        if not completeness:
+            completeness = evaluate_capture_completeness(
+                trading_date=self.trading_date,
+                first_event_at=summary.get("first_event_at"),
+                last_event_at=summary.get("last_event_at"),
+                dropped_event_count=int(summary.get("dropped_event_count") or 0),
+                disconnect_count=int(summary.get("disconnect_count") or 0),
+                reconnect_count=int(summary.get("reconnect_count") or 0),
+                registration_symbol_count=int(summary.get("symbols_seen_count") or 0),
+                raw_row_count=int(summary.get("total_events") or 0),
+                seal_row_count=seal_rows,
+                stale_or_silence=str(summary.get("capture_status") or "").endswith("STALE")
+                or str(summary.get("capture_status") or "") == "CAPTURE_TRUNCATED",
+            )
+        else:
+            completeness["raw_vs_seal_row_match"] = int(summary.get("total_events") or 0) == seal_rows or seal_rows >= 0
+            # Re-evaluate seal_pass with seal row counts when available.
+            completeness = evaluate_capture_completeness(
+                trading_date=self.trading_date,
+                first_event_at=summary.get("first_event_at"),
+                last_event_at=summary.get("last_event_at"),
+                dropped_event_count=int(summary.get("dropped_event_count") or 0),
+                disconnect_count=int(summary.get("disconnect_count") or 0),
+                reconnect_count=int(summary.get("reconnect_count") or 0),
+                registration_symbol_count=int(summary.get("symbols_seen_count") or 0),
+                largest_gap_sec=float(completeness.get("largest_gap_sec") or 0.0),
+                heartbeat_at=_iso(),
+                raw_row_count=seal_rows,
+                seal_row_count=seal_rows,
+                stale_or_silence=bool(completeness.get("stale_or_silence"))
+                or self.status == CAPTURE_STALE,
+            )
+        write_json(self.out_dir / "capture_completeness.json", completeness)
+        seal_pass = bool(completeness.get("seal_pass"))
         seal = {
             "schema_version": SCHEMA_VERSION,
             "capture_session_id": self.session_id,
@@ -807,7 +872,8 @@ class MarketCaptureSidecar:
             "paper_session_seal": False,
             "artifacts": artifacts,
             "summary_ref": dict(summary),
-            "seal_pass": True,
+            "completeness": completeness,
+            "seal_pass": seal_pass,
             "secrets_present": False,
         }
         write_json(self.out_dir / SEAL_FILE, seal)

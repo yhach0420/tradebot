@@ -284,7 +284,15 @@ def _enqueue_inner(
     am_pm = session_kind_am_pm(summary)
     router = get_router(Path(native_root))
     day = trading_date or str(summary.get("trading_date") or trading_date_jst())
-    sid = session_id or str(summary.get("session_id") or "")
+    from small_paper.session_end_discord_delivery import resolve_session_id
+
+    sid = resolve_session_id(
+        summary,
+        output_dir=output_dir,
+        session_id=session_id or str(summary.get("session_id") or ""),
+    )
+    if not sid:
+        raise ValueError("empty_session_id_forbidden")
 
     if am_pm not in ("am", "pm"):
         # Daily: do not send (no AM/PM duplicate)

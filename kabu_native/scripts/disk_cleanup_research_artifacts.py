@@ -159,12 +159,17 @@ def write_plan(rows: list[dict[str, Any]], path: Path) -> None:
 
 
 def execute_deletes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Phase687W70: never delete live session / push_jsonl / archive without approval.
+    sys.path.insert(0, str(ROOT / "src"))
+    from small_paper.data_retention_guard import ProtectedDataDeleteError, forbid_protected_delete
+
     results: list[dict[str, Any]] = []
     for r in rows:
         p = Path(r["path"])
         ok = False
         err = ""
         try:
+            forbid_protected_delete(p, root=ROOT, reason="disk_cleanup_research_artifacts")
             if p.is_dir():
                 shutil.rmtree(p)
                 ok = not p.exists()
@@ -174,6 +179,8 @@ def execute_deletes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             else:
                 ok = True
                 err = "already_missing"
+        except ProtectedDataDeleteError as exc:
+            err = str(exc)
         except Exception as exc:
             err = str(exc)
         results.append({**r, "deleted_ok": ok, "error": err})

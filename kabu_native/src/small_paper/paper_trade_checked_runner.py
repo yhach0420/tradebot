@@ -1693,6 +1693,7 @@ class PaperTradeCheckedRunner:
             wait_capture_online,
         )
         from small_paper.capture_child_cleanup import prepare_day_dir_operator_stop_for_spawn
+        from small_paper.market_ingress_protocol import market_ingress_v2_enabled
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
@@ -1705,35 +1706,71 @@ class PaperTradeCheckedRunner:
         )
         self.capture["operator_stop_prep"] = stop_prep
 
-        spawn = spawn_sidecar_process(
-            native_root=self.native_root,
-            trading_date=self.trading_date,
-            synthetic=self.capture_synthetic,
-            synthetic_events=80 if self.capture_synthetic else 0,
-            python_exe=self.python_exe,
-        )
-        # Track owned PID immediately (even if wait fails) so finally can stop our child.
-        if int(spawn.get("pid") or 0) > 0:
-            from small_paper.capture_child_cleanup import record_owned_from_spawn
+        if market_ingress_v2_enabled():
+            from small_paper.market_ingress_spawn import spawn_ingress_process, wait_ingress_online
 
-            self._owned_capture = record_owned_from_spawn(spawn, native_root=self.native_root)
-        wait = wait_capture_online(
-            self.native_root,
-            self.trading_date,
-            timeout_sec=20.0 if self.capture_synthetic else 45.0,
-        )
-        ok = bool(wait.get("ok"))
-        self.capture.update(
-            {
-                "started": ok,
-                "pid": wait.get("pid") or spawn.get("pid"),
-                "status": wait.get("status") or ("CAPTURE_ONLINE" if ok else "CAPTURE_START_FAILED"),
-                "output": wait.get("output") or spawn.get("output"),
-                "topology": "SINGLE_INGRESS_LOCAL_FANOUT",
-                "spawn": spawn,
-                "wait": wait,
-            }
-        )
+            # Cutover: Independent Ingress owns WS + Raw; legacy fanout sidecar OFF.
+            spawn = spawn_ingress_process(
+                native_root=self.native_root,
+                trading_date=self.trading_date,
+                python_exe=self.python_exe,
+                synthetic=bool(self.capture_synthetic),
+            )
+            if int(spawn.get("pid") or 0) > 0:
+                from small_paper.capture_child_cleanup import record_owned_from_spawn
+
+                self._owned_capture = record_owned_from_spawn(spawn, native_root=self.native_root)
+            wait = wait_ingress_online(
+                self.native_root,
+                self.trading_date,
+                timeout_sec=20.0 if self.capture_synthetic else 45.0,
+            )
+            ok = bool(wait.get("ok"))
+            self.capture.update(
+                {
+                    "started": ok,
+                    "pid": wait.get("pid") or spawn.get("pid"),
+                    "status": wait.get("status") or ("INGRESS_ONLINE" if ok else "INGRESS_START_FAILED"),
+                    "output": str(day_dir),
+                    "topology": "INDEPENDENT_MARKET_INGRESS",
+                    "websocket_owner": "MARKET_INGRESS_SERVICE",
+                    "capture_source": "INGRESS_RAW_WRITER",
+                    "legacy_paper_websocket": "DISABLED",
+                    "legacy_capture_fanout": "DISABLED",
+                    "spawn": spawn,
+                    "wait": wait,
+                }
+            )
+        else:
+            spawn = spawn_sidecar_process(
+                native_root=self.native_root,
+                trading_date=self.trading_date,
+                synthetic=self.capture_synthetic,
+                synthetic_events=80 if self.capture_synthetic else 0,
+                python_exe=self.python_exe,
+            )
+            # Track owned PID immediately (even if wait fails) so finally can stop our child.
+            if int(spawn.get("pid") or 0) > 0:
+                from small_paper.capture_child_cleanup import record_owned_from_spawn
+
+                self._owned_capture = record_owned_from_spawn(spawn, native_root=self.native_root)
+            wait = wait_capture_online(
+                self.native_root,
+                self.trading_date,
+                timeout_sec=20.0 if self.capture_synthetic else 45.0,
+            )
+            ok = bool(wait.get("ok"))
+            self.capture.update(
+                {
+                    "started": ok,
+                    "pid": wait.get("pid") or spawn.get("pid"),
+                    "status": wait.get("status") or ("CAPTURE_ONLINE" if ok else "CAPTURE_START_FAILED"),
+                    "output": wait.get("output") or spawn.get("output"),
+                    "topology": "SINGLE_INGRESS_LOCAL_FANOUT",
+                    "spawn": spawn,
+                    "wait": wait,
+                }
+            )
         step = self._record(
             "capture_sidecar_start",
             7,

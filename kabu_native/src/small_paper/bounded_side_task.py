@@ -450,18 +450,151 @@ def _execute_request(req: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "should_not_reach"}
 
     if task == "discord_session_end":
-        # Capture-only / no network when DISCORD_CAPTURE_ONLY=1
+        # Load finalized summary from disk and send session-end Discord.
+        # Capture-only / no network when DISCORD_CAPTURE_ONLY=1 (handled inside notifier).
         marker = tmp_dir / "discord_done.json"
         assert_writable_path(session_dir, marker)
+        capture_only = str(os.environ.get("DISCORD_CAPTURE_ONLY") or "").strip() in (
+            "1",
+            "true",
+            "True",
+            "YES",
+            "yes",
+        )
         try:
-            # Soft import; never raise to parent beyond result JSON
-            from small_paper import discord_notifier  # noqa: F401
+            from small_paper.discord_notifier import (
+                SmallPaperDiscordConfig,
+                SmallPaperDiscordNotifier,
+            )
 
+            summary_path = Path(
+                str(extra.get("summary_path") or (session_dir / "small_paper_summary.json"))
+            )
+            if not summary_path.is_file():
+                alt = session_dir / "summary.json"
+                summary_path = alt if alt.is_file() else summary_path
+            if not summary_path.is_file():
+                raise FileNotFoundError(f"summary_missing:{summary_path}")
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            if not isinstance(summary, dict):
+                raise ValueError("summary_not_object")
+
+            cfg = SmallPaperDiscordConfig(
+                enabled=True,
+                send_daily_summary=True,
+                # _post requires observer_only=True (paper notify path).
+                observer_only=True,
+            )
+            discord = SmallPaperDiscordNotifier(
+                cfg,
+                profile=str(summary.get("profile") or "session_end"),
+                entry_profile=str(summary.get("entry_profile") or summary.get("profile") or "session_end"),
+                policy_label=str(summary.get("policy_label") or "paper"),
+                min_continuation_quality=float(summary.get("min_continuation_quality") or 0.0),
+            )
+            # Prefer in-memory empty events — production embed uses canonical_summary only.
+            events: list[dict[str, Any]] = []
+            events_path = Path(str(extra.get("events_path") or ""))
+            if events_path.is_file() and events_path.stat().st_size < 8_000_000:
+                for line in events_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        events.append(json.loads(line))
+                    except Exception:
+                        pass
+
+            if capture_only:
+                # Demo / investigation: do not hit webhook; persist capture artifact.
+                capture = tmp_dir / "discord_capture.json"
+                assert_writable_path(session_dir, capture)
+                capture.write_text(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "capture_only": True,
+                            "task_id": task_id,
+                            "dedupe_key": extra.get("dedupe_key"),
+                            "stop_reason": summary.get("stop_reason"),
+                            "trading_date": summary.get("trading_date"),
+                            "accepted_count": summary.get("accepted_count"),
+                            "canonical_total_pnl_yen_100": summary.get("canonical_total_pnl_yen_100"),
+                        },
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                    encoding="utf-8",
+                )
+                marker.write_text(
+                    json.dumps(
+                        {"ok": True, "capture_only": True, "task_id": task_id, "capture": str(capture)},
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                return {
+                    "ok": True,
+                    "value": {"discord": "capture_only", "marker": str(marker), "capture": str(capture)},
+                }
+
+            native_root = Path(str(extra.get("native_root") or Path(__file__).resolve().parents[2]))
+            from small_paper.session_end_discord_delivery import (
+                DEFAULT_FLUSH_SEC,
+                deliver_session_end_discord,
+            )
+
+            flush_sec = float(extra.get("flush_sec") or DEFAULT_FLUSH_SEC)
+            delivery = deliver_session_end_discord(
+                discord=discord,
+                events=events,
+                summary=summary,
+                native_root=native_root,
+                output_dir=session_dir,
+                flush_sec=flush_sec,
+                session_id=str(summary.get("session_id") or session_dir.name or ""),
+            )
+            discord_status = str(delivery.get("discord") or "failed")
+            # HTTP-confirmed only — never mark enqueue as sent.
+            marker_ok = bool(delivery.get("ok")) and discord_status == "sent"
             marker.write_text(
-                json.dumps({"ok": True, "capture_only": os.environ.get("DISCORD_CAPTURE_ONLY"), "task_id": task_id}),
+                json.dumps(
+                    {
+                        "ok": marker_ok,
+                        "capture_only": False,
+                        "task_id": task_id,
+                        "dedupe_key": extra.get("dedupe_key"),
+                        "summary_path": str(summary_path),
+                        "discord": discord_status,
+                        "delivery": {
+                            "per_key": delivery.get("per_key"),
+                            "flush": delivery.get("flush"),
+                            "session_id": delivery.get("session_id"),
+                        },
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
                 encoding="utf-8",
             )
-            return {"ok": True, "value": {"discord": "done", "marker": str(marker)}}
+            return {
+                "ok": marker_ok,
+                "pending": not marker_ok,
+                "value": {
+                    "discord": discord_status,
+                    "marker": str(marker),
+                    "summary_path": str(summary_path),
+                    "dedupe_key": extra.get("dedupe_key"),
+                    "per_key": delivery.get("per_key"),
+                    "flush": delivery.get("flush"),
+                    "queue_remaining": delivery.get("queue_remaining"),
+                    "worker_alive": delivery.get("worker_alive"),
+                    "submit": 0,
+                    "cancel": 0,
+                    "live_order": 0,
+                },
+                "error": None if marker_ok else f"discord_{discord_status}",
+            }
         except Exception as exc:
             marker.write_text(json.dumps({"ok": False, "error": str(exc)}), encoding="utf-8")
             return {"ok": False, "pending": True, "error": str(exc)}

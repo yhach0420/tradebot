@@ -92,6 +92,7 @@ OFFICIAL_STRUCTURAL_EXIT_REASONS = frozenset(
         *STRUCTURE_EXIT_REASONS,
         "morning_session_close",
         "afternoon_session_close",
+        "recovery_session_close",
     }
 )
 

@@ -33,14 +33,15 @@ def volatility_liquidity_score(
 
 
 def spread_pct_from_payload(payload: Mapping[str, Any]) -> Optional[float]:
-    bid = _float(payload.get("BidPrice"))
-    ask = _float(payload.get("AskPrice"))
+    from small_paper.canonical_board import best_bid_ask_for_mode
+
+    bid, ask = best_bid_ask_for_mode(payload)
     if bid is None or ask is None or bid <= 0 or ask <= 0:
         return None
     mid = (bid + ask) / 2.0
     if mid <= 0:
         return None
-    return round((ask - bid) / mid * 100.0, 6)
+    return round(abs(ask - bid) / mid * 100.0, 6)
 
 
 def enrich_daytrade_metrics(

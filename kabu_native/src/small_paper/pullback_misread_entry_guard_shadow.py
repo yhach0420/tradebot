@@ -199,8 +199,14 @@ class PullbackMisreadEntryGuardShadowCounters:
 
     def summary_fields(self) -> dict[str, Any]:
         delta = round(self.shadow_total_pnl_yen_100 - self.actual_total_pnl_yen_100, 2)
+        try:
+            from small_paper.shadow_registry import is_shadow_runtime_enabled
+
+            enabled = is_shadow_runtime_enabled("pullback_misread_guard_shadow")
+        except Exception:
+            enabled = False
         return {
-            "pullback_misread_guard_shadow_enabled": True,
+            "pullback_misread_guard_shadow_enabled": enabled,
             "pullback_misread_guard_shadow_blocked_count": (
                 self.pullback_misread_guard_shadow_blocked_count
             ),

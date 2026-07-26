@@ -103,7 +103,14 @@ def mask_secrets(obj: Any) -> Any:
 
 
 def extract_board_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Search helpers only — original_payload remains source of truth."""
+    """Search helpers only — original_payload remains source of truth.
+
+    bid/ask columns prefer canonical English book when attached; raw BidPrice/AskPrice
+    stay inside original_payload unchanged.
+    """
+    from small_paper.canonical_board import best_bid_ask_for_mode
+
+    c_bid, c_ask = best_bid_ask_for_mode(payload)
     return {
         "symbol": payload.get("Symbol") or payload.get("symbol"),
         "exchange": payload.get("Exchange") or payload.get("exchange"),
@@ -111,8 +118,12 @@ def extract_board_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
         "current_price_time": payload.get("CurrentPriceTime") or payload.get("current_price_time"),
         "trading_volume": payload.get("TradingVolume") or payload.get("trading_volume"),
         "trading_value": payload.get("TradingValue") or payload.get("trading_value"),
-        "bid": payload.get("BidPrice") or payload.get("bid"),
-        "ask": payload.get("AskPrice") or payload.get("ask"),
+        "bid": c_bid if c_bid is not None else payload.get("bid"),
+        "ask": c_ask if c_ask is not None else payload.get("ask"),
+        "canonical_best_bid": payload.get("canonical_best_bid", c_bid),
+        "canonical_best_ask": payload.get("canonical_best_ask", c_ask),
+        "kabu_bid_price_raw": payload.get("kabu_bid_price_raw"),
+        "kabu_ask_price_raw": payload.get("kabu_ask_price_raw"),
     }
 
 
@@ -165,7 +176,23 @@ class MarketCaptureWriter:
     def __post_init__(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._cv = threading.Condition(self._lock)
-        self._open_part()
+        # Never append into a prior session's non-empty parts (PM relaunch / fresh PID).
+        # Exclusive max(existing)+1 preserves AM tape and avoids mixed-session contamination.
+        if self._day_has_nonempty_parts():
+            self._part_idx = next_exclusive_part_index(self.output_dir)
+            self._open_part(exclusive=True)
+        else:
+            self._open_part()
+
+    def _day_has_nonempty_parts(self) -> bool:
+        for idx in list_push_part_indexes(self.output_dir):
+            p = self.output_dir / f"push_part_{idx:04d}.jsonl"
+            try:
+                if p.is_file() and p.stat().st_size > 0:
+                    return True
+            except OSError:
+                continue
+        return False
 
     def _part_name(self) -> str:
         return f"push_part_{self._part_idx:04d}.jsonl"

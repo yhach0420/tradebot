@@ -55,7 +55,15 @@ class DedupeStore:
             status = str(prev.get("status") or "")
             if status == "SENT":
                 return {"result": "DEDUPED", "allow": False, "previous": prev}
-            if status == "FAILED":
+            if status in ("FAILED", "TIMEOUT", "KILLED"):
+                return {"result": "RETRY_ALLOWED", "allow": True, "previous": prev}
+            # QUEUED means enqueue-only (not HTTP-confirmed). Allow retry if stale
+            # so short-lived resend processes cannot permanently block delivery.
+            if status == "QUEUED":
+                mono = float(prev.get("mono") or 0.0)
+                age = (time.monotonic() - mono) if mono else 1e9
+                if age < 60.0:
+                    return {"result": "IN_FLIGHT", "allow": False, "previous": prev}
                 return {"result": "RETRY_ALLOWED", "allow": True, "previous": prev}
             return {"result": "DEDUPED", "allow": False, "previous": prev}
 

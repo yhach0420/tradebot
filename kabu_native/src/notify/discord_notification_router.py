@@ -53,7 +53,7 @@ class DiscordNotificationRouter:
         self.audit = NotificationAudit(self.native_root)
         self.dedupe = default_dedupe_store(self.native_root)
         self.rate = RateLimiter()
-        self.worker = NotificationWorker(audit=self.audit)
+        self.worker = NotificationWorker(audit=self.audit, dedupe=self.dedupe)
         self.critical_ops_fallback = CRITICAL_OPERATIONS_FALLBACK_DEFAULT
         self.enable_worker = enable_worker
         self.publish_count = 0
@@ -179,10 +179,11 @@ class DiscordNotificationRouter:
             return {"status": "SKIPPED_WEBHOOK_NOT_CONFIGURED", "queued": False}
 
         result = self.worker.enqueue(envelope, url)
+        # Phase723: dedupe SENT only after HTTP success (worker). Queue ≠ delivered.
         if result.get("queued") and dedupe_key:
             self.dedupe.record(
                 dedupe_key=dedupe_key,
-                status="SENT",
+                status="QUEUED",
                 notification_id=envelope.notification_id,
                 payload_hash=envelope.payload_hash,
                 severity=envelope.severity,

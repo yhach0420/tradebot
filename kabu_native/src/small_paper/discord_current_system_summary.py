@@ -519,7 +519,13 @@ def render_cost_aware_section(summary: Mapping[str, Any], cfg: Any = None) -> li
             state=state,
             normal_lines=[],
         )
-    if state.get("enabled") is not True:
+    # Phase722: prefer top-level enabled; fall back to nested block.enabled
+    enabled = state.get("enabled")
+    if enabled is None:
+        enabled = bool(block.get("enabled"))
+    if enabled is not True and summary.get("cost_aware_entry_shadow_enabled") is True:
+        enabled = True
+    if enabled is not True:
         return _section_for_observer_state(
             title="--- Cost-Aware ENTRY ---",
             state=state,
@@ -529,32 +535,47 @@ def render_cost_aware_section(summary: Mapping[str, Any], cfg: Any = None) -> li
     same = int(block.get("official_entry_match") or 0)
     diff = int(block.get("official_entry_mismatch") or 0)
     completed = int(block.get("n_closed") or 0)
-    rt = block.get("runtime_compatible_pnl")
-    sh = block.get("pnl_after_5bps_30m")
+    rt = summary.get("cost_aware_runtime_compatible_pnl", block.get("runtime_compatible_pnl"))
+    sh = summary.get("cost_aware_shadow_pnl_after_5bps", block.get("pnl_after_5bps_30m"))
+    status = str(summary.get("cost_aware_status") or block.get("status") or "collecting")
+    rt_pf = block.get("runtime_compatible_pf_5bps")
+    sh_pf = block.get("shadow_pf_5bps_30m") or block.get("fixed_30m_pf_5bps")
+    incomplete = ""
+    if status == "PARTIAL_PIPELINE":
+        missing = []
+        if rt is None:
+            missing.append("runtime_compatible_pnl")
+        if sh is None:
+            missing.append("shadow_5bps_pnl")
+        if int(block.get("recovery_finalize_count") or 0) > 0:
+            missing.append("force_finalize_without_price_path")
+        incomplete = ", ".join(missing) if missing else "partial metrics"
     lines = [
         "--- Cost-Aware ENTRY ---",
         "",
+        f"status: {status}",
         f"evaluations: {int(block.get('candidates') or block.get('shadow_eligible') or 0)}",
-        f"comparable groups: {cycles}",
+        f"eligible: {int(block.get('eligible') or block.get('shadow_eligible') or 0)}",
+        f"selection_cycles: {cycles}",
+        f"shadow_entries: {int(block.get('shadow_entries') or 0)}",
+        f"stop_risk_reject: {int(block.get('stop_risk_reject') or 0)}",
         "",
         f"runtime selected: {same + diff}",
         f"shadow different choice: {diff}",
         f"same choice: {same}",
-        "",
         f"virtual outcomes completed: {completed}",
         "",
+        f"runtime_compatible_pnl: {_yen(rt) if isinstance(rt, (int, float)) else 'n/a'}",
+        f"shadow_pnl_after_5bps: {_yen(sh) if isinstance(sh, (int, float)) else 'n/a'}",
     ]
-    if rt is not None:
-        yen_rt = block.get("runtime_pnl_yen_100")
-        yen_sh = block.get("shadow_pnl_yen_100")
-        if yen_rt is not None or yen_sh is not None:
-            lines.append(f"runtime PnL: {_yen(yen_rt)}")
-            lines.append(f"shadow PnL: {_yen(yen_sh)}")
-            if yen_rt is not None and yen_sh is not None:
-                lines.append(f"delta: {_yen(float(yen_sh) - float(yen_rt))}")
-        else:
-            lines.append(f"runtime PnL (pct proxy): {rt}")
-            lines.append(f"shadow PnL after 5bps (pct): {sh}")
+    if isinstance(rt, (int, float)) and isinstance(sh, (int, float)):
+        lines.append(f"delta: {_yen(float(sh) - float(rt))}")
+    else:
+        lines.append("delta: n/a")
+    lines.append(f"runtime PF: {rt_pf if rt_pf is not None else 'n/a'}")
+    lines.append(f"shadow PF: {sh_pf if sh_pf is not None else 'n/a'}")
+    if incomplete:
+        lines.append(f"incomplete reason: {incomplete}")
     lines.extend(
         [
             "",
@@ -562,7 +583,6 @@ def render_cost_aware_section(summary: Mapping[str, Any], cfg: Any = None) -> li
             f"Winner missed: {int(block.get('never_filled') or 0)}",
             f"Winner captured: {int(block.get('later_fill') or 0)}",
             "",
-            "status: collecting",
             "runtime ENTRY unchanged: YES",
         ]
     )
@@ -912,23 +932,56 @@ def build_shadow_summary_structured(
     am_pm: str,
     cfg: Any = None,
 ) -> dict[str, Any]:
+    """Shadow Portfolio Cleanup: Discord shows ≤3 PnL shadows only.
+
+    E1_X5 / Flat Weak + Range / Board Dynamic Monitor.
+    Logger / Mainline Component / Retired are omitted from Shadow Summary.
+    Deprecated section renderers remain for reader compatibility when called directly.
+    """
+    from small_paper.shadow_registry import format_shadow_portfolio_startup_lines
+
+    e1 = summary.get("e1_x5_forward_shadow") if isinstance(summary.get("e1_x5_forward_shadow"), Mapping) else {}
+    e1_enabled = bool(summary.get("e1_x5_forward_shadow_enabled", e1.get("enabled")))
+    e1_trades = int(summary.get("e1_x5_forward_shadow_trades") or e1.get("trades") or 0)
+    e1_pnl = summary.get("e1_x5_forward_shadow_total_pnl_yen_100", e1.get("total_pnl_yen_100"))
+    e1_pf = summary.get("e1_x5_forward_shadow_profit_factor_yen_100", e1.get("profit_factor_yen_100"))
+    e1_open = int(summary.get("e1_x5_forward_shadow_open_positions") or e1.get("open_positions") or 0)
+
+    fwr_lines = render_flat_weak_range_section(summary, cfg)
+    # Board Dynamic: one-line monitor summary
+    bd_exits = int(summary.get("board_dynamic_shadow_exit_count") or 0)
+    bd_delta = summary.get("board_dynamic_shadow_total_delta_yen")
+    bd_on = bool(summary.get("board_dynamic_shadow_enabled", True))
+    bd_line = (
+        f"Board Dynamic Monitor: {'ON' if bd_on else 'OFF'} "
+        f"exits={bd_exits} delta={bd_delta if bd_delta is not None else 'n/a'}"
+    )
+
+    e1_block = [
+        "--- E1_X5 ---",
+        f"status: {'ON' if e1_enabled else 'OFF'}",
+        f"trades: {e1_trades}",
+        f"PnL: {e1_pnl if e1_pnl is not None else 'n/a'}",
+        f"PF: {e1_pf if e1_pf is not None else 'n/a'}",
+        "delta: n/a (independent CAP5)",
+        f"open: {e1_open}",
+        "gate progress: Forward 5 sessions / 30 trades",
+    ]
+
     sections = {
+        "portfolio": format_shadow_portfolio_startup_lines(),
+        "e1_x5": e1_block,
+        "flat_weak_range": fwr_lines,
+        "board_dynamic": [bd_line],
+        # deprecated (kept for callers; not emitted in discord_text)
         "observer_status": render_observer_status_section(summary, cfg),
-        "cost_aware": render_cost_aware_section(summary, cfg),
-        "flat_weak_range": render_flat_weak_range_section(summary, cfg),
-        "pullback_misread": render_pullback_misread_section(summary, cfg),
-        "pullback_volume": render_pullback_volume_section(summary, cfg),
+        "cost_aware": [],
+        "pullback_misread": [],
+        "pullback_volume": [],
         "data_completeness": render_data_completeness_section(summary, cfg),
     }
     lines: list[str] = [f"[SHADOW SUMMARY - {am_pm.upper()}]", ""]
-    for key in (
-        "observer_status",
-        "cost_aware",
-        "flat_weak_range",
-        "pullback_misread",
-        "pullback_volume",
-        "data_completeness",
-    ):
+    for key in ("e1_x5", "flat_weak_range", "board_dynamic"):
         part = sections[key]
         if part:
             lines.extend(part)
@@ -936,9 +989,10 @@ def build_shadow_summary_structured(
     text = "\n".join(lines).rstrip() + "\n"
     return {
         "am_pm": am_pm,
-        "sections": {k: "\n".join(v) for k, v in sections.items()},
+        "sections": {k: "\n".join(v) if isinstance(v, list) else str(v) for k, v in sections.items()},
         "discord_text": text,
         "char_len": len(text),
+        "discord_visible_count": 3,
     }
 
 

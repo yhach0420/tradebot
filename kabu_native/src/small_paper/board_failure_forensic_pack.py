@@ -24,14 +24,19 @@ CORRECT_CUT_DROP_PCT = -0.1
 
 
 def _board_snapshot(payload: Mapping[str, Any], entry_imb: Optional[float]) -> dict[str, Any]:
+    from small_paper.canonical_board import bid_ask_qty_for_mode
+
     imb = calc_bid_ask_imbalance(payload)
     imb_r = round(float(imb), 6) if imb is not None else None
     delta = _imb_delta(entry_imb, imb_r)
+    bq, aq = bid_ask_qty_for_mode(payload)
     return {
         "board_imbalance": imb_r,
         "board_imbalance_delta": round(float(delta), 6) if delta is not None else None,
-        "bid_qty": payload.get("BidQty"),
-        "ask_qty": payload.get("AskQty"),
+        "bid_qty": bq,
+        "ask_qty": aq,
+        "kabu_bid_qty_raw": payload.get("kabu_bid_qty_raw"),
+        "kabu_ask_qty_raw": payload.get("kabu_ask_qty_raw"),
     }
 
 

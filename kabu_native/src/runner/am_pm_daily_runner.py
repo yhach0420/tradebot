@@ -1671,6 +1671,35 @@ def _pilot_session_summary_health(
     }
 
 
+def _session_seal_and_flat_ok(repo_root: Path, live: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[str, Any]:
+    """Phase722: SEALED_VALID + open=0 allows PM continuation after comm-fault exits."""
+    session_dir = _session_dir_from_live(repo_root, live)
+    seal_status = ""
+    finalize_locked = False
+    if session_dir is not None:
+        seal_path = session_dir / "session_seal.json"
+        if seal_path.is_file():
+            try:
+                seal = json.loads(seal_path.read_text(encoding="utf-8"))
+                seal_status = str(seal.get("session_seal_status") or "")
+                finalize_locked = bool(seal.get("finalize_locked"))
+            except Exception:
+                pass
+    open_slots = int(summary.get("open_slots_end") or summary.get("active_positions") or 0)
+    holding = int(summary.get("observer_holding_count") or 0)
+    open_flat = open_slots == 0 and holding == 0
+    sealed_valid = seal_status in ("SEALED_VALID", "SEALED") or (
+        str(summary.get("session_seal_status") or "") in ("SEALED_VALID", "SEALED")
+    )
+    return {
+        "seal_status": seal_status or str(summary.get("session_seal_status") or ""),
+        "finalize_locked": finalize_locked,
+        "open_flat": open_flat,
+        "open_slots_end": open_slots,
+        "sealed_valid_flat": bool(sealed_valid and open_flat),
+    }
+
+
 def _pilot_completed_with_warnings(
     repo_root: Path, live: Mapping[str, Any]
 ) -> tuple[bool, dict[str, Any]]:
@@ -1690,6 +1719,13 @@ def _pilot_completed_with_warnings(
         is_post_session_subprocess_failure,
         session_stop_reason_soft_ok,
     )
+
+    seal_flat = _session_seal_and_flat_ok(repo_root, live, summary)
+    health.update(seal_flat)
+    # Phase722: communication-fault nonzero exit — continue to PM only when sealed+flat.
+    if seal_flat.get("sealed_valid_flat") and health["summary_finalized"] and health["session_started"]:
+        health["soft_ok_path"] = "sealed_valid_flat_comm_fault_ok"
+        return True, health
 
     if not session_stop_reason_soft_ok(health["stop_reason"]):
         if not (

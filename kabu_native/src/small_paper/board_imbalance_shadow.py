@@ -10,7 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
-from screening.morning_screen import calc_board_imbalance
+from small_paper.canonical_board import (
+    board_token_from_imbalance,
+    entry_imbalance_for_mode,
+    resolve_quote_semantic_mode,
+)
 from small_paper.vwap_shadow_reject import VWAP_SHADOW_REJECT_MIN
 
 TV_MIN = 1e8
@@ -109,13 +113,25 @@ def board_mid_token_active(imbalance: Optional[float]) -> bool:
 def compute_entry_order_book_imbalance_field(
     *,
     payload: Mapping[str, Any],
+    quote_mode: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Phase299: compute entry_order_book_imbalance before gate score (reject path included)."""
-    imbalance = calc_board_imbalance(payload)
+    """Phase299 / quote-repair: imbalance before gate score (reject path included).
+
+    canonical mode → canonical_depth_imbalance (Buy1..N / Sell1..N).
+    legacy mode → pre-repair mixed BidQty+Buy / AskQty+Sell.
+    """
+    mode = quote_mode or resolve_quote_semantic_mode()
+    imbalance = entry_imbalance_for_mode(payload, mode=mode)
     rounded = round(float(imbalance), 6) if imbalance is not None else None
+    tok = board_token_from_imbalance(rounded)
     return {
         "entry_order_book_imbalance": rounded,
         "entry_board_mid_token_active": board_mid_token_active(rounded),
+        "entry_board_token": tok,
+        "quote_semantic_mode": mode,
+        "canonical_depth_imbalance": payload.get("canonical_depth_imbalance"),
+        "canonical_top_imbalance": payload.get("canonical_top_imbalance"),
+        "legacy_mixed_imbalance": payload.get("legacy_mixed_imbalance"),
     }
 
 

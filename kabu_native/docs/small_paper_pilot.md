@@ -1180,6 +1180,15 @@ python kabu_native/scripts/run_small_paper_pilot.py --dry-run --source live --fu
 
 
 
+## E1_X5 Forward Shadow（運用）
+
+- **Paper ではデフォルト ON**（`E1_X5_FORWARD_SHADOW` 未設定 / 空文字）
+- **停止方法:** `E1_X5_FORWARD_SHADOW=0`（`false` / `no` / `off` も可）
+- **Live:** 環境変数に関係なく **強制 OFF**（実注文経路では絶対に有効化しない）
+- **PBv2 とは独立 CAP5**（PBv2 CAP / ENTRY / EXIT に影響しない）
+- **注文 API を使用しない**（observe-only / submit・cancel・live_order = 0）
+- Paper 判定は正式フラグ `KABU_PAPER_RUNTIME`（`forward_observer_defaults.is_paper_runtime`）を使用
+
 ## 関連
 
 

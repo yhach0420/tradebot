@@ -490,6 +490,24 @@ def compute_batch_stats(boards: Mapping[str, Mapping[str, Any]]) -> dict[str, tu
 
 
 def calc_board_imbalance(board: Mapping[str, Any]) -> float | None:
+    """Board imbalance.
+
+    When quote_semantic_mode=canonical (default), uses Buy1..N / Sell1..N depth only.
+    legacy mode (KABU_QUOTE_SEMANTIC_MODE=legacy) preserves pre-repair mixed formula.
+    """
+    try:
+        from small_paper.canonical_board import entry_imbalance_for_mode, resolve_quote_semantic_mode
+
+        mode = resolve_quote_semantic_mode()
+        if mode == "canonical":
+            imb = entry_imbalance_for_mode(board, mode="canonical")
+            if imb is not None:
+                return imb
+        else:
+            return entry_imbalance_for_mode(board, mode="legacy")
+    except Exception:
+        pass
+    # Fallback: legacy mixed (pre-repair) if import unavailable
     bid = _as_float(board.get("BidQty")) or 0.0
     ask = _as_float(board.get("AskQty")) or 0.0
     for i in range(1, 11):

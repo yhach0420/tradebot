@@ -224,18 +224,44 @@ async def _iter_push_board_messages(
     ws_url: str,
     *,
     recv_poll_sec: float | None = 30.0,
+    open_timeout_sec: float = 20.0,
+    close_timeout_sec: float = 10.0,
+    yield_timeout_ticks: bool = True,
 ) -> AsyncIterator[dict[str, Any]]:
     import websockets
 
-    async with websockets.connect(ws_url, ping_timeout=None, close_timeout=10) as ws:
+    # Phase675: never block forever on handshake or recv.
+    # Timeout ticks surface to the runner so force_close / heartbeat / stop can progress.
+    connect_kwargs: dict[str, Any] = {
+        "ping_timeout": None,
+        "close_timeout": max(1.0, float(close_timeout_sec)),
+        "open_timeout": max(1.0, float(open_timeout_sec)),
+    }
+    async with websockets.connect(ws_url, **connect_kwargs) as ws:
+        consecutive_timeouts = 0
         while True:
             try:
                 if recv_poll_sec is None:
                     raw = await ws.recv()
                 else:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=max(0.1, float(recv_poll_sec)))
+                    raw = await asyncio.wait_for(
+                        ws.recv(), timeout=max(0.1, float(recv_poll_sec))
+                    )
             except asyncio.TimeoutError:
+                consecutive_timeouts += 1
+                if yield_timeout_ticks:
+                    try:
+                        from small_paper.ws_freeze_recovery import make_recv_timeout_tick
+
+                        yield make_recv_timeout_tick(consecutive_timeouts)
+                    except Exception:
+                        yield {
+                            "__ws_lifecycle_tick__": True,
+                            "tick_kind": "recv_timeout",
+                            "consecutive_timeouts": consecutive_timeouts,
+                        }
                 continue
+            consecutive_timeouts = 0
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8", errors="replace")
             payload = json.loads(raw)
