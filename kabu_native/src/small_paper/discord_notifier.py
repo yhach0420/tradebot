@@ -6,8 +6,10 @@ Webhooks:
   KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL, fallback KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL
 - Trade cap blocked (ENTRY qualified but position cap full):
   KABU_SMALL_PAPER_CAP_BLOCKED_WEBHOOK_URL only (no trade-notify fallback)
-- Legacy observer (HEARTBEAT / HOLD / TAKE / REJECT / ERROR / SESSION SUMMARY):
-  KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL only — not KABU_SHADOW / Yahoo / IssueBot.
+- Heartbeat / HOLD / TAKE / REJECT / ERROR:
+  trade-notify (KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL, legacy fallback) — not ops-only divert.
+- Legacy observer SESSION SUMMARY fallback:
+  KABU_SMALL_PAPER_DISCORD_WEBHOOK_URL — not KABU_SHADOW / Yahoo / IssueBot.
 """
 
 from __future__ import annotations
@@ -1505,6 +1507,7 @@ class SmallPaperDiscordNotifier:
             fields=fields,
             color=0x3182CE,
             dedupe_key=None,
+            trade_notify=True,
         )
         if ok:
             self._last_heartbeat_mono = time.monotonic()

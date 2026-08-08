@@ -946,6 +946,50 @@ def build_shadow_summary_structured(
     e1_pnl = summary.get("e1_x5_forward_shadow_total_pnl_yen_100", e1.get("total_pnl_yen_100"))
     e1_pf = summary.get("e1_x5_forward_shadow_profit_factor_yen_100", e1.get("profit_factor_yen_100"))
     e1_open = int(summary.get("e1_x5_forward_shadow_open_positions") or e1.get("open_positions") or 0)
+    e1_eval = int(summary.get("e1_x5_forward_shadow_evaluated_count") or e1.get("evaluated_count") or 0)
+    e1_no_eval = int(
+        summary.get("e1_x5_forward_shadow_no_evaluation_count")
+        or e1.get("no_evaluation_count")
+        or e1.get("tick_build_failed_count")
+        or 0
+    )
+    e1_miss_after = int(
+        summary.get("e1_x5_forward_shadow_missing_score_after_valid_tick")
+        or e1.get("missing_score_after_valid_tick")
+        or 0
+    )
+    e1_tick_fail = int(e1.get("tick_build_failed_count") or 0)
+    e1_funnel_early = e1.get("entry_funnel_exclusive") if isinstance(e1.get("entry_funnel_exclusive"), Mapping) else {}
+    if e1_tick_fail == 0 and e1_funnel_early:
+        e1_tick_fail = int(e1_funnel_early.get("tick_build_failed") or 0)
+    # Legacy fallback: if new fields absent, do not treat missing_score_count as AM score miss
+    if e1_no_eval == 0 and e1_miss_after == 0:
+        legacy_miss = int(summary.get("e1_x5_forward_shadow_missing_score_count") or e1.get("missing_score_count") or 0)
+        funnel = e1_funnel_early
+        e1_no_eval = int(funnel.get("no_evaluation") or legacy_miss or 0)
+        e1_miss_after = int(funnel.get("missing_score_after_valid_tick", funnel.get("missing_score")) or 0)
+        e1_tick_fail = int(funnel.get("tick_build_failed") or e1_tick_fail)
+    e1_entries = int(summary.get("e1_x5_forward_shadow_entries_n") or e1.get("entries_n") or 0)
+    e1_wins = int(summary.get("e1_x5_forward_shadow_wins") or e1.get("wins") or 0)
+    e1_losses = int(summary.get("e1_x5_forward_shadow_losses") or e1.get("losses") or 0)
+    e1_draws = int(summary.get("e1_x5_forward_shadow_draws") or e1.get("draws") or 0)
+    e1_cap = int(summary.get("e1_x5_forward_shadow_cap_blocked") or e1.get("cap_blocked") or 0)
+    e1_same = int(summary.get("e1_x5_forward_shadow_same_symbol_blocked") or e1.get("same_symbol_blocked") or 0)
+    e1_avg_hold = summary.get("e1_x5_forward_shadow_avg_holding_sec", e1.get("avg_holding_sec"))
+    e1_best = summary.get("e1_x5_forward_shadow_best_trade_yen_100", e1.get("best_trade_yen_100"))
+    e1_worst = summary.get("e1_x5_forward_shadow_worst_trade_yen_100", e1.get("worst_trade_yen_100"))
+    e1_exits = e1.get("exit_reasons") if isinstance(e1.get("exit_reasons"), Mapping) else {}
+    e1_funnel = e1.get("entry_funnel_exclusive") if isinstance(e1.get("entry_funnel_exclusive"), Mapping) else {}
+    e1_overshoot = e1.get("stop_overshoot_yen_100")
+    e1_fwd = e1.get("forward_gate") if isinstance(e1.get("forward_gate"), Mapping) else {}
+    if not e1_fwd:
+        from small_paper.e1_x5_forward_shadow import E1X5ForwardShadowSession
+
+        e1_fwd = E1X5ForwardShadowSession(enabled=False).forward_gate_display(
+            valid_sessions=int(summary.get("e1_x5_forward_valid_sessions") or 0),
+            valid_trades=int(summary.get("e1_x5_forward_valid_trades") or 0),
+            complete_am_pm_days=int(summary.get("e1_x5_forward_complete_am_pm_days") or 0),
+        )
 
     fwr_lines = render_flat_weak_range_section(summary, cfg)
     # Board Dynamic: one-line monitor summary
@@ -957,16 +1001,57 @@ def build_shadow_summary_structured(
         f"exits={bd_exits} delta={bd_delta if bd_delta is not None else 'n/a'}"
     )
 
+    e1_noe_bd = e1.get("no_evaluation_breakdown") if isinstance(e1.get("no_evaluation_breakdown"), Mapping) else {}
+    e1_noe_reasons = (
+        e1_noe_bd.get("no_evaluation_reason_breakdown")
+        if isinstance(e1_noe_bd.get("no_evaluation_reason_breakdown"), Mapping)
+        else {}
+    )
+    if not e1_noe_reasons and e1_tick_fail:
+        e1_noe_reasons = {"TICK_BUILD_FAILED": e1_tick_fail}
+
+    def _funnel_discord_lines(funnel: Mapping[str, Any]) -> list[str]:
+        return [
+            "funnel(evaluated, exclusive):",
+            f"  threshold fail: {int(funnel.get('threshold_fail') or 0)}",
+            f"  spread fail: {int(funnel.get('spread_fail') or 0)}",
+            f"  same-symbol blocked: {int(funnel.get('same_symbol_blocked') or 0)}",
+            f"  cap blocked: {int(funnel.get('cap_blocked') or 0)}",
+            f"  accepted entry: {int(funnel.get('accepted_entry') or 0)}",
+        ]
+
+    def _noe_reason_lines(reasons: Mapping[str, Any]) -> list[str]:
+        lines = ["no_evaluation reasons:"]
+        if not reasons:
+            lines.append("  (none)")
+            return lines
+        for k in sorted(reasons.keys()):
+            lines.append(f"  {k}: {int(reasons[k])}")
+        return lines
+
+    # Independent strategy panel — never PBv2 reject/delta/PF-diff fallback.
     e1_block = [
         "--- E1_X5 ---",
         f"status: {'ON' if e1_enabled else 'OFF'}",
-        f"trades: {e1_trades}",
-        f"PnL: {e1_pnl if e1_pnl is not None else 'n/a'}",
+        f"evaluated/no_evaluation: {e1_eval}/{e1_no_eval}",
+        f"missing_score_after_valid_tick: {e1_miss_after}",
+        *_funnel_discord_lines(e1_funnel),
+        *_noe_reason_lines(e1_noe_reasons),
+        f"ENTRY/completed/open: {e1_entries}/{e1_trades}/{e1_open}",
+        f"CAP blocked/same-symbol blocked: {e1_cap}/{e1_same}",
+        f"net PnL: {e1_pnl if e1_pnl is not None else 'n/a'}",
         f"PF: {e1_pf if e1_pf is not None else 'n/a'}",
-        "delta: n/a (independent CAP5)",
-        f"open: {e1_open}",
-        "gate progress: Forward 5 sessions / 30 trades",
+        f"W/L/D: {e1_wins}/{e1_losses}/{e1_draws}",
+        f"EXIT reasons: {dict(e1_exits) if e1_exits else '{}'}",
+        f"avg hold sec: {e1_avg_hold if e1_avg_hold is not None else 'n/a'}",
+        f"best/worst: {e1_best}/{e1_worst}",
+        f"STOP overshoot yen100: {e1_overshoot if e1_overshoot is not None else 'n/a'}",
     ]
+    e1_block.extend(list(e1_fwd.get("lines") or []))
+    ledger_sha = summary.get("e1_x5_virtual_ledger_sha256") or e1.get("virtual_ledger_sha256")
+    if ledger_sha:
+        e1_block.append(f"ledger_sha256: `{ledger_sha}`")
+    e1_block.append("note: 旧SHADOW OBSERVATIONの対象件数/block/deltaはE1_X5成績ではない")
 
     sections = {
         "portfolio": format_shadow_portfolio_startup_lines(),

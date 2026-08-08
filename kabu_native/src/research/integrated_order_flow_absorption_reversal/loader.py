@@ -103,16 +103,20 @@ def iter_day_ticks(day: str) -> Iterator[Tick]:
         from small_paper.replay_session_normalizer import normalize_day_capture
 
         events, _rep = normalize_day_capture(day_dir, day=day)
-        records = [
-            {
-                "original_payload": e.payload,
-                "symbol": e.symbol,
-                "received_at_jst": e.received_at or e.event_time,
-                "sequence": e.sequence,
-                "capture_session_id": e.session_id,
-            }
-            for e in events
-        ]
+        records = []
+        for e in events:
+            # NormalizedEvent.payload is the capture envelope; board lives in original_payload.
+            env = e.payload if isinstance(e.payload, dict) else {}
+            op = env.get("original_payload") if isinstance(env.get("original_payload"), dict) else env
+            records.append(
+                {
+                    "original_payload": op,
+                    "symbol": e.symbol,
+                    "received_at_jst": e.received_at or e.event_time,
+                    "sequence": e.sequence,
+                    "capture_session_id": e.session_id,
+                }
+            )
     except Exception:
         records = []
         for fp in sorted(day_dir.glob("push_part_*.jsonl")):

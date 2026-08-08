@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import signal
@@ -78,6 +79,11 @@ def make_ingress_session_id() -> str:
     return f"ing_{trading_date_jst()}_{os.getpid()}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
 
 
+def universe_symbol_hash(symbols: Sequence[str]) -> str:
+    norm = ",".join(sorted({str(s).split(".")[0].strip().upper() for s in symbols if str(s).strip()}))
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
 class MarketIngressService:
     def __init__(
         self,
@@ -114,6 +120,14 @@ class MarketIngressService:
         self._warmup_until_mono: float = 0.0
         self._lat_raw: list[float] = []
         self._lat_pub: list[float] = []
+        # Live Kabu register bookkeeping (Ingress is sole PUT owner).
+        self._register_put_ok: bool = False
+        self._last_register_generation: int = 0
+        self._last_register_symbols: tuple[str, ...] = ()
+        self._register_evidence: dict[str, Any] = {}
+        self._register_in_flight: bool = False
+        self._force_reconnect: bool = False
+        self._last_status_mono: Optional[float] = None
 
         self.session_path = session_dir(self.native_root, self.trading_date, self.session_id)
         self.session_path.mkdir(parents=True, exist_ok=True)
@@ -277,6 +291,10 @@ class MarketIngressService:
                 "paper_consumer_ready": bool(paper.get("ready")),
                 "paper_consumer_connected": bool(paper.get("connected")),
                 "first_recovered_sequence": self._first_recovered_sequence,
+                "register_put_ok": bool(self._register_put_ok),
+                "register_verified": bool(self._register_evidence.get("verified")),
+                "register_actual_count": int(self._register_evidence.get("actual_count") or 0),
+                "register_put_executed": bool(self._register_evidence.get("put_executed")),
             },
         )
 
@@ -288,18 +306,24 @@ class MarketIngressService:
         pub_seq = int(pub.get("last_published_sequence") or 0)
         ack = int(cons.get("last_ack_sequence") or cons.get("last_ack") or 0)
         lag = int(cons.get("lag") or max(0, pub_seq - ack))
-        expected = len(self.desired_symbols) or len(self.registered_symbols)
-        registered = len(self.registered_symbols) or len(self.desired_symbols)
+        expected = len(self.desired_symbols)
+        registered = len(self.registered_symbols)
         tcp_ok = str(cons.get("transport") or "") == "TCP" and bool(cons.get("ready"))
         first_ok = self._last_push_mono is not None and raw_seq > 0
+        # Live PUSH can advance pub_seq between Paper process and ACK; treat lag<=1 as caught up.
         if self._pending_recovery_success:
-            need = int(self._first_recovered_sequence or (pub_seq + 1))
-            ack_ok = ack >= need and lag == 0 and pub_seq > 0
+            need = int(self._first_recovered_sequence or pub_seq)
+            ack_ok = ack >= need and lag <= 1 and pub_seq > 0
         else:
-            ack_ok = ack >= pub_seq and lag == 0 and pub_seq > 0
+            ack_ok = ack > 0 and lag <= 1 and pub_seq > 0 and ack >= (pub_seq - 1)
+        registered_ok = (
+            expected > 0
+            and registered == expected
+            and (self.synthetic or self._register_put_ok)
+        )
         return {
             "websocket_or_synthetic": True if self.synthetic else self._receiver_count == 1,
-            "registered_ok": expected > 0 and registered == expected,
+            "registered_ok": registered_ok,
             "first_push": first_ok,
             "raw_ok": raw_seq > 0 and self.writer.storage_errors == 0,
             "publish_ok": pub_seq > 0 and int(pub.get("publish_fail") or 0) == 0,
@@ -440,6 +464,17 @@ class MarketIngressService:
         else:
             self.maybe_promote_running(reason="push_then_ack_check")
 
+        # Continuous PUSH suppresses lifecycle ticks (timeout-based). Flush status/desired
+        # on a short cadence so ACK/lag/ENTRY gate remain observable and refreshable.
+        now_m = time.monotonic()
+        if self._last_status_mono is None or (now_m - self._last_status_mono) >= 2.0:
+            self._last_status_mono = now_m
+            try:
+                self._poll_desired_universe()
+            except Exception:
+                pass
+            self._write_status()
+
         return {
             "ok": True,
             "sequence": wr.sequence,
@@ -521,16 +556,288 @@ class MarketIngressService:
             gen = int(req.get("generation") or 0)
             if gen and gen < self.sm.registration_generation:
                 return
-            if gen == self.sm.registration_generation and self.registered_symbols:
+            if (
+                gen == self.sm.registration_generation
+                and self.registered_symbols
+                and self._register_put_ok
+                and tuple(self.desired_symbols) == self._last_register_symbols
+            ):
                 return
-            self.set_desired_universe(
+            applied = self.set_desired_universe(
                 list(req.get("symbols") or []),
                 generation=gen or None,
                 position_symbols=list(req.get("position_symbols") or []),
             )
+            if not applied.get("ok"):
+                return
             # In synthetic mode, mark registered immediately
             if self.synthetic:
                 self.registered_symbols = list(self.desired_symbols)
+                self._register_put_ok = True
+                self._last_register_generation = int(self.sm.registration_generation)
+                self._last_register_symbols = tuple(self.desired_symbols)
+                return
+            # Live: apply Kabu PUT via canonical register when desired/generation changes
+            self._maybe_register_desired_live(reason="desired_poll")
+        except Exception:
+            pass
+
+    def _should_skip_live_register(self) -> bool:
+        if self.synthetic or not self.desired_symbols:
+            return True
+        if self._register_in_flight:
+            return True
+        return bool(
+            self._register_put_ok
+            and self._last_register_generation == int(self.sm.registration_generation)
+            and self._last_register_symbols == tuple(self.desired_symbols)
+        )
+
+    def _maybe_register_desired_live(self, *, reason: str) -> dict[str, Any]:
+        """Run canonical Kabu register when live desired/generation needs Station PUT."""
+        if self._should_skip_live_register():
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "same_desired_generation_already_registered",
+                "put_executed": False,
+            }
+        push = self._push_client
+        if push is None:
+            return {"ok": False, "skipped": True, "reason": "no_push_client", "put_executed": False}
+        return self._execute_live_register(push, reason=reason)
+
+    def _execute_live_register(self, push: Any, *, reason: str) -> dict[str, Any]:
+        """Sole live registration path — reuses api.kabu_register.register_symbols_cleared."""
+        from api.kabu_register import extract_regist_num, extract_symbol_set, register_symbols_cleared
+        from api.rest_client import load_kabu_env
+
+        if self._should_skip_live_register():
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "same_desired_generation_already_registered",
+                "put_executed": False,
+            }
+        specs = [(s, 1) for s in self.desired_symbols]
+        if not specs:
+            self.registered_symbols = []
+            self._register_put_ok = False
+            self.sm.block_entry("WAITING_DESIRED_REGISTER")
+            self._publish_control(KIND_ENTRY_BLOCK, "WAITING_DESIRED_REGISTER")
+            return {"ok": True, "skipped": True, "reason": "empty_desired", "put_executed": False}
+
+        # Refresh credentials from disk .env on every register attempt.
+        # Capture may have been started with a stale process-env password;
+        # load_kabu_env(override=False) would keep the bad value forever.
+        load_kabu_env(repo_root=self.native_root.parent)
+        load_kabu_env(repo_root=self.native_root)
+        try:
+            from dotenv import load_dotenv
+
+            for root in (self.native_root.parent, self.native_root):
+                env_path = Path(root) / ".env"
+                if env_path.is_file():
+                    load_dotenv(dotenv_path=env_path, override=True)
+        except Exception:
+            pass
+        allow_reuse = bool(
+            self._register_put_ok and self._last_register_symbols == tuple(self.desired_symbols)
+        )
+        self._register_in_flight = True
+        gen = int(self.sm.registration_generation)
+        uhash = universe_symbol_hash(self.desired_symbols)
+        try:
+            if self.sm.state in (WAITING_FIRST_PUSH, RUNNING, RECOVERED):
+                self.sm.transition(REREGISTERING, reason=reason)
+            elif self.sm.state != REGISTERING:
+                self.sm.transition(REGISTERING, reason=reason)
+            self.sm.block_entry("REGISTERING")
+            self._publish_control(KIND_ENTRY_BLOCK, "REGISTERING")
+            meta = register_symbols_cleared(
+                push,
+                specs,
+                clear_first=False,
+                native_root=self.native_root,
+                trading_date=self.trading_date,
+                allow_reuse_if_match=allow_reuse,
+            )
+            put_executed = not bool(meta.get("reused_existing"))
+            resp = meta.get("response") if isinstance(meta, dict) else None
+            regist_num = extract_regist_num(resp) if resp is not None else None
+            if regist_num is None and meta.get("ok"):
+                regist_num = int(meta.get("symbol_count") or len(specs))
+            symbol_set = sorted(extract_symbol_set(resp) or []) if resp is not None else []
+            if not symbol_set and meta.get("ok"):
+                symbol_set = sorted({s for s, _ in specs})
+            ok = bool(meta.get("ok")) and int(regist_num or 0) == len(specs)
+            # verified requires a real PUT response this session (or prior PUT for same symbols + reuse)
+            verified = bool(ok and (put_executed or self._register_put_ok))
+            if put_executed and ok:
+                self._register_put_ok = True
+            evidence = {
+                "ok": ok,
+                "verified": verified,
+                "put_executed": put_executed,
+                "reused_existing": bool(meta.get("reused_existing")),
+                "http_status": 200 if ok and put_executed else (None if meta.get("reused_existing") else None),
+                "http_status_note": (
+                    "kabu client raises on non-2xx; 200 recorded only when PUT succeeded"
+                    if put_executed
+                    else "PUT skipped (reuse_existing_registration); verified only if prior PUT ok"
+                ),
+                "response_body": resp,
+                "actual_count": int(regist_num or 0) if ok else 0,
+                "actual_symbols": symbol_set if ok else [],
+                "desired_count": len(specs),
+                "generation": gen,
+                "universe_hash": uhash,
+                "executed_at": now_iso(),
+                "reason": reason,
+                "steps": meta.get("steps") if isinstance(meta, dict) else [],
+                "owner": "MARKET_INGRESS_SERVICE",
+                "verification_basis": (
+                    "kabu_put_response"
+                    if put_executed and ok
+                    else ("prior_put_plus_reuse" if verified else "unverified")
+                ),
+            }
+            self._register_evidence = evidence
+            self._write_register_evidence(evidence)
+            if ok and verified:
+                self.registered_symbols = list(self.desired_symbols)
+                self._last_register_generation = gen
+                self._last_register_symbols = tuple(self.desired_symbols)
+                self._publish_ingress_registration_result(
+                    verified=True,
+                    actual_symbols=list(self.registered_symbols),
+                    actual_count=int(regist_num or len(specs)),
+                    generation=gen,
+                    universe_hash=uhash,
+                    put_executed=put_executed,
+                )
+                self.sm.transition(WAITING_FIRST_PUSH, reason=f"register_ok:{reason}")
+                self.sm.block_entry("WAITING_FIRST_PUSH")
+                self._publish_control(KIND_ENTRY_BLOCK, "WAITING_FIRST_PUSH")
+            else:
+                self.registered_symbols = []
+                self._register_put_ok = False
+                self._publish_ingress_registration_result(
+                    verified=False,
+                    actual_symbols=[],
+                    actual_count=0,
+                    generation=gen,
+                    universe_hash=uhash,
+                    put_executed=put_executed,
+                )
+                self.sm.block_entry("REGISTER_FAILED")
+                self._publish_control(KIND_ENTRY_BLOCK, "REGISTER_FAILED")
+                self.sm.transition(WAITING_FIRST_PUSH, reason=f"register_not_verified:{reason}")
+            self._write_status()
+            return {**evidence, "meta": meta}
+        except Exception as exc:
+            evidence = {
+                "ok": False,
+                "verified": False,
+                "put_executed": False,
+                "http_status": None,
+                "response_body": None,
+                "actual_count": 0,
+                "actual_symbols": [],
+                "desired_count": len(specs),
+                "generation": gen,
+                "universe_hash": uhash,
+                "executed_at": now_iso(),
+                "reason": reason,
+                "error": str(exc)[:800],
+                "error_type": type(exc).__name__,
+                "owner": "MARKET_INGRESS_SERVICE",
+                "verification_basis": "register_exception",
+            }
+            self.registered_symbols = []
+            self._register_put_ok = False
+            self._register_evidence = evidence
+            self._write_register_evidence(evidence)
+            self._publish_ingress_registration_result(
+                verified=False,
+                actual_symbols=[],
+                actual_count=0,
+                generation=gen,
+                universe_hash=uhash,
+                put_executed=False,
+            )
+            self.sm.block_entry("REGISTER_FAILED")
+            self._publish_control(KIND_ENTRY_BLOCK, "REGISTER_FAILED")
+            try:
+                self.sm.transition(WAITING_FIRST_PUSH, reason=f"register_exc:{reason}")
+            except Exception:
+                pass
+            self._write_status()
+            self.sm.last_error = type(exc).__name__
+            return evidence
+        finally:
+            self._register_in_flight = False
+
+    def _write_register_evidence(self, evidence: dict[str, Any]) -> None:
+        payload = dict(evidence)
+        payload["ingress_session_id"] = self.session_id
+        payload["trading_date"] = self.trading_date
+        payload["pid"] = os.getpid()
+        text = json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
+        try:
+            (self.session_path / "ingress_register_api_trace.json").write_text(text, encoding="utf-8")
+            (self.day_root / "ingress_register_api_trace.json").write_text(text, encoding="utf-8")
+        except Exception:
+            pass
+        try:
+            with (self.day_root / "ingress_register_api_events.jsonl").open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+        except Exception:
+            pass
+
+    def _publish_ingress_registration_result(
+        self,
+        *,
+        verified: bool,
+        actual_symbols: Sequence[str],
+        actual_count: int,
+        generation: int,
+        universe_hash: str,
+        put_executed: bool,
+    ) -> None:
+        """Update registration manifest from Ingress Kabu PUT evidence (not Paper MATCH)."""
+        try:
+            from small_paper.market_capture_registration import (
+                record_generation_change,
+                write_registration_manifest,
+            )
+
+            gen_id = f"gen_{self.trading_date}_{int(generation)}"
+            write_registration_manifest(
+                self.native_root,
+                trading_date=self.trading_date,
+                symbols=list(self.desired_symbols),
+                generation_id=gen_id,
+                universe_sha256=universe_hash,
+                verified=bool(verified),
+                owner="MARKET_INGRESS_SERVICE",
+                extra={
+                    "status": "MATCH" if verified else "REGISTER_FAILED",
+                    "actual_symbols": list(actual_symbols),
+                    "actual_count": int(actual_count),
+                    "put_executed": bool(put_executed),
+                    "verification_source": "ingress_kabu_put",
+                    "registration_generation": int(generation),
+                },
+            )
+            record_generation_change(
+                self.day_root,
+                generation_id=gen_id,
+                previous_symbols=list(self._last_register_symbols),
+                new_symbols=list(self.desired_symbols),
+                registration_verified=bool(verified),
+                capture_sequence_at_change=int(self.writer.snapshot().get("last_sequence") or 0),
+            )
         except Exception:
             pass
 
@@ -548,7 +855,7 @@ class MarketIngressService:
     async def _live_async(self) -> None:
         self._ws_loop = asyncio.get_running_loop()
         self.sm.transition(CONNECTING, reason="live")
-        while not self._stop.is_set() and not self._scheduled_end_passed():
+        while not self._stop.is_set() and not self._scheduled_end_passed() and not self._operator_stop_requested():
             try:
                 await self._connect_register_consume()
             except Exception as exc:
@@ -560,26 +867,37 @@ class MarketIngressService:
 
     async def _connect_register_consume(self) -> None:
         from api.push_client import KabuNativePushClient
-        from api.rest_client import KabuNativeRestClient, default_base_url
-        from api.kabu_register import register_symbols_cleared
+        from api.rest_client import KabuNativeRestClient, default_base_url, load_kabu_env
 
         self.sm.transition(CONNECTING, reason="connect")
         self.sm.bump_connection()
+        load_kabu_env(repo_root=self.native_root.parent)
+        load_kabu_env(repo_root=self.native_root)
+        # Apply any pre-written desired universe before first register attempt
+        self._poll_desired_universe_apply_only()
         rest = KabuNativeRestClient(default_base_url())
         token = rest.issue_token_from_env()
         push = KabuNativePushClient(rest, token)
         self._push_client = push
         self.sm.transition(REGISTERING, reason="register")
-        specs = [(s, 1) for s in self.desired_symbols]
-        if specs:
-            register_symbols_cleared(push, specs, clear_first=False)
-        self.registered_symbols = list(self.desired_symbols)
-        self.sm.bump_registration()
-        self.sm.transition(WAITING_FIRST_PUSH, reason="waiting_push")
+        if self.desired_symbols:
+            self._execute_live_register(push, reason="connect")
+        else:
+            # Empty desired at connect: wait for control-channel update (do not fake registered)
+            self.registered_symbols = []
+            self._register_put_ok = False
+            self.sm.block_entry("WAITING_DESIRED_REGISTER")
+            self._publish_control(KIND_ENTRY_BLOCK, "WAITING_DESIRED_REGISTER")
+            self.sm.transition(WAITING_FIRST_PUSH, reason="waiting_desired")
+        if self.sm.state == REGISTERING:
+            self.sm.transition(WAITING_FIRST_PUSH, reason="waiting_push")
         self._receiver_count = 1
         try:
             async for payload in push.iter_messages(recv_poll_sec=5.0):
-                if self._stop.is_set() or self._scheduled_end_passed():
+                if self._stop.is_set() or self._scheduled_end_passed() or self._operator_stop_requested():
+                    break
+                if self._force_reconnect:
+                    self._force_reconnect = False
                     break
                 if isinstance(payload, dict) and payload.get("__ws_lifecycle_tick__"):
                     self._poll_desired_universe()
@@ -593,6 +911,25 @@ class MarketIngressService:
         finally:
             self._receiver_count = 0
             self._push_client = None
+
+    def _poll_desired_universe_apply_only(self) -> None:
+        """Apply control-channel desired symbols without registering (pre-connect)."""
+        try:
+            from small_paper.ingress_control_channel import read_desired_universe
+
+            req = read_desired_universe(self.native_root)
+            if not req:
+                return
+            gen = int(req.get("generation") or 0)
+            if gen and gen < self.sm.registration_generation:
+                return
+            self.set_desired_universe(
+                list(req.get("symbols") or []),
+                generation=gen or None,
+                position_symbols=list(req.get("position_symbols") or []),
+            )
+        except Exception:
+            pass
 
     async def _async_stop_receiver(self) -> None:
         # Best-effort close; push client context managed by iter_messages
@@ -685,7 +1022,8 @@ class MarketIngressService:
                 await self._connect_register_consume_once_until_first_push()
                 self._pending_recovery_success = True
                 cur = int(self.writer.snapshot().get("last_sequence") or 0)
-                self._first_recovered_sequence = cur + 1
+                # Recovery path already consumed the first post-reconnect PUSH at `cur`.
+                self._first_recovered_sequence = cur if cur > 0 else 1
                 self.sm.transition(RECOVERED, reason=f"attempt{attempt}_pending_ack")
                 self.sm.block_entry("recovery_warmup")
                 self._publish_control(KIND_ENTRY_BLOCK, "recovery_warmup")
@@ -695,6 +1033,9 @@ class MarketIngressService:
                     f"attempt={attempt} elapsed_sec={elapsed:.1f} registered={len(self.registered_symbols)}",
                 )
                 self.maybe_promote_running(reason="live_recovery_pending_ack")
+                # Break the pre-recovery receive loop (if still alive) so `_live_async` reconnects.
+                self._force_reconnect = True
+                self._push_client = None
                 return
             except Exception as exc:
                 last_err = type(exc).__name__
@@ -703,24 +1044,26 @@ class MarketIngressService:
         self.sm.block_entry("RECOVERY_FAILED")
         self._publish_control(KIND_ENTRY_BLOCK, "RECOVERY_FAILED")
         self._notify("[INGRESS RECOVERY FAILED]", f"err={last_err}")
+        self._force_reconnect = True
 
     async def _connect_register_consume_once_until_first_push(self) -> None:
         from api.push_client import KabuNativePushClient
-        from api.rest_client import KabuNativeRestClient, default_base_url
-        from api.kabu_register import register_symbols_cleared
+        from api.rest_client import KabuNativeRestClient, default_base_url, load_kabu_env
 
         self.sm.bump_connection()
+        load_kabu_env(repo_root=self.native_root.parent)
+        load_kabu_env(repo_root=self.native_root)
+        self._poll_desired_universe_apply_only()
         rest = KabuNativeRestClient(default_base_url())
         token = rest.issue_token_from_env()
         push = KabuNativePushClient(rest, token)
         self._push_client = push
-        self.sm.transition(REREGISTERING, reason="recovery")
-        specs = [(s, 1) for s in self.desired_symbols]
-        if specs:
-            register_symbols_cleared(push, specs, clear_first=False)
-        self.registered_symbols = list(self.desired_symbols)
-        self.sm.bump_registration()
-        self.sm.transition(WAITING_FIRST_PUSH, reason="recovery")
+        # Force re-PUT on recovery even if generation/symbols unchanged
+        self._register_put_ok = False
+        self._last_register_generation = -1
+        reg = self._execute_live_register(push, reason="recovery")
+        if not reg.get("ok") or not reg.get("verified"):
+            raise RuntimeError(reg.get("error") or "register_failed_recovery")
         self._receiver_count = 1
         got = False
         async for payload in push.iter_messages(recv_poll_sec=5.0):
@@ -739,6 +1082,13 @@ class MarketIngressService:
         y, m, d = int(self.trading_date[:4]), int(self.trading_date[4:6]), int(self.trading_date[6:8])
         end = datetime(y, m, d, FINALIZE_TIME.hour, FINALIZE_TIME.minute, tzinfo=JST)
         return datetime.now(JST) >= end
+
+    def _operator_stop_requested(self) -> bool:
+        """Formal stop path: day_root/operator_stop.flag (checked-runner / cleanup)."""
+        try:
+            return (self.day_root / "operator_stop.flag").is_file()
+        except Exception:
+            return False
 
     def _finalize_seal(self) -> None:
         from small_paper.capture_completeness_gate import evaluate_capture_completeness
@@ -830,7 +1180,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         while svc.sm.state != STOPPED and not svc._scheduled_end_passed():
             time.sleep(1.0)
-            if svc._stop.is_set():
+            if svc._stop.is_set() or svc._operator_stop_requested():
                 break
     finally:
         if svc.sm.state != STOPPED:

@@ -133,7 +133,8 @@ def normalize_day_capture(
                 except Exception:
                     seq = 0
                 op = rec.get("original_payload") if isinstance(rec.get("original_payload"), dict) else None
-                payload = op or rec.get("payload") if isinstance(rec.get("payload"), dict) else rec
+                pl = rec.get("payload") if isinstance(rec.get("payload"), dict) else None
+                payload = op or pl or {}
                 if not isinstance(payload, dict):
                     payload = {}
                 ts = (
@@ -172,21 +173,50 @@ def normalize_day_capture(
         if len(sids) > 1:
             report.mixed_session_parts.append(part)
 
-    # Stable chronological order: event_time, then session_id, then sequence
-    events.sort(key=lambda e: (e.ts, e.session_id, e.sequence, e.source_part))
+    # Runtime / ingress order: session blocks by first appearance, then sequence.
+    # Do NOT sort primarily by market CurrentPriceTime (causes holding_sec<0 / order drift).
+    session_first: dict[str, datetime] = {}
+    for e in events:
+        prev = session_first.get(e.session_id)
+        if prev is None or e.ts < prev:
+            session_first[e.session_id] = e.ts
+    events.sort(
+        key=lambda e: (
+            session_first.get(e.session_id) or e.ts,
+            e.session_id,
+            e.sequence,
+            e.source_part,
+        )
+    )
     report.normalized_rows = len(events)
     if events:
         report.first_event_at = events[0].event_time
         report.last_event_at = events[-1].event_time
 
-    # Gap map (exclude lunch)
+    # Gap map on ingress-ordered stream (exclude pure lunch hole only)
     for a, b in zip(events, events[1:]):
+        # Session boundary is always a discontinuity for research windows
+        if a.session_id != b.session_id:
+            report.gaps.append(
+                {
+                    "from": a.event_time,
+                    "to": b.event_time,
+                    "gap_sec": (b.ts - a.ts).total_seconds(),
+                    "from_key": a.unique_key,
+                    "to_key": b.unique_key,
+                    "kind": "SESSION_BOUNDARY",
+                }
+            )
+            continue
         gap = (b.ts - a.ts).total_seconds()
         if gap <= gap_threshold_sec:
             continue
-        # lunch skip
-        if a.ts.timetz().replace(tzinfo=None) <= LUNCH_START and b.ts.timetz().replace(tzinfo=None) >= LUNCH_END:
-            if a.ts.date() == b.ts.date():
+        # Lunch skip: hole fully covers scheduled [11:30, 12:30] on same day.
+        # Mid-session holes that resume before 12:30 (e.g. 7/23, 7/24) stay as TIME_GAP.
+        if a.ts.date() == b.ts.date():
+            lunch_s = datetime.combine(a.ts.date(), LUNCH_START, tzinfo=JST)
+            lunch_e = datetime.combine(a.ts.date(), LUNCH_END, tzinfo=JST)
+            if a.ts <= lunch_s and b.ts >= lunch_e:
                 continue
         report.gaps.append(
             {
@@ -195,6 +225,7 @@ def normalize_day_capture(
                 "gap_sec": gap,
                 "from_key": a.unique_key,
                 "to_key": b.unique_key,
+                "kind": "TIME_GAP",
             }
         )
     return events, report

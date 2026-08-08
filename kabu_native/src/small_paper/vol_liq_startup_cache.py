@@ -185,7 +185,11 @@ def load_cache_payload(
     run_session_key: str,
     config_fp: Mapping[str, Any],
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
-    """Load cache for canonical key, with alias fallback (bare stamp ↔ live_session_)."""
+    """Load cache for canonical key, with alias fallback (bare stamp ↔ live_session_).
+
+    Also reuses the newest same-trading-date cache with matching config fingerprint
+    (AM→PM Paper PID restart must not re-scan multi-GB push_jsonl for ~9 minutes).
+    """
     canon = normalize_vol_liq_run_session_key(run_session_key)
     last_err: Optional[str] = "cache_missing"
     saw_file = False
@@ -226,6 +230,37 @@ def load_cache_payload(
                 pass
             payload = promoted
         return payload, None
+
+    # Same-day reuse: avoid 500s+ full scan on PM Paper restart (lag recovery path).
+    day = str(canon).split("/", 1)[0]
+    if len(day) == 8 and day.isdigit():
+        candidates = sorted(
+            cache_dir.glob(f"{day}__*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for path in candidates:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            fp = payload.get("config_fingerprint") or {}
+            if any(fp.get(k) != v for k, v in config_fp.items()):
+                last_err = "same_day_config_fingerprint_mismatch"
+                continue
+            scores = payload.get("scores")
+            if not isinstance(scores, list):
+                continue
+            if str(payload.get("scores_checksum") or "") != scores_checksum([float(s) for s in scores]):
+                last_err = "same_day_scores_checksum_mismatch"
+                continue
+            promoted = dict(payload)
+            promoted["run_session_key"] = canon
+            try:
+                save_cache_payload(cache_dir, promoted)
+            except OSError:
+                pass
+            return promoted, None
     return None, last_err
 
 

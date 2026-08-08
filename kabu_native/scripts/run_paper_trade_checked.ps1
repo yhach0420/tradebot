@@ -8,7 +8,9 @@ param(
     [switch]$SkipPaper,
     [switch]$SkipW4s,
     [switch]$DemoPushE2E,
-    [switch]$CommFaultE2E
+    [switch]$CommFaultE2E,
+    [switch]$ReuseCapture,
+    [int]$ReuseCapturePid = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,6 +52,12 @@ if ($SkipPaper) { $pyArgs += "--skip-paper" }
 if ($SkipW4s) { $pyArgs += "--skip-w4s" }
 if ($DemoPushE2E) { $pyArgs += "--demo-push-e2e" }
 if ($CommFaultE2E) { $pyArgs += "--comm-fault-e2e" }
+if ($ReuseCapture) {
+    $pyArgs += "--reuse-capture"
+    if ($ReuseCapturePid -gt 0) {
+        $pyArgs += @("--reuse-capture-pid", "$ReuseCapturePid")
+    }
+}
 
 $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) {

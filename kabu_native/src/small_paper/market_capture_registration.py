@@ -414,6 +414,10 @@ def notify_registration_refresh(
     prev_man = read_registration_manifest(native_root)
     prev = list(previous_symbols) if previous_symbols is not None else list(prev_man.get("registered_symbols") or [])
     gen = f"gen_{trading_date}_{int(time.time())}"
+    # verified=True only when caller has Kabu PUT evidence. Paper MATCH alone must
+    # publish PLANNED_FOLLOWER with actual_count=0 (Ingress owns Station register).
+    actual_symbols = list(symbols) if verified else []
+    actual_count = len(actual_symbols)
     with registration_lock(native_root):
         path = write_registration_manifest(
             native_root,
@@ -421,13 +425,14 @@ def notify_registration_refresh(
             symbols=symbols,
             generation_id=gen,
             universe_path=universe_path,
-            verified=verified,
+            verified=bool(verified),
             owner="paper_refresh",
             extra={
                 "status": "MATCH" if verified else "PLANNED_FOLLOWER",
-                "actual_symbols": symbols,
-                "actual_count": len(symbols),
+                "actual_symbols": actual_symbols,
+                "actual_count": actual_count,
                 "refresh_notify": True,
+                "verification_source": "kabu_put" if verified else "paper_desired_only",
             },
         )
     event_path = None

@@ -613,6 +613,8 @@ class PaperTradeCheckedRunner:
         skip_capture_wait: bool = False,
         demo_push_e2e: bool = False,
         comm_fault_e2e: bool = False,
+        reuse_capture: bool = False,
+        reuse_capture_pid: Optional[int] = None,
     ) -> None:
         self.repo_root = Path(repo_root)
         self.native_root = Path(native_root)
@@ -624,6 +626,8 @@ class PaperTradeCheckedRunner:
         self.skip_w4s = skip_w4s
         self.no_pause = no_pause
         self.allow_paper_without_capture = allow_paper_without_capture
+        self.reuse_capture = bool(reuse_capture)
+        self.reuse_capture_pid = int(reuse_capture_pid) if reuse_capture_pid else None
         self.demo_push_e2e = bool(demo_push_e2e)
         self.comm_fault_e2e = bool(comm_fault_e2e)
         if self.demo_push_e2e:
@@ -1706,6 +1710,28 @@ class PaperTradeCheckedRunner:
         )
         self.capture["operator_stop_prep"] = stop_prep
 
+        if self.reuse_capture:
+            if not market_ingress_v2_enabled():
+                self.verdict = VERDICT_CAPTURE_REQUIRED
+                self._block(
+                    "capture_sidecar_start",
+                    1,
+                    "reuse_capture_requires_MARKET_INGRESS_V2",
+                    "Enable MARKET_INGRESS_V2=1 for --reuse-capture.",
+                )
+                self._record(
+                    "capture_sidecar_start",
+                    7,
+                    "reuse_existing_ingress",
+                    exit_code=1,
+                    started=started,
+                    result="FAIL",
+                    blocked_reason="reuse_capture_requires_MARKET_INGRESS_V2",
+                )
+                self._print_step(7, self._step_total, "Capture reuse", "FAIL")
+                return False
+            return self._step_reuse_capture(started=started, day_dir=day_dir)
+
         if market_ingress_v2_enabled():
             from small_paper.market_ingress_spawn import spawn_ingress_process, wait_ingress_online
 
@@ -1739,6 +1765,7 @@ class PaperTradeCheckedRunner:
                     "legacy_capture_fanout": "DISABLED",
                     "spawn": spawn,
                     "wait": wait,
+                    "reused": False,
                 }
             )
         else:
@@ -1809,6 +1836,83 @@ class PaperTradeCheckedRunner:
                 "Start capture sidecar successfully, or pass --allow-paper-without-capture (not default).",
             )
         return ok or self.allow_paper_without_capture
+
+    def _step_reuse_capture(self, *, started: float, day_dir: Path) -> bool:
+        """Attach to an already-running Independent Market Ingress (explicit --reuse-capture).
+
+        Fail-closed. Never calls spawn_ingress_process / Popen. Does not claim ownership
+        (so runner cleanup will not stop the reused Capture).
+        """
+        from small_paper.market_ingress_reuse import attach_existing_ingress
+
+        reg = self.capture.get("registration") or {}
+        uni = self.capture.get("universe") or {}
+        expected = int(
+            reg.get("expected_count")
+            or uni.get("symbol_count")
+            or (self.universe_prebuild or {}).get("symbol_count")
+            or 0
+        )
+        attach = attach_existing_ingress(
+            native_root=self.native_root,
+            trading_date=self.trading_date,
+            expected_symbol_count=expected,
+            expected_pid=self.reuse_capture_pid,
+        )
+        ok = bool(attach.get("ok"))
+        # Critical: do NOT set self._owned_capture — reused Capture must survive runner exit.
+        self._owned_capture = None
+        self.capture.update(
+            {
+                "started": ok,
+                "pid": attach.get("pid"),
+                "status": attach.get("status") or ("REUSE_OK" if ok else "REUSE_FAIL"),
+                "output": attach.get("output") or str(day_dir),
+                "topology": "INDEPENDENT_MARKET_INGRESS",
+                "websocket_owner": "MARKET_INGRESS_SERVICE",
+                "capture_source": "INGRESS_RAW_WRITER",
+                "legacy_paper_websocket": "DISABLED",
+                "legacy_capture_fanout": "DISABLED",
+                "spawn": {
+                    "mode": "reuse_capture",
+                    "spawned": False,
+                    "pid": attach.get("pid"),
+                    "cmd": None,
+                },
+                "wait": attach,
+                "reused": True,
+                "owned_by_runner": False,
+                "continuing_until": True,
+                "runtime_register_pending": bool(attach.get("runtime_register_pending")),
+            }
+        )
+        step = self._record(
+            "capture_sidecar_start",
+            7,
+            "reuse_existing_ingress",
+            exit_code=0 if ok else 1,
+            started=started,
+            stdout=json.dumps({"reuse": attach}, ensure_ascii=False, default=str),
+            result="PASS" if ok else "FAIL",
+            blocked_reason="" if ok else str(attach.get("reason") or "capture_reuse_failed"),
+        )
+        self._print_step(7, self._step_total, "Capture reuse", step.result)
+        if ok:
+            print(
+                f"  [{7}/{self._step_total}] REUSE_CAPTURE pid={attach.get('pid')} "
+                f"state={attach.get('status')} owned_by_runner=false",
+                flush=True,
+            )
+            self._print_capture_banner()
+            return True
+        self.verdict = VERDICT_CAPTURE_REQUIRED
+        self._block(
+            "capture_sidecar_start",
+            1,
+            str(attach.get("reason") or "CAPTURE_REUSE_FAILED"),
+            "Fix Capture reuse preconditions, or start without --reuse-capture.",
+        )
+        return False
 
     def _refresh_capture_stats(self) -> None:
         out = self.capture.get("output")
@@ -2053,6 +2157,19 @@ class PaperTradeCheckedRunner:
             cleanup_owned_capture,
             write_cleanup_artifact,
         )
+
+        # Reused Capture is never owned — never stop PID from a prior session.
+        if self.reuse_capture or bool(self.capture.get("reused")):
+            out = {
+                "skipped": True,
+                "skip_reason": "reused_capture_not_owned",
+                "pid": self.capture.get("pid"),
+                "reason": str(reason or self._shutdown_reason or ""),
+            }
+            self._cleanup_done = True
+            self._cleanup_result = out
+            self.capture["child_cleanup"] = dict(out)
+            return out
 
         continue_skips = {
             "paper_blocked_capture_continues",
@@ -2378,6 +2495,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--capture-synthetic", action="store_true", help="Test-only synthetic capture sidecar")
     parser.add_argument("--skip-capture-wait", action="store_true", help="Test-only: operator-stop capture instead of 15:35 wait")
     parser.add_argument(
+        "--reuse-capture",
+        action="store_true",
+        help="Attach to an already-running Independent Market Ingress (fail-closed; no new spawn)",
+    )
+    parser.add_argument(
+        "--reuse-capture-pid",
+        type=int,
+        default=0,
+        help="Optional expected Capture PID when using --reuse-capture (fail-closed if mismatch)",
+    )
+    parser.add_argument(
         "--demo-push-e2e",
         action="store_true",
         help="Phase687W20: demo PUSH full runtime path (fail-closed; also TRADEBOT_DEMO_PUSH_E2E=1)",
@@ -2407,6 +2535,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "on",
     )
     harness = demo or comm_fault
+    if bool(args.reuse_capture) and harness:
+        print("[CHECKED RUNNER] --reuse-capture incompatible with demo/comm-fault harness", flush=True)
+        return 2
     runner = PaperTradeCheckedRunner(
         repo_root=Path(args.repo_root),
         native_root=Path(args.native_root),
@@ -2419,6 +2550,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         skip_capture_wait=bool(args.skip_capture_wait) or harness,
         demo_push_e2e=demo,
         comm_fault_e2e=comm_fault,
+        reuse_capture=bool(args.reuse_capture),
+        reuse_capture_pid=int(args.reuse_capture_pid or 0) or None,
     )
     code = runner.run()
     if not args.no_pause:

@@ -1479,13 +1479,129 @@ def _is_excluded_recovery_session_path(path: Path) -> bool:
         "tests",
         "__pycache__",
         "reports",
+        "research",
+        "preflight",
+        "demo",
+        "market_capture",
+        "session_ing_",
         "recovery_quarantine",
         "_quarantine",
         "quarantine",
         "archive",
         "debug",
     }
+    # Also exclude Capture / ingress path markers in any path segment prefix.
+    joined = "/".join(path.parts).replace("\\", "/").lower()
+    if "data/market_capture/" in joined or "/market_capture/" in joined:
+        return True
+    if "results/research/" in joined or "/results/research/" in joined:
+        return True
+    if "session_ing_" in joined or "/ingress_" in joined:
+        return True
     return bool(parts & deny)
+
+
+# Readonly/auth noise recorded as startup recon "diffs" — not real position residue.
+_PAPER_BENIGN_RECON_DIFF_TYPES = frozenset(
+    {
+        "API_UNAVAILABLE",
+        "BUYING_POWER_UNKNOWN",
+    }
+)
+_PAPER_BLOCKING_RECON_DIFF_TYPES = frozenset(
+    {
+        "QUANTITY_MISMATCH",
+        "BROKER_ONLY_POSITION",
+        "LOCAL_ONLY_POSITION",
+        "BROKER_ONLY_ORDER",
+        "LOCAL_ONLY_ORDER",
+    }
+)
+
+
+def classify_prior_reconciliation_mismatch(
+    *,
+    safety_dir: Path,
+    man_data: Mapping[str, Any],
+    mismatch: int,
+    recon_status: str,
+) -> dict[str, Any]:
+    """Distinguish auth/API noise from real broker/local position residue.
+
+    Paper-only sealed sessions may finalize with reconciliation_status=OK and
+    reconciliation_mismatch>0 when startup readonly auth failed (API_UNAVAILABLE).
+    That must NOT block the next trading day's Paper start when:
+      - live_trading_enabled=false, order_enabled=false
+      - submit_count=0, cancel_count=0
+      - broker_reconciliation diffs contain only benign auth types
+    Real position/order mismatches remain fail-closed.
+    """
+    status = str(recon_status or "UNKNOWN").upper()
+    out: dict[str, Any] = {
+        "mismatch": int(mismatch or 0),
+        "manifest_status": status,
+        "classification": "unknown",
+        "gate_state": "UNKNOWN",
+        "diff_types": [],
+        "benign_only": False,
+    }
+    if status in ("OK", "PASS", "CLEAN") and int(mismatch or 0) == 0:
+        out["classification"] = "clean"
+        out["gate_state"] = status if status in ("OK", "PASS", "CLEAN") else "OK"
+        out["benign_only"] = True
+        return out
+
+    submit_n = int(man_data.get("submit_count") or 0)
+    cancel_n = int(man_data.get("cancel_count") or 0)
+    live = bool(man_data.get("live_trading_enabled"))
+    order_en = bool(man_data.get("order_enabled"))
+    paper_only = (not live) and (not order_en) and submit_n == 0 and cancel_n == 0
+
+    recon_path = Path(safety_dir) / "broker_reconciliation.jsonl"
+    diff_types: list[str] = []
+    if recon_path.is_file():
+        try:
+            for line in recon_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                t = str(row.get("type") or row.get("diff_type") or "").strip()
+                if t:
+                    diff_types.append(t)
+        except Exception:
+            diff_types = []
+    out["diff_types"] = sorted(set(diff_types))
+
+    blocking = [t for t in diff_types if t in _PAPER_BLOCKING_RECON_DIFF_TYPES]
+    if blocking:
+        out["classification"] = "position_or_order_mismatch"
+        out["gate_state"] = "UNKNOWN"
+        out["blocking_types"] = blocking
+        return out
+
+    benign = bool(diff_types) and all(t in _PAPER_BENIGN_RECON_DIFF_TYPES for t in diff_types)
+    if paper_only and status in ("OK", "PASS", "CLEAN") and (benign or (int(mismatch or 0) > 0 and not diff_types and not blocking)):
+        # Prefer explicit benign journal rows; if journal empty but paper-only counters
+        # are clean and status claims OK, still fail-closed unless mismatch explained.
+        if benign:
+            out["classification"] = "paper_auth_noise"
+            out["gate_state"] = "OK"
+            out["benign_only"] = True
+            return out
+
+    if status in ("OK", "PASS", "CLEAN") and int(mismatch or 0) > 0:
+        # Legacy demotion: OK+mismatch without proven-benign diffs → UNKNOWN
+        out["classification"] = "ok_with_unexplained_mismatch"
+        out["gate_state"] = "UNKNOWN"
+        return out
+
+    out["classification"] = "manifest_status"
+    out["gate_state"] = status if status else "UNKNOWN"
+    return out
 
 
 _LIVE_SESSION_DIR_RE = re.compile(r"^live_session_\d{6}$")
@@ -1652,21 +1768,25 @@ def evaluate_prior_session_artifacts(session: Mapping[str, Any]) -> dict[str, An
             detail["seal_status"] = "ok" if seal_ok else str(legacy.get("reason") or "invalid")
             detail["seal_verify"] = legacy
 
-    # Reconciliation from prior manifest (SoT for completed session)
+    # Reconciliation from prior manifest (SoT for completed session).
+    # OK + mismatch>0 is demoted unless diffs are paper-only auth noise
+    # (API_UNAVAILABLE) with submit/cancel/live=0 — see classify_prior_reconciliation_mismatch.
     recon_raw = str(man_data.get("reconciliation_status") or "UNKNOWN")
     mismatch = int(man_data.get("reconciliation_mismatch") or 0)
-    if recon_raw.upper() in ("OK", "PASS", "CLEAN") and mismatch == 0:
-        recon_state = recon_raw.upper() if recon_raw.upper() in ("OK", "PASS", "CLEAN") else "OK"
-        detail["reconciliation_status"] = recon_state
-    elif not man_path.is_file():
+    if not man_path.is_file():
         recon_state = "UNKNOWN"
         detail["reconciliation_status"] = "manifest_missing"
     else:
-        recon_state = recon_raw if recon_raw else "UNKNOWN"
-        detail["reconciliation_status"] = recon_state
+        classified = classify_prior_reconciliation_mismatch(
+            safety_dir=safety_dir,
+            man_data=man_data,
+            mismatch=mismatch,
+            recon_status=recon_raw,
+        )
+        detail["reconciliation_status"] = str(classified.get("manifest_status") or recon_raw)
         detail["reconciliation_mismatch"] = mismatch
-        if mismatch > 0 and recon_state in ("OK", "PASS", "CLEAN"):
-            recon_state = "UNKNOWN"
+        detail["reconciliation_classification"] = classified
+        recon_state = str(classified.get("gate_state") or "UNKNOWN")
 
     # Journal: shared global sequence across SafetySM journals (Phase687W32)
     jr = check_journals_global_sequence(safety_dir, make_recovery_copy=False)

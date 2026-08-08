@@ -119,22 +119,14 @@ class ExtensionBus:
                     px=px_tick,
                     day=datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d"),
                 )
-        # E1_X5 independent shadow (Paper default ON; Live forced OFF; E1_X5_FORWARD_SHADOW=0 to disable)
+        # E1_X5 independent shadow — every normalized push (not PBv2 eval-gated).
+        # FeatureEngine + EXIT every event; score/ENTRY gated inside provider (5s+state).
         e1x5 = getattr(self.state, "e1_x5_forward_shadow", None)
         if e1x5 is not None and getattr(e1x5, "enabled", False):
             try:
-                from small_paper.canonical_board import best_bid_ask_for_mode
-                from datetime import datetime
-                from zoneinfo import ZoneInfo
+                from small_paper.e1_x5_decision_core import feed_e1_x5_from_runtime_state
 
-                bid, ask = best_bid_ask_for_mode(payload, mode="canonical")
-                ts = tick_ts_from_payload(payload)
-                if ts is None:
-                    ts = datetime.now(ZoneInfo("Asia/Tokyo"))
-                e1x5.on_quote(
-                    symbol=symbol, ts=ts, bid=bid, ask=ask,
-                    day=ts.strftime("%Y%m%d") if hasattr(ts, "strftime") else "",
-                )
+                feed_e1_x5_from_runtime_state(self.state, symbol=symbol, payload=payload)
             except Exception:
                 pass
         self._record_extension("Shadow", (time.monotonic() - t_shadow) * 1000.0)

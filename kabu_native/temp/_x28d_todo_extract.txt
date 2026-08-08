@@ -1,0 +1,941 @@
+<timestamp>Saturday, Aug 8, 2026, 4:27 AM (UTC+9)</timestamp>
+<user_query>
+# TradeBot TODO Execution 26
+
+## E1_X28D Additional Historical Stress Validation Before X29
+
+目的:
+
+2026-08-10以降の5 valid prospective daysを使用する前に、未使用だった2026-08-05〜08-07を追加Historical Stressとして一度だけ開封し、現在凍結済みの、
+
+* Specific 49
+* Family Preferred 118
+
+が4日Evaluationだけへの適合ではないかを確認する。
+
+このphaseでは候補、ENTRY、EXIT parameterを最適化しない。
+
+---
+
+# 0. Safety
+
+```text
+Paper Trade only
+実注文禁止
+
+submit/cancel/live = 0/0/0
+
+runtime ENTRY変更禁止
+runtime EXIT変更禁止
+Universe変更禁止
+
+Paper注文禁止
+Live注文禁止
+Discord production通知禁止
+```
+
+---
+
+# 1. Source identity
+
+X28C:
+
+```text
+run_id:
+e1x28c_exec_20260807_224708_A
+
+logic manifest SHA:
+3a18b414afe46a4209bf636a86565a1f23acabb5c8a93d06bbd0447a98c4f7db
+
+assignment registry SHA:
+11ff956354e441e8e62c767bef0f06a0f7f3b65ca5e01b2823ffd2a92c39a040
+
+semantic registry SHA:
+f8b5dfd70858e97e211ac29562e216c2cf96c196c8bd402ca0c40bd6bd6ba6ef
+
+family baseline registry SHA:
+893fd2b75467a3d104d246b4c2dca558da290a05c2145b2bee90a6caf5b48f6b
+
+board mapping SHA:
+6adf923a0fa850e5882d217b44030cb36a3287c967c4710c8951b305808a0a97
+```
+
+existing X29 precommit:
+
+```text
+run_id:
+e1x29_precommit_20260808_030924_A
+
+precommit SHA:
+39c983981b68e6bee705b7604568dae567641068ce18cbf0db32587c28cfc78d
+```
+
+---
+
+# 2. Phase 0 — Data sufficiency check only
+
+最初に20260805、20260806、20260807について、X28Cと同じreplayが可能かを確認する。
+
+この段階では、
+
+```text
+candidate signal count
+PnL
+return
+PF
+winner
+specific-family delta
+```
+
+を計算・表示してはならない。
+
+確認するのはschema / file presence / required field availabilityのみ。
+
+必須:
+
+```text
+CurrentPrice
+CurrentPriceTime
+
+Sell1.Price
+Sell1.Qty
+
+Buy1.Price
+Buy1.Qty
+
+board timestamp / event timestamp
+
+special quote状態
+
+X29 167 masksのENTRY判定に必要な全feature source
+
+same-session識別情報
+```
+
+さらに、
+
+```text
+X28Cと同じENTRY feature semantics
+X28Cと同じquote semantics
+```
+
+で再生可能であること。
+
+---
+
+# 3. Data sufficiency verdict
+
+3日について完全replay不能なら:
+
+```text
+E1_X28D_SOURCE_DATA_INSUFFICIENT
+```
+
+として停止。
+
+この場合:
+
+```text
+existing X29 precommitをsupersedeしない
+precommit SHA 39c983... を維持
+```
+
+し、8/10 prospectiveへ進める状態を壊さない。
+
+不足データを推定・補間・Yahoo等で代替しない。
+
+---
+
+# 4. Only if data sufficient — supersede current X29
+
+3日ともreplay可能であることを確認した後だけ、既存X29 precommitを:
+
+```text
+SUPERSEDED_BEFORE_PROSPECTIVE_MARKET_OPEN
+```
+
+とする。
+
+理由:
+
+```text
+ADDITIONAL_HISTORICAL_STRESS_VALIDATION_20260805_20260807
+```
+
+明記:
+
+```text
+20260810 market data not opened
+prospective observer not started
+no prospective evidence consumed
+```
+
+既存precommitを削除・上書きしない。
+
+---
+
+# 5. Freeze X28D before opening alpha results
+
+```text
+analysis_id:
+E1_X28D_ADDITIONAL_HISTORICAL_STRESS_VALIDATION
+```
+
+対象期間:
+
+```text
+20260805
+20260806
+20260807
+```
+
+role:
+
+```text
+ADDITIONAL_HISTORICAL_STRESS
+```
+
+これはprospectiveとは呼ばない。
+
+X28D precommit SHAを発行してから初めてcandidate replayを開始する。
+
+---
+
+# 6. Cohorts fixed
+
+Specific:
+
+```text
+PROSPECTIVE_SPECIFIC_49
+n = 49
+
+REFERENCE_SURVIVOR = 24
+EXECUTION_EMERGENT = 25
+```
+
+Family:
+
+```text
+PROSPECTIVE_FAMILY_PREFERRED_118
+n = 118
+```
+
+必須:
+
+```text
+49 + 118 = 167
+overlap = 0
+```
+
+membership変更禁止。
+
+49→良かった候補だけ抽出、は禁止。
+
+118も同じ。
+
+---
+
+# 7. No retuning
+
+以下を変更禁止:
+
+```text
+ENTRY mask
+ENTRY threshold
+
+stop
+target
+trail activation
+giveback
+NoProgress
+max hold
+
+candidate-specific EXIT
+family baseline EXIT
+
+quote freshness
+min qty
+special quote rule
+```
+
+8/5〜8/7は現ロジックのstress確認にのみ使用。
+
+---
+
+# 8. Execution contract
+
+X28Cと完全一致。
+
+ENTRY:
+
+```text
+signal後5秒以内
+first valid Sell1.Price
+
+Sell1.Qty >= 100
+freshness <= 5sec
+special quote = false
+same session
+```
+
+ENTRY basis:
+
+```text
+actual ask
+```
+
+EXIT trigger state:
+
+```text
+actual ask basis
+CurrentPrice trigger mark
+```
+
+EXIT:
+
+```text
+trigger後5秒以内
+first valid Buy1.Price
+
+Buy1.Qty >= 100
+freshness <= 5sec
+special quote = false
+same session
+```
+
+禁止:
+
+```text
+future best
+mid
+CurrentPrice fill
+synthetic threshold fill
+session cross
+```
+
+---
+
+# 9. Specific 49 evaluation
+
+49全件について:
+
+```text
+specific executable return
+specific PF
+
+ENTRY selected-minus-complement return
+
+specific-minus-family return
+specific-minus-family PnL
+
+trades
+days
+symbols
+coverage
+```
+
+を保存。
+
+X28C classificationとの方向一致:
+
+```text
+X28C_TO_X28D_SAME_DIRECTION
+X28C_TO_X28D_REVERSED
+X28C_TO_X28D_MIXED
+X28C_TO_X28D_INSUFFICIENT
+```
+
+---
+
+# 10. Family 118 evaluation
+
+family EXITをprimaryとして:
+
+```text
+family executable return
+family PF
+
+ENTRY selected-minus-complement return
+
+family-minus-specific return
+
+trades
+days
+symbols
+coverage
+```
+
+を保存。
+
+目的:
+
+```text
+ENTRY edgeは残るか
+
+専用EXITよりfamily EXITが良い
+というX28C結論が再現するか
+```
+
+---
+
+# 11. STOP diagnostic — mandatory
+
+Specific 49についてhistorical stop class:
+
+```text
+NORMAL_STOP = 11
+WIDE_STOP = 35
+VERY_WIDE_STOP = 3
+```
+
+別に集計。
+
+必ず実際のEXIT理由を数える。
+
+```text
+HARD_STOP
+TRAIL_GIVEBACK
+NO_PROGRESS
+MAX_HOLD
+SESSION_CLOSE
+```
+
+重要:
+
+STOP設定数とHard Stop発生回数を混同しない。
+
+保存:
+
+```text
+hard_stop_exit_rate
+
+gross loss from hard stops
+
+avg / median MAE
+
+MAE q25/q50/q75
+
+avg MFE
+
+winner MAE
+loser MAE
+```
+
+---
+
+# 12. Near-stop recovery diagnostic
+
+各tradeについて:
+
+```text
+near_stop =
+MAE <= -0.8 * configured_stop_bps
+```
+
+その後positive EXITした場合:
+
+```text
+NEAR_STOP_RECOVERED_WIN
+```
+
+とする。
+
+risk class別に:
+
+```text
+near_stop count
+near_stop recovery count
+near_stop recovery rate
+```
+
+を保存。
+
+目的:
+
+```text
+WIDE STOPが単に損切りを遅らせているのか
+
+それとも
+大きなpullback後に本当に回復するpathを許容しているのか
+```
+
+を確認する。
+
+この診断からSTOP parameterを変更しない。
+
+---
+
+# 13. Stop-risk result view
+
+```text
+NORMAL
+WIDE
+VERY_WIDE
+```
+
+それぞれ:
+
+```text
+candidate count
+trade count
+avg return
+PF
+hard stop rate
+MAE
+specific-family delta
+```
+
+を報告する。
+
+以下の場合は警告tag:
+
+```text
+WIDE_STOP_EDGE_DEPENDENCY_ALERT
+```
+
+条件:
+
+Specificのpositive edgeがWIDE/VERY_WIDE群に偏り、
+NORMAL群のdirectional resultが非正の場合。
+
+これはX29 observerを自動禁止する条件にはしない。
+
+---
+
+# 14. Symbol dependency
+
+49 Specific / 118 Familyについて、
+
+20260805〜07の全symbolを使用してLOSO。
+
+保存:
+
+```text
+max_symbol_contribution_share
+
+positive LOSO count
+negative LOSO count
+
+without 2354
+without 285A
+without 4052
+```
+
+存在するsymbolのみ計算。
+
+特定symbolが存在しない場合は:
+
+```text
+NOT_PRESENT
+```
+
+とする。
+
+---
+
+# 15. Day dependency
+
+3日についてleave-one-day-out:
+
+```text
+without 20260805
+without 20260806
+without 20260807
+```
+
+保存:
+
+```text
+max_day_contribution_share
+positive LODO count
+negative LODO count
+```
+
+3日しかないのでrobustとは呼ばない。
+
+---
+
+# 16. Cohort-level views
+
+candidate maskの重複・相関を考慮し、
+
+次の2 viewを両方作る。
+
+## Candidate-balanced view
+
+各maskを同weight。
+
+保存:
+
+```text
+median candidate return
+positive candidate share
+
+median ENTRY selection delta
+positive ENTRY delta share
+
+median personalization delta
+positive personalization share
+```
+
+## Cluster-balanced pooled view
+
+```text
+cluster_id
+```
+
+を単位として重複市場eventへの過剰weightを抑える。
+
+---
+
+# 17. Specific cohort stress status
+
+Specificについて以下3項目を見る:
+
+```text
+A. specific absolute return
+B. ENTRY selection delta
+C. specific-family personalization delta
+```
+
+Candidate-balanced medianとCluster-balanced metricの両方が正:
+
+```text
+SPECIFIC_STRESS_COMPATIBLE
+```
+
+一部正・一部非正:
+
+```text
+SPECIFIC_STRESS_MIXED
+```
+
+両viewで主要方向が非正:
+
+```text
+SPECIFIC_STRESS_CONTRADICTED
+```
+
+3日結果から個別maskを削除しない。
+
+---
+
+# 18. Family cohort stress status
+
+Familyについて:
+
+```text
+A. family absolute return
+B. ENTRY selection delta
+C. family-minus-specific delta
+```
+
+同じルールで:
+
+```text
+FAMILY_STRESS_COMPATIBLE
+FAMILY_STRESS_MIXED
+FAMILY_STRESS_CONTRADICTED
+```
+
+---
+
+# 19. Program-level decision
+
+## Case A
+
+Specific / Familyの少なくとも一方が:
+
+```text
+*_STRESS_COMPATIBLE
+```
+
+なら:
+
+```text
+E1_X28D_ADDITIONAL_STRESS_SUPPORT_PRESENT
+```
+
+X29へ進む価値あり。
+
+167候補を変更せず新X29 precommitへ渡す。
+
+---
+
+## Case B
+
+compatibleはないが、少なくとも一方がMIXED:
+
+```text
+E1_X28D_ADDITIONAL_STRESS_EVIDENCE_MIXED
+```
+
+この場合もX29は実施可能。
+
+理由:
+
+prospective windowの役割が不確実性解消だから。
+
+167候補は変更しない。
+
+---
+
+## Case C
+
+Specific:
+
+```text
+SPECIFIC_STRESS_CONTRADICTED
+```
+
+かつFamily:
+
+```text
+FAMILY_STRESS_CONTRADICTED
+```
+
+なら:
+
+```text
+E1_X28D_CURRENT_LOGIC_SYSTEMIC_STRESS_FAILURE
+```
+
+この場合は8/10 prospectiveを現在のロジックで開始しない。
+
+ENTRY/EXIT再設計フェーズへ戻す。
+
+8/5〜8/7はその時点から正式なhistorical design evidenceとして扱う。
+
+---
+
+# 20. Important rule
+
+8/5〜8/7の結果を見て、
+
+```text
+49 → 17
+118 → 32
+```
+
+のように都合の良いcandidate selectionをしない。
+
+個別maskのselectionを変更したい場合は、
+
+```text
+NEW LOGIC VERSION
+```
+
+として正式に再設計し、
+
+新manifest
+↓
+新precommit
+↓
+8/10以降の完全未使用データ
+
+とする。
+
+---
+
+# 21. X29 V2
+
+X28D verdictが、
+
+```text
+ADDITIONAL_STRESS_SUPPORT_PRESENT
+```
+
+または
+
+```text
+ADDITIONAL_STRESS_EVIDENCE_MIXED
+```
+
+なら、X29 precommit V2を新規作成する。
+
+V2には:
+
+```text
+20260805
+20260806
+20260807
+```
+
+を:
+
+```text
+CONSUMED_ADDITIONAL_HISTORICAL_STRESS
+```
+
+として追加。
+
+prospective first eligible day:
+
+```text
+20260810
+```
+
+を維持。
+
+Specific:
+
+```text
+49
+```
+
+Family:
+
+```text
+118
+```
+
+parameter/membership変更なし。
+
+新precommit SHAを発行。
+
+旧SHA:
+
+```text
+39c983981b68e6bee705b7604568dae567641068ce18cbf0db32587c28cfc78d
+```
+
+は:
+
+```text
+SUPERSEDED_NOT_PROSPECTIVE_OPENED
+```
+
+として保存。
+
+---
+
+# 22. Artifacts
+
+Phase 0 sufficiency失敗の場合:
+
+```text
+results/research/e1_x28d_additional_stress/report.json
+results/research/e1_x28d_additional_stress/report.md
+```
+
+だけでよい。
+
+実行する場合:
+
+```text
+results/research/e1_x28d_additional_stress/precommit.json
+
+results/research/e1_x28d_additional_stress/report.json
+results/research/e1_x28d_additional_stress/report.md
+results/research/e1_x28d_additional_stress/audit.xlsx
+```
+
+大量CSV生成禁止。
+
+---
+
+# 23. Tests
+
+最低限:
+
+```text
+test_source_identity
+
+test_phase0_no_performance_open
+test_required_fields_20260805
+test_required_fields_20260806
+test_required_fields_20260807
+
+test_old_x29_not_superseded_if_data_insufficient
+
+test_specific_49_exact
+test_family_118_exact
+test_overlap_zero
+
+test_no_candidate_selection_change
+test_no_parameter_retune
+
+test_x28c_execution_contract_parity
+
+test_first_valid_ask
+test_first_valid_bid
+test_qty100
+test_freshness
+test_special_quote
+test_no_future_best
+test_same_session
+
+test_actual_hard_stop_count
+test_near_stop_recovery
+
+test_lodo_3_days
+test_loso
+
+test_candidate_balanced_view
+test_cluster_balanced_view
+
+test_program_decision_rule
+
+test_no_runtime_change
+test_submit_cancel_live_zero
+test_ab_determinism
+```
+
+---
+
+# 24. Completion report
+
+```text
+run_id
+verdict
+
+data sufficiency 8/5
+data sufficiency 8/6
+data sufficiency 8/7
+
+old X29 precommit status
+
+Specific 49:
+stress status
+avg/median return
+PF
+ENTRY delta
+personalization delta
+same/reversed counts
+
+Family 118:
+stress status
+family return
+PF
+ENTRY delta
+family-specific delta
+
+NORMAL/WIDE/VERY_WIDE:
+return
+PF
+hard-stop rate
+MAE
+near-stop recovery
+
+max day dependency
+max symbol dependency
+285A dependency
+2354 dependency
+4052 dependency
+
+program decision
+
+X29 V2 required yes/no
+
+tests
+A/B
+submit/cancel/live
+
+artifacts
+```
+
+X28D終了後停止。
+
+X29 V2を作成した場合も、20260810 market dataは開かず停止する。
+
+</user_query>

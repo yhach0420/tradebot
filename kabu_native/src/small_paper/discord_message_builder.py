@@ -560,12 +560,17 @@ def build_shadow_observation_embed_payload(
                 "判定: observation only",
             ]
         )
+    note = (
+        "※旧SHADOW OBSERVATION（在庫表示）。対象件数/block件数/delta円はE1_X5成績ではない。"
+        "E1_X5詳細は --- E1_X5 --- 通知を参照。"
+    )
+    desc = (desc.rstrip() + "\n\n" + note).strip()
     return {
         "title": title,
         "description": desc[:2048],
         "color": COLOR_SHADOW,
         "fields": [],
-        "footer": TEST_FOOTER if test_mode else "observation only / RESEARCH",
+        "footer": TEST_FOOTER if test_mode else "observation only / RESEARCH / NOT E1_X5 scorecard",
     }
 
 

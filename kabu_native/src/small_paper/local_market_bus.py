@@ -35,6 +35,8 @@ DEFAULT_RING = 20000
 MSG_SUBSCRIBE = "subscribe"
 MSG_ACK = "ack"
 MSG_READY = "ready"
+RESUME_MODE_CONTINUE = "continue"
+RESUME_MODE_REALTIME = "realtime"
 
 
 def bus_host(*, environ: Optional[dict[str, str]] = None) -> str:
@@ -441,8 +443,18 @@ class LocalMarketBusPublisher:
                         continue
                     if str(obj.get("msg_type") or "") == MSG_SUBSCRIBE:
                         consumer_id = str(obj.get("consumer_id") or "paper_runtime")
+                        resume_mode = str(obj.get("resume_mode") or RESUME_MODE_CONTINUE).lower()
+                        req_ack = 0
+                        try:
+                            req_ack = int(obj.get("resume_from_ack") or obj.get("last_ack_sequence") or 0)
+                        except Exception:
+                            req_ack = 0
                         catchup: list[MarketEnvelope] = []
                         with self._lock:
+                            # Duplicate consumer: replace prior TCP socket for same consumer_id.
+                            prev = self._tcp_by_consumer.get(consumer_id)
+                            if prev is not None and prev is not conn:
+                                self._drop_tcp_sock_locked(prev)
                             self._tcp_clients.append(conn)
                             self._tcp_by_consumer[consumer_id] = conn
                             st = self._consumers.get(consumer_id) or ConsumerState(consumer_id=consumer_id)
@@ -450,22 +462,35 @@ class LocalMarketBusPublisher:
                             st.ready = True
                             st.transport = "TCP"
                             st.ingress_session_id = self.ingress_session_id
+                            # REALTIME_RESYNC: jump ACK to publisher head (OPEN=0 path; Paper asserts).
+                            if resume_mode == RESUME_MODE_REALTIME:
+                                head = int(self._seq_published)
+                                st.last_ack_sequence = head
+                                st.last_delivered_sequence = max(st.last_delivered_sequence, head)
+                                st.lag = 0
+                                catchup = []
+                            else:
+                                # Optional client resume watermark (never regress; never beyond head).
+                                if req_ack > int(st.last_ack_sequence):
+                                    st.last_ack_sequence = min(int(req_ack), int(self._seq_published))
+                                last_ack = int(st.last_ack_sequence)
+                                catchup = [
+                                    e
+                                    for e in list(self._ring)
+                                    if int(e.sequence) > last_ack and e.kind == KIND_MARKET_PUSH
+                                ]
                             self._consumers[consumer_id] = st
-                            # Catch-up: replay ring events after last_ack
-                            last_ack = int(st.last_ack_sequence)
-                            catchup = [
-                                e
-                                for e in list(self._ring)
-                                if int(e.sequence) > last_ack and e.kind == KIND_MARKET_PUSH
-                            ]
                         with self._lock:
                             st_ack = self._consumers.get(consumer_id)
                             last_ack_hint = int(st_ack.last_ack_sequence if st_ack else 0)
+                            pub_head = int(self._seq_published)
                         ready = {
                             "msg_type": MSG_READY,
                             "consumer_id": consumer_id,
                             "ingress_session_id": self.ingress_session_id,
                             "last_ack_sequence": last_ack_hint,
+                            "publisher_last_sequence": pub_head,
+                            "resume_mode": resume_mode,
                             "at": now_iso(),
                         }
                         conn.sendall(
@@ -534,6 +559,8 @@ class LocalMarketBusConsumer:
     connect_timeout_sec: float = 5.0
     on_envelope: Optional[Callable[[MarketEnvelope], None]] = None
     ingress_session_id: str = ""
+    resume_mode: str = RESUME_MODE_CONTINUE
+    resume_from_ack: int = 0
 
     _sock: Optional[socket.socket] = field(default=None, init=False)
     _thread: Optional[threading.Thread] = field(default=None, init=False)
@@ -542,6 +569,7 @@ class LocalMarketBusConsumer:
     last_sequence: int = 0
     last_event_at: str = ""
     last_ack_sequence: int = 0
+    publisher_last_sequence_hint: int = 0
     connected: bool = False
     ready: bool = False
     transport: str = "TCP"
@@ -552,6 +580,7 @@ class LocalMarketBusConsumer:
     last_error: str = ""
     entry_blocked: bool = False
     entry_block_reason: str = ""
+    last_resume_mode: str = ""
 
     def connect(self) -> bool:
         try:
@@ -561,6 +590,8 @@ class LocalMarketBusConsumer:
                 "msg_type": MSG_SUBSCRIBE,
                 "consumer_id": self.consumer_id,
                 "ingress_session_id": self.ingress_session_id,
+                "resume_mode": str(self.resume_mode or RESUME_MODE_CONTINUE),
+                "resume_from_ack": int(self.resume_from_ack or 0),
                 "at": now_iso(),
             }
             s.sendall((json.dumps(sub, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
@@ -578,15 +609,26 @@ class LocalMarketBusConsumer:
                         continue
                     obj = json.loads(line.decode("utf-8", errors="replace"))
                     if str(obj.get("msg_type") or "") == MSG_READY:
-                        self.ingress_session_id = str(
-                            obj.get("ingress_session_id") or self.ingress_session_id
-                        )
+                        new_sid = str(obj.get("ingress_session_id") or "")
+                        prev_sid = str(self.ingress_session_id or "")
+                        hint = 0
                         try:
-                            self.last_ack_sequence = max(
-                                self.last_ack_sequence, int(obj.get("last_ack_sequence") or 0)
+                            hint = int(obj.get("last_ack_sequence") or 0)
+                        except Exception:
+                            hint = 0
+                        try:
+                            self.publisher_last_sequence_hint = int(
+                                obj.get("publisher_last_sequence") or 0
                             )
                         except Exception:
-                            pass
+                            self.publisher_last_sequence_hint = 0
+                        self.last_resume_mode = str(obj.get("resume_mode") or "")
+                        # New Ingress session ⇒ reset ACK cursor (do not keep prior-session high watermark)
+                        if new_sid and new_sid != prev_sid:
+                            self.last_ack_sequence = hint
+                        else:
+                            self.last_ack_sequence = max(int(self.last_ack_sequence or 0), hint)
+                        self.ingress_session_id = new_sid or prev_sid
                         self._sock = s
                         self.connected = True
                         self.ready = True

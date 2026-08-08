@@ -99,6 +99,8 @@ def validate_trade_window(
         return _fail(INVALID_ENTRY_PRICE, "missing_entry_time")
     if xt is None:
         return _fail(INVALID_EXIT_PRICE, "missing_exit_time")
+    if xt < et:
+        return _fail(CORRUPTED_ORDER, "exit_before_entry", entry_ask_valid=True)
     if str(exit_reason or "").upper() in ("DATA_END", "DATAEND"):
         return _fail(DATA_END_INCOMPLETE, "data_end_exit", outcome_valid=False)
 

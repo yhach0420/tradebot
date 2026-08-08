@@ -1729,10 +1729,54 @@ def _e1_x5_forward_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]
             "e1_x5_forward_shadow_total_pnl_yen_100": s.get("total_pnl_yen_100"),
             "e1_x5_forward_shadow_profit_factor_yen_100": s.get("profit_factor_yen_100"),
             "e1_x5_forward_shadow_open_positions": int(s.get("open_positions") or 0),
+            "e1_x5_forward_shadow_evaluated_count": int(s.get("evaluated_count") or 0),
+            "e1_x5_forward_shadow_no_evaluation_count": int(s.get("no_evaluation_count") or 0),
+            "e1_x5_forward_shadow_entries_n": int(s.get("entries_n") or 0),
+            "e1_x5_forward_shadow_wins": int(s.get("wins") or 0),
+            "e1_x5_forward_shadow_losses": int(s.get("losses") or 0),
+            "e1_x5_forward_shadow_draws": int(s.get("draws") or 0),
+            "e1_x5_forward_shadow_cap_blocked": int(s.get("cap_blocked") or 0),
+            "e1_x5_forward_shadow_same_symbol_blocked": int(s.get("same_symbol_blocked") or 0),
+            "e1_x5_forward_shadow_missing_score_count": int(s.get("missing_score_count") or 0),
+            "e1_x5_forward_shadow_candidate_count": int(
+                s.get("candidate_count") if s.get("candidate_count") is not None else s.get("candidates") or 0
+            ),
+            "e1_x5_forward_shadow_evaluation_status": s.get("evaluation_status"),
             "e1_x5_forward_shadow": s,
         }
     except Exception:
         return {"e1_x5_forward_shadow_enabled": False}
+
+
+def _apply_e1_x5_forward_shadow_finalize(
+    state: _LiveRunState,
+    summary: dict[str, Any],
+    *,
+    output_dir: Optional[Path] = None,
+) -> None:
+    """Persist independent E1_X5 virtual ENTRY/EXIT ledger; refresh summary fields."""
+    summary.update(_e1_x5_forward_shadow_summary_fields(state))
+    sess = getattr(state, "e1_x5_forward_shadow", None)
+    if sess is None or output_dir is None:
+        return
+    try:
+        from small_paper.e1_x5_forward_shadow import persist_e1_x5_virtual_ledger
+
+        meta = persist_e1_x5_virtual_ledger(sess, Path(output_dir))
+        summary["e1_x5_virtual_ledger"] = meta
+        summary["e1_x5_virtual_ledger_sha256"] = meta.get("ledger_sha256")
+        summary["e1_x5_virtual_ledger_path"] = meta.get("ledger_path")
+        # Mirror aggregates for Discord --- E1_X5 --- panel
+        agg = meta.get("aggregates") if isinstance(meta.get("aggregates"), dict) else {}
+        nested = summary.get("e1_x5_forward_shadow")
+        if isinstance(nested, dict):
+            nested = dict(nested)
+            nested["virtual_ledger_sha256"] = meta.get("ledger_sha256")
+            nested["virtual_ledger_aggregates"] = agg
+            summary["e1_x5_forward_shadow"] = nested
+    except Exception as exc:
+        log.warning("e1_x5 virtual ledger persist failed: %s", exc)
+        summary["e1_x5_virtual_ledger_error"] = str(exc)
 
 
 def _board_imbalance_reversal_shadow_summary_fields(state: _LiveRunState) -> dict[str, Any]:
@@ -3913,6 +3957,65 @@ def _reject_session_closing_entry(
         pass
 
 
+def _maybe_e1_x13_execution_risk_observer(cand: Any, scan_meta: Optional[Mapping[str, Any]] = None) -> None:
+    """E1_X13 OBSERVER_ONLY: opt-in telemetry; never blocks or alters ENTRY decision.
+
+    Enable with env E1_X13_EXECUTION_RISK_OBSERVER=1. Default off. Exceptions swallowed.
+    """
+    try:
+        from research.e1_x13_execution_risk_observer.observer import observer_enabled, observe_candidate
+        if not observer_enabled():
+            return
+        trade = getattr(cand, "trade", None)
+        if not isinstance(trade, dict):
+            return
+        payload = getattr(cand, "payload", None) or {}
+        enriched = getattr(cand, "enriched", None) or {}
+        sm = dict(scan_meta or {})
+        # Fill quote fields onto trade for measure input if missing (non-destructive defaults).
+        for src_key, dest_key in (
+            ("best_bid", "best_bid"),
+            ("best_ask", "best_ask"),
+            ("best_bid_qty", "best_bid_qty"),
+            ("best_ask_qty", "best_ask_qty"),
+            ("reference_price", "reference_price"),
+            ("tick_size", "tick_size"),
+        ):
+            if trade.get(dest_key) is None:
+                v = payload.get(src_key) if isinstance(payload, Mapping) else None
+                if v is None and isinstance(enriched, Mapping):
+                    v = enriched.get(src_key)
+                if v is not None:
+                    trade[dest_key] = v
+        if trade.get("board_age_sec") is None and sm.get("board_age_sec") is not None:
+            trade["board_age_sec"] = sm.get("board_age_sec")
+        if trade.get("event_time") is None:
+            trade["event_time"] = sm.get("entry_signal_ts") or trade.get("entry_time")
+        if trade.get("candidate_id") is None:
+            trade["candidate_id"] = f"{getattr(cand, 'symbol', '')}|{getattr(cand, 'msg_i', '')}"
+        if trade.get("symbol") is None:
+            trade["symbol"] = str(getattr(cand, "symbol", "") or "")
+        observe_candidate(
+            trade,
+            rolling={
+                "rolling_spread_cost_p95": trade.get("rolling_spread_cost_p95"),
+                "rolling_down_bid_jump_p95": trade.get("rolling_down_bid_jump_p95"),
+                "rolling_executable_loss_5s_p95": trade.get("rolling_executable_loss_5s_p95"),
+                "history_support_status": trade.get("history_support_status") or "RUNTIME_ROLLING_UNRESOLVED",
+            },
+        )
+        tel = trade.get("execution_risk_observer") or {}
+        for k in (
+            "one_lot_notional_yen", "one_tick_risk_yen_100", "current_spread_cost_yen_100",
+            "estimated_execution_risk_yen", "history_support_status", "board_age_sec",
+            "measurement_status", "reason_codes", "capital_policy_status",
+        ):
+            if k in tel:
+                trade[k] = tel[k]
+    except Exception:
+        return
+
+
 def _process_scan_flush(ctx: _PushPipelineContext, flush: Any) -> None:
     from research.exposure_gate import GateDecision
     import time as _time
@@ -3954,6 +4057,8 @@ def _process_scan_flush(ctx: _PushPipelineContext, flush: Any) -> None:
             "entry_signal_ts": cand.entry_signal_ts,
             "entry_signal_mono": cand.entry_signal_mono,
         }
+        # E1_X13: observer AFTER candidate accepted into flush; does not reject or alter decision.
+        _maybe_e1_x13_execution_risk_observer(cand, scan_meta)
         _execute_accepted_entry(
             ctx,
             sym=cand.symbol,
@@ -4071,7 +4176,12 @@ def _throttled_state_only_push(
     *,
     symbol: str,
 ) -> None:
-    """Phase687W43F: update rings/features/readiness without candidate evaluation."""
+    """Phase687W43F: update rings/features/readiness without candidate evaluation.
+
+    E1_X5 FeatureEngine + EXIT must still see every push (Offline parity).
+    Score/ENTRY remain gated inside the E1 provider (5s + state_change).
+    PBv2 candidate eval stays behind should_evaluate — unchanged.
+    """
     from small_paper.extended_entry_shadow import append_price_tick, tick_ts_from_payload
 
     try:
@@ -4096,6 +4206,13 @@ def _throttled_state_only_push(
         feature_complete=feature_complete,
     )
     _sync_reachability_summary(ctx)
+    # E1_X5 dense path: every push, independent of PBv2 5s eval gate.
+    try:
+        from small_paper.e1_x5_decision_core import feed_e1_x5_from_runtime_state
+
+        feed_e1_x5_from_runtime_state(ctx.state, symbol=symbol, payload=payload)
+    except Exception:
+        pass
 
 
 def _sync_reachability_summary(
@@ -5548,6 +5665,13 @@ def _warmup_ring_only_push(
                 prev_close=_as_float(payload.get("PreviousClose")),
             )
         _pullback_volume_forward_on_push(ctx, symbol=sym, payload=payload, px_tick=px_tick)
+    # E1_X5 FeatureEngine warmup during ring-only (ENTRY still gated by provider/session).
+    try:
+        from small_paper.e1_x5_decision_core import feed_e1_x5_from_runtime_state
+
+        feed_e1_x5_from_runtime_state(ctx.state, symbol=sym, payload=payload)
+    except Exception:
+        pass
 
 
 def _process_push_payload(
@@ -6827,6 +6951,7 @@ def run_push_replay_dry_run(
     _apply_ihc_shadow_counterfactual_finalize(state, summary, output_dir=output_dir, config=replay_config)
     _apply_post_entry_forward_shadow_finalize(state, summary, output_dir=output_dir)
     _apply_classic_momentum_forward_shadow_finalize(state, summary, output_dir=output_dir)
+    _apply_e1_x5_forward_shadow_finalize(state, summary, output_dir=output_dir)
     try:
         notify_discord_session_end(
             discord,
@@ -7575,9 +7700,28 @@ def run_live_dry_run(
     if not ingress_v2:
         push = KabuNativePushClient(rest, token)
     else:
+        from small_paper.consumer_ack_state import resolve_resume_ack
+        from small_paper.local_market_bus import RESUME_MODE_CONTINUE
         from small_paper.paper_market_bus_consumer import PaperMarketBusBridge
 
-        bus_bridge = PaperMarketBusBridge(consumer_id="paper_runtime")
+        _day_yyyymmdd = datetime.now(JST).strftime("%Y%m%d")
+        _resume_ack, _resume_src = resolve_resume_ack(
+            native_root=native_root,
+            ingress_session_id="",
+            trading_date=_day_yyyymmdd,
+            ingress_hint_ack=0,
+        )
+        bus_bridge = PaperMarketBusBridge(
+            consumer_id="paper_runtime",
+            resume_mode=RESUME_MODE_CONTINUE,
+            resume_from_ack=int(_resume_ack or 0),
+            native_root=native_root,
+            trading_date=_day_yyyymmdd,
+        )
+        print(
+            f"[INGRESS_V2] ack_resume_seed={_resume_ack} source={_resume_src}",
+            flush=True,
+        )
 
     from small_paper.symbol_cooloff import session_key_from_output_dir
 
@@ -8004,7 +8148,8 @@ def run_live_dry_run(
                     new_symbols=notify_syms,
                     previous_symbols=before_syms,
                     universe_path=str(refresh_path),
-                    verified=True,
+                    # Ingress owns Kabu PUT; Paper MATCH alone must not set verified
+                    verified=False if ingress_v2 else True,
                     capture_day_dir=capture_day_dir(native_root, day),
                 )
             except Exception:
@@ -8168,9 +8313,12 @@ def run_live_dry_run(
     async def _loop() -> None:
         nonlocal push, token, bus_bridge
 
-        push_rec_local = (
-            PushRecorder(native_root, trade_date) if config.live_record_push_jsonl else None
-        )
+        push_rec_local: Any = None
+        if config.live_record_push_jsonl:
+            from small_paper.async_push_recorder import AsyncPushRecorder
+
+            push_rec_local = AsyncPushRecorder(PushRecorder(native_root, trade_date))
+            push_rec_local.start()
         try:
             from api.kabu_register import format_register_failure_message, register_symbols_cleared
 
@@ -8192,6 +8340,18 @@ def run_live_dry_run(
                 }
                 if bus_bridge is not None:
                     bus_bridge.start()
+                    # OPEN=0 + large backlog → REALTIME_RESYNC (ACK jump; skip stale ENTRY eval).
+                    try:
+                        open_n = int(len(gate.state.open_slots))
+                        policy_out = bus_bridge.maybe_apply_lag_policy(open_positions=open_n)
+                        print(f"[INGRESS_V2] lag_policy={policy_out}", flush=True)
+                        if policy_out.get("resync"):
+                            (output_dir / "consumer_lag_realtime_resync.json").write_text(
+                                json.dumps(policy_out, ensure_ascii=False, indent=2) + "\n",
+                                encoding="utf-8",
+                            )
+                    except Exception as pol_exc:
+                        _log_api_error("lag_policy_resync", pol_exc)
                     # Architecture boot banner
                     try:
                         print(
@@ -8235,7 +8395,8 @@ def run_live_dry_run(
                     trading_date=day,
                     new_symbols=[s[0] for s in sym_specs],
                     universe_path=str(universe_csv_path or ""),
-                    verified=True,
+                    # Ingress owns Kabu PUT; Paper MATCH alone must not set verified
+                    verified=False if ingress_v2 else True,
                     capture_day_dir=capture_day_dir(native_root, day),
                 )
             except Exception:
@@ -8707,6 +8868,32 @@ def run_live_dry_run(
                                 push_rec_local.append(sym, payload, source="live_push")
                             except Exception as e:
                                 _log_api_error("push_recorder", e)
+                        # REALTIME_RESYNC warmup: ring update + ACK only (no ENTRY/EXIT eval).
+                        if ingress_v2 and bus_bridge is not None and bool(getattr(bus_bridge, "warmup_only", False)):
+                            try:
+                                _warmup_ring_only_push(
+                                    pipeline_ctx, payload, msg_i, symbol=sym
+                                )
+                            except Exception as warm_exc:
+                                _log_api_error("resync_warmup", warm_exc)
+                            bus_bridge.ack_processed(payload)
+                            warm_n = int(getattr(state, "_resync_warmup_count", 0) or 0) + 1
+                            state._resync_warmup_count = warm_n  # type: ignore[attr-defined]
+                            # Bounded warmup then release ENTRY gate for fresh PUSH.
+                            if warm_n >= 200:
+                                try:
+                                    bus_bridge.finish_warmup()
+                                    print(
+                                        f"[INGRESS_V2] warmup_finished after {warm_n} events "
+                                        f"ack={bus_bridge.last_ack_sequence}",
+                                        flush=True,
+                                    )
+                                except Exception:
+                                    pass
+                            if (time.monotonic() - last_hb) >= heartbeat_sec:
+                                _emit_heartbeat(note="resync_warmup")
+                                last_hb = time.monotonic()
+                            continue
                         # lightweight lifecycle on real push (HB / force_close)
                         if (time.monotonic() - last_hb) >= heartbeat_sec:
                             _emit_heartbeat(note="push")
@@ -8789,6 +8976,11 @@ def run_live_dry_run(
                         continue
                     break
         finally:
+            if push_rec_local is not None and hasattr(push_rec_local, "stop"):
+                try:
+                    push_rec_local.stop(drain=True, timeout=2.0)
+                except Exception:
+                    pass
             if ingress_v2 and bus_bridge is not None:
                 try:
                     bus_bridge.stop()
@@ -9088,6 +9280,7 @@ def run_live_dry_run(
         _apply_board_imbalance_shadow_finalize(state, summary)
         _apply_entry_expectancy_score_shadow_finalize(state, summary)
         _apply_ihc_shadow_counterfactual_finalize(state, summary, output_dir=output_dir, config=config)
+    _apply_e1_x5_forward_shadow_finalize(state, summary, output_dir=output_dir)
     if discord:
         summary.update(discord_notify_summary_fields(discord))
     try:

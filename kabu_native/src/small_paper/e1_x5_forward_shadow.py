@@ -5,6 +5,7 @@ Non-Paper / Live: always forced OFF. No PBv2 CAP / ENTRY / EXIT impact.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -234,6 +235,18 @@ class E1X5ForwardShadowSession:
     cap_blocked: int = 0
     same_symbol_blocked: int = 0
     notify_fn: Optional[Callable[[str], None]] = None
+    evaluated_count: int = 0
+    missing_score_count: int = 0  # legacy alias; prefer missing_score_after_valid_tick
+    no_evaluation_count: int = 0
+    missing_score_after_valid_tick: int = 0
+    tick_build_failed_count: int = 0
+    identity_fail_count: int = 0
+    duplicate_eval_suppressed: int = 0
+    _evaluated_event_keys: set[str] = field(default_factory=set)
+
+    # Forward gate targets (display only; progress comes from qualified Live provenance)
+    FORWARD_GATE_TARGET_SESSIONS: int = 5
+    FORWARD_GATE_TARGET_TRADES: int = 30
 
     @classmethod
     def maybe_create(
@@ -270,11 +283,126 @@ class E1X5ForwardShadowSession:
         except Exception:
             pass
 
+    def _coerce_ts(self, ts: Any) -> datetime:
+        if isinstance(ts, datetime):
+            if ts.tzinfo is None:
+                return ts.replace(tzinfo=JST)
+            return ts.astimezone(JST)
+        if isinstance(ts, (int, float)):
+            return datetime.fromtimestamp(float(ts), tz=JST)
+        if isinstance(ts, str) and ts.strip():
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    return dt.replace(tzinfo=JST)
+                return dt.astimezone(JST)
+            except Exception:
+                pass
+        # Do not silently use wall-clock for strategy decisions.
+        raise ValueError("E1_X5 decision_time_missing")
+
+    def _event_key(self, symbol: str, ts: datetime, sample_id: str, event_sequence: Any) -> str:
+        if sample_id:
+            return f"sid:{sample_id}"
+        if event_sequence is not None and str(event_sequence) != "":
+            return f"seq:{symbol}|{event_sequence}|{ts.isoformat()}"
+        return f"ts:{symbol}|{ts.isoformat()}"
+
+    def on_missing_score(
+        self,
+        *,
+        symbol: str,
+        ts: Any,
+        bid: Optional[float] = None,
+        ask: Optional[float] = None,
+        reason: str = "NO_EVALUATION_MISSING_SCORE",
+        sample_id: str = "",
+        day: str = "",
+        event_sequence: Any = None,
+        mid: Optional[float] = None,
+    ) -> str:
+        """Explicit non-evaluation. Not an ENTRY=0.
+
+        TICK_BUILD_FAILED / BAD_SYMBOL / SESSION_OTHER → no_evaluation (no valid tick).
+        MODEL_UNAVAILABLE / SCORE_COMPUTE_FAILED / NO_EVALUATION_MISSING_SCORE →
+        missing_score_after_valid_tick (sample due but score absent).
+        """
+        if not self.enabled:
+            return "DISABLED"
+        ts_dt = self._coerce_ts(ts)
+        if symbol in self.positions and bid is not None and bid > 0:
+            self._update_position(symbol, ts_dt, float(bid))
+        reason_s = str(reason or "NO_EVALUATION_MISSING_SCORE")
+        no_eval_reasons = {
+            "TICK_BUILD_FAILED",
+            "BAD_SYMBOL",
+            "SESSION_OTHER",
+            "NO_EVALUATION_DECISION_TIME_MISSING",
+        }
+        if reason_s in no_eval_reasons or reason_s.startswith("TICK_BUILD"):
+            self.no_evaluation_count += 1
+            if reason_s == "TICK_BUILD_FAILED":
+                self.tick_build_failed_count += 1
+            # Keep legacy counter for older readers, but Discord topline uses no_evaluation.
+            self.missing_score_count += 1
+        else:
+            self.missing_score_after_valid_tick += 1
+            self.missing_score_count += 1
+        self.candidates.append({
+            "timestamp": ts_dt,
+            "symbol": symbol,
+            "score": None,
+            "threshold": THRESHOLD,
+            "spread_bps": None,
+            "bid": bid,
+            "ask": ask,
+            "mid": mid,
+            "entry_decision": "NO_EVALUATION",
+            "reject_reason": reason_s,
+            "active_positions": len(self.positions),
+            "cap": CAP,
+            "sample_id": sample_id,
+            "day": day or ts_dt.strftime("%Y%m%d"),
+            "event_sequence": event_sequence,
+        })
+        return reason_s
+
+    def on_identity_fail(
+        self,
+        *,
+        symbol: str,
+        ts: Any,
+        reason: str,
+        bid: Optional[float] = None,
+        ask: Optional[float] = None,
+    ) -> str:
+        if not self.enabled:
+            return "DISABLED"
+        ts_dt = self._coerce_ts(ts)
+        if symbol in self.positions and bid is not None and bid > 0:
+            self._update_position(symbol, ts_dt, float(bid))
+        self.identity_fail_count += 1
+        self.candidates.append({
+            "timestamp": ts_dt,
+            "symbol": symbol,
+            "score": None,
+            "threshold": THRESHOLD,
+            "spread_bps": None,
+            "bid": bid,
+            "ask": ask,
+            "mid": None,
+            "entry_decision": "NO_EVALUATION",
+            "reject_reason": reason,
+            "active_positions": len(self.positions),
+            "cap": CAP,
+        })
+        return reason
+
     def on_quote(
         self,
         *,
         symbol: str,
-        ts: datetime,
+        ts: Any,
         bid: Optional[float],
         ask: Optional[float],
         score: Optional[float] = None,
@@ -282,16 +410,57 @@ class E1X5ForwardShadowSession:
         sample_id: str = "",
         day: str = "",
         mid: Optional[float] = None,
+        event_sequence: Any = None,
     ) -> None:
         if not self.enabled:
             return
+        ts_dt = self._coerce_ts(ts)
         if symbol in self.positions and bid is not None and bid > 0:
-            self._update_position(symbol, ts, float(bid))
-        if score is not None:
-            self.try_entry(
-                symbol=symbol, ts=ts, bid=bid, ask=ask, score=float(score),
-                spread_bps=spread_bps, sample_id=sample_id, day=day, mid=mid,
-            )
+            self._update_position(symbol, ts_dt, float(bid))
+        if score is None:
+            # Position mark only — not an evaluation attempt (NO_SAMPLE path).
+            return
+        self.try_entry(
+            symbol=symbol,
+            ts=ts_dt,
+            bid=bid,
+            ask=ask,
+            score=float(score),
+            spread_bps=spread_bps,
+            sample_id=sample_id,
+            day=day,
+            mid=mid,
+            event_sequence=event_sequence,
+        )
+
+    def evaluate_entry_gates(
+        self,
+        *,
+        symbol: str,
+        ts: datetime,
+        bid: Optional[float],
+        ask: Optional[float],
+        score: float,
+        spread_bps: Optional[float],
+    ) -> tuple[Optional[str], float]:
+        """Shared ENTRY gate ladder (Paper Runtime + G1). Returns (reject_reason|None, spread_bps)."""
+        if self._sess(ts) is None:
+            return "SESSION_INVALID", float(spread_bps or 0.0)
+        if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
+            return "INVALID_QUOTE", float(spread_bps or 0.0)
+        if spread_bps is None:
+            spread_bps = (ask - bid) / ask * 10000.0
+        if score < THRESHOLD:
+            return "SCORE_BELOW_THRESHOLD", float(spread_bps)
+        if float(spread_bps) > SPREAD_MAX_BPS + 1e-9:
+            return "SPREAD_OVER_5BPS", float(spread_bps)
+        if symbol in self.positions:
+            self.same_symbol_blocked += 1
+            return "SAME_SYMBOL_OPEN", float(spread_bps)
+        if len(self.positions) >= CAP:
+            self.cap_blocked += 1
+            return "CAP5_BLOCKED", float(spread_bps)
+        return None, float(spread_bps)
 
     def try_entry(
         self,
@@ -305,35 +474,21 @@ class E1X5ForwardShadowSession:
         sample_id: str = "",
         day: str = "",
         mid: Optional[float] = None,
+        event_sequence: Any = None,
     ) -> Optional[str]:
         if not self.enabled:
             return "DISABLED"
-        if self._sess(ts) is None:
-            reason = "SESSION_INVALID"
-            self._log_candidate(ts, symbol, score, spread_bps, bid, ask, mid, False, reason)
-            return reason
-        if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
-            reason = "INVALID_QUOTE"
-            self._log_candidate(ts, symbol, score, spread_bps, bid, ask, mid, False, reason)
-            return reason
-        if spread_bps is None:
-            spread_bps = (ask - bid) / ask * 10000.0
-        if score < THRESHOLD:
-            reason = "SCORE_BELOW_THRESHOLD"
-            self._log_candidate(ts, symbol, score, spread_bps, bid, ask, mid, False, reason)
-            return reason
-        if float(spread_bps) > SPREAD_MAX_BPS + 1e-9:
-            reason = "SPREAD_OVER_5BPS"
-            self._log_candidate(ts, symbol, score, spread_bps, bid, ask, mid, False, reason)
-            return reason
-        if symbol in self.positions:
-            reason = "SAME_SYMBOL_OPEN"
-            self.same_symbol_blocked += 1
-            self._log_candidate(ts, symbol, score, spread_bps, bid, ask, mid, False, reason)
-            return reason
-        if len(self.positions) >= CAP:
-            reason = "CAP5_BLOCKED"
-            self.cap_blocked += 1
+        ts = self._coerce_ts(ts)
+        ek = self._event_key(symbol, ts, sample_id, event_sequence)
+        if ek in self._evaluated_event_keys:
+            self.duplicate_eval_suppressed += 1
+            return "DUPLICATE_EVENT"
+        self._evaluated_event_keys.add(ek)
+        self.evaluated_count += 1
+        reason, spread_bps = self.evaluate_entry_gates(
+            symbol=symbol, ts=ts, bid=bid, ask=ask, score=score, spread_bps=spread_bps
+        )
+        if reason is not None:
             self._log_candidate(ts, symbol, score, spread_bps, bid, ask, mid, False, reason)
             return reason
         pos = ShadowPosition(
@@ -348,6 +503,7 @@ class E1X5ForwardShadowSession:
             "entry_decision": "ENTER", "reject_reason": None,
             "active_positions": len(self.positions), "cap": CAP,
             "sample_id": sample_id, "day": pos.day,
+            "event_sequence": event_sequence,
         })
         self._log_candidate(ts, symbol, score, spread_bps, bid, ask, mid, True, None)
         self._notify(
@@ -438,11 +594,121 @@ class E1X5ForwardShadowSession:
             "entry_decision": "ENTER", "cap": prev_cap,
         })
 
+    def exclusive_entry_funnel(self) -> dict[str, int]:
+        """Exclusive terminal buckets among EVALUATED candidates only.
+
+        Denominator = evaluated SCORE attempts (ENTER + REJECT). NO_EVALUATION
+        events are excluded from this funnel and reported via no_evaluation_breakdown().
+        """
+        buckets = {
+            "missing_score_after_valid_tick": 0,
+            "threshold_fail": 0,
+            "spread_fail": 0,
+            "same_symbol_blocked": 0,
+            "cap_blocked": 0,
+            "accepted_entry": 0,
+            "other_reject": 0,
+        }
+        for c in self.candidates:
+            dec = str(c.get("entry_decision") or "")
+            reason = str(c.get("reject_reason") or "")
+            # NO_EVALUATION is never part of the exclusive evaluated funnel
+            if dec == "NO_EVALUATION":
+                continue
+            if dec == "ENTER":
+                buckets["accepted_entry"] += 1
+            elif reason == "SCORE_BELOW_THRESHOLD":
+                buckets["threshold_fail"] += 1
+            elif reason == "SPREAD_OVER_5BPS":
+                buckets["spread_fail"] += 1
+            elif reason == "SAME_SYMBOL_OPEN":
+                buckets["same_symbol_blocked"] += 1
+            elif reason == "CAP5_BLOCKED":
+                buckets["cap_blocked"] += 1
+            elif reason in ("MODEL_UNAVAILABLE",) or reason.startswith("SCORE_COMPUTE_FAILED"):
+                # Evaluated-path missing score after valid tick (rare; usually NO_EVALUATION)
+                buckets["missing_score_after_valid_tick"] += 1
+            elif "MISSING" in reason.upper() or reason.startswith("NO_EVALUATION_MISSING"):
+                buckets["missing_score_after_valid_tick"] += 1
+            else:
+                buckets["other_reject"] += 1
+        buckets["terminal_sum"] = (
+            buckets["missing_score_after_valid_tick"]
+            + buckets["threshold_fail"]
+            + buckets["spread_fail"]
+            + buckets["same_symbol_blocked"]
+            + buckets["cap_blocked"]
+            + buckets["accepted_entry"]
+            + buckets["other_reject"]
+        )
+        return buckets
+
+    def no_evaluation_breakdown(self) -> dict[str, Any]:
+        """Separate aggregate — not part of entry_funnel_exclusive."""
+        reasons: dict[str, int] = {}
+        for c in self.candidates:
+            if str(c.get("entry_decision") or "") != "NO_EVALUATION":
+                continue
+            r = str(c.get("reject_reason") or "UNKNOWN")
+            reasons[r] = reasons.get(r, 0) + 1
+        return {
+            "evaluated": int(self.evaluated_count),
+            "no_evaluation": int(self.no_evaluation_count),
+            "no_evaluation_reason_breakdown": dict(reasons),
+            "missing_score_after_valid_tick": int(self.missing_score_after_valid_tick),
+            "tick_build_failed": int(self.tick_build_failed_count),
+        }
+
+    def forward_gate_display(
+        self,
+        *,
+        valid_sessions: int = 0,
+        valid_trades: int = 0,
+        complete_am_pm_days: int = 0,
+        excluded: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        """Separate target vs valid Live progress (Replay/fixture/synthetic excluded)."""
+        return {
+            "forward_gate_target_sessions": int(self.FORWARD_GATE_TARGET_SESSIONS),
+            "forward_gate_target_trades": int(self.FORWARD_GATE_TARGET_TRADES),
+            "valid_progress_sessions": int(valid_sessions),
+            "valid_progress_trades": int(valid_trades),
+            "complete_am_pm_days": int(complete_am_pm_days),
+            "excluded": list(excluded or ["20260727 PM (NOT_ADOPTED)"]),
+            "lines": [
+                (
+                    f"Forward gate target: {self.FORWARD_GATE_TARGET_SESSIONS} valid sessions / "
+                    f"{self.FORWARD_GATE_TARGET_TRADES} completed trades"
+                ),
+                f"Valid progress: {int(valid_sessions)} sessions / {int(valid_trades)} trades",
+                f"Complete AM+PM days: {int(complete_am_pm_days)}",
+                f"Excluded: {', '.join(excluded or ['20260727 PM (NOT_ADOPTED)'])}",
+            ],
+        }
+
+    def stop_overshoot_yen(self) -> float:
+        """Price move beyond -15bps STOP threshold only (excludes explicit 5bps cost)."""
+        total = 0.0
+        for x in self.exits:
+            if str(x.get("exit_reason") or "") != "STOP":
+                continue
+            ask = float(x.get("entry_ask") or 0)
+            bid = float(x.get("exit_bid") or 0)
+            if ask <= 0 or bid <= 0:
+                continue
+            stop_px = ask * (1.0 + STOP_BPS / 10000.0)  # STOP_BPS is negative
+            # Overshoot = further adverse move past stop threshold price
+            if bid < stop_px:
+                total += (bid - stop_px) * 100.0
+        return float(total)
+
     def summary(self) -> dict[str, Any]:
         pnls = [x["net_pnl_yen_100"] for x in self.exits]
         wins = [p for p in pnls if p > 0]
         losses = [p for p in pnls if p < 0]
+        draws = [p for p in pnls if p == 0]
         bps = [x["net_bps"] for x in self.exits]
+        holds = [float(x.get("holding_sec") or 0) for x in self.exits]
         eq = peak = max_dd = 0.0
         for p in pnls:
             eq += p
@@ -452,24 +718,190 @@ class E1X5ForwardShadowSession:
         for x in self.exits:
             reasons[x["exit_reason"]] = reasons.get(x["exit_reason"], 0) + 1
         decision = self.enable_decision
+        funnel = self.exclusive_entry_funnel()
+        no_eval = self.no_evaluation_breakdown()
         return {
             "strategy": STRATEGY_ID, "enabled": self.enabled,
             "enable_reason": decision.reason if decision else None,
             "paper_runtime": decision.paper_runtime if decision else None,
             "startup_lines": list(self.startup_lines),
             "trades": len(self.exits), "open_positions": len(self.positions),
-            "wins": len(wins), "losses": len(losses),
+            "wins": len(wins), "losses": len(losses), "draws": len(draws),
             "total_pnl_yen_100": sum(pnls) if pnls else 0.0,
             "avg_pnl_yen_100": (sum(pnls) / len(pnls)) if pnls else None,
             "avg_bps": (sum(bps) / len(bps)) if bps else None,
+            "avg_holding_sec": (sum(holds) / len(holds)) if holds else None,
+            "best_trade_yen_100": max(pnls) if pnls else None,
+            "worst_trade_yen_100": min(pnls) if pnls else None,
             "profit_factor_yen_100": (sum(wins) / abs(sum(losses))) if losses else None,
             "max_drawdown": max_dd, "exit_reasons": reasons,
             "cap_blocked": self.cap_blocked, "same_symbol_blocked": self.same_symbol_blocked,
             "candidates": len(self.candidates), "entries_n": len(self.entries),
+            "evaluated_count": int(self.evaluated_count),
+            "no_evaluation_count": int(self.no_evaluation_count),
+            "missing_score_after_valid_tick": int(self.missing_score_after_valid_tick),
+            "tick_build_failed_count": int(self.tick_build_failed_count),
+            # Legacy total of on_missing_score calls (includes no_evaluation + missing_after_valid_tick)
+            "missing_score_count": int(self.missing_score_count),
+            "identity_fail_count": int(self.identity_fail_count),
+            "duplicate_eval_suppressed": int(self.duplicate_eval_suppressed),
+            "candidate_count": len(self.candidates),
+            "entry_funnel_exclusive": funnel,
+            "no_evaluation_breakdown": no_eval,
+            "stop_overshoot_yen_100": self.stop_overshoot_yen(),
+            "forward_gate": self.forward_gate_display(),
+            "topline_evaluated_no_evaluation": {
+                "evaluated": int(self.evaluated_count),
+                "no_evaluation": int(self.no_evaluation_count),
+            },
+            "evaluation_status": (
+                "NO_EVALUATION"
+                if self.evaluated_count == 0 and self.no_evaluation_count > 0
+                else (
+                    "EVALUATED"
+                    if self.evaluated_count > 0
+                    else "NO_EVALUATION"
+                )
+            ),
             "order_api": "disabled",
             "pbv2_cap_impact": "none",
             "submit": 0, "cancel": 0, "live_order": 0,
         }
+
+    def virtual_ledger_payload(self) -> dict[str, Any]:
+        """Independent virtual ENTRY/EXIT ledger (observe-only; not PBv2)."""
+        from small_paper.e1_x5_artifact_sot import canonical_ledger_hash
+
+        open_rows = [
+            {
+                "symbol": p.symbol,
+                "entry_time": p.entry_time,
+                "entry_ask": p.entry_ask,
+                "score": p.score,
+                "spread_bps": p.spread_bps,
+                "sample_id": p.sample_id,
+                "day": p.day,
+            }
+            for p in self.positions.values()
+        ]
+        exits = list(self.exits)
+        for row in exits:
+            if "holding_sec" not in row:
+                et, xt = row.get("entry_time"), row.get("exit_time")
+                if hasattr(et, "timestamp") and hasattr(xt, "timestamp"):
+                    row = dict(row)
+                    row["holding_sec"] = (xt - et).total_seconds()
+        # normalize exits for hash (copy with holding_sec)
+        exits_norm: list[dict[str, Any]] = []
+        for x in exits:
+            row = dict(x)
+            if "holding_sec" not in row:
+                et, xt = row.get("entry_time"), row.get("exit_time")
+                if hasattr(et, "timestamp") and hasattr(xt, "timestamp"):
+                    row["holding_sec"] = (xt - et).total_seconds()
+                else:
+                    row["holding_sec"] = 0.0
+            exits_norm.append(row)
+        ledger_sha = canonical_ledger_hash(exits_norm, version="v1") if exits_norm else canonical_ledger_hash([], version="v1")
+        agg = aggregate_from_virtual_ledger(
+            entries=list(self.entries),
+            exits=exits_norm,
+            open_rows=open_rows,
+            summary=self.summary(),
+        )
+        return {
+            "strategy": STRATEGY_ID,
+            "observe_only": True,
+            "g1_adopted": False,
+            "ledger_sha256": ledger_sha,
+            "ledger_hash_version": "e1_x5_trade_ledger_hash_v1",
+            "entries": list(self.entries),
+            "exits": exits_norm,
+            "open_positions": open_rows,
+            "aggregates": agg,
+            "submit": 0,
+            "cancel": 0,
+            "live_order": 0,
+        }
+
+
+def aggregate_from_virtual_ledger(
+    *,
+    entries: Sequence[Mapping[str, Any]],
+    exits: Sequence[Mapping[str, Any]],
+    open_rows: Sequence[Mapping[str, Any]],
+    summary: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    """Independent aggregates from virtual ledger only (not PBv2 reject/delta)."""
+    s = dict(summary or {})
+    pnls = [float(x.get("net_pnl_yen_100") or 0) for x in exits]
+    wins = sum(1 for p in pnls if p > 0)
+    losses = sum(1 for p in pnls if p < 0)
+    draws = sum(1 for p in pnls if p == 0)
+    gp = sum(p for p in pnls if p > 0)
+    gl = -sum(p for p in pnls if p < 0)
+    pf = (gp / gl) if gl > 0 else None
+    reasons: dict[str, int] = {}
+    for x in exits:
+        r = str(x.get("exit_reason") or "")
+        reasons[r] = reasons.get(r, 0) + 1
+    return {
+        "evaluated": int(s.get("evaluated_count") or 0),
+        "no_evaluation": int(s.get("no_evaluation_count") or 0),
+        "ENTRY": len(entries),
+        "completed": len(exits),
+        "open": len(open_rows),
+        "net_pnl_yen_100": float(sum(pnls)) if pnls else 0.0,
+        "profit_factor": pf,
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "exit_reasons": reasons,
+        "valid_progress": s.get("forward_gate") if isinstance(s.get("forward_gate"), Mapping) else {},
+        "cap_blocked": int(s.get("cap_blocked") or 0),
+        "same_symbol_blocked": int(s.get("same_symbol_blocked") or 0),
+    }
+
+
+def persist_e1_x5_virtual_ledger(session: E1X5ForwardShadowSession, output_dir: Path) -> dict[str, Any]:
+    """Write independent E1_X5 virtual ledger files under session output_dir."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    payload = session.virtual_ledger_payload()
+
+    def _json_default(obj: Any) -> Any:
+        if isinstance(obj, datetime):
+            dt = obj if obj.tzinfo else obj.replace(tzinfo=JST)
+            return dt.astimezone(JST).isoformat()
+        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+    ledger_path = out / "e1_x5_virtual_ledger.json"
+    entries_path = out / "e1_x5_virtual_entries.jsonl"
+    exits_path = out / "e1_x5_virtual_exits.jsonl"
+    ledger_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default) + "\n",
+        encoding="utf-8",
+    )
+    with entries_path.open("w", encoding="utf-8") as fh:
+        for row in payload["entries"]:
+            fh.write(json.dumps(row, ensure_ascii=False, default=_json_default) + "\n")
+    with exits_path.open("w", encoding="utf-8") as fh:
+        for row in payload["exits"]:
+            fh.write(json.dumps(row, ensure_ascii=False, default=_json_default) + "\n")
+    meta = {
+        "ledger_path": str(ledger_path),
+        "entries_path": str(entries_path),
+        "exits_path": str(exits_path),
+        "ledger_sha256": payload["ledger_sha256"],
+        "aggregates": payload["aggregates"],
+        "entries_n": len(payload["entries"]),
+        "exits_n": len(payload["exits"]),
+        "open_n": len(payload["open_positions"]),
+    }
+    (out / "e1_x5_virtual_ledger_meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return meta
 
 
 def simulate_x5_on_ticks(

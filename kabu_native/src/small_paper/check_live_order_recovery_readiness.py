@@ -52,6 +52,11 @@ def main(argv: list[str] | None = None) -> int:
     result["live_trading_enabled"] = False
     result["order_enabled"] = False
 
+    art = result.get("artifact_trace") or {}
+    ref = art.get("reference_session") or {}
+    prior_eval = art.get("prior_eval") or {}
+    sha = art.get("config_sha") or {}
+    design = art.get("design") or {}
     summary = {
         "session_manifest_valid": result.get("session_manifest_valid"),
         "session_seal_valid": result.get("session_seal_valid"),
@@ -68,8 +73,39 @@ def main(argv: list[str] | None = None) -> int:
         "recovery_ready": result.get("recovery_ready"),
         "blockers": result.get("blockers"),
         "exit_code": result.get("exit_code"),
+        "probe_mode": result.get("probe_mode"),
+        "design_consistency_pass": result.get("design_consistency_pass"),
+        "config_sha_match": result.get("config_sha_match"),
+        "selected_prior": {
+            "session_root": ref.get("session_root"),
+            "trading_day": ref.get("trading_day"),
+            "session_id": ref.get("session_id"),
+            "session_seal_status": ref.get("session_seal_status"),
+            "reconciliation_state": prior_eval.get("reconciliation_state"),
+            "reconciliation_classification": (prior_eval.get("detail") or {}).get(
+                "reconciliation_classification"
+            ),
+        }
+        if ref
+        else None,
+        "prior_sessions_found": art.get("prior_sessions_found"),
+        "config_sha": {
+            "match": sha.get("match"),
+            "disk_sha256": sha.get("disk_sha256"),
+            "pin_sha256": sha.get("pin_sha256"),
+            "status": sha.get("status"),
+        },
+        "design_consistency": {
+            "pass": design.get("pass"),
+            "status": design.get("status"),
+        },
         "production_order_enablement": PRODUCTION_ORDER_ENABLEMENT,
         "flags_mutated": False,
+        "live_trading_enabled": False,
+        "order_enabled": False,
+        "submit": 0,
+        "cancel": 0,
+        "live": 0,
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return int(result.get("exit_code", 5))

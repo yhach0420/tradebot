@@ -370,6 +370,26 @@ def _enqueue_inner(
     embed_body = embed_to_discord_payload(shadow_embed, content="")
     discord_embeds = list(embed_body.get("embeds") or [])
 
+    # Extract E1_X5 detail block for real Discord send (independent of OBSERVATION inventory).
+    e1_detail = ""
+    if "--- E1_X5 ---" in content:
+        start = content.index("--- E1_X5 ---")
+        rest = content[start:]
+        # stop before next major section if any leftover portfolio lines exist
+        cut = len(rest)
+        for marker in ("\n--- Flat", "\nBoard Dynamic", "\n--- Observer", "\nsource artifact:"):
+            i = rest.find(marker)
+            if i > 0:
+                cut = min(cut, i)
+        e1_detail = rest[:cut].strip() + "\n"
+        sha = str(summary.get("e1_x5_virtual_ledger_sha256") or "")
+        if sha and "ledger_sha256" not in e1_detail:
+            e1_detail = e1_detail.rstrip() + f"\nledger_sha256: `{sha}`\n"
+        e1_detail = (
+            e1_detail.rstrip()
+            + "\n\n(旧【SHADOW OBSERVATION】の対象件数/block/deltaはE1_X5成績ではない)\n"
+        )
+
     # Stable once-per AM/PM identity; full key includes hash for UPDATE detection.
     stable_key = f"{day}|{sid}|{am_pm.upper()}|{SHADOW_NAME_COMPOSITE}"
     dedupe_key = f"{stable_key}|{art_hash}"
@@ -436,16 +456,49 @@ def _enqueue_inner(
             "artifact_hash": art_hash,
             "full_dedupe_key": dedupe_key,
             "auto_resend": False,
-            "shadow_text_audit": content[:500],
+            "shadow_text_audit": content[:2000],
+            "e1_x5_detail_preview": e1_detail[:1500],
             "active_shadows": active,
             "inventory": inventory_audit,
+            "shadow_observation_is_not_e1_x5_scorecard": True,
         },
     )
     # Ensure payload_hash used by dedupe.record is the artifact hash
     env.payload_hash = art_hash
     outcome = router.publish(env)
+
+    e1_outcome: dict[str, Any] = {"status": "SKIPPED", "queued": False}
+    if e1_detail.strip():
+        e1_key = f"{day}|{sid}|{am_pm.upper()}|E1_X5_FORWARD_DETAIL|{art_hash}"
+        e1_env = build_envelope(
+            category=NotificationCategory.RESEARCH_SHADOW,
+            severity=Severity.INFO,
+            event_type=f"E1_X5_FORWARD_DETAIL_{am_pm.upper()}",
+            title=f"[E1_X5 FORWARD DETAIL - {am_pm.upper()}]",
+            content=e1_detail[:1900],
+            embeds=[],
+            trading_date=day,
+            session_id=sid,
+            am_pm=am_pm.upper(),
+            dedupe_key=e1_key,
+            actual_or_shadow=ActualOrShadow.SHADOW,
+            source_module="shadow_summary_runtime_hook",
+            ownership=OWNERSHIP,
+            artifact_path=art_path,
+            state_version=art_hash,
+            extra={
+                "artifact_hash": art_hash,
+                "e1_x5_detail": True,
+                "ledger_sha256": summary.get("e1_x5_virtual_ledger_sha256"),
+            },
+        )
+        e1_env.payload_hash = art_hash + "|e1x5"
+        e1_outcome = router.publish(e1_env)
+
     outcome["am_pm"] = am_pm
     outcome["dedupe_key"] = dedupe_key
     outcome["stable_key"] = stable_key
     outcome["ownership"] = OWNERSHIP
+    outcome["e1_x5_detail_publish"] = e1_outcome
+    outcome["e1_x5_detail_sent"] = bool(e1_outcome.get("queued") or e1_outcome.get("status") in {"SENT", "QUEUED", "OK", "PUBLISHED"})
     return outcome
