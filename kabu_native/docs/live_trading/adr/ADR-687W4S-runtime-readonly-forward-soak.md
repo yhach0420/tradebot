@@ -1,7 +1,7 @@
 # ADR-687W4S — Runtime Read-Only Forward Soak
 
 - **Status:** READONLY_SOAK_NOT_STARTED
-- **Date:** 2026-08-07
+- **Date:** 2026-08-10
 
 ## Context
 

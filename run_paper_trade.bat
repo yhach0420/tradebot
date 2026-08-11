@@ -1,42 +1,12 @@
 @echo off
-
-
-
 setlocal
-
-
-
-
-
-
 
 set REPO=C:\Users\yhach\Documents\tradebotfile
 
-
-
-
-
-
-
 echo [PAPER TRADE] starting...
-
-
-
 echo [PAPER TRADE] repo=%REPO%
 
-
-
-
-
-
-
 cd /d %REPO%
-
-
-
-
-
-
 
 set PYTHONPATH=kabu_native\src
 
@@ -44,7 +14,7 @@ REM Shadow Portfolio Cleanup: Paper runtime + LOGGER_ONLY / ACTIVE_FORWARD defau
 if not defined KABU_PAPER_RUNTIME set KABU_PAPER_RUNTIME=1
 REM Market Ingress V2: Independent WS owner + Raw-first Capture (cutover after preflight PASS)
 if not defined MARKET_INGRESS_V2 set MARKET_INGRESS_V2=1
-REM Cost-Aware v1/v2 RETIRED ??do not auto-enable
+REM Cost-Aware v1/v2 RETIRED — do not auto-enable
 if not defined COST_AWARE_ENTRY_SHADOW set COST_AWARE_ENTRY_SHADOW=0
 if not defined COST_AWARE_ENTRY_V2_SHADOW set COST_AWARE_ENTRY_V2_SHADOW=0
 if not defined PULLBACK_VOLUME_FORWARD set PULLBACK_VOLUME_FORWARD=1
@@ -57,133 +27,50 @@ echo [PAPER TRADE] PULLBACK_VOLUME_FORWARD=%PULLBACK_VOLUME_FORWARD% (LOGGER_ONL
 if defined E1_X5_FORWARD_SHADOW (
   echo [PAPER TRADE] E1_X5_FORWARD_SHADOW=%E1_X5_FORWARD_SHADOW%
 ) else (
-  echo [PAPER TRADE] E1_X5_FORWARD_SHADOW=^(unset ??Paper default ON^)
+  echo [PAPER TRADE] E1_X5_FORWARD_SHADOW=^(unset — Paper default ON^)
 )
-
-
-
-
-
-
 
 echo [PAPER TRADE] MARKET_INGRESS_V2=%MARKET_INGRESS_V2%
-
 echo [PAPER TRADE] preflight: Market Ingress V2 cutover
-
 python kabu_native\scripts\run_market_ingress_v2_preflight.py
-
 if errorlevel 1 (
-
     echo [PAPER TRADE] aborted: MARKET_INGRESS_V2_CUTOVER_BLOCKED
-
     pause
-
     exit /b 1
-
 )
-
 
 echo [PAPER TRADE] preflight: live ENTRY pipeline
-
-
-
 python kabu_native\scripts\check_live_pipeline_preflight.py
-
-
-
 if errorlevel 1 (
-
-
-
     echo [PAPER TRADE] aborted: live pipeline preflight failed
-
-
-
     pause
-
-
-
     exit /b 1
-
-
-
 )
 
-
-
-
-
-
-
-echo [PAPER TRADE] preflight: production startup smoke test
-
-
-
-python kabu_native\scripts\run_production_startup_smoke_test.py --exit-policy-shadow trailing-mfe
-
-
-
+REM === V1R Paper Primary activation (Execution repair) ===
+REM Classic trailing-mfe daily runner is NO LONGER Paper Primary.
+REM If V1R role assertion fails: NO PAPER PRIMARY (PBv2 Primary fallback FORBIDDEN).
+echo [PAPER TRADE] preflight: V1R Paper Primary role assertion (fail-closed)
+python -m small_paper.v1r_paper_primary_launcher --mode live
 if errorlevel 1 (
-
-
-
-    echo [PAPER TRADE] aborted: production startup smoke test failed
-
-
-
+    echo [PAPER TRADE] aborted: V1R_PRIMARY_ROLE_ASSERTION_FAILED
+    echo [PAPER TRADE] NO PAPER PRIMARY — classic PBv2 Primary fallback FORBIDDEN
     pause
-
-
-
     exit /b 1
-
-
-
 )
 
-
-
-
-
-
-
+echo [PAPER TRADE] V1R is PAPER_PRIMARY. Classic trailing-MFE Primary path DISABLED.
+echo [PAPER TRADE] PBv2 role=SHADOW_ONLY (not started as Primary).
 echo [PAPER TRADE] command:
+echo python -m small_paper.v1r_paper_primary_launcher --mode live
 
-
-
-echo python kabu_native/scripts/run_core10_dynamic40_am_pm_daily_runner.py --universe-mode core10-dynamic40-price-risk-filter-shadow --enable-intraday-refresh --exit-policy-shadow trailing-mfe
-
-
-
-
-
-
-
-python kabu_native\scripts\run_core10_dynamic40_am_pm_daily_runner.py --universe-mode core10-dynamic40-price-risk-filter-shadow --enable-intraday-refresh --exit-policy-shadow trailing-mfe
-
-
-
-
-
-
+set V1R_PRIMARY_BOUND=1
+python -m small_paper.v1r_paper_primary_launcher --mode live
+set PAPER_EXIT=%ERRORLEVEL%
 
 echo.
-
-
-
-echo [PAPER TRADE] finished with exit code %ERRORLEVEL%
-
-
-
+echo [PAPER TRADE] finished with exit code %PAPER_EXIT%
 pause
 
-
-
-
-
-
-
 endlocal
-
-
-
+exit /b %PAPER_EXIT%

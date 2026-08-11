@@ -100,16 +100,17 @@ INFRA_KEYS = frozenset({
 })
 
 NOTIFY_ENV = {
-    "v1r_paper": "KABU_DISCORD_RESEARCH_WEBHOOK_URL",  # Paper Primary events (not live actual)
-    "v1r_paper_fallback": "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL",
-    "pbv2_shadow": "KABU_SHADOW_DISCORD_WEBHOOK_URL",
-    "pbv2_shadow_fallback": "KABU_DISCORD_RESEARCH_WEBHOOK_URL",
+    # Final V1R Discord routing (Execution 51) — see notify.v1r_discord_routing
+    "v1r_entry": "KABU_V1R_ENTRY_WEBHOOK_URL",  # ENTRY / EXPIRED only; no fallback
+    "v1r_fill_exit": "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL",  # FILL / EXIT only
+    "v1r_summary_and_shadow": "KABU_DISCORD_RESEARCH_WEBHOOK_URL",  # SUMMARY / PBV2 / 1M
+    "pbv2_shadow": "KABU_DISCORD_RESEARCH_WEBHOOK_URL",
     "one_m_shadow": "KABU_DISCORD_RESEARCH_WEBHOOK_URL",
     "cap_blocked": "KABU_SMALL_PAPER_CAP_BLOCKED_WEBHOOK_URL",
     "operations": "KABU_DISCORD_OPERATIONS_WEBHOOK_URL",
     "critical": "KABU_DISCORD_CRITICAL_WEBHOOK_URL",
     "capture": "KABU_DISCORD_MARKET_CAPTURE_WEBHOOK_URL",
-    "forbidden_for_shadow": "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL",  # PBV2/1M must not steal this as sole path incorrectly — documented
+    "forbidden_for_shadow": "KABU_SMALL_PAPER_NOTIFY_WEBHOOK_URL",
 }
 
 

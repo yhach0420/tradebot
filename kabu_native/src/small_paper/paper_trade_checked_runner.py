@@ -2332,6 +2332,46 @@ class PaperTradeCheckedRunner:
             paper_code = 1
             paper_ok = False
             if paper_path_ok:
+                # V1R Primary fail-closed gate BEFORE classic paper bat.
+                # If assertion fails: NO PAPER PRIMARY (do not fall back to PBv2).
+                try:
+                    from small_paper.v1r_exit_v2_activation_gate import (
+                        ASSERTION_FAIL,
+                        assert_exit_v2_primary_roles,
+                    )
+                    _v1r_assert = assert_exit_v2_primary_roles()
+                    print(_v1r_assert.startup_block, flush=True)
+                    self._record(
+                        "v1r_exit_v2_primary_role_assertion",
+                        8,
+                        "assert_exit_v2_primary_roles",
+                        exit_code=0 if _v1r_assert.ok else 2,
+                        started=time.time(),
+                        result="PASS" if _v1r_assert.ok else "FAIL",
+                        blocked_reason="" if _v1r_assert.ok else (_v1r_assert.reason or ASSERTION_FAIL),
+                    )
+                    if not _v1r_assert.ok:
+                        paper_path_ok = False
+                        self.blocked = {
+                            "step": "v1r_exit_v2_primary_role_assertion",
+                            "reason": _v1r_assert.reason or ASSERTION_FAIL,
+                            "exit_code": 2,
+                            "no_pbv2_primary_fallback": True,
+                            "no_fixed600_primary_fallback": True,
+                        }
+                        self._paper_block_but_capture_continues("v1r_exit_v2_primary_role_assertion")
+                except Exception as exc:
+                    paper_path_ok = False
+                    self.blocked = {
+                        "step": "v1r_exit_v2_primary_role_assertion",
+                        "reason": f"V1R_EXIT_V2_PRIMARY_ROLE_ASSERTION_FAILED:exception:{exc}",
+                        "exit_code": 2,
+                        "no_pbv2_primary_fallback": True,
+                        "no_fixed600_primary_fallback": True,
+                    }
+                    self._paper_block_but_capture_continues("v1r_exit_v2_primary_role_assertion")
+
+            if paper_path_ok:
                 paper_code = self.step_start_paper()
                 paper_ok = paper_code == 0
                 if self.comm_fault_e2e:
