@@ -52,6 +52,7 @@ DISCORD_REASON_JA = {
     "TIME750": "750秒延長決済: 600秒時点で上昇継続条件成立",
     "FIXED_HOLD": "600秒決済: 上昇継続条件なし",
     "FIRST_VALID_BUY1_AT_OR_AFTER_TARGET": "600秒決済: 上昇継続条件なし",
+    "SESSION_CLOSE": "セッション終了決済: 最終有効Buy1",
 }
 
 

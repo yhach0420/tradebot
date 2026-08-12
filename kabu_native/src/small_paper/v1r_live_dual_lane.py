@@ -133,6 +133,17 @@ class LanePosition:
     fill_snapshot: dict[str, Any] = field(default_factory=dict)
 
 
+def session_end_for_position(*, date: str, session: str, fill_time: float) -> float:
+    """Frozen V1R session-end clock (AM 11:30 / PM 15:00 JST). Not PBv2 11:25/15:23."""
+    from research.e1_x22_actual_exit_factory.paths import session_end_epoch
+
+    day = str(date or "").strip()
+    if len(day) != 8 or not day.isdigit():
+        day = datetime.fromtimestamp(float(fill_time), JST).strftime("%Y%m%d")
+    sess = session if session in ("AM", "PM") else "AM"
+    return float(session_end_epoch(day, sess))
+
+
 @dataclass
 class DualLaneStats:
     primary_fills: int = 0
@@ -142,6 +153,7 @@ class DualLaneStats:
     guard_triggers: int = 0
     exit_600: int = 0
     extend_750: int = 0
+    session_close: int = 0
     primary_capacity_block: int = 0
     control_capacity_block: int = 0
     ticks: int = 0
@@ -214,6 +226,7 @@ class V1RLiveDualLane:
         fill_time: Optional[float] = None,
         payload: Optional[Mappingish] = None,
         session: str = "AM",
+        date: str = "",
         source: str = "",
     ) -> dict[str, Any]:
         """Admit fill independently into Primary and Control (separate caps).
@@ -249,8 +262,11 @@ class V1RLiveDualLane:
                 "source": source,
             }
         ft = float(fill_time if fill_time is not None else time.time())
-        iso = _now().isoformat(timespec="seconds")
-        day = _now().strftime("%Y%m%d")
+        ft_dt = datetime.fromtimestamp(ft, JST)
+        iso = ft_dt.isoformat(timespec="seconds")
+        day = str(date or "").strip()
+        if len(day) != 8 or not day.isdigit():
+            day = ft_dt.strftime("%Y%m%d")
         snap = dict(payload) if isinstance(payload, dict) else {}
         out = {
             "symbol": sym,
@@ -364,7 +380,16 @@ class V1RLiveDualLane:
                             "push_sequence": push_sequence,
                         },
                     )
+                # In-session quotes first so a tick at exactly sess_end is usable.
                 self._append_board(pos, payload, t)
+            # Frozen session-close after in-session append; never observer.close_all.
+            exits.extend(self.maybe_session_close(event_t=t))
+            if self.fail_closed:
+                return exits
+            for lane, book in (("primary", self.primary), ("control", self.control)):
+                pos = book.get(sym)
+                if pos is None or pos.closed:
+                    continue
                 self._trace_decisions(pos)
                 decision = self._evaluate(pos)
                 if decision and decision.get("exit"):
@@ -437,7 +462,117 @@ class V1RLiveDualLane:
                     found.append(k)
         return sorted(set(found))
 
+    def close_open_at_session_end(
+        self, *, event_t: float, session: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        """Alias: Frozen session-end actual EXIT + slot/native release."""
+        return self.maybe_session_close(event_t=event_t, session=session)
+
+    def maybe_session_close(
+        self, *, event_t: float, session: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        """Frozen SESSION_CLOSE: last valid executable Buy1 at-or-before session_end.
+
+        Required when 600/750 horizon has not been reached by AM 11:30 / PM 15:00.
+        Does not invent quotes, does not use observer.close_all, does not release
+        on trigger/pending/Discord/timer, and does not close the other session.
+        """
+        if self.fail_closed:
+            return []
+        t = float(event_t)
+        exits: list[dict[str, Any]] = []
+        for _lane, book in (("primary", self.primary), ("control", self.control)):
+            for pos in list(book.values()):
+                if pos.closed:
+                    continue
+                if session is not None and pos.session != session:
+                    continue
+                se = session_end_for_position(
+                    date=pos.date, session=pos.session, fill_time=pos.fill_time
+                )
+                if t + 1e-9 < se:
+                    continue
+                decision = self._session_close_decision(pos, sess_end=se)
+                self._close(pos, decision, pos.fill_snapshot or {})
+                exits.append(decision)
+        return exits
+
+    def _last_valid_executable_bid(
+        self, pos: LanePosition, *, until_t: float
+    ) -> Optional[tuple[float, float]]:
+        """Last Frozen-valid Buy1 at-or-before until_t. No future quote, no synthetic."""
+        n = len(pos.t)
+        for i in range(n - 1, -1, -1):
+            ti = float(pos.t[i])
+            if ti > float(until_t) + 1e-12:
+                continue
+            if pos.special and pos.special[i]:
+                continue
+            if pos.bid_qty and pos.bid_qty[i] < MIN_BUY1_QTY - 1e-12:
+                continue
+            if pos.fresh_sec and pos.fresh_sec[i] > BOARD_FRESH_SEC + 1e-12:
+                continue
+            if not pos.bid:
+                continue
+            px = float(pos.bid[i])
+            if px <= 0:
+                continue
+            return ti, px
+        snap = pos.fill_snapshot if isinstance(pos.fill_snapshot, dict) else {}
+        if snap:
+            bid, bq = extract_buy1(snap)
+            special = bool(snap.get("SpecialQuote") or snap.get("special"))
+            fresh = _f(snap.get("board_age_sec"))
+            if fresh is None:
+                fresh = _f(snap.get("fresh_sec"))
+            if (
+                bid is not None
+                and bid > 0
+                and not special
+                and (bq is None or float(bq) >= MIN_BUY1_QTY - 1e-12)
+                and (fresh is None or float(fresh) <= BOARD_FRESH_SEC + 1e-12)
+            ):
+                ft = float(pos.fill_time)
+                if ft <= float(until_t) + 1e-12:
+                    return ft, float(bid)
+        if pos.fill_price and float(pos.fill_time) <= float(until_t) + 1e-12:
+            return float(pos.fill_time), float(pos.fill_price)
+        return None
+
+    def _session_close_decision(self, pos: LanePosition, *, sess_end: float) -> dict[str, Any]:
+        found = self._last_valid_executable_bid(pos, until_t=sess_end)
+        if found is None:
+            # No post-session quote: use fill itself (already executable). Never invent.
+            et = min(float(pos.fill_time), float(sess_end))
+            px = float(pos.fill_price)
+        else:
+            et, px = found
+        ret = 0.0
+        if pos.fill_price:
+            ret = (float(px) / float(pos.fill_price) - 1.0) * 10000.0
+        return {
+            "exit": True,
+            "lane": pos.lane,
+            "symbol": pos.symbol,
+            "reason": "SESSION_CLOSE",
+            "triggered_guard": False,
+            "extended": False,
+            "exit_off": max(0.0, float(et) - float(pos.fill_time)),
+            "exit_time": float(et),
+            "exit_ret_bps": float(ret),
+            "exit_price": float(px),
+            "arch": "E" if pos.lane == "primary" else "A",
+            "execution": "LAST_VALID_EXECUTABLE_BUY1_AT_OR_BEFORE_SESSION_END",
+            "guard": None,
+            "continuation": None,
+        }
+
     def _append_board(self, pos: LanePosition, payload: Mappingish, t: float) -> None:
+        se = session_end_for_position(
+            date=pos.date, session=pos.session, fill_time=pos.fill_time
+        )
+        if float(t) > se + 1e-12:
+            return
         bid, bq = extract_buy1(payload)
         ask, aq = extract_sell1(payload)
         px = _f(payload.get("CurrentPrice"))
@@ -508,7 +643,9 @@ class V1RLiveDualLane:
             board,
             entry_price=float(pos.fill_price),
             entry_t=float(pos.fill_time),
-            sess_end=float(pos.fill_time) + 3600.0,
+            sess_end=session_end_for_position(
+                date=pos.date, session=pos.session, fill_time=pos.fill_time
+            ),
         )
         if not path.get("ok"):
             return
@@ -596,7 +733,9 @@ class V1RLiveDualLane:
             board,
             entry_price=float(pos.fill_price),
             entry_t=float(pos.fill_time),
-            sess_end=float(pos.fill_time) + 3600.0,
+            sess_end=session_end_for_position(
+                date=pos.date, session=pos.session, fill_time=pos.fill_time
+            ),
         )
         if not path.get("ok"):
             return None
@@ -655,6 +794,9 @@ class V1RLiveDualLane:
         }
 
     def _close(self, pos: LanePosition, decision: dict[str, Any], payload: Mappingish) -> None:
+        # Idempotent: duplicate actual-close must not double-count or corrupt occupancy.
+        if pos.closed:
+            return
         pos.closed = True
         pos.exit_reason = str(decision.get("reason") or "")
         # Slot release at actual executable exit time (not trigger-only).
@@ -666,6 +808,8 @@ class V1RLiveDualLane:
             self.stats.primary_exits += 1
             if pos.triggered_guard:
                 self.stats.guard_triggers += 1
+            elif pos.exit_reason == "SESSION_CLOSE":
+                self.stats.session_close += 1
             elif pos.extended:
                 self.stats.extend_750 += 1
             else:
@@ -673,6 +817,8 @@ class V1RLiveDualLane:
             ev_name = "EXIT_EXECUTED"
         else:
             self.stats.control_exits += 1
+            if pos.exit_reason == "SESSION_CLOSE":
+                self.stats.session_close += 1
             ev_name = "CONTROL_EXIT"
         self._trace(
             ev_name,
@@ -702,7 +848,37 @@ class V1RLiveDualLane:
                 "slot_released": True,
             },
         )
-        # Primary EXIT Discord only (trade-notify). Control FIXED600 stays silent here.
+        # Native occupancy: Primary actual EXIT only. Never Control / Discord / trigger.
+        try:
+            from small_paper.v1r_native_entry_live import get_native_entry
+
+            eng = get_native_entry()
+            if eng is not None:
+                if pos.lane == "primary":
+                    eng.note_primary_exit(
+                        pos.symbol,
+                        exit_time=pos.exit_time,
+                        reason=pos.exit_reason,
+                    )
+                inv_event = (
+                    "PRIMARY_ACTUAL_EXIT" if pos.lane == "primary" else "CONTROL_ACTUAL_EXIT"
+                )
+                eng.check_occupancy_invariant(dual=self, event=inv_event)
+        except Exception as exc:
+            self.stats.exceptions += 1
+            self._report_error(
+                {
+                    "error_type": "v1r_native_occupancy_release_exception",
+                    "where": "_close",
+                    "symbol": pos.symbol,
+                    "lane": pos.lane,
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                }
+            )
+            self._fail_closed(f"OCCUPANCY_RELEASE:{type(exc).__name__}")
+            return
+        # Discord after occupancy, never a release condition.
         if pos.lane == "primary":
             self._notify_primary_exit(pos, decision)
 
@@ -892,6 +1068,7 @@ class V1RLiveDualLane:
                 "guard_triggers": self.stats.guard_triggers,
                 "exit_600": self.stats.exit_600,
                 "extend_750": self.stats.extend_750,
+                "session_close": self.stats.session_close,
                 "ticks": self.stats.ticks,
                 "tick_matches": self.stats.tick_matches,
                 "lookup_miss_with_open": self.stats.lookup_miss_with_open,

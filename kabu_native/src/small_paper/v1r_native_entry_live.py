@@ -468,6 +468,13 @@ class V1RNativeEntryLive:
     def _run_anchor(
         self, *, anchor: str, t0: float, day: str, session: str
     ) -> list[dict[str, Any]]:
+        # Frozen session-end sweep BEFORE new admits so leftover AM opens cannot
+        # CAP_BLOCK 12:40 (and leftover PM cannot linger past 15:00).
+        # Uses Dual Lane actual EXIT — not observer.close_all.
+        dual_pre = get_dual_lane(trace_dir=self.trace_dir) if live_primary_enabled() else None
+        if dual_pre is not None:
+            dual_pre.maybe_session_close(event_t=float(t0))
+        self.on_tick_fill_check(event_t=float(t0))
         out: list[dict[str, Any]] = []
         events: list[dict[str, Any]] = []
         for sym in list(self.universe):
@@ -610,6 +617,7 @@ class V1RNativeEntryLive:
                 }
                 self._emit(ev)
                 self._notify("EXPIRED", ev)
+                self.check_occupancy_invariant(event="EXPIRED")
                 done.append(ev)
         return done
 
@@ -655,8 +663,12 @@ class V1RNativeEntryLive:
         }
 
     def _promote_fill(self, po: PendingOrder, fill: dict[str, Any]) -> dict[str, Any]:
-        sym = po.symbol
-        del self.pending[sym]
+        from small_paper.v1r_live_dual_lane import canonical_symbol_key
+
+        sym = canonical_symbol_key(po.symbol)
+        del self.pending[po.symbol]
+        if po.symbol != sym:
+            self.pending.pop(sym, None)
         self.open_symbols.add(sym)
         self.primary_fills += 1
         fill_price = float(fill["fill_price"])
@@ -671,6 +683,7 @@ class V1RNativeEntryLive:
                 fill_time=fill_t,
                 payload=snap,
                 session=po.session,
+                date=po.date,
                 source="v1r_native",
             )
         ev = {
@@ -693,12 +706,108 @@ class V1RNativeEntryLive:
         }
         self._emit(ev)
         self._notify("FILL", ev)
+        self.check_occupancy_invariant(dual=dual, event="FILL")
+        if dual is not None:
+            dual.maybe_session_close(event_t=fill_t)
         return ev
 
-    def note_primary_exit(self, symbol: str) -> None:
+    def note_primary_exit(
+        self,
+        symbol: str,
+        *,
+        exit_time: Optional[float] = None,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """Release native open occupancy after Primary actual executable EXIT only.
+
+        Canonical bare symbol (6098 / 6098.T → 6098). Idempotent on duplicate close.
+        """
         from small_paper.v1r_live_dual_lane import canonical_symbol_key
 
-        self.open_symbols.discard(canonical_symbol_key(symbol))
+        key = canonical_symbol_key(symbol)
+        before_open = self.open_n
+        before_exp = self.exposure()
+        had = any(canonical_symbol_key(s) == key for s in self.open_symbols)
+        for alias in list(self.open_symbols):
+            if canonical_symbol_key(alias) == key:
+                self.open_symbols.discard(alias)
+        rec = {
+            "kind": "V1R_NATIVE_PRIMARY_EXIT_RELEASE",
+            "symbol": key,
+            "primary_exit_time": exit_time,
+            "native_open_before": before_open,
+            "native_open_after": self.open_n,
+            "native_exposure_before": before_exp,
+            "native_exposure_after": self.exposure(),
+            "reason": str(reason or ""),
+            "duplicate": not had,
+        }
+        self._emit(rec)
+        return rec
+
+    def check_occupancy_invariant(
+        self,
+        *,
+        dual: Any = None,
+        event: str = "",
+    ) -> dict[str, Any]:
+        """native.exposure == native.pending + Primary OPEN native trades.
+
+        Control occupancy is excluded. native open==cap with Primary open==0 is FAIL.
+        """
+        if dual is None:
+            dual = get_dual_lane(trace_dir=self.trace_dir) if live_primary_enabled() else None
+        native_open = int(self.open_n)
+        pending = int(self.pending_n)
+        exposure = int(self.exposure())
+        tautology_ok = exposure == pending + native_open
+        if dual is None:
+            rec = {
+                "kind": "V1R_OCCUPANCY_INVARIANT" if tautology_ok else "V1R_OCCUPANCY_INVARIANT_FAIL",
+                "event": event,
+                "ok": tautology_ok,
+                "native_pending": pending,
+                "native_open": native_open,
+                "native_exposure": exposure,
+                "primary_open": None,
+                "control_open": None,
+                "cap": int(POSITION_CAP),
+                "tautology_ok": tautology_ok,
+                "aligned": True,
+                "cap_desync": False,
+                "dual_bound": False,
+            }
+            self._emit(rec)
+            return rec
+        primary_open = int(dual.open_n("primary"))
+        # User invariant: exposure = pending + Primary actually OPEN native trades.
+        # Control occupancy is excluded.
+        exposure_vs_primary = exposure == pending + primary_open
+        aligned = native_open == primary_open
+        cap_desync = native_open >= int(POSITION_CAP) and primary_open == 0
+        ok = bool(tautology_ok and exposure_vs_primary and aligned and not cap_desync)
+        rec = {
+            "kind": "V1R_OCCUPANCY_INVARIANT" if ok else "V1R_OCCUPANCY_INVARIANT_FAIL",
+            "event": event,
+            "ok": ok,
+            "native_pending": pending,
+            "native_open": native_open,
+            "native_exposure": exposure,
+            "primary_open": primary_open,
+            "control_open": int(dual.open_n("control")),
+            "cap": int(POSITION_CAP),
+            "tautology_ok": tautology_ok,
+            "aligned": aligned,
+            "cap_desync": cap_desync,
+            "dual_bound": True,
+        }
+        self._emit(rec)
+        if not ok:
+            self.ready = False
+            self.fail_reason = "OCCUPANCY_INVARIANT"
+            if dual is not None and not dual.fail_closed:
+                dual._fail_closed("OCCUPANCY_INVARIANT")
+        return rec
 
     def _emit(self, row: dict[str, Any]) -> None:
         row = dict(row)

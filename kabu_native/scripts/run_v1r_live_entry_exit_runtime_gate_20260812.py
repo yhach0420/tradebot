@@ -43,6 +43,11 @@ OUT = ROOT / "results" / "research" / "v1r_live_entry_exit_runtime_gate_20260812
 OUT.mkdir(parents=True, exist_ok=True)
 
 
+def _t0(hour: int, minute: int) -> float:
+    """In-session AM clock so Frozen sess_end (11:30) is after 600/750 horizons."""
+    return datetime(2026, 8, 12, hour, minute, tzinfo=JST).timestamp()
+
+
 def _payload(
     t: float,
     *,
@@ -88,7 +93,7 @@ def _feed(
 def _case_guard(trace: Path) -> dict[str, Any]:
     reset_dual_lane_for_tests()
     dual = V1RLiveDualLane(trace_dir=trace)
-    t0 = 1_800_000_000.0
+    t0 = _t0(9, 5)
     fill_px = 1000.0
     admit = dual.try_admit_fill(
         symbol="6098",
@@ -126,7 +131,7 @@ def _case_guard(trace: Path) -> dict[str, Any]:
 def _case_600(trace: Path) -> dict[str, Any]:
     reset_dual_lane_for_tests()
     dual = V1RLiveDualLane(trace_dir=trace)
-    t0 = 1_800_100_000.0
+    t0 = _t0(9, 15)
     fill_px = 1000.0
     admit = dual.try_admit_fill(
         symbol="6098.T",
@@ -170,7 +175,7 @@ def _case_600(trace: Path) -> dict[str, Any]:
 def _case_750(trace: Path) -> dict[str, Any]:
     reset_dual_lane_for_tests()
     dual = V1RLiveDualLane(trace_dir=trace)
-    t0 = 1_800_200_000.0
+    t0 = _t0(9, 25)
     fill_px = 1000.0
     admit = dual.try_admit_fill(
         symbol="6098",
@@ -215,7 +220,7 @@ def _case_pilot_hook_path(trace: Path) -> dict[str, Any]:
     reset_native_entry_for_tests()
     dual = ensure_dual_lane(trace_dir=trace)
     assert dual is not None
-    t0 = 1_800_300_000.0
+    t0 = _t0(9, 40)
     # Native-like bare admit + fill snapshot
     snap = _payload(t0, bid=16460.0, ask=16470.0, bq=400.0, aq=200.0)
     dual.try_admit_fill(

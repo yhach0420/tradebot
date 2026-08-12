@@ -201,7 +201,10 @@ def _run_residency_live_loop(
                     )
                     sym = str(payload.get("Symbol") or "").replace(".T", "")
                     if sym:
-                        dual.on_tick(symbol=sym, payload=payload, event_t=time.time())
+                        from small_paper.v1r_native_entry_live import board_event_epoch_from_payload
+
+                        et = board_event_epoch_from_payload(payload)
+                        dual.on_tick(symbol=sym, payload=payload, event_t=et)
                     try:
                         bridge.ack_processed(payload)
                     except Exception:

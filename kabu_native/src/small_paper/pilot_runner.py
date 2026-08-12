@@ -4665,8 +4665,6 @@ def _observer_open_position_tick(
             td = _v1r_native_writer_output_dir(ctx)
             dual = ensure_dual_lane(trace_dir=td)
             if dual is not None:
-                import time as _time
-
                 if dual.error_sink is None:
 
                     def _dual_err(rec: Mapping[str, Any]) -> None:
@@ -4691,10 +4689,19 @@ def _observer_open_position_tick(
                 dual.on_push_meta(
                     sequence=seq, push_at=str(payload.get("CurrentPriceTime") or _now_iso())
                 )
+                from small_paper.v1r_native_entry_live import board_event_epoch_from_payload
+
+                pay_for_t = dict(enriched if isinstance(enriched, dict) else payload or {})
+                t0_recv = getattr(norm, "t0_push_received_at", None)
+                if t0_recv and not pay_for_t.get("recorded_at"):
+                    pay_for_t["recorded_at"] = t0_recv
+                if t0_recv and not pay_for_t.get("received_at"):
+                    pay_for_t["received_at"] = t0_recv
+                et = board_event_epoch_from_payload(pay_for_t)
                 dual.on_tick(
                     symbol=sym,
                     payload=enriched if isinstance(enriched, dict) else dict(payload or {}),
-                    event_t=_time.time(),
+                    event_t=et,
                     push_sequence=seq,
                 )
     except Exception as exc:
@@ -8668,13 +8675,23 @@ def run_live_dry_run(
 
             if live_primary_enabled():
                 dual = get_dual_lane(trace_dir=output_dir)
+                eng = get_native_entry()
+                # Frozen V1R session-close (AM 11:30 / PM 15:00) — independent of
+                # observer.close_all / PBv2 11:25/15:23. Wall clock is live event time.
+                try:
+                    now_t = time.time()
+                    if dual is not None:
+                        dual.maybe_session_close(event_t=now_t)
+                    if eng is not None:
+                        eng.on_tick_fill_check(event_t=now_t)
+                except Exception:
+                    pass
                 if dual is not None:
                     hb["v1r_exit_v2"] = dual.heartbeat_fields()
                     try:
                         dual.emit_heartbeat_summary()
                     except Exception:
                         pass
-                eng = get_native_entry()
                 if eng is not None:
                     hb["v1r_native_entry"] = eng.heartbeat_fields()
                 hb["v1r_native_exception_count"] = int(
