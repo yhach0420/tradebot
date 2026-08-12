@@ -32,15 +32,35 @@ def write_desired_universe(
     position_symbols: Optional[list[str]] = None,
     generation: Optional[int] = None,
     trading_date: str = "",
+    source_path: str = "",
+    source_sha256: str = "",
+    source_trading_date: str = "",
 ) -> dict[str, Any]:
+    day = str(trading_date or "")
+    src_day = str(source_trading_date or day)
+    if day and src_day and src_day != day:
+        return {
+            "ok": False,
+            "rejected": True,
+            "reason": "STALE_DESIRED_UNIVERSE",
+            "allow_put": False,
+            "trading_date": day,
+            "source_trading_date": src_day,
+            "symbols": [],
+        }
     path = desired_universe_path(native_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     gen = int(generation if generation is not None else time.time())
     payload = {
+        "ok": True,
+        "rejected": False,
         "generation": gen,
         "symbols": [str(s).split(".")[0] for s in symbols],
         "position_symbols": [str(s).split(".")[0] for s in (position_symbols or [])],
-        "trading_date": trading_date,
+        "trading_date": day,
+        "source_trading_date": src_day or day,
+        "source_path": str(source_path or ""),
+        "source_sha256": str(source_sha256 or ""),
         "updated_at": now_iso(),
     }
     tmp = path.with_suffix(".tmp")
@@ -49,14 +69,34 @@ def write_desired_universe(
     return payload
 
 
-def read_desired_universe(native_root: Path) -> Optional[dict[str, Any]]:
+def read_desired_universe(
+    native_root: Path,
+    *,
+    requested_trading_date: str = "",
+) -> Optional[dict[str, Any]]:
+    """Read control-channel desired universe.
+
+    When requested_trading_date is set, payload.trading_date must match or the
+    result is rejected (STALE_DESIRED_UNIVERSE). mtime is never the SoT.
+    """
     path = desired_universe_path(native_root)
     if not path.is_file():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
+    if not isinstance(payload, dict):
+        return None
+    requested = str(requested_trading_date or "")
+    if requested:
+        from small_paper.day_fixed_am_registration import validate_desired_payload
+
+        checked = validate_desired_payload(payload, requested)
+        if checked.get("rejected"):
+            return checked
+        payload = {**payload, **checked}
+    return payload
 
 
 def append_demo_inject(native_root: Path, payloads: list[dict[str, Any]]) -> int:

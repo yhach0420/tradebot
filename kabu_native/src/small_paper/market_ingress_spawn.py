@@ -109,10 +109,17 @@ def spawn_ingress_process(
     (day / "ingress_spawn.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return meta
 
-def wait_ingress_online(native_root: Path, trading_date: str, *, timeout_sec: float = 45.0) -> dict[str, Any]:
+def wait_ingress_online(
+    native_root: Path,
+    trading_date: str,
+    *,
+    timeout_sec: float = 45.0,
+    require_registered_count: int = 0,
+) -> dict[str, Any]:
     status = Path(native_root) / "data" / "market_capture" / trading_date / "ingress_status.json"
     deadline = time.monotonic() + float(timeout_sec)
     last: dict[str, Any] = {}
+    need = int(require_registered_count or 0)
     while time.monotonic() < deadline:
         if status.is_file():
             try:
@@ -125,6 +132,9 @@ def wait_ingress_online(native_root: Path, trading_date: str, *, timeout_sec: fl
                     "RECOVERED",
                     "CONNECTING",
                 ):
+                    if need > 0 and int(last.get("registered_symbol_count") or 0) < need:
+                        time.sleep(0.25)
+                        continue
                     return {"ok": True, "status": st, "pid": last.get("pid"), "snapshot": last}
             except Exception as exc:
                 last = {"error": type(exc).__name__}

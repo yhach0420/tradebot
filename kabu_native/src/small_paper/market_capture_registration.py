@@ -246,6 +246,20 @@ def write_registration_manifest(
     }
     if extra:
         payload.update(dict(extra))
+    src_day = str(payload.get("source_trading_date") or trading_date)
+    if src_day != str(trading_date):
+        raise ValueError("STALE_DESIRED_UNIVERSE")
+    from small_paper.day_fixed_am_registration import canonical_membership_sha, canonical_symbols
+
+    canon = canonical_symbols(list(payload.get("registered_symbols") or symbols))
+    payload["source_trading_date"] = src_day
+    payload["source_path"] = str(payload.get("source_path") or universe_path or "")
+    payload["source_sha256"] = str(payload.get("source_sha256") or universe_sha256 or "")
+    payload["desired_count"] = int(payload.get("desired_count") or len(canon))
+    payload["registered_count"] = int(payload.get("registered_count") or payload.get("actual_count") or len(canon))
+    payload["canonical_membership_sha"] = str(
+        payload.get("canonical_membership_sha") or canonical_membership_sha(canon)
+    )
     path = manifest_path(native_root)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
@@ -274,6 +288,7 @@ def coordinate_registration(
     universe_path: Optional[str] = None,
     universe_sha256: str = "",
     test_mode: bool = False,
+    extra: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     """
     Acquire lock → compare expected vs actual → register only if needed → verify → save manifest.
@@ -349,6 +364,16 @@ def coordinate_registration(
             verified = bool(match_after) and 1 <= len(expected) <= KABU_PUSH_REGISTER_LIMIT
             status = "MATCH" if verified else "MISMATCH"
 
+        extra_out: dict[str, Any] = {
+            "status": status,
+            "actual_symbols": current,
+            "actual_count": len(current),
+            "match_before": match_before,
+            "applied": applied,
+            "source_trading_date": str(trading_date),
+        }
+        if extra:
+            extra_out.update(dict(extra))
         path = write_registration_manifest(
             native_root,
             trading_date=trading_date,
@@ -358,13 +383,7 @@ def coordinate_registration(
             universe_sha256=universe_sha256,
             verified=verified,
             owner="checked_runner" if apply_register else "sidecar_follower",
-            extra={
-                "status": status,
-                "actual_symbols": current,
-                "actual_count": len(current),
-                "match_before": match_before,
-                "applied": applied,
-            },
+            extra=extra_out,
         )
         return {
             "ok": verified or status == "PLANNED_FOLLOWER",

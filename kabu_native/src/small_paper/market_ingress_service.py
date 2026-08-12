@@ -128,6 +128,10 @@ class MarketIngressService:
         self._register_in_flight: bool = False
         self._force_reconnect: bool = False
         self._last_status_mono: Optional[float] = None
+        self._desired_source_trading_date: str = ""
+        self._desired_source_path: str = ""
+        self._desired_source_sha256: str = ""
+        self._desired_reject_reason: str = ""
 
         self.session_path = session_dir(self.native_root, self.trading_date, self.session_id)
         self.session_path.mkdir(parents=True, exist_ok=True)
@@ -198,6 +202,9 @@ class MarketIngressService:
         self.bus.start()
         self._write_manifest()
         self._stop.clear()
+        # Bind same-day desired (or AM SoT) before the worker thread so synthetic
+        # fallback 7203/6758 cannot race a stale prior-day file.
+        self._apply_desired_from_control_or_am(register=False)
         if self.synthetic:
             self._thread = threading.Thread(target=self._synthetic_loop, name="ingress-synth", daemon=True)
         else:
@@ -548,39 +555,108 @@ class MarketIngressService:
 
     def _poll_desired_universe(self) -> None:
         try:
-            from small_paper.ingress_control_channel import read_desired_universe
-
-            req = read_desired_universe(self.native_root)
-            if not req:
-                return
-            gen = int(req.get("generation") or 0)
-            if gen and gen < self.sm.registration_generation:
-                return
-            if (
-                gen == self.sm.registration_generation
-                and self.registered_symbols
-                and self._register_put_ok
-                and tuple(self.desired_symbols) == self._last_register_symbols
-            ):
-                return
-            applied = self.set_desired_universe(
-                list(req.get("symbols") or []),
-                generation=gen or None,
-                position_symbols=list(req.get("position_symbols") or []),
-            )
-            if not applied.get("ok"):
-                return
-            # In synthetic mode, mark registered immediately
-            if self.synthetic:
-                self.registered_symbols = list(self.desired_symbols)
-                self._register_put_ok = True
-                self._last_register_generation = int(self.sm.registration_generation)
-                self._last_register_symbols = tuple(self.desired_symbols)
-                return
-            # Live: apply Kabu PUT via canonical register when desired/generation changes
-            self._maybe_register_desired_live(reason="desired_poll")
+            self._apply_desired_from_control_or_am(register=True)
         except Exception:
             pass
+
+    def _poll_desired_universe_apply_only(self) -> None:
+        """Apply control-channel / AM SoT desired symbols without registering (pre-connect)."""
+        try:
+            self._apply_desired_from_control_or_am(register=False)
+        except Exception:
+            pass
+
+    def _apply_desired_from_control_or_am(self, *, register: bool) -> dict[str, Any]:
+        """Accept same-day desired file, else same-day AM CSV. Never PUT a stale date."""
+        from small_paper.day_fixed_am_registration import (
+            STALE_DESIRED_UNIVERSE,
+            bind_same_day_am_desired_universe,
+            load_am_canonical_50,
+        )
+        from small_paper.ingress_control_channel import read_desired_universe
+
+        req = read_desired_universe(self.native_root, requested_trading_date=self.trading_date)
+        accepted: Optional[dict[str, Any]] = None
+        if req and not req.get("rejected") and list(req.get("symbols") or []):
+            accepted = req
+            self._desired_reject_reason = ""
+        else:
+            if req and req.get("rejected"):
+                self._desired_reject_reason = str(req.get("reason") or STALE_DESIRED_UNIVERSE)
+            else:
+                self._desired_reject_reason = str((req or {}).get("reason") or "desired_universe_missing")
+            # CASE C: stale/missing file must not win; use same-day AM SoT when present.
+            am = load_am_canonical_50(self.native_root, self.trading_date)
+            if am.get("ok"):
+                bound = bind_same_day_am_desired_universe(
+                    self.native_root,
+                    self.trading_date,
+                    symbols=list(am.get("symbols") or []),
+                    source_path=str(am.get("universe_path") or ""),
+                    source_sha256=str(am.get("universe_sha256") or ""),
+                )
+                if bound.get("ok"):
+                    accepted = {
+                        "symbols": list(bound.get("symbols") or []),
+                        "generation": int((bound.get("desired") or {}).get("generation") or 0),
+                        "position_symbols": [],
+                        "source_path": str(bound.get("source_path") or ""),
+                        "source_sha256": str(bound.get("source_sha256") or ""),
+                        "source_trading_date": self.trading_date,
+                        "trading_date": self.trading_date,
+                    }
+                    self._desired_reject_reason = ""
+            if accepted is None:
+                return {
+                    "ok": False,
+                    "reason": self._desired_reject_reason or STALE_DESIRED_UNIVERSE,
+                    "allow_put": False,
+                }
+
+        gen = int(accepted.get("generation") or 0)
+        if gen and gen < self.sm.registration_generation:
+            return {"ok": False, "reason": "stale_generation", "allow_put": False}
+        if (
+            register
+            and gen == self.sm.registration_generation
+            and self.registered_symbols
+            and self._register_put_ok
+            and tuple(self.desired_symbols) == self._last_register_symbols
+        ):
+            return {"ok": True, "skipped": True, "reason": "same_desired_generation_already_registered"}
+        applied = self.set_desired_universe(
+            list(accepted.get("symbols") or []),
+            generation=gen or None,
+            position_symbols=list(accepted.get("position_symbols") or []),
+        )
+        if not applied.get("ok"):
+            return applied
+        self._desired_source_trading_date = str(
+            accepted.get("source_trading_date") or accepted.get("trading_date") or self.trading_date
+        )
+        self._desired_source_path = str(accepted.get("source_path") or "")
+        self._desired_source_sha256 = str(accepted.get("source_sha256") or "")
+        if self._desired_source_trading_date != str(self.trading_date):
+            self.desired_symbols = []
+            self._desired_reject_reason = STALE_DESIRED_UNIVERSE
+            return {"ok": False, "reason": STALE_DESIRED_UNIVERSE, "allow_put": False}
+        if self.synthetic:
+            self.registered_symbols = list(self.desired_symbols)
+            self._register_put_ok = True
+            self._last_register_generation = int(self.sm.registration_generation)
+            self._last_register_symbols = tuple(self.desired_symbols)
+            self._publish_ingress_registration_result(
+                verified=True,
+                actual_symbols=list(self.registered_symbols),
+                actual_count=len(self.registered_symbols),
+                generation=int(self.sm.registration_generation),
+                universe_hash=universe_symbol_hash(self.desired_symbols),
+                put_executed=False,
+            )
+            return {"ok": True, "synthetic": True}
+        if register:
+            return self._maybe_register_desired_live(reason="desired_poll")
+        return {"ok": True, "applied": True}
 
     def _should_skip_live_register(self) -> bool:
         if self.synthetic or not self.desired_symbols:
@@ -626,6 +702,20 @@ class MarketIngressService:
             self.sm.block_entry("WAITING_DESIRED_REGISTER")
             self._publish_control(KIND_ENTRY_BLOCK, "WAITING_DESIRED_REGISTER")
             return {"ok": True, "skipped": True, "reason": "empty_desired", "put_executed": False}
+        src_day = str(self._desired_source_trading_date or self.trading_date)
+        if src_day != str(self.trading_date):
+            self.registered_symbols = []
+            self._register_put_ok = False
+            self._desired_reject_reason = "STALE_DESIRED_UNIVERSE"
+            self.sm.block_entry("STALE_DESIRED_UNIVERSE")
+            self._publish_control(KIND_ENTRY_BLOCK, "STALE_DESIRED_UNIVERSE")
+            return {
+                "ok": False,
+                "skipped": True,
+                "reason": "STALE_DESIRED_UNIVERSE",
+                "put_executed": False,
+                "allow_put": False,
+            }
 
         # Refresh credentials from disk .env on every register attempt.
         # Capture may have been started with a stale process-env password;
@@ -813,12 +903,18 @@ class MarketIngressService:
             )
 
             gen_id = f"gen_{self.trading_date}_{int(generation)}"
+            src_day = str(self._desired_source_trading_date or self.trading_date)
+            if src_day != str(self.trading_date):
+                return
+            from small_paper.day_fixed_am_registration import canonical_membership_sha
+
             write_registration_manifest(
                 self.native_root,
                 trading_date=self.trading_date,
                 symbols=list(self.desired_symbols),
                 generation_id=gen_id,
-                universe_sha256=universe_hash,
+                universe_path=self._desired_source_path or None,
+                universe_sha256=self._desired_source_sha256 or universe_hash,
                 verified=bool(verified),
                 owner="MARKET_INGRESS_SERVICE",
                 extra={
@@ -828,6 +924,12 @@ class MarketIngressService:
                     "put_executed": bool(put_executed),
                     "verification_source": "ingress_kabu_put",
                     "registration_generation": int(generation),
+                    "source_trading_date": src_day,
+                    "source_path": self._desired_source_path,
+                    "source_sha256": self._desired_source_sha256 or universe_hash,
+                    "desired_count": len(self.desired_symbols),
+                    "registered_count": int(actual_count),
+                    "canonical_membership_sha": canonical_membership_sha(self.desired_symbols),
                 },
             )
             record_generation_change(
@@ -911,25 +1013,6 @@ class MarketIngressService:
         finally:
             self._receiver_count = 0
             self._push_client = None
-
-    def _poll_desired_universe_apply_only(self) -> None:
-        """Apply control-channel desired symbols without registering (pre-connect)."""
-        try:
-            from small_paper.ingress_control_channel import read_desired_universe
-
-            req = read_desired_universe(self.native_root)
-            if not req:
-                return
-            gen = int(req.get("generation") or 0)
-            if gen and gen < self.sm.registration_generation:
-                return
-            self.set_desired_universe(
-                list(req.get("symbols") or []),
-                generation=gen or None,
-                position_symbols=list(req.get("position_symbols") or []),
-            )
-        except Exception:
-            pass
 
     async def _async_stop_receiver(self) -> None:
         # Best-effort close; push client context managed by iter_messages

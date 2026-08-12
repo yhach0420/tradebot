@@ -132,10 +132,17 @@ def resolve_resume_ack(
     hint = int(ingress_hint_ack or 0)
     if disk is None:
         return hint, "ingress_hint_only_no_disk"
-    if disk.ingress_session_id and ingress_session_id and disk.ingress_session_id != ingress_session_id:
-        return hint, "stale_session_ignored"
-    if disk.trading_date and trading_date and disk.trading_date != trading_date:
+    # Both trading_date and ingress_session_id must match. Missing either side
+    # is not a match — never carry a prior-day / prior-session sequence into a
+    # new Ingress session (would skip that session's events).
+    if str(disk.trading_date or "") != str(trading_date or ""):
         return hint, "stale_date_ignored"
+    if (
+        not str(disk.ingress_session_id or "")
+        or not str(ingress_session_id or "")
+        or str(disk.ingress_session_id) != str(ingress_session_id)
+    ):
+        return hint, "stale_session_ignored"
     disk_ack = int(disk.last_ack_sequence or 0)
     # Prefer the higher contiguous watermark when same session.
     if disk_ack >= hint:

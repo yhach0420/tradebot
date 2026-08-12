@@ -1029,8 +1029,9 @@ def resolve_day_fixed_am_runtime_universe(
 
     man = read_registration_manifest(root)
     man_day = str(man.get("trading_date") or "")
+    man_src_day = str(man.get("source_trading_date") or "")
     man_syms: list[str] = []
-    if man_day == day:
+    if man_day == day and (not man_src_day or man_src_day == day):
         raw = man.get("registered_symbols") or man.get("actual_symbols") or []
         man_syms = [_norm_sym(s) for s in raw if _norm_sym(s)]
 

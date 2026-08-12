@@ -1625,13 +1625,12 @@ class PaperTradeCheckedRunner:
 
     def step_universe_resolve(self) -> bool:
         started = time.time()
-        from small_paper.market_capture_registration import resolve_universe_symbols
+        from small_paper.day_fixed_am_registration import load_am_canonical_50
 
-        resolved = resolve_universe_symbols(self.native_root, self.trading_date, allow_empty=True)
-        ok = bool(resolved.get("ok")) and 1 <= int(resolved.get("symbol_count") or 0) <= 50
-        # Weekend / missing CSV: allow planned empty only with override path later; default fail-closed for capture
+        resolved = load_am_canonical_50(self.native_root, self.trading_date)
+        ok = bool(resolved.get("ok")) and int(resolved.get("symbol_count") or 0) == 50
+        # Weekend / missing CSV: synthetic tests inject symbols via coordination
         if not ok and self.capture_synthetic:
-            # synthetic tests inject symbols via coordination
             ok = True
             resolved = {
                 **resolved,
@@ -1639,37 +1638,78 @@ class PaperTradeCheckedRunner:
                 "symbols": [str(7200 + i) for i in range(50)],
                 "symbol_count": 50,
                 "reason": "synthetic_universe",
+                "universe_path": resolved.get("universe_path"),
+                "universe_sha256": "",
             }
         step = self._record(
             "universe_resolve",
             5,
-            "resolve_universe_symbols",
+            "load_am_canonical_50",
             exit_code=0 if ok else 1,
             started=started,
-            stdout=json.dumps({k: resolved.get(k) for k in ("ok", "symbol_count", "universe_path", "reason")}, ensure_ascii=False),
+            stdout=json.dumps(
+                {k: resolved.get(k) for k in ("ok", "symbol_count", "universe_path", "reason")},
+                ensure_ascii=False,
+            ),
             result="PASS" if ok else "FAIL",
             blocked_reason="" if ok else str(resolved.get("reason") or "universe_resolve_failed"),
         )
         self._print_step(5, self._step_total, "Universe resolve", step.result)
         self.capture["universe"] = resolved
         if not ok:
-            self._block("universe_resolve", 1, step.blocked_reason, "Provide today's universe CSV SoT (≤50 symbols).")
+            self._block("universe_resolve", 1, step.blocked_reason, "Provide today's AM universe CSV SoT (exactly 50 symbols).")
         return ok
 
     def step_registration_coordination(self) -> bool:
         started = time.time()
+        from small_paper.day_fixed_am_registration import (
+            bind_same_day_am_desired_universe,
+            canonical_membership_sha,
+        )
         from small_paper.market_capture_registration import coordinate_registration
 
-        symbols = list((self.capture.get("universe") or {}).get("symbols") or [])
         uni = self.capture.get("universe") or {}
+        symbols = list(uni.get("symbols") or [])
+        bind = bind_same_day_am_desired_universe(
+            self.native_root,
+            self.trading_date,
+            symbols=symbols,
+            source_path=str(uni.get("universe_path") or ""),
+            source_sha256=str(uni.get("universe_sha256") or uni.get("universe_manifest_sha256") or ""),
+        )
+        if not bind.get("ok"):
+            step = self._record(
+                "registration_coordination",
+                6,
+                "bind_same_day_am_desired_universe",
+                exit_code=1,
+                started=started,
+                result="FAIL",
+                blocked_reason=str(bind.get("reason") or "desired_universe_bind_failed"),
+            )
+            self._print_step(6, self._step_total, "Registration plan", step.result)
+            self._block(
+                "registration_coordination",
+                1,
+                step.blocked_reason,
+                "Bind same-day AM 50 to Ingress desired universe before spawn.",
+            )
+            return False
         coord = coordinate_registration(
             self.native_root,
             self.trading_date,
             expected_symbols=symbols,
-            apply_register=False,  # live register remains Paper-owned; coordinator writes planned manifest
+            apply_register=False,  # live PUT remains Ingress-owned after same-day bind
             universe_path=uni.get("universe_path"),
-            universe_sha256=str(uni.get("universe_manifest_sha256") or ""),
+            universe_sha256=str(uni.get("universe_sha256") or uni.get("universe_manifest_sha256") or ""),
             test_mode=self.capture_synthetic,
+            extra={
+                "source_trading_date": self.trading_date,
+                "source_path": str(uni.get("universe_path") or ""),
+                "source_sha256": str(uni.get("universe_sha256") or uni.get("universe_manifest_sha256") or ""),
+                "desired_count": len(symbols),
+                "canonical_membership_sha": canonical_membership_sha(symbols),
+            },
         )
         ok = bool(coord.get("ok")) and int(coord.get("expected_count") or 0) <= 50
         step = self._record(
@@ -1702,6 +1742,7 @@ class PaperTradeCheckedRunner:
             **coord,
             "coordination_only": True,
             "runtime_register": "PENDING",
+            "desired_bound": True,
             "display_status": "REGISTRATION_COORDINATION_READY" if ok else "FAIL",
         }
         self.capture["symbols_label"] = f"{coord.get('expected_count', 0)}/50"
@@ -1790,6 +1831,7 @@ class PaperTradeCheckedRunner:
                 self.native_root,
                 self.trading_date,
                 timeout_sec=20.0 if self.capture_synthetic else 45.0,
+                require_registered_count=50 if int((self.capture.get("registration") or {}).get("expected_count") or 0) == 50 else 0,
             )
             ok = bool(wait.get("ok"))
             self.capture.update(
