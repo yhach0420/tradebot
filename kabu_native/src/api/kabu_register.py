@@ -520,6 +520,31 @@ def resolve_native_root_for_register_state(repo_root: Path) -> Path:
 def clear_register_before_session(repo_root) -> dict[str, Any]:
     try:
         root = Path(repo_root)
+        native = resolve_native_root_for_register_state(root)
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            from small_paper.kabu_registration_authority import forbid_post_ingress_unregister_all
+
+            day = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d")
+            gate = forbid_post_ingress_unregister_all(
+                native, day, caller="clear_register_before_session"
+            )
+            if gate.get("blocked"):
+                return {
+                    "ok": True,
+                    "cleared": False,
+                    "skipped": True,
+                    "reason": "INGRESS_OWNS_KABU_REGISTRATION",
+                    "unregister_all": {"ok": True, "skipped": True, "reason": gate.get("reason")},
+                    "POST_INGRESS_COMMIT_UNREGISTER_ALL": 0,
+                    "register_limit": KABU_PUSH_REGISTER_LIMIT,
+                    "list_registered_symbols_api": False,
+                    "note": "Ingress owns Kabu registration; legacy unregister/all forbidden.",
+                }
+        except Exception:
+            pass
         push, _, _ = push_client_from_repo(root)
         unr = unregister_all_until_zero(push)
         ok = bool(unr.get("ok"))

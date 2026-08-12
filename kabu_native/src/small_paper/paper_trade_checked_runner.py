@@ -593,6 +593,37 @@ def _default_run(
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
+def paper_bat_command(bat: Path) -> list[str]:
+    """cmd /c call <bat> — list form, no %ERRORLEVEL% expansion."""
+    return ["cmd.exe", "/d", "/c", "call", str(bat)]
+
+
+def run_paper_bat_preserving_exitcode(
+    bat: Path,
+    env: Mapping[str, str],
+    cwd: Path,
+    *,
+    feed_pause_newline: bool = True,
+) -> tuple[int, str, str]:
+    """Return the bat's actual ERRORLEVEL as subprocess.returncode.
+
+    Must not embed the cmd percent-ERRORLEVEL percent token in a command string
+    (parse-time expansion would replace it with 0 before the bat runs).
+    """
+    cmd = paper_bat_command(bat)
+    proc = subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        env=dict(env),
+        input="\n" if feed_pause_newline else None,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return int(proc.returncode), proc.stdout or "", proc.stderr or ""
+
+
 class PaperTradeCheckedRunner:
     """Fail-closed orchestrator. Paper bat is invoked at most once."""
 
@@ -857,6 +888,108 @@ class PaperTradeCheckedRunner:
                 code,
                 reason,
                 "Start Kabu Station manually if needed; do not auto-start. Fix auth/port, then retry.",
+            )
+        return ok
+
+    def step_legacy_register_preclear(self) -> bool:
+        """Unregister/all only before Ingress spawn. Forbidden after Ingress owns Kabu."""
+        started = time.time()
+        if self.capture_synthetic or self.demo_push_e2e or self.comm_fault_e2e or self.reuse_capture:
+            self._record(
+                "legacy_register_preclear",
+                3,
+                "SKIPPED",
+                exit_code=0,
+                started=started,
+                result="PASS",
+                info_only=True,
+            )
+            return True
+        from small_paper.kabu_registration_authority import (
+            forbid_post_ingress_unregister_all,
+            ingress_owns_kabu_registration,
+        )
+
+        owned = ingress_owns_kabu_registration(self.native_root, self.trading_date)
+        if owned.get("owned"):
+            gate = forbid_post_ingress_unregister_all(
+                self.native_root, self.trading_date, caller="checked_runner.preclear"
+            )
+            step = self._record(
+                "legacy_register_preclear",
+                3,
+                "blocked_ingress_owns",
+                exit_code=0,
+                started=started,
+                stdout=json.dumps(gate, ensure_ascii=False, default=str),
+                result="PASS",
+            )
+            self._print_step(3, self._step_total, "Legacy unregister preclear", "SKIP(owned)")
+            return True
+        from api.kabu_register import clear_register_before_session
+
+        out = clear_register_before_session(self.repo_root)
+        ok = bool(out.get("ok") or out.get("skipped"))
+        step = self._record(
+            "legacy_register_preclear",
+            3,
+            "clear_register_before_session",
+            exit_code=0 if ok else 1,
+            started=started,
+            stdout=json.dumps(
+                {k: out.get(k) for k in ("ok", "cleared", "skipped", "reason")},
+                ensure_ascii=False,
+                default=str,
+            ),
+            result="PASS" if ok else "FAIL",
+            blocked_reason="" if ok else str(out.get("error") or "preclear_failed"),
+        )
+        self._print_step(3, self._step_total, "Legacy unregister preclear", step.result)
+        if not ok:
+            self._block(
+                "legacy_register_preclear",
+                1,
+                step.blocked_reason,
+                "Legacy unregister/all must succeed before Ingress spawn.",
+            )
+        return ok
+
+    def _verify_actual_kabu_exact50(self) -> bool:
+        if self.capture_synthetic or self.demo_push_e2e or self.comm_fault_e2e:
+            return True
+        from small_paper.kabu_registration_authority import verify_exact50_membership
+
+        started = time.time()
+        last: dict = {}
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            last = verify_exact50_membership(
+                self.native_root,
+                self.trading_date,
+                require_actual_kabu=True,
+                allow_self_record_only=False,
+            )
+            if last.get("ok"):
+                break
+            time.sleep(0.5)
+        ok = bool(last.get("ok"))
+        self.capture["actual_kabu_membership"] = last
+        if not ok:
+            self._record(
+                "actual_kabu_membership",
+                7,
+                "verify_exact50_membership",
+                exit_code=1,
+                started=started,
+                stdout=json.dumps(last, ensure_ascii=False, default=str),
+                result="FAIL",
+                blocked_reason=str(last.get("reason") or "actual_kabu_mismatch"),
+            )
+            self._block(
+                "actual_kabu_membership",
+                1,
+                str(last.get("reason") or "actual_kabu_mismatch"),
+                "Ingress self-record 50 is not READY if actual Kabu RegistList is empty or drifted.",
             )
         return ok
 
@@ -1247,48 +1380,52 @@ class PaperTradeCheckedRunner:
             self._block("paper_trade", 1, f"missing {self.paper_bat}", "Restore run_paper_trade.bat")
             self.paper_exit_code = 1
             return 1
-        # Feed pause with newline; call once; wait for completion; no retry.
-        # Windows: pass a *string* so _default_run uses shell=True.
-        # A list form ["cmd","/c", 'echo.| call "path" ...'] is broken because
-        # subprocess.list2cmdline wraps the /c body and turns " into \" — cmd then
-        # fails with "is not recognized as an internal or external command".
         started = time.time()
-        bat = str(self.paper_bat)
-        cmdline = f'echo.| call "{bat}" & exit /b %ERRORLEVEL%'
+        bat = Path(self.paper_bat)
+        cmd = paper_bat_command(bat)
         self.paper_call_count += 1
-        code, out, err = self.run_command(cmdline, self._env(), self.repo_root)
+        if self.run_command is _default_run:
+            code, out, err = run_paper_bat_preserving_exitcode(bat, self._env(), self.repo_root)
+        else:
+            code, out, err = self.run_command(cmd, self._env(), self.repo_root)
         elapsed = time.time() - started
         self.paper_exit_code = int(code)
         self.paper_elapsed_sec = float(elapsed)
-        # Non-demo live: launcher must not exit immediately after stub heartbeats.
-        premature = False
-        if (
+        from small_paper.kabu_registration_authority import (
+            PREMATURE_PRE_WARMUP_EXIT,
+            classify_pre_warmup_process_exit,
+        )
+
+        classified = classify_pre_warmup_process_exit(int(code))
+        premature = bool(
             not self.demo_push_e2e
             and not self.comm_fault_e2e
             and not self.skip_paper
-            and int(code) == 0
-            and elapsed < 30.0
-        ):
-            premature = True
-            self.paper_exit_code = 4
-            code = 4
-            err = (err or "") + "\nV1R_PRIMARY_PREMATURE_EXIT: paper bat returned in " f"{elapsed:.1f}s"
+            and classified.get("fail")
+            and str(classified.get("reason") or "") == PREMATURE_PRE_WARMUP_EXIT
+        )
+        if premature:
+            self.paper_exit_code = int(classified.get("exit_code") or 4)
+            code = int(self.paper_exit_code)
+            err = (err or "") + (
+                f"\n{PREMATURE_PRE_WARMUP_EXIT}: paper bat returned 0 before warmup/session start"
+            )
         self._record(
             "paper_trade",
             8,
-            cmdline,
+            cmd,
             exit_code=code,
             started=started,
             stdout=out,
             stderr=err,
-            result="FAIL" if premature or code != 0 else "PASS",
+            result="FAIL" if premature or int(code) != 0 else "PASS",
             blocked_reason=(
-                "V1R_PRIMARY_PREMATURE_EXIT"
+                PREMATURE_PRE_WARMUP_EXIT
                 if premature
-                else ("" if code == 0 else "paper bat non-zero exit")
+                else ("" if int(code) == 0 else "paper bat non-zero exit")
             ),
         )
-        return code
+        return int(code)
 
     # ── Post ────────────────────────────────────────────────────────────────
 
@@ -1893,6 +2030,8 @@ class PaperTradeCheckedRunner:
         self._print_step(7, self._step_total, "Capture sidecar", step.result)
         if ok:
             self._print_capture_banner()
+            if not self._verify_actual_kabu_exact50():
+                return False
         else:
             if self.allow_paper_without_capture:
                 self.capture["override_used"] = True
@@ -1986,6 +2125,8 @@ class PaperTradeCheckedRunner:
                 flush=True,
             )
             self._print_capture_banner()
+            if not self._verify_actual_kabu_exact50():
+                return False
             return True
         self.verdict = VERDICT_CAPTURE_REQUIRED
         self._block(
@@ -2321,6 +2462,11 @@ class PaperTradeCheckedRunner:
                 exit_code = int((self.blocked or {}).get("exit_code") or 1)
                 return exit_code
             if not self.step_kabu_readonly():
+                self._print_blocked()
+                self.write_logs()
+                exit_code = int((self.blocked or {}).get("exit_code") or 1)
+                return exit_code
+            if not self.step_legacy_register_preclear():
                 self._print_blocked()
                 self.write_logs()
                 exit_code = int((self.blocked or {}).get("exit_code") or 1)

@@ -19,6 +19,10 @@ if not defined COST_AWARE_ENTRY_SHADOW set COST_AWARE_ENTRY_SHADOW=0
 if not defined COST_AWARE_ENTRY_V2_SHADOW set COST_AWARE_ENTRY_V2_SHADOW=0
 if not defined PULLBACK_VOLUME_FORWARD set PULLBACK_VOLUME_FORWARD=1
 REM E1_X5 Forward Shadow: Paper default ON in code (leave unset; set E1_X5_FORWARD_SHADOW=0 to disable)
+REM V1R EXIT V2 live Primary dual-lane (Arch E + FIXED600 Control)
+if not defined V1R_EXIT_V2_LIVE_PRIMARY set V1R_EXIT_V2_LIVE_PRIMARY=1
+REM PBv2 Discord: SHADOW_ONLY → research (NOT trade-notify). Occupancy untouched.
+if not defined V1R_PBV2_NOTIFICATION_ROUTING_ONLY set V1R_PBV2_NOTIFICATION_ROUTING_ONLY=1
 
 echo [PAPER TRADE] PYTHONPATH=%PYTHONPATH%
 echo [PAPER TRADE] COST_AWARE_ENTRY_SHADOW=%COST_AWARE_ENTRY_SHADOW% (RETIRED)
@@ -31,6 +35,8 @@ if defined E1_X5_FORWARD_SHADOW (
 )
 
 echo [PAPER TRADE] MARKET_INGRESS_V2=%MARKET_INGRESS_V2%
+echo [PAPER TRADE] V1R_EXIT_V2_LIVE_PRIMARY=%V1R_EXIT_V2_LIVE_PRIMARY%
+echo [PAPER TRADE] V1R_PBV2_NOTIFICATION_ROUTING_ONLY=%V1R_PBV2_NOTIFICATION_ROUTING_ONLY% (PBv2 ENTRY/EXIT→research; no occupancy impact)
 echo [PAPER TRADE] preflight: Market Ingress V2 cutover
 python kabu_native\scripts\run_market_ingress_v2_preflight.py
 if errorlevel 1 (
@@ -47,11 +53,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM === V1R Paper Primary activation (Execution repair) ===
-REM Classic trailing-mfe daily runner is NO LONGER Paper Primary.
-REM If V1R role assertion fails: NO PAPER PRIMARY (PBv2 Primary fallback FORBIDDEN).
-echo [PAPER TRADE] preflight: V1R Paper Primary role assertion (fail-closed)
-python -m small_paper.v1r_paper_primary_launcher --mode live
+REM === V1R Paper Primary preflight: role assertion ONLY (no long-running launcher) ===
+echo [PAPER TRADE] preflight: V1R Paper Primary role assertion (fail-closed, assert-only)
+python -m small_paper.v1r_paper_primary_launcher --assert-only
 if errorlevel 1 (
     echo [PAPER TRADE] aborted: V1R_PRIMARY_ROLE_ASSERTION_FAILED
     echo [PAPER TRADE] NO PAPER PRIMARY — classic PBv2 Primary fallback FORBIDDEN

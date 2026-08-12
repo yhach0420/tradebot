@@ -132,6 +132,8 @@ class MarketIngressService:
         self._desired_source_path: str = ""
         self._desired_source_sha256: str = ""
         self._desired_reject_reason: str = ""
+        self._last_readonly_verify_mono: float = 0.0
+        self._last_actual_symbols: tuple[str, ...] = ()
 
         self.session_path = session_dir(self.native_root, self.trading_date, self.session_id)
         self.session_path.mkdir(parents=True, exist_ok=True)
@@ -255,6 +257,19 @@ class MarketIngressService:
             json.dumps(man, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         write_status_json(self.day_root / "ingress_active_session.json", man)
+        try:
+            from small_paper.kabu_registration_authority import write_registration_owner
+
+            write_registration_owner(
+                self.native_root,
+                trading_date=self.trading_date,
+                pid=os.getpid(),
+                ingress_session_id=self.session_id,
+                committed=bool(self._register_put_ok),
+                synthetic=bool(self.synthetic),
+            )
+        except Exception:
+            pass
 
     def _write_status(self) -> None:
         snap = self.health_snapshot()
@@ -616,14 +631,6 @@ class MarketIngressService:
         gen = int(accepted.get("generation") or 0)
         if gen and gen < self.sm.registration_generation:
             return {"ok": False, "reason": "stale_generation", "allow_put": False}
-        if (
-            register
-            and gen == self.sm.registration_generation
-            and self.registered_symbols
-            and self._register_put_ok
-            and tuple(self.desired_symbols) == self._last_register_symbols
-        ):
-            return {"ok": True, "skipped": True, "reason": "same_desired_generation_already_registered"}
         applied = self.set_desired_universe(
             list(accepted.get("symbols") or []),
             generation=gen or None,
@@ -663,11 +670,87 @@ class MarketIngressService:
             return True
         if self._register_in_flight:
             return True
+        return False
+
+    def _internal_same_generation_registered(self) -> bool:
         return bool(
             self._register_put_ok
             and self._last_register_generation == int(self.sm.registration_generation)
             and self._last_register_symbols == tuple(self.desired_symbols)
+            and self.registered_symbols
         )
+
+    def _skip_put_if_actual_kabu_matches(self) -> Optional[dict[str, Any]]:
+        """Skip PUT only when readonly actual RegistList == desired. Never internal-state-only."""
+        from small_paper.day_fixed_am_registration import canonical_symbols
+        from small_paper.kabu_registration_authority import (
+            REGISTRATION_DRIFT_DETECTED,
+            append_authority_audit,
+            fetch_kabu_regist_list,
+            write_actual_regist_snapshot,
+        )
+
+        if self.synthetic or not self.desired_symbols or self._register_in_flight:
+            return None
+        if not self._internal_same_generation_registered():
+            return None
+        desired = canonical_symbols(self.desired_symbols)
+        fetched = fetch_kabu_regist_list(self._push_client)
+        if fetched.get("ok"):
+            actual = canonical_symbols(list(fetched.get("symbols") or []))
+            write_actual_regist_snapshot(
+                self.native_root,
+                trading_date=self.trading_date,
+                symbols=actual,
+                source=str(fetched.get("reason") or "kabu_readonly_get"),
+                generation=int(self.sm.registration_generation),
+            )
+            self._last_actual_symbols = tuple(actual)
+            if set(actual) == set(desired) and len(actual) == len(desired):
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "reason": "same_desired_generation_already_registered",
+                    "put_executed": False,
+                    "actual_count": len(actual),
+                    "actual_source": fetched.get("reason"),
+                }
+            append_authority_audit(
+                self.native_root,
+                self.trading_date,
+                REGISTRATION_DRIFT_DETECTED,
+                {
+                    "generation": int(self.sm.registration_generation),
+                    "desired_n": len(desired),
+                    "actual_n": len(actual),
+                    "actual_empty": len(actual) == 0,
+                    "am_only": sorted(set(desired) - set(actual)),
+                    "kabu_only": sorted(set(actual) - set(desired)),
+                },
+            )
+            return None
+        if str(fetched.get("reason") or "") == "GET_NOT_SUPPORTED":
+            # Cannot skip on internal state. Rate-limit verify PUT to avoid hammering Station.
+            now_m = time.monotonic()
+            if self._last_readonly_verify_mono and (now_m - self._last_readonly_verify_mono) < 30.0:
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "reason": "readonly_get_unsupported_verify_interval",
+                    "put_executed": False,
+                }
+            return None
+        append_authority_audit(
+            self.native_root,
+            self.trading_date,
+            REGISTRATION_DRIFT_DETECTED,
+            {
+                "generation": int(self.sm.registration_generation),
+                "fetch_ok": False,
+                "fetch_reason": fetched.get("reason"),
+            },
+        )
+        return None
 
     def _maybe_register_desired_live(self, *, reason: str) -> dict[str, Any]:
         """Run canonical Kabu register when live desired/generation needs Station PUT."""
@@ -675,9 +758,12 @@ class MarketIngressService:
             return {
                 "ok": True,
                 "skipped": True,
-                "reason": "same_desired_generation_already_registered",
+                "reason": "synthetic_or_empty_or_in_flight",
                 "put_executed": False,
             }
+        skipped = self._skip_put_if_actual_kabu_matches()
+        if skipped:
+            return skipped
         push = self._push_client
         if push is None:
             return {"ok": False, "skipped": True, "reason": "no_push_client", "put_executed": False}
@@ -687,14 +773,24 @@ class MarketIngressService:
         """Sole live registration path — reuses api.kabu_register.register_symbols_cleared."""
         from api.kabu_register import extract_regist_num, extract_symbol_set, register_symbols_cleared
         from api.rest_client import load_kabu_env
+        from small_paper.kabu_registration_authority import (
+            REGISTRATION_DRIFT_REPUT,
+            append_authority_audit,
+            write_actual_regist_snapshot,
+            write_registration_owner,
+        )
 
-        if self._should_skip_live_register():
+        if self._should_skip_live_register() and reason != "connect":
             return {
                 "ok": True,
                 "skipped": True,
-                "reason": "same_desired_generation_already_registered",
+                "reason": "synthetic_or_empty_or_in_flight",
                 "put_executed": False,
             }
+        if reason != "connect" or self._internal_same_generation_registered():
+            skipped = self._skip_put_if_actual_kabu_matches()
+            if skipped:
+                return skipped
         specs = [(s, 1) for s in self.desired_symbols]
         if not specs:
             self.registered_symbols = []
@@ -731,8 +827,11 @@ class MarketIngressService:
                     load_dotenv(dotenv_path=env_path, override=True)
         except Exception:
             pass
+        drift_reput = bool(self._internal_same_generation_registered())
         allow_reuse = bool(
-            self._register_put_ok and self._last_register_symbols == tuple(self.desired_symbols)
+            (not drift_reput)
+            and self._register_put_ok
+            and self._last_register_symbols == tuple(self.desired_symbols)
         )
         self._register_in_flight = True
         gen = int(self.sm.registration_generation)
@@ -798,6 +897,36 @@ class MarketIngressService:
                 self.registered_symbols = list(self.desired_symbols)
                 self._last_register_generation = gen
                 self._last_register_symbols = tuple(self.desired_symbols)
+                self._last_readonly_verify_mono = time.monotonic()
+                actual_for_snap = list(symbol_set) if symbol_set else list(self.registered_symbols)
+                write_actual_regist_snapshot(
+                    self.native_root,
+                    trading_date=self.trading_date,
+                    symbols=actual_for_snap,
+                    source="kabu_put_response",
+                    generation=gen,
+                    extra={"put_executed": put_executed, "reason": reason},
+                )
+                write_registration_owner(
+                    self.native_root,
+                    trading_date=self.trading_date,
+                    pid=os.getpid(),
+                    ingress_session_id=self.session_id,
+                    committed=True,
+                    synthetic=bool(self.synthetic),
+                )
+                if drift_reput and put_executed:
+                    append_authority_audit(
+                        self.native_root,
+                        self.trading_date,
+                        REGISTRATION_DRIFT_REPUT,
+                        {
+                            "generation": gen,
+                            "actual_count": int(regist_num or len(specs)),
+                            "reason": reason,
+                        },
+                    )
+                    evidence["drift_reput"] = True
                 self._publish_ingress_registration_result(
                     verified=True,
                     actual_symbols=list(self.registered_symbols),

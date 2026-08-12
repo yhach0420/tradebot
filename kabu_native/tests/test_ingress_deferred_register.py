@@ -17,6 +17,7 @@ class _FakePush:
         self.calls: list[list[tuple[str, int]]] = []
         self.fail = fail
         self.regist_override = regist_override
+        self.regist: list[tuple[str, int]] = []
 
     def register(self, symbols_spec: list[tuple[str, int]]) -> dict[str, Any]:
         self.calls.append(list(symbols_spec))
@@ -24,14 +25,30 @@ class _FakePush:
             from api.rest_client import KabuNativeApiError
 
             raise KabuNativeApiError("register HTTP 500: boom")
+        have = {s for s, _ in self.regist}
+        for s, ex in symbols_spec:
+            if s not in have:
+                self.regist.append((s, int(ex)))
+                have.add(s)
         n = self.regist_override if self.regist_override is not None else len(symbols_spec)
         return {
             "RegistNum": n,
             "Symbols": [{"Symbol": s, "Exchange": int(ex)} for s, ex in symbols_spec],
+            "RegistList": [{"Symbol": s, "Exchange": int(ex)} for s, ex in symbols_spec],
         }
 
     def unregister_all(self) -> dict[str, Any]:
-        return {"RegistNum": 0, "Symbols": []}
+        self.regist = []
+        return {"RegistNum": 0, "Symbols": [], "RegistList": []}
+
+    def fetch_regist_list(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "readonly": True,
+            "reason": "push_fetch_regist_list",
+            "symbols": [s for s, _ in self.regist],
+            "http_status": 200,
+        }
 
 
 def _svc(tmp_path: Path) -> MarketIngressService:

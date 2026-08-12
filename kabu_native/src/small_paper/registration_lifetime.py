@@ -427,6 +427,23 @@ def safe_paper_unregister(
     Never raises into Paper finalize.
     """
     try:
+        from small_paper.kabu_registration_authority import forbid_post_ingress_unregister_all
+
+        day = str(trading_date or datetime.now(JST).strftime("%Y%m%d"))
+        gate = forbid_post_ingress_unregister_all(
+            Path(native_root), day, caller=f"safe_paper_unregister:{path_label}"
+        )
+        if gate.get("blocked"):
+            return {
+                "ok": True,
+                "deferred": True,
+                "unregister_all_called": False,
+                "reason": "INGRESS_OWNS_KABU_REGISTRATION",
+                "decision": gate,
+            }
+    except Exception:
+        pass
+    try:
         decision = should_defer_paper_unregister(native_root, trading_date=trading_date, now=now)
         if decision.active:
             _audit_defer(

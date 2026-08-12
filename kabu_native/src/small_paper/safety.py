@@ -506,8 +506,47 @@ def check_kabu_station_connection(repo_root: Path, *, stale_tick_sec: float = 12
         )
 
     jst = ZoneInfo("Asia/Tokyo")
+    day = datetime.now(jst).strftime("%Y%m%d")
+    probe: dict[str, Any] = {}
+    symbol_key = "9984@1"
     try:
-        conn = verify_kabu_connection(repo_root)
+        from api.kabu_register import resolve_native_root_for_register_state
+        from small_paper.kabu_registration_authority import select_registration_safe_probe_symbol
+
+        native = resolve_native_root_for_register_state(Path(repo_root))
+        probe = select_registration_safe_probe_symbol(native, day)
+        if not probe.get("ok"):
+            return SafetyCheck(
+                "kabu_station_connection",
+                False,
+                f"registration-safe kabu probe rejected: {probe.get('reason')}",
+                {
+                    "root_cause": str(probe.get("reason") or "probe_symbol_rejected"),
+                    "kabu_probe_symbol": probe.get("kabu_probe_symbol"),
+                    "kabu_probe_symbol_registered": bool(probe.get("kabu_probe_symbol_registered")),
+                    "registration_mutation": int(probe.get("registration_mutation") or 0),
+                    "probe": probe,
+                },
+            )
+        symbol_key = str(probe.get("symbol_key") or probe.get("kabu_probe_symbol") or "")
+        if not symbol_key:
+            return SafetyCheck(
+                "kabu_station_connection",
+                False,
+                "registration-safe kabu probe missing symbol_key",
+                {"root_cause": "probe_symbol_missing", "probe": probe},
+            )
+    except Exception as exc:
+        probe = {"ok": False, "reason": f"probe_select_exc:{type(exc).__name__}", "error": str(exc)}
+        return SafetyCheck(
+            "kabu_station_connection",
+            False,
+            f"registration-safe kabu probe failed: {exc}",
+            {"root_cause": "probe_select_exception", "error": str(exc)},
+        )
+
+    try:
+        conn = verify_kabu_connection(repo_root, symbol_key=symbol_key)
         tick_raw = conn.get("current_price_time")
         stale = False
         age_sec: Optional[float] = None
@@ -522,7 +561,15 @@ def check_kabu_station_connection(repo_root: Path, *, stale_tick_sec: float = 12
             "kabu_station_connection",
             True,
             msg,
-            {"connection": conn, "stale": stale, "tick_age_sec": age_sec},
+            {
+                "connection": conn,
+                "stale": stale,
+                "tick_age_sec": age_sec,
+                "kabu_probe_symbol": symbol_key,
+                "kabu_probe_symbol_registered": bool(probe.get("kabu_probe_symbol_registered")),
+                "registration_mutation": int(probe.get("registration_mutation") or 0),
+                "probe": probe,
+            },
         )
     except Exception as e:
         err = str(e)
@@ -531,7 +578,14 @@ def check_kabu_station_connection(repo_root: Path, *, stale_tick_sec: float = 12
             "kabu_station_connection",
             False,
             f"kabu connection failed: {e}",
-            {"root_cause": root, "error": err},
+            {
+                "root_cause": root,
+                "error": err,
+                "kabu_probe_symbol": symbol_key,
+                "kabu_probe_symbol_registered": bool(probe.get("kabu_probe_symbol_registered")),
+                "registration_mutation": int(probe.get("registration_mutation") or 0),
+                "probe": probe,
+            },
         )
 
 
@@ -836,7 +890,32 @@ def check_kabu_register_capacity(
     cap = assess_register_capacity(universe_symbol_count=universe_symbol_count)
     clear_result: dict[str, Any] = {}
     if pre_clear and repo_root is not None:
-        clear_result = clear_register_before_session(repo_root)
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            from small_paper.kabu_registration_authority import (
+                forbid_post_ingress_unregister_all,
+            )
+            from api.kabu_register import resolve_native_root_for_register_state
+
+            native = resolve_native_root_for_register_state(Path(repo_root))
+            day = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d")
+            gate = forbid_post_ingress_unregister_all(
+                native, day, caller="safety.check_kabu_register_capacity"
+            )
+            if gate.get("blocked"):
+                clear_result = {
+                    "ok": True,
+                    "cleared": False,
+                    "skipped": True,
+                    "reason": "INGRESS_OWNS_KABU_REGISTRATION",
+                    "POST_INGRESS_COMMIT_UNREGISTER_ALL": 0,
+                }
+            else:
+                clear_result = clear_register_before_session(repo_root)
+        except Exception:
+            clear_result = clear_register_before_session(repo_root)
 
     within = bool(cap.get("within_limit"))
     msgs: list[str] = []

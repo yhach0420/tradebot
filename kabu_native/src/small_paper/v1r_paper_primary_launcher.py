@@ -24,6 +24,11 @@ from small_paper.v1r_exit_v2_activation_gate import (
 from small_paper.v1r_live_dual_lane import ENV_FLAG, live_primary_enabled
 from small_paper.v1r_primary_activation_gate import heartbeat_identity_fields
 from small_paper.v1r_dual_strategy_replay import run_dual_day
+from small_paper.kabu_registration_authority import (
+    PREMATURE_PRE_WARMUP_EXIT,
+    classify_pre_warmup_process_exit,
+    evaluate_native_runtime_ready,
+)
 
 JST = ZoneInfo("Asia/Tokyo")
 NATIVE = Path(__file__).resolve().parents[2]
@@ -288,6 +293,24 @@ def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
             )
             print("[V1R EXIT V2] PBv2/classic Primary fallback FORBIDDEN", flush=True)
             return 2
+        from small_paper.kabu_registration_authority import verify_exact50_membership
+
+        membership = verify_exact50_membership(
+            NATIVE, day, require_actual_kabu=True, allow_self_record_only=False
+        )
+        (out / "actual_kabu_membership.json").write_text(
+            json.dumps(membership, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        if not membership.get("ok"):
+            print(
+                f"[V1R EXIT V2] NO PAPER PRIMARY - actual Kabu membership: "
+                f"{membership.get('reason')} actual_n={membership.get('actual_n')} "
+                f"self_record_n={membership.get('self_record_n')}",
+                flush=True,
+            )
+            print("[V1R EXIT V2] Ingress self-record 50 is not READY if actual Kabu is empty", flush=True)
+            return 2
         native = boot_v1r_native_entry(
             universe=list(resolved.get("symbols") or []),
             trace_dir=out / "native_entry",
@@ -353,31 +376,83 @@ def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
         os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
     )
     t0 = time.time()
+    hb_seq = 0
+    proc: Any = None
+    code = 0
     try:
-        proc = subprocess.run(cmd, cwd=str(REPO), env=env)
-        code = int(proc.returncode)
+        proc = subprocess.Popen(cmd, cwd=str(REPO), env=env)
+        while True:
+            hb_seq += 1
+            code_poll = proc.poll()
+            child_dead = code_poll is not None
+            ready_ev = evaluate_native_runtime_ready(
+                native_boot_ready=True,
+                primary_resident=not child_dead,
+                heartbeat_fresh=True,
+            )
+            _write_hb(hb_path, heartbeat_identity_fields(
+                current_anchor=None,
+                next_anchor="09:05",
+                open_n=0,
+                pending_n=0,
+                extra={
+                    "mode": "live",
+                    "runtime": "am_pm_daily_runner",
+                    "state": "STOPPED" if child_dead else "WAITING_MARKET",
+                    "env": ENV_FLAG,
+                    "hb_seq": hb_seq,
+                    "primary_exit": "ARCH_E_V2",
+                    "native_ready": bool(ready_ev.get("ready")),
+                    "native_ready_blockers": ready_ev.get("blockers"),
+                    "primary_pid": os.getpid(),
+                },
+            ))
+            if child_dead:
+                code = int(code_poll)
+                break
+            time.sleep(5.0)
     except KeyboardInterrupt:
         print("[V1R EXIT V2] KeyboardInterrupt - graceful stop", flush=True)
+        try:
+            proc.terminate()
+        except Exception:
+            pass
         code = 0
     elapsed = time.time() - t0
+    ready_final = evaluate_native_runtime_ready(
+        native_boot_ready=True,
+        primary_resident=False,
+        heartbeat_fresh=True,
+    )
     _write_hb(hb_path, heartbeat_identity_fields(
         current_anchor="15:00",
         next_anchor=None,
         open_n=0,
         pending_n=0,
-        extra={"mode": "live", "elapsed_sec": elapsed, "daily_exit_code": code, "state": "STOPPED"},
+        extra={
+            "mode": "live",
+            "elapsed_sec": elapsed,
+            "daily_exit_code": code,
+            "state": "STOPPED",
+            "native_ready": bool(ready_final.get("ready")),
+            "native_ready_blockers": ready_final.get("blockers"),
+            "primary_pid": os.getpid(),
+        },
     ))
     (out / "daily_runner_result.json").write_text(
         json.dumps({"exit_code": code, "elapsed_sec": elapsed}, indent=2), encoding="utf-8"
     )
-    # Premature: daily runner returned in under 30s on a normal live day start
-    if code == 0 and elapsed < 30.0:
+    classified = classify_pre_warmup_process_exit(code)
+    if classified.get("fail"):
+        reason = str(classified.get("reason") or "PRE_WARMUP_STARTUP_FAIL")
         print(
-            f"[V1R EXIT V2] V1R_PRIMARY_PREMATURE_EXIT elapsed={elapsed:.1f}s "
-            "(daily runner returned too fast)",
+            f"[V1R EXIT V2] {reason} child_exit={classified.get('child_exit_code')} "
+            f"elapsed={elapsed:.1f}s (pre-warmup residency required until 08:50)",
             flush=True,
         )
-        return 4
+        if reason == PREMATURE_PRE_WARMUP_EXIT:
+            print("[V1R EXIT V2] daily runner exit 0 before warmup is not a normal session", flush=True)
+        return int(classified.get("exit_code") or 2)
     return code
 
 

@@ -691,9 +691,33 @@ def wait_until_hhmm(
 
 
 def kabu_clear_stale_registrations(state: DailyRunnerState, *, label: str) -> dict[str, Any]:
-    """PUT /unregister/all between AM/PM or at preflight (Phase155)."""
+    """PUT /unregister/all between AM/PM or at preflight (Phase155).
+
+    MARKET_INGRESS_V2: after Ingress spawn, Kabu registration owner is
+    MARKET_INGRESS_SERVICE — this path must not unregister.
+    """
     if state.options.skip_kabu or state.options.dry_run_only:
         return {"skipped": True, "reason": "skip_kabu_or_dry_run_only", "label": label}
+    try:
+        from small_paper.kabu_registration_authority import forbid_post_ingress_unregister_all
+        from api.kabu_register import resolve_native_root_for_register_state
+
+        native = resolve_native_root_for_register_state(Path(state.repo_root))
+        day = str(state.options.day_stamp or "")
+        gate = forbid_post_ingress_unregister_all(
+            native, day, caller=f"daily_runner.kabu_clear_stale_registrations:{label}"
+        )
+        if gate.get("blocked"):
+            return {
+                "ok": True,
+                "skipped": True,
+                "cleared": False,
+                "reason": "INGRESS_OWNS_KABU_REGISTRATION",
+                "label": label,
+                "POST_INGRESS_COMMIT_UNREGISTER_ALL": 0,
+            }
+    except Exception:
+        pass
     from api.kabu_register import clear_register_before_session
 
     out = clear_register_before_session(state.repo_root)

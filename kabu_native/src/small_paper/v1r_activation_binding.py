@@ -50,10 +50,15 @@ RUNTIME_DEPENDENCY_RELS: tuple[str, ...] = (
     "src/notify/v1r_discord_embeds.py",
     "src/research/e1_x34a_execution_policy/arms.py",
     "src/small_paper/day_fixed_am_registration.py",
+    "src/small_paper/kabu_registration_authority.py",
     "src/small_paper/ingress_control_channel.py",
     "src/small_paper/market_capture_registration.py",
     "src/small_paper/market_ingress_service.py",
     "src/small_paper/consumer_ack_state.py",
+    "src/api/kabu_register.py",
+    "src/small_paper/safety.py",
+    "src/small_paper/registration_lifetime.py",
+    "src/runner/am_pm_daily_runner.py",
 )
 
 # Forbidden in runtime inventory (would reintroduce selector↔manifest cycles).

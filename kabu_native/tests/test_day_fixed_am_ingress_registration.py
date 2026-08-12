@@ -60,16 +60,33 @@ def _write_am_csv(root: Path, day: str, symbols: list[str], *, dotted: bool = Tr
 class _FakePush:
     def __init__(self) -> None:
         self.calls: list[list[tuple[str, int]]] = []
+        self.regist: list[tuple[str, int]] = []
 
     def register(self, symbols_spec: list[tuple[str, int]]) -> dict:
+        have = {s for s, _ in self.regist}
+        for s, ex in symbols_spec:
+            if s not in have:
+                self.regist.append((s, int(ex)))
+                have.add(s)
         self.calls.append(list(symbols_spec))
         return {
-            "RegistNum": len(symbols_spec),
-            "Symbols": [{"Symbol": s, "Exchange": int(ex)} for s, ex in symbols_spec],
+            "RegistNum": len(self.regist),
+            "Symbols": [{"Symbol": s, "Exchange": int(ex)} for s, ex in self.regist],
+            "RegistList": [{"Symbol": s, "Exchange": int(ex)} for s, ex in self.regist],
         }
 
     def unregister_all(self) -> dict:
-        return {"RegistNum": 0, "Symbols": []}
+        self.regist = []
+        return {"RegistNum": 0, "Symbols": [], "RegistList": []}
+
+    def fetch_regist_list(self) -> dict:
+        return {
+            "ok": True,
+            "readonly": True,
+            "reason": "push_fetch_regist_list",
+            "symbols": [s for s, _ in self.regist],
+            "http_status": 200,
+        }
 
 
 def _svc(tmp_path: Path, day: str = "20260813") -> MarketIngressService:

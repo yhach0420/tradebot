@@ -61,25 +61,22 @@ def test_exposure_gate_reachable():
     assert hasattr(d, "accept")
 
 
-def test_paper_bat_cmdline_escaping_windows():
-    """Regression: paper bat must use shell string, not list2cmdline-escaped cmd /c."""
+def test_paper_bat_cmdline_preserving_exitcode():
+    """Regression: paper bat must keep actual ERRORLEVEL (no parse-time %ERRORLEVEL%)."""
     import inspect
-    import subprocess
 
     from small_paper import paper_trade_checked_runner as m
 
     src = inspect.getsource(m.PaperTradeCheckedRunner.step_start_paper)
-    assert 'call \\"' not in src
-    assert 'echo.| call "' in src
-    # Must be a str assignment (shell=True path), not a ["cmd","/c", ...] list.
-    assert 'cmdline = f\'echo.| call "' in src or 'cmdline = f"echo.| call' in src
-    assert '["cmd", "/c"' not in src and "['cmd', '/c'" not in src
-    # Prove list form would still be broken on Windows:
-    bat = r"C:\Users\yhach\Documents\tradebotfile\run_paper_trade.bat"
-    broken = subprocess.list2cmdline(
-        ["cmd", "/c", f'echo.| call "{bat}" & exit /b %ERRORLEVEL%']
-    )
-    assert '\\"' in broken or '""' in broken
+    assert "%ERRORLEVEL%" not in src
+    assert "echo.|" not in src
+    assert "run_paper_bat_preserving_exitcode" in src
+    helper = inspect.getsource(m.run_paper_bat_preserving_exitcode)
+    assert "echo.|" not in helper
+    cmd = m.paper_bat_command(Path(r"C:\Users\yhach\Documents\tradebotfile\run_paper_trade.bat"))
+    assert cmd[0].lower().startswith("cmd")
+    assert "call" in cmd
+    assert all("%ERRORLEVEL%" not in part for part in cmd)
 
 
 def test_daytrade_safety_uses_am_prebuild_cache_key():

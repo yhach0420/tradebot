@@ -95,6 +95,58 @@ class KabuNativePushClient:
             retry_backoff_sec=self._rest.retry_backoff_sec,
         )
 
+    def fetch_regist_list(self) -> dict[str, Any]:
+        """Readonly GET /register. Does not PUT or unregister."""
+        import requests
+
+        url = f"{str(self._base_url).rstrip('/')}/register"
+        try:
+            response = requests.get(
+                url,
+                headers={"Content-Type": "application/json", "X-API-KEY": self._token},
+                timeout=float(self._rest.timeout or 10.0),
+            )
+        except requests.RequestException as exc:
+            return {
+                "ok": False,
+                "readonly": True,
+                "reason": f"GET_exc:{type(exc).__name__}",
+                "symbols": [],
+                "http_status": None,
+            }
+        http = int(response.status_code)
+        if http == 405:
+            return {
+                "ok": False,
+                "readonly": True,
+                "reason": "GET_NOT_SUPPORTED",
+                "http_status": 405,
+                "symbols": [],
+            }
+        try:
+            body = dict(response.json())
+        except Exception:
+            body = {}
+        if http >= 400:
+            return {
+                "ok": False,
+                "readonly": True,
+                "reason": f"GET_HTTP_{http}",
+                "http_status": http,
+                "symbols": [],
+            }
+        from small_paper.kabu_registration_authority import extract_regist_symbols
+
+        symbols = extract_regist_symbols(body)
+        return {
+            "ok": True,
+            "readonly": True,
+            "reason": "GET_register",
+            "http_status": http,
+            "symbols": symbols,
+            "RegistList": body.get("RegistList") or body.get("Symbols") or [],
+        }
+
     async def iter_messages(
         self,
         *,
