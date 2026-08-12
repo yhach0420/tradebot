@@ -1,0 +1,12 @@
+{
+  "verdict": "V1R_ACTIVATION_BINDING_SELF_REFERENCE_CONFIRMED",
+  "hardcoded_in_gate": {
+    "ACTIVATION_ID": true,
+    "ACTIVATION_SHA": true,
+    "RUNTIME_CODE_GIT_COMMIT": true
+  },
+  "gate_in_runtime_file_sha256": true,
+  "cycle": "manifest.runtime_file_sha256[gate] -> gate hardcodes ACTIVATION_SHA -> must match manifest.sha256 -> freeze after bind changes gate -> inventory mismatch",
+  "existing_formal_selector": false,
+  "runtime_pins_is_active_sot": false
+}
