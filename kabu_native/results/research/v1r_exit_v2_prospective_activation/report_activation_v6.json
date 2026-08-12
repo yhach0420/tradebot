@@ -1,0 +1,17 @@
+{
+  "verdict": "V1R_EXIT_V2_RUNTIME_ACTIVATION_V6_FROZEN",
+  "activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V6",
+  "activation_sha": "f113dd0d77138417a0b32c2666edb99b2d257163a43805dad4a2c032e6d4c86f",
+  "parent_activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V5",
+  "parent_activation_sha": "885e2ba246ecfdc448274adafaaf1789c7ccb874a3290cc497346cc48aee5e3a",
+  "supersede_reason": "RUNTIME_REGISTRATION_OWNERSHIP_AND_DRIFT_RECOVERY_FIX",
+  "runtime_code_git_commit": "4ad279a7926a3a8d5093e15e58709684e53fc9f4",
+  "runtime_dependency_count": 30,
+  "inventory_match_after_bind": true,
+  "inventory_matched": 30,
+  "strategy_sha": "9ad4ba2730892d40c757d940b82480e620e502e3e789839120e90b18be082547",
+  "precommit_sha": "acd3fee10c94f84b9ae2b1d4bddd9402ed4ab588af0ba06be0063cb8a0662100",
+  "selector_path": "results/research/v1r_exit_v2_prospective_activation/active_v1r_activation.json",
+  "startup_binding_ok": true,
+  "created_at": "2026-08-13T08:08:31.706589+09:00"
+}
