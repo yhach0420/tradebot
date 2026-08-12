@@ -12,6 +12,16 @@ from typing import Any, Optional
 from small_paper.market_ingress_protocol import now_iso
 
 
+def _live_ingress_pids(*, native_root: Path, trading_date: str) -> list[dict[str, Any]]:
+    """Detect already-running ingress for this trading-date (fail-closed duplex guard)."""
+    try:
+        from small_paper.v1r_pbv2_duplicate_runtime import list_live_ingress
+
+        return list_live_ingress(trading_date=str(trading_date), native_root=Path(native_root))
+    except Exception:
+        return []
+
+
 def spawn_ingress_process(
     *,
     native_root: Path,
@@ -22,7 +32,29 @@ def spawn_ingress_process(
     bus_port: Optional[int] = None,
     silence_stale_sec: Optional[float] = None,
     code_root: Optional[Path] = None,
+    allow_duplicate: bool = False,
 ) -> dict[str, Any]:
+    """Spawn ingress. Refuses if a live ingress already exists for trading_date.
+
+    Returns meta with pid>0 on success. On duplex reject:
+      {"ok": False, "rejected": True, "reason": "V1R_PBV2_DUPLICATE_RUNTIME_CONTAMINATION", "pid": 0, ...}
+    """
+    live = [] if allow_duplicate or synthetic else _live_ingress_pids(
+        native_root=Path(native_root), trading_date=str(trading_date)
+    )
+    if live:
+        return {
+            "ok": False,
+            "rejected": True,
+            "reason": "V1R_PBV2_DUPLICATE_RUNTIME_CONTAMINATION",
+            "detail": "ingress_already_running_for_trading_date",
+            "pid": 0,
+            "live_ingress": live,
+            "trading_date": str(trading_date),
+            "at": now_iso(),
+            "spawned": False,
+        }
+
     exe = python_exe or sys.executable
     root = Path(code_root) if code_root else Path(native_root)
     if not (root / "src" / "small_paper").is_dir():
@@ -64,6 +96,9 @@ def spawn_ingress_process(
         start_new_session=(sys.platform != "win32"),
     )
     meta = {
+        "ok": True,
+        "rejected": False,
+        "spawned": True,
         "at": now_iso(),
         "pid": proc.pid,
         "cmd": cmd,
@@ -73,7 +108,6 @@ def spawn_ingress_process(
     (day / "ingress.pid").write_text(str(proc.pid), encoding="utf-8")
     (day / "ingress_spawn.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return meta
-
 
 def wait_ingress_online(native_root: Path, trading_date: str, *, timeout_sec: float = 45.0) -> dict[str, Any]:
     status = Path(native_root) / "data" / "market_capture" / trading_date / "ingress_status.json"

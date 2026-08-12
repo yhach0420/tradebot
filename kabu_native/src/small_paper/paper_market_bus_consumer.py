@@ -114,6 +114,15 @@ class PaperMarketBusBridge:
         payload["__ingress_session_id__"] = env.ingress_session_id
         payload["__ingress_sequence__"] = env.sequence
         payload["__persisted_at__"] = env.persisted_at
+        # Causal Capture/ingress clock — NOT consumer wall time.
+        # Frozen load_board_events board.t = recorded_at; live must use the same axis.
+        if env.received_at:
+            payload["__ingress_received_at__"] = env.received_at
+            payload.setdefault("received_at", env.received_at)
+            payload.setdefault("recorded_at", env.received_at)
+        if env.event_time:
+            payload["__ingress_event_time__"] = env.event_time
+            payload.setdefault("event_time", env.event_time)
         try:
             self.q.put_nowait(payload)
         except queue.Full:

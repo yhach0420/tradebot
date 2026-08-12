@@ -19,6 +19,28 @@ COLOR_SHADOW = 0x9B59B6
 PAPER_FOOTER = {"text": "PAPER ONLY / 実注文なし"}
 TEST_FOOTER = {"text": "TEST ONLY / NO TRADE · PAPER ONLY / 実注文なし"}
 
+
+def _runtime_identity_field(p: dict[str, Any]) -> dict[str, Any]:
+    """Minimum V1R-native identity block required on Primary Discord messages."""
+    lim = p.get("limit")
+    if lim is None:
+        lim = p.get("entry_price")
+    return _field(
+        "Identity",
+        "\n".join(
+            [
+                f"symbol: {_disp(p.get('symbol'))}",
+                f"source: {_disp(p.get('source') or 'v1r_native')}",
+                f"anchor: {_disp(p.get('anchor') or p.get('signal_time'))}",
+                f"limit: {_yen(lim)}",
+                f"status: {_disp(p.get('status'))}",
+                f"role: {_disp(p.get('role') or 'PAPER_PRIMARY')}",
+            ]
+        ),
+        inline=False,
+    )
+
+
 EXIT_REASON_HUMAN = {
     "FIRST_VALID_BUY1_AT_OR_AFTER_TARGET": "600秒経過後の最初の有効Buy1",
     "FIXED600": "固定600秒",
@@ -170,6 +192,7 @@ def build_entry_embed(p: dict[str, Any], *, test_only: bool = False) -> dict[str
         "・Special quoteなし" if not p.get("special_quote") else "・Special quote検出",
     ]
     fields.append(_field("ENTRY判断", "\n".join(reason_lines), inline=False))
+    fields.append(_runtime_identity_field(p))
 
     return {
         "title": title[:256],
@@ -220,6 +243,7 @@ def build_fill_embed(p: dict[str, Any], *, test_only: bool = False) -> dict[str,
         ]), inline=True),
         _field("板", board, inline=False),
         _field("本日", f"本日同銘柄FILL: {fill_n}回目" if fill_n is not None else "本日同銘柄FILL: —"),
+        _runtime_identity_field(p),
     ]
     return {
         "title": title[:256],
@@ -260,6 +284,7 @@ def build_expired_embed(p: dict[str, Any], *, test_only: bool = False) -> dict[s
             f"Sell1: {_yen(p.get('sell1'))}",
             f"freshness: {_disp(p.get('freshness_sec'))}秒",
         ])),
+        _runtime_identity_field(p),
     ]
     return {
         "title": title[:256],
@@ -307,6 +332,7 @@ def build_exit_embed(p: dict[str, Any], *, test_only: bool = False) -> dict[str,
             f"Buy1 Qty: {_disp(p.get('buy1_qty'))}",
             f"freshness: {_disp(p.get('freshness_sec'))}秒",
         ])),
+        _runtime_identity_field(p),
     ]
     return {
         "title": title[:256],
@@ -360,6 +386,60 @@ def build_primary_summary_embed(p: dict[str, Any], *, test_only: bool = False) -
 
 
 def build_pbv2_shadow_embed(p: dict[str, Any], *, test_only: bool = False) -> dict[str, Any]:
+    # Aggregated window digest (preferred) — one message per 5m / fixed anchor
+    if p.get("digest") or str(p.get("status") or "") == "DIGEST":
+        syms = p.get("symbols") or []
+        if isinstance(syms, (list, tuple)):
+            sym_txt = ", ".join(str(s) for s in list(syms)[:20]) or "—"
+            if len(syms) > 20:
+                sym_txt += f" …(+{len(syms) - 20})"
+        else:
+            sym_txt = _disp(syms)
+        title = f"[PBV2 SHADOW] digest | {_disp(p.get('anchor') or p.get('window_id'))}"
+        fields = [
+            _field(
+                "Window",
+                "\n".join(
+                    [
+                        f"date: {_disp(p.get('date'))}",
+                        f"window: {_disp(p.get('window_id'))}",
+                        f"anchor: {_disp(p.get('anchor'))}",
+                        f"role: {_disp(p.get('role') or 'SHADOW_ONLY')}",
+                    ]
+                ),
+            ),
+            _field(
+                "Counts",
+                "\n".join(
+                    [
+                        f"evaluated: {_disp(p.get('evaluated'))}",
+                        f"accepted: {_disp(p.get('accepted'))}",
+                        f"already_open: {_disp(p.get('already_open'))}",
+                        f"cap_blocked: {_disp(p.get('cap_blocked'))}",
+                        f"hypothetical fills: {_disp(p.get('hypothetical_fills') if p.get('hypothetical_fills') is not None else p.get('accepted'))}",
+                        f"exits: {_disp(p.get('exits'))}",
+                        f"pnl: {_disp(p.get('pnl'))}",
+                        f"open/cap: {_disp(p.get('open_n'))}/{_disp(p.get('cap'))}",
+                    ]
+                ),
+            ),
+            _field("symbols (accepted)", sym_txt),
+            _field(
+                "Note",
+                _disp(
+                    p.get("note"),
+                    default="SHADOW_ONLY — Primary occupancy unchanged",
+                ),
+            ),
+        ]
+        return {
+            "title": title[:256],
+            "description": "SHADOW_ONLY digest (aggregated)",
+            "color": COLOR_SHADOW,
+            "fields": fields,
+            "footer": TEST_FOOTER if test_only else PAPER_FOOTER,
+        }
+
     title = f"[PBV2 SHADOW] 日次結果 | {_disp(p.get('date'))}"
     fields = [
         _field("成績", "\n".join([

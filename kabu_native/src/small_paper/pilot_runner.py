@@ -873,6 +873,129 @@ class _LiveRunState:
     observer_session_id: Optional[str] = None
     or_overlay: Any = None
     entry_stage_counters: Any = field(default_factory=_default_entry_stage_counters)
+    v1r_native_exception_count: int = 0
+    v1r_day_fixed_universe: list[str] = field(default_factory=list)
+    v1r_native_entry_blocked: bool = False
+    v1r_native_block_reason: str = ""
+
+
+def _v1r_native_writer_output_dir(ctx: "_PushPipelineContext") -> Optional[Path]:
+    """LiveSessionWriter formal output root (never session_dir — attribute does not exist)."""
+    w = getattr(ctx, "writer", None)
+    od = getattr(w, "output_dir", None) if w is not None else None
+    return Path(od) if od else None
+
+
+def _log_v1r_native_entry_exception(
+    ctx: "_PushPipelineContext",
+    exc: BaseException,
+    *,
+    where: str,
+    symbol: str = "",
+    message_index: Any = None,
+) -> None:
+    from small_paper.v1r_native_entry_live import get_native_entry
+
+    eng = get_native_entry()
+    ctx.state.v1r_native_exception_count = int(ctx.state.v1r_native_exception_count) + 1
+    rec = {
+        "event_time": _now_iso(),
+        "error_type": "v1r_native_entry_runtime",
+        "where": where,
+        "exception_type": type(exc).__name__,
+        "message": str(exc),
+        "push_sequence": message_index,
+        "symbol": symbol,
+        "native_exception_count": ctx.state.v1r_native_exception_count,
+        "native_engine_state": eng.snapshot() if eng is not None else None,
+    }
+    try:
+        ctx.writer.append_error(rec)
+    except Exception:
+        pass
+    # Fail-closed Primary ENTRY on wiring/runtime faults (no PBv2 Primary fallback).
+    ctx.state.v1r_native_entry_blocked = True
+    ctx.state.v1r_native_block_reason = f"{where}:{type(exc).__name__}:{exc}"
+
+
+def _init_v1r_native_entry_for_live(
+    *,
+    state: "_LiveRunState",
+    writer: "LiveSessionWriter",
+    native_root: Path,
+    trading_date: str,
+    session_symbols: Sequence[str],
+) -> dict[str, Any]:
+    """Wire day-fixed AM universe + session trace_dir. Fail-closed if unresolved."""
+    from small_paper.v1r_live_dual_lane import live_primary_enabled
+    from small_paper.v1r_native_entry_live import (
+        ensure_native_entry,
+        resolve_day_fixed_am_runtime_universe,
+    )
+
+    if not live_primary_enabled():
+        return {"enabled": False}
+    resolved = resolve_day_fixed_am_runtime_universe(
+        native_root=native_root, trading_date=trading_date
+    )
+    # Cross-check session watch list when present (must equal day-fixed membership)
+    sess = [str(s).replace(".T", "") for s in session_symbols if str(s).replace(".T", "")]
+    if resolved.get("ok") and sess and set(sess) != set(resolved["symbols"]):
+        resolved = {
+            **resolved,
+            "ok": False,
+            "reason": "session_symbols_day_fixed_mismatch",
+            "session_count": len(set(sess)),
+        }
+    trace_dir = Path(writer.output_dir)
+    eng = ensure_native_entry(
+        universe=list(resolved.get("symbols") or []) if resolved.get("ok") else [],
+        trace_dir=trace_dir,
+        native_root=native_root,
+        trading_date=trading_date,
+        force_rebuild=True,
+    )
+    if not resolved.get("ok"):
+        eng.ready = False
+        eng.fail_reason = (
+            f"NO_PAPER_PRIMARY:EMPTY_UNIVERSE:{resolved.get('reason')}"
+        )
+    state.v1r_day_fixed_universe = list(eng.universe) if eng.ready else []
+    if not eng.ready or not eng.universe:
+        state.v1r_native_entry_blocked = True
+        state.v1r_native_block_reason = eng.fail_reason or str(
+            resolved.get("reason") or "EMPTY_UNIVERSE"
+        )
+        writer.append_error(
+            {
+                "event_time": _now_iso(),
+                "error_type": "v1r_native_entry_boot",
+                "message": "NO PAPER PRIMARY — day-fixed universe unresolved or engine not ready",
+                "fail_reason": state.v1r_native_block_reason,
+                "resolved": resolved,
+                "native_engine_state": eng.snapshot(),
+            }
+        )
+    else:
+        state.v1r_native_entry_blocked = False
+        state.v1r_native_block_reason = ""
+    wiring = {
+        "enabled": True,
+        "resolved": resolved,
+        "native_universe_count": len(eng.universe),
+        "trace_dir": str(eng.trace_dir) if eng.trace_dir else None,
+        "ready": eng.ready,
+        "fail_reason": eng.fail_reason,
+        "blocked": state.v1r_native_entry_blocked,
+    }
+    try:
+        (trace_dir / "v1r_native_entry_wiring.json").write_text(
+            json.dumps(wiring, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    return wiring
 
 
 def _init_position_cap_tracking(config: SmallPaperPilotConfig, state: _LiveRunState) -> None:
@@ -2969,6 +3092,107 @@ def _execute_accepted_entry(
         )
         return
 
+    # EMERGENCY 20260812 decontamination:
+    # When V1R is PAPER_PRIMARY, PBv2 gate_accept is SHADOW_ONLY.
+    # Must not mutate Primary observer / pending / open / cap / dual primary.
+    try:
+        from small_paper.v1r_live_dual_lane import live_primary_enabled
+        from small_paper.v1r_native_entry_live import get_native_entry, ensure_native_entry
+
+        if live_primary_enabled():
+            eng = get_native_entry() or ensure_native_entry(
+                universe=list(getattr(ctx.state, "v1r_day_fixed_universe", None) or []),
+                trace_dir=_v1r_native_writer_output_dir(ctx),
+            )
+            entry_px = 0.0
+            try:
+                entry_px = float(
+                    trade.get("entry_price")
+                    or payload.get("CurrentPrice")
+                    or enriched.get("CurrentPrice")
+                    or 0.0
+                )
+            except (TypeError, ValueError):
+                entry_px = 0.0
+            snap = eng.note_pbv2_shadow_accept(
+                symbol=str(sym),
+                entry_price=entry_px,
+                entry_time=str(trade.get("entry_time") or _now_iso()),
+            )
+            # Record shadow accept row (not official Primary ENTRY)
+            try:
+                row = _event_from_gate(
+                    event_type="pbv2_shadow_accepted",
+                    trade=trade,
+                    decision=decision,
+                    source=ctx.source,
+                    message_index=msg_i,
+                    current_price=payload.get("CurrentPrice"),
+                )
+                row["pbv2_role"] = "SHADOW_ONLY"
+                row["primary_role"] = "PAPER_PRIMARY_V1R_NATIVE"
+                row["entry_mode"] = "PBv2_SHADOW_ONLY"
+                row["primary_occupancy_unchanged"] = True
+                row["shadow_admit"] = snap.get("shadow_admit") if isinstance(snap, dict) else None
+                row["v1r_primary_snapshot"] = {
+                    "open": eng.open_n,
+                    "pending": eng.pending_n,
+                    "exposure": eng.exposure(),
+                }
+                row["shadow_note"] = snap
+                row["shadow_pbv2_snapshot"] = eng.shadow_pbv2.snapshot()
+                ctx.writer.append_event(row)
+            except Exception:
+                pass
+            # Discord: digest only (never per-PUSH / per-second trade-research flood).
+            # Internal shadow ledger above is unchanged; Primary occupancy untouched.
+            try:
+                from small_paper.v1r_pbv2_shadow_discord_digest import (
+                    get_pbv2_shadow_discord_digest,
+                )
+
+                digest = get_pbv2_shadow_discord_digest(
+                    trace_dir=_v1r_native_writer_output_dir(ctx)
+                )
+                shadow_admit = (
+                    snap.get("shadow_admit") if isinstance(snap, dict) else {}
+                ) or {}
+                digest.note_accept_attempt(
+                    symbol=str(sym),
+                    shadow_admit=dict(shadow_admit),
+                    entry_price=float(entry_px or 0.0),
+                    trading_date=str(getattr(ctx.state, "trading_date", "") or ""),
+                    open_n=int(eng.shadow_pbv2.open_n),
+                    cap=int(eng.shadow_pbv2.cap),
+                )
+            except Exception as exc:
+                try:
+                    ctx.writer.append_error(
+                        {
+                            "event": "PBV2_SHADOW_DISCORD_DIGEST_EXCEPTION",
+                            "symbol": str(sym),
+                            "error": f"{type(exc).__name__}:{exc}",
+                            "channel_expected": "trade-research",
+                        }
+                    )
+                except Exception:
+                    pass
+                print(
+                    f"[PBV2_SHADOW_DISCORD_DIGEST_EXCEPTION] symbol={sym} "
+                    f"err={type(exc).__name__}:{exc}",
+                    flush=True,
+                )
+            return
+    except Exception:
+        # Fail-closed: if diversion fails under live primary, do NOT fall through to classic Primary
+        try:
+            from small_paper.v1r_live_dual_lane import live_primary_enabled
+
+            if live_primary_enabled():
+                return
+        except Exception:
+            pass
+
     ll_shadow = bool(getattr(ctx.config, "low_liquidity_shadow_enabled", False))
     tv_min = float(getattr(ctx.config, "low_liquidity_shadow_trading_value_min", 1e8) or 1e8)
     to_min = float(getattr(ctx.config, "low_liquidity_shadow_turnover_proxy_min", 0.002) or 0.002)
@@ -3664,6 +3888,9 @@ def _finalize_accepted_entry_stages(
                 quality_tier=str(decision.quality_tier or ""),
                 entry_price=entry_px,
             )
+            # EMERGENCY 20260812: PBv2 accept MUST NOT hitchhike dual Primary/Control.
+            # V1R-native ENTRY alone may call dual.try_admit_fill(source="v1r_native").
+            # (Previously: register_entry → dual.try_admit_fill contaminated PAPER_PRIMARY.)
             from small_paper.observer_entry_time import observer_entry_fields
 
             acc.update(observer_entry_fields(trade, payload=enriched))
@@ -4430,6 +4657,54 @@ def _observer_open_position_tick(
     msg_i = norm.msg_i
     bucket = norm.bucket
     close_info: Optional[ObserverCloseOnPush] = None
+    # V1R dual-lane always ticks independently (even if classic observer closed)
+    try:
+        from small_paper.v1r_live_dual_lane import ensure_dual_lane, live_primary_enabled
+
+        if live_primary_enabled():
+            td = _v1r_native_writer_output_dir(ctx)
+            dual = ensure_dual_lane(trace_dir=td)
+            if dual is not None:
+                import time as _time
+
+                if dual.error_sink is None:
+
+                    def _dual_err(rec: Mapping[str, Any]) -> None:
+                        try:
+                            ctx.writer.append_error(dict(rec))
+                        except Exception:
+                            pass
+                        ctx.state.v1r_native_exception_count = int(
+                            getattr(ctx.state, "v1r_native_exception_count", 0) or 0
+                        ) + 1
+                        if rec.get("error_type") in (
+                            "v1r_dual_lane_symbol_lookup_mismatch",
+                            "v1r_dual_lane_exception",
+                        ):
+                            ctx.state.v1r_native_entry_blocked = True
+                            ctx.state.v1r_native_block_reason = str(
+                                rec.get("message") or rec.get("error_type") or "dual_fail"
+                            )
+
+                    dual.set_error_sink(_dual_err)
+                seq = int(payload.get("sequence") or payload.get("Sequence") or msg_i or 0)
+                dual.on_push_meta(
+                    sequence=seq, push_at=str(payload.get("CurrentPriceTime") or _now_iso())
+                )
+                dual.on_tick(
+                    symbol=sym,
+                    payload=enriched if isinstance(enriched, dict) else dict(payload or {}),
+                    event_t=_time.time(),
+                    push_sequence=seq,
+                )
+    except Exception as exc:
+        _log_v1r_native_entry_exception(
+            ctx,
+            exc,
+            where="dual_lane_on_tick",
+            symbol=str(sym or ""),
+            message_index=msg_i,
+        )
     if ctx.observer and ctx.observer.has_open(sym):
         price = payload.get("CurrentPrice")
         obs_events = ctx.observer.on_tick(
@@ -5760,6 +6035,79 @@ def _process_push_payload(
     except Exception:
         pass
     close_info = _observer_open_position_tick(ctx, norm)
+    # V1R-native Primary ENTRY: board ingest + anchor fire + pending fill (independent of PBv2)
+    try:
+        from small_paper.v1r_live_dual_lane import live_primary_enabled
+        from small_paper.v1r_native_entry_live import ensure_native_entry, get_native_entry
+
+        if live_primary_enabled() and not getattr(ctx.state, "v1r_native_entry_blocked", False):
+            eng = get_native_entry()
+            if eng is None:
+                eng = ensure_native_entry(
+                    universe=list(getattr(ctx.state, "v1r_day_fixed_universe", None) or []),
+                    trace_dir=_v1r_native_writer_output_dir(ctx),
+                )
+            elif eng.trace_dir is None:
+                td = _v1r_native_writer_output_dir(ctx)
+                if td is not None:
+                    eng.trace_dir = td
+            if eng.ready and eng.universe:
+                from small_paper.v1r_native_entry_live import board_event_epoch_from_payload
+
+                # Causal Capture/ingress clock (recorded_at/received_at) — not consumer wall.
+                pay_for_t = dict(norm.enriched or norm.payload or {})
+                if t0_push_received_at and not pay_for_t.get("recorded_at"):
+                    pay_for_t["recorded_at"] = t0_push_received_at
+                if t0_push_received_at and not pay_for_t.get("received_at"):
+                    pay_for_t["received_at"] = t0_push_received_at
+                et = board_event_epoch_from_payload(pay_for_t)
+                eng.ingest_push(
+                    symbol=norm.symbol,
+                    payload=pay_for_t,
+                    event_t=et,
+                )
+                eng.maybe_fire_anchor(now_t=et)
+                eng.on_tick_fill_check(event_t=et, payload=pay_for_t)
+                # PBv2 shadow Discord digest: flush on 5m / fixed-anchor boundary
+                # (evaluation continues; this only gates trade-research Discord).
+                try:
+                    from small_paper.v1r_pbv2_shadow_discord_digest import (
+                        get_pbv2_shadow_discord_digest,
+                    )
+
+                    get_pbv2_shadow_discord_digest(
+                        trace_dir=_v1r_native_writer_output_dir(ctx)
+                    ).maybe_flush(
+                        trading_date=str(getattr(ctx.state, "trading_date", "") or ""),
+                        open_n=int(eng.shadow_pbv2.open_n),
+                        cap=int(eng.shadow_pbv2.cap),
+                    )
+                except Exception:
+                    pass
+            else:
+                # Fail-closed: native ENTRY not ready → no Primary (PBv2 already diverted)
+                if not getattr(ctx.state, "v1r_native_entry_blocked", False):
+                    ctx.state.v1r_native_entry_blocked = True
+                    ctx.state.v1r_native_block_reason = eng.fail_reason or "NOT_READY"
+                    ctx.writer.append_error(
+                        {
+                            "event_time": _now_iso(),
+                            "error_type": "v1r_native_entry_runtime",
+                            "where": "push_hook_not_ready",
+                            "message": "NO PAPER PRIMARY — native ENTRY not ready",
+                            "push_sequence": getattr(norm, "msg_i", None),
+                            "symbol": getattr(norm, "symbol", ""),
+                            "native_engine_state": eng.snapshot(),
+                        }
+                    )
+    except Exception as exc:
+        _log_v1r_native_entry_exception(
+            ctx,
+            exc,
+            where="push_native_entry_hook",
+            symbol=str(getattr(norm, "symbol", "") or ""),
+            message_index=getattr(norm, "msg_i", None),
+        )
     if _should_skip_same_push_reentry_after_no_progress(
         close_info, symbol=norm.symbol, message_index=norm.msg_i
     ):
@@ -7876,6 +8224,44 @@ def run_live_dry_run(
     )
     if pipeline_ctx.extension_bus is not None and pipeline_ctx.extension_bus.latency_trace is not None:
         print("[PAPER TRADE] entry_latency_trace_enabled=true", flush=True)
+    # V1R-native ENTRY wiring: day-fixed AM universe + session output_dir traces
+    try:
+        from small_paper.v1r_live_dual_lane import ensure_dual_lane, live_primary_enabled
+
+        if live_primary_enabled():
+            _init_v1r_native_entry_for_live(
+                state=state,
+                writer=writer,
+                native_root=native_root,
+                trading_date=day_compact,
+                session_symbols=[t[0] for t in symbols],
+            )
+            dual = ensure_dual_lane(trace_dir=output_dir)
+
+            def _dual_err(rec: Mapping[str, Any]) -> None:
+                try:
+                    writer.append_error(dict(rec))
+                except Exception:
+                    pass
+                state.v1r_native_exception_count = int(
+                    getattr(state, "v1r_native_exception_count", 0) or 0
+                ) + 1
+
+            if dual is not None:
+                dual.set_error_sink(_dual_err)
+                dual.emit_heartbeat_summary()
+    except Exception as exc:
+        state.v1r_native_entry_blocked = True
+        state.v1r_native_block_reason = f"init:{type(exc).__name__}:{exc}"
+        writer.append_error(
+            {
+                "event_time": _now_iso(),
+                "error_type": "v1r_native_entry_boot",
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+                "where": "run_live_dry_run_init",
+            }
+        )
     refresh_hhmm = "10:00"
     if am_pm_policy is not None and getattr(am_pm_policy, "kind", "") == "pm":
         refresh_hhmm = "14:30"
@@ -8276,6 +8662,29 @@ def run_live_dry_run(
             "note": note,
             **hb_extra,
         }
+        try:
+            from small_paper.v1r_live_dual_lane import get_dual_lane, live_primary_enabled
+            from small_paper.v1r_native_entry_live import get_native_entry
+
+            if live_primary_enabled():
+                dual = get_dual_lane(trace_dir=output_dir)
+                if dual is not None:
+                    hb["v1r_exit_v2"] = dual.heartbeat_fields()
+                    try:
+                        dual.emit_heartbeat_summary()
+                    except Exception:
+                        pass
+                eng = get_native_entry()
+                if eng is not None:
+                    hb["v1r_native_entry"] = eng.heartbeat_fields()
+                hb["v1r_native_exception_count"] = int(
+                    getattr(state, "v1r_native_exception_count", 0) or 0
+                )
+                hb["v1r_native_entry_blocked"] = bool(
+                    getattr(state, "v1r_native_entry_blocked", False)
+                )
+        except Exception:
+            pass
         writer.append_heartbeat(hb)
         summary_partial = _build_live_summary(
             config=config,
@@ -8300,7 +8709,13 @@ def run_live_dry_run(
     def _process_payload(payload: Mapping[str, Any], msg_i: int) -> None:
         assert pipeline_ctx is not None
         state.consecutive_api_errors = 0
-        t0_iso = _now_iso()
+        # Prefer Ingress/Capture received_at (propagated on bus) over consumer wall clock.
+        t0_iso = str(
+            payload.get("recorded_at")
+            or payload.get("received_at")
+            or payload.get("__ingress_received_at__")
+            or _now_iso()
+        )
         t0_m = time.monotonic()
         _process_push_payload(
             pipeline_ctx,
@@ -8865,7 +9280,29 @@ def run_live_dry_run(
                             _clear_degraded_on_push()
                         if push_rec_local:
                             try:
-                                push_rec_local.append(sym, payload, source="live_push")
+                                from datetime import datetime as _dt
+
+                                _ra_raw = (
+                                    payload.get("recorded_at")
+                                    or payload.get("received_at")
+                                    or payload.get("__ingress_received_at__")
+                                )
+                                _ra_dt = None
+                                if _ra_raw:
+                                    try:
+                                        _ra_dt = _dt.fromisoformat(
+                                            str(_ra_raw).replace("Z", "+00:00")
+                                        )
+                                        if _ra_dt.tzinfo is None:
+                                            _ra_dt = _ra_dt.replace(tzinfo=JST)
+                                    except Exception:
+                                        _ra_dt = None
+                                push_rec_local.append(
+                                    sym,
+                                    payload,
+                                    recorded_at=_ra_dt,
+                                    source="live_push",
+                                )
                             except Exception as e:
                                 _log_api_error("push_recorder", e)
                         # REALTIME_RESYNC warmup: ring update + ACK only (no ENTRY/EXIT eval).

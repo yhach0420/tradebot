@@ -654,6 +654,7 @@ class PaperTradeCheckedRunner:
         self.trading_date = trading_date_jst()
         self.blocked: Optional[dict[str, Any]] = None
         self.paper_exit_code: Optional[int] = None
+        self.paper_elapsed_sec: Optional[float] = None
         self.post_session: dict[str, Any] = {}
         self.verdict = VERDICT_PRECHECK
         self.capture: dict[str, Any] = {
@@ -1256,7 +1257,22 @@ class PaperTradeCheckedRunner:
         cmdline = f'echo.| call "{bat}" & exit /b %ERRORLEVEL%'
         self.paper_call_count += 1
         code, out, err = self.run_command(cmdline, self._env(), self.repo_root)
+        elapsed = time.time() - started
         self.paper_exit_code = int(code)
+        self.paper_elapsed_sec = float(elapsed)
+        # Non-demo live: launcher must not exit immediately after stub heartbeats.
+        premature = False
+        if (
+            not self.demo_push_e2e
+            and not self.comm_fault_e2e
+            and not self.skip_paper
+            and int(code) == 0
+            and elapsed < 30.0
+        ):
+            premature = True
+            self.paper_exit_code = 4
+            code = 4
+            err = (err or "") + "\nV1R_PRIMARY_PREMATURE_EXIT: paper bat returned in " f"{elapsed:.1f}s"
         self._record(
             "paper_trade",
             8,
@@ -1265,8 +1281,12 @@ class PaperTradeCheckedRunner:
             started=started,
             stdout=out,
             stderr=err,
-            result="PASS" if code == 0 else "FAIL",
-            blocked_reason="" if code == 0 else "paper bat non-zero exit",
+            result="FAIL" if premature or code != 0 else "PASS",
+            blocked_reason=(
+                "V1R_PRIMARY_PREMATURE_EXIT"
+                if premature
+                else ("" if code == 0 else "paper bat non-zero exit")
+            ),
         )
         return code
 
@@ -1742,6 +1762,26 @@ class PaperTradeCheckedRunner:
                 python_exe=self.python_exe,
                 synthetic=bool(self.capture_synthetic),
             )
+            if spawn.get("rejected"):
+                self.verdict = "V1R_PBV2_DUPLICATE_RUNTIME_CONTAMINATION"
+                self._block(
+                    "capture_sidecar_start",
+                    1,
+                    "V1R_PBV2_DUPLICATE_RUNTIME_CONTAMINATION",
+                    "Live Market Ingress already running for this trading-date; refuse second spawn. "
+                    "Stop orphan ingress or use --reuse-capture.",
+                )
+                self._record(
+                    "capture_sidecar_start",
+                    7,
+                    "ingress_spawn_rejected_duplicate",
+                    exit_code=1,
+                    started=started,
+                    result="FAIL",
+                    blocked_reason="V1R_PBV2_DUPLICATE_RUNTIME_CONTAMINATION",
+                )
+                self._print_step(7, self._step_total, "Capture Ingress", "FAIL (duplicate)")
+                return False
             if int(spawn.get("pid") or 0) > 0:
                 from small_paper.capture_child_cleanup import record_owned_from_spawn
 

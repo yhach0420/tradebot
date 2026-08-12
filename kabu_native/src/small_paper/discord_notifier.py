@@ -395,10 +395,35 @@ class SmallPaperDiscordNotifier:
             res.suppressed_reason = f"cooldown:{dedupe_key}"
             res.failure_classification = CLASS_OTHER
             return res
+        # V1R_PBV2_NOTIFICATION_ROUTING_ONLY: PBv2 ENTRY/EXIT → research shadow
+        # (never trade-notify). Occupancy / Arch E state untouched.
+        pbv2_shadow_route = False
+        try:
+            from small_paper.v1r_pbv2_notification_routing import (
+                should_reroute_trade_event,
+                resolve_pbv2_shadow_webhook,
+                shadow_title,
+            )
+
+            pbv2_shadow_route = bool(
+                trade_notify and not cap_blocked and should_reroute_trade_event(event_tag)
+            )
+        except Exception:
+            pbv2_shadow_route = False
+
         if cap_blocked:
             webhook = self._resolve_cap_blocked_webhook()
             env_hint = self.cfg.trade_cap_blocked_webhook_env
             source = "cap_blocked"
+        elif pbv2_shadow_route:
+            if not self.active:
+                res.final_result = FINAL_SKIPPED
+                res.suppressed_reason = "pbv2_shadow_route_inactive"
+                res.failure_classification = CLASS_NOTIFY_NOT_CALLED
+                return res
+            webhook, env_hint = resolve_pbv2_shadow_webhook()
+            source = "pbv2_shadow_research"
+            title_line = shadow_title(title_line)
         elif trade_notify:
             if not self.active:
                 res.final_result = FINAL_SKIPPED
@@ -455,6 +480,10 @@ class SmallPaperDiscordNotifier:
                 category = NotificationCategory.CAP_BLOCKED
                 aos = ActualOrShadow.NONE
                 ownership = "PAPER_RUNTIME"
+            elif pbv2_shadow_route:
+                category = NotificationCategory.RESEARCH_SHADOW
+                aos = ActualOrShadow.SHADOW
+                ownership = "PBV2_SHADOW_ONLY"
             elif trade_notify:
                 tag = (event_tag or "").upper()
                 if tag in ("ENTRY", "EXIT"):
