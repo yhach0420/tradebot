@@ -1,0 +1,14 @@
+{
+  "verdict": "V1R_EXIT_V2_RUNTIME_ACTIVATION_V2_FROZEN",
+  "ready_label": "PROSPECTIVE_DAY1_READY_WITH_MANDATORY_FIRST_FILL_EXIT_WATCH",
+  "activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V2",
+  "activation_sha": "0cd4b6289e392269035448b7a71be0b1f2b449782b57991a9e028f8e1be7bd46",
+  "parent_activation_sha": "29cbc5933421319ffcb1ed24d9be517d35e74c1027ebe67df431657c6997ada1",
+  "runtime_code_git_commit": "68a915ad55bc455f028b25103db40405cf7f89a9",
+  "runtime_file_hash_count": 19,
+  "strategy_sha_unchanged": true,
+  "precommit_sha_unchanged": true,
+  "old_activation_v1_unchanged": true,
+  "prospective_evidence_days": 0,
+  "created_at": "2026-08-12T20:11:44.548822+09:00"
+}
