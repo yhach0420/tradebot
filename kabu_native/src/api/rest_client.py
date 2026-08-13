@@ -37,6 +37,7 @@ class KabuNativeRestClient:
         self.retry_backoff_sec = max(0.0, float(retry_backoff_sec))
 
     def issue_token(self, api_password: str) -> str:
+        _gate_live_token_issue()
         url = f"{self.base_url}/token"
         response = self._request(
             "POST",
@@ -118,6 +119,15 @@ class KabuNativeRestClient:
         if self.retry_backoff_sec <= 0:
             return
         time.sleep(self.retry_backoff_sec * (2**attempt))
+
+
+def _gate_live_token_issue() -> None:
+    """Block child POST /token while MARKET_INGRESS_SERVICE owns the live session."""
+    try:
+        from small_paper.kabu_token_authority import gate_token_issue
+    except Exception:
+        return
+    gate_token_issue(caller="rest_client.issue_token")
 
 
 def load_kabu_env(*, repo_root: Path | None = None) -> Path:

@@ -234,6 +234,33 @@ def classify_token_exception(exc: BaseException) -> tuple[TokenProbeStatus, bool
     return TokenProbeStatus.TOKEN_REQUEST_FAILED, True, http_status
 
 
+def _readonly_or_owned_issue(rest: Any) -> Callable[[], str]:
+    """Reuse Ingress token when live owner is active; otherwise issue (pre-Ingress)."""
+
+    def _issue() -> str:
+        try:
+            from small_paper.kabu_token_authority import (
+                acquire_token_for_readonly,
+                ingress_owner_active,
+            )
+
+            native = Path(__file__).resolve().parents[2]
+            day = datetime.now(JST).strftime("%Y%m%d")
+            if ingress_owner_active(native, day):
+                got = acquire_token_for_readonly(
+                    native_root=native,
+                    trading_date=day,
+                    caller="kabu_readonly_readiness",
+                    rest=rest,
+                )
+                return str(got.get("token") or "")
+        except Exception:
+            pass
+        return rest.issue_token_from_env()
+
+    return _issue
+
+
 def acquire_token_with_policy(
     *,
     issue_fn: Callable[[], str],
@@ -359,7 +386,7 @@ def run_readonly_readiness_probe(
         _assert_hard_fails(diag)
         return diag
 
-    token, token_diag = acquire_token_with_policy(issue_fn=rest.issue_token_from_env)
+    token, token_diag = acquire_token_with_policy(issue_fn=_readonly_or_owned_issue(rest))
     for k in (
         "token_acquired",
         "token_present",

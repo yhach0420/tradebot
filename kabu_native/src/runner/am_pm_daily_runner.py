@@ -77,6 +77,7 @@ PM_SCREEN_HHMM = "12:25"
 AM_END_HHMM = "11:25"
 AM_REFRESH_HHMM = "10:00"
 PM_REFRESH_HHMM = "14:30"
+SKIPPED_AFTER_SESSION_END = "SKIPPED_AFTER_SESSION_END"
 
 
 @dataclass
@@ -129,6 +130,20 @@ def rel_path(repo_root: Path, p: Path) -> str:
 
 def now_jst() -> datetime:
     return datetime.now(JST)
+
+
+def should_skip_am_live_after_session_end(
+    state: DailyRunnerState,
+    now: Optional[datetime] = None,
+) -> bool:
+    """Same-day afternoon/PM startup must not launch an already-ended AM pilot."""
+    n = now or now_jst()
+    if str(state.options.day_stamp or "") != n.strftime("%Y%m%d"):
+        return False
+    from small_paper.session_schedule import SessionSchedule
+
+    sched = SessionSchedule("09:00", AM_END_HHMM, n.date())
+    return sched.is_after_session(n)
 
 
 def parse_day_stamp(day_stamp: str) -> date:
@@ -1419,6 +1434,10 @@ def build_summary_payload(state: DailyRunnerState) -> dict[str, Any]:
         "pm_live_ok": (state.pm_live or {}).get("ok"),
         "am_pilot_verdict": (state.am_live or {}).get("pilot_verdict"),
         "pm_pilot_verdict": (state.pm_live or {}).get("pilot_verdict"),
+        "am_runtime_skipped_after_session_end": bool(
+            (state.am_live or {}).get("am_runtime_skipped_after_session_end")
+            or state.sessions.get("am_runtime_skipped_after_session_end")
+        ),
         "am_warning_notes": (state.am_live or {}).get("warning_notes"),
         "pm_warning_notes": (state.pm_live or {}).get("warning_notes"),
     }
@@ -1966,27 +1985,48 @@ def _run_daily_runner_body(state: DailyRunnerState) -> int:
         )
 
         if not state.options.dry_run_only:
-            try:
-                state.am_live = run_pilot_session(state, session="am")
-            finally:
-                state.sessions["am_dir"] = (state.am_live or {}).get("session_dir")
-                state.sessions["am_finalize"] = (state.am_live or {}).get("finalize_snapshot")
-                _write_pilot_checkpoint(state, session="am")
-                state.sessions["kabu_register_clear_after_am"] = kabu_clear_stale_registrations(
-                    state, label="after_am_session"
-                )
-            if _pilot_failed_hard(state.am_live or {}, repo_root=state.repo_root):
-                state.verdict = "am_failed"
-                _record_pilot_hard_failure(state, session="am", live=state.am_live or {})
+            if should_skip_am_live_after_session_end(state):
+                state.am_live = {
+                    "skipped": True,
+                    "reason": SKIPPED_AFTER_SESSION_END,
+                    "am_runtime_skipped_after_session_end": True,
+                    "am_kabu_full_safety": "NOT_RUN",
+                    "am_token_mutation": 0,
+                    "am_board_probe": 0,
+                    "runtime_sec": 0,
+                    "exit_code": 0,
+                    "pilot_ok": True,
+                    "ok": True,
+                    "pilot_verdict": SKIPPED_AFTER_SESSION_END,
+                    "counted_as_success_session": False,
+                }
+                state.sessions["am_runtime_skipped_after_session_end"] = True
                 state.verdict_notes.append(
-                    f"AM pilot exit={state.am_live.get('exit_code')} "
-                    f"error={state.am_live.get('error')}"
+                    "AM live execution SKIPPED_AFTER_SESSION_END; frozen AM universe reused; "
+                    "AM not counted as a success session"
                 )
-                state.stopped_reason = "am_pilot"
-                write_outputs(state)
-                return 2
-            _record_pilot_soft_ok_notes(state, session="am", live=state.am_live or {})
-            _apply_session_detection_warning(state, session="am", live=state.am_live)
+            else:
+                try:
+                    state.am_live = run_pilot_session(state, session="am")
+                finally:
+                    state.sessions["am_dir"] = (state.am_live or {}).get("session_dir")
+                    state.sessions["am_finalize"] = (state.am_live or {}).get("finalize_snapshot")
+                    _write_pilot_checkpoint(state, session="am")
+                    state.sessions["kabu_register_clear_after_am"] = kabu_clear_stale_registrations(
+                        state, label="after_am_session"
+                    )
+                if _pilot_failed_hard(state.am_live or {}, repo_root=state.repo_root):
+                    state.verdict = "am_failed"
+                    _record_pilot_hard_failure(state, session="am", live=state.am_live or {})
+                    state.verdict_notes.append(
+                        f"AM pilot exit={state.am_live.get('exit_code')} "
+                        f"error={state.am_live.get('error')}"
+                    )
+                    state.stopped_reason = "am_pilot"
+                    write_outputs(state)
+                    return 2
+                _record_pilot_soft_ok_notes(state, session="am", live=state.am_live or {})
+                _apply_session_detection_warning(state, session="am", live=state.am_live)
         else:
             state.am_live = {"skipped": True, "reason": "dry_run_only"}
 

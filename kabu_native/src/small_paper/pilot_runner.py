@@ -582,11 +582,22 @@ def verify_kabu_connection(
         if not key:
             raise KabuNativeApiError(NO_REGISTERED_KABU_PROBE_SYMBOL)
 
-    if not os.environ.get("KABU_API_PASSWORD", "").strip():
-        raise KabuNativeApiError("KABU_API_PASSWORD is not set")
     load_kabu_env(repo_root=repo_root)
     client = KabuNativeRestClient(default_base_url())
-    token = client.issue_token_from_env()
+    from small_paper.kabu_token_authority import acquire_token_for_readonly, ingress_owner_active
+
+    native = Path(native_root) if native_root else resolve_native_root_for_register_state(Path(repo_root))
+    day = str(trading_date or datetime.now(JST).strftime("%Y%m%d"))
+    if not ingress_owner_active(native, day):
+        if not os.environ.get("KABU_API_PASSWORD", "").strip():
+            raise KabuNativeApiError("KABU_API_PASSWORD is not set")
+    acquired = acquire_token_for_readonly(
+        native_root=native,
+        trading_date=day,
+        caller="verify_kabu_connection",
+        rest=client,
+    )
+    token = str(acquired.get("token") or "")
     board = client.get_board(key, token=token)
     out = {
         "ok": True,
@@ -598,6 +609,9 @@ def verify_kabu_connection(
         "current_price": board.get("CurrentPrice"),
         "current_price_time": board.get("CurrentPriceTime"),
         "registration_mutation": int(probe.get("registration_mutation") or 0),
+        "token_reused": bool(acquired.get("reused")),
+        "token_issued": bool(acquired.get("issued")),
+        "token_generation": int(acquired.get("token_generation") or 0),
     }
     return out
 
@@ -8122,7 +8136,15 @@ def run_live_dry_run(
 
     log_core_runtime_mode(config)
     rest = KabuNativeRestClient(default_base_url())
-    token = rest.issue_token_from_env()
+    from small_paper.kabu_token_authority import acquire_token_for_readonly
+
+    acquired = acquire_token_for_readonly(
+        native_root=Path(native_root),
+        trading_date=probe_day,
+        caller="run_live_dry_run",
+        rest=rest,
+    )
+    token = str(acquired.get("token") or "")
     from api.order_read_client import KabuOrderReadClient
 
     capital_read_client = KabuOrderReadClient(default_base_url())
@@ -9290,6 +9312,17 @@ def run_live_dry_run(
 
                 def _sync_register() -> None:
                     nonlocal push, token
+                    if ingress_v2:
+                        from small_paper.kabu_token_authority import acquire_token_for_readonly
+
+                        acquired = acquire_token_for_readonly(
+                            native_root=Path(native_root),
+                            trading_date=probe_day,
+                            caller="pilot_reconnect_ingress_v2",
+                            rest=rest,
+                        )
+                        token = str(acquired.get("token") or token)
+                        return
                     token = rest.issue_token_from_env()
                     push = KabuNativePushClient(rest, token)
                     register_symbols_cleared(
@@ -10301,7 +10334,18 @@ def run_poll_dry_run(
 
     load_kabu_env(repo_root=repo_root)
     client = KabuNativeRestClient(default_base_url())
-    token = client.issue_token_from_env()
+    from api.kabu_register import resolve_native_root_for_register_state
+    from small_paper.kabu_token_authority import acquire_token_for_readonly
+
+    native = resolve_native_root_for_register_state(Path(repo_root))
+    day = datetime.now(JST).strftime("%Y%m%d")
+    acquired = acquire_token_for_readonly(
+        native_root=native,
+        trading_date=day,
+        caller="run_poll_dry_run",
+        rest=client,
+    )
+    token = str(acquired.get("token") or "")
 
     events: list[dict[str, Any]] = []
     for poll in range(max(1, max_polls)):

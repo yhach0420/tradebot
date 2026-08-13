@@ -134,6 +134,17 @@ class MarketIngressService:
         self._desired_reject_reason: str = ""
         self._last_readonly_verify_mono: float = 0.0
         self._last_actual_symbols: tuple[str, ...] = ()
+        self._register_retry_count: int = 0
+        self._auth_failure_count: int = 0
+        self._rate_limit_count: int = 0
+        self._backoff_count: int = 0
+        self._circuit_open_count: int = 0
+        self._circuit_open_until_mono: float = 0.0
+        self._circuit_reason: str = ""
+        self._auth_refresh_mono: float = 0.0
+        self._token_refresh_fn: Optional[Callable[[], str]] = None
+        self._had_verified_exact50: bool = False
+        self._auth_recovery_in_flight: bool = False
 
         self.session_path = session_dir(self.native_root, self.trading_date, self.session_id)
         self.session_path.mkdir(parents=True, exist_ok=True)
@@ -317,6 +328,12 @@ class MarketIngressService:
                 "register_verified": bool(self._register_evidence.get("verified")),
                 "register_actual_count": int(self._register_evidence.get("actual_count") or 0),
                 "register_put_executed": bool(self._register_evidence.get("put_executed")),
+                "registration_retry_count": int(self._register_retry_count),
+                "auth_failure_count": int(self._auth_failure_count),
+                "rate_limit_count": int(self._rate_limit_count),
+                "backoff_count": int(self._backoff_count),
+                "circuit_open_count": int(self._circuit_open_count),
+                "circuit_reason": self._circuit_reason or None,
             },
         )
 
@@ -720,6 +737,106 @@ class MarketIngressService:
             return self._maybe_register_desired_live(reason="desired_poll")
         return {"ok": True, "applied": True}
 
+    def _registration_circuit_open(self) -> bool:
+        until = float(self._circuit_open_until_mono or 0.0)
+        return bool(until and time.monotonic() < until)
+
+    def _open_register_circuit(self, *, reason: str) -> None:
+        from small_paper.kabu_token_authority import next_backoff_sec
+
+        delay = next_backoff_sec(self._backoff_count)
+        self._backoff_count += 1
+        self._circuit_open_count += 1
+        self._circuit_reason = str(reason)
+        self._circuit_open_until_mono = time.monotonic() + delay
+        self._write_recovery_audit(event="circuit_open", reason=reason, backoff_sec=delay)
+
+    def _write_recovery_audit(self, **extra: Any) -> None:
+        try:
+            payload = {
+                "at": now_iso(),
+                "registration_retry_count": int(self._register_retry_count),
+                "auth_failure_count": int(self._auth_failure_count),
+                "rate_limit_count": int(self._rate_limit_count),
+                "backoff_count": int(self._backoff_count),
+                "circuit_open_count": int(self._circuit_open_count),
+                "circuit_reason": self._circuit_reason,
+                "had_verified_exact50": bool(self._had_verified_exact50),
+                **extra,
+            }
+            path = self.day_root / "registration_recovery_audit.jsonl"
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+        except Exception:
+            pass
+
+    def _owner_refresh_token(self) -> bool:
+        from small_paper.kabu_token_authority import owner_issue_context, publish_owned_token
+
+        now_m = time.monotonic()
+        if self._auth_refresh_mono and (now_m - self._auth_refresh_mono) < 5.0:
+            return False
+        token = ""
+        try:
+            if self._token_refresh_fn is not None:
+                token = str(self._token_refresh_fn() or "")
+            else:
+                from api.rest_client import KabuNativeRestClient, default_base_url, load_kabu_env
+
+                load_kabu_env(repo_root=self.native_root.parent)
+                load_kabu_env(repo_root=self.native_root)
+                rest = KabuNativeRestClient(default_base_url())
+                with owner_issue_context(
+                    native_root=self.native_root,
+                    trading_date=self.trading_date,
+                    pid=os.getpid(),
+                    session_id=self.session_id,
+                    caller="ingress_auth_recovery",
+                ):
+                    token = rest.issue_token_from_env()
+                publish_owned_token(
+                    token,
+                    native_root=self.native_root,
+                    trading_date=self.trading_date,
+                    caller="ingress_auth_recovery",
+                )
+        except Exception:
+            return False
+        if not token:
+            return False
+        self._auth_refresh_mono = now_m
+        push = self._push_client
+        if push is not None:
+            try:
+                push._token = token
+            except Exception:
+                pass
+        return True
+
+    def _handle_auth_invalidated(self, *, source: str) -> None:
+        if self._auth_recovery_in_flight:
+            self._open_register_circuit(reason="AUTHORITY_TOKEN_INVALIDATED")
+            return
+        self._auth_recovery_in_flight = True
+        try:
+            self._auth_failure_count += 1
+            self._write_recovery_audit(event="AUTHORITY_TOKEN_INVALIDATED", source=source)
+            refreshed = self._owner_refresh_token()
+            if not refreshed:
+                self._open_register_circuit(reason="AUTHORITY_TOKEN_INVALIDATED")
+                return
+            skipped = self._skip_put_if_actual_kabu_matches()
+            if skipped and skipped.get("ok"):
+                return
+            self._open_register_circuit(reason="AUTH_RECOVERY_VERIFY")
+        finally:
+            self._auth_recovery_in_flight = False
+
+    def _handle_rate_limit(self, *, source: str) -> None:
+        self._rate_limit_count += 1
+        self._open_register_circuit(reason="RATE_LIMIT")
+        self._write_recovery_audit(event="RATE_LIMIT_CIRCUIT", source=source)
+
     def _should_skip_live_register(self) -> bool:
         if self.synthetic or not self.desired_symbols:
             return True
@@ -795,6 +912,28 @@ class MarketIngressService:
                     "put_executed": False,
                 }
             return None
+        from small_paper.kabu_token_authority import AUTH_INVALID, RATE_LIMIT, classify_kabu_api_error
+
+        cls = classify_kabu_api_error(
+            fetched.get("reason"),
+            fetched.get("http_status"),
+        )
+        if cls == AUTH_INVALID:
+            self._handle_auth_invalidated(source="readonly_get")
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "AUTHORITY_TOKEN_INVALIDATED",
+                "put_executed": False,
+            }
+        if cls == RATE_LIMIT:
+            self._handle_rate_limit(source="readonly_get")
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "RATE_LIMIT_CIRCUIT",
+                "put_executed": False,
+            }
         append_authority_audit(
             self.native_root,
             self.trading_date,
@@ -814,6 +953,13 @@ class MarketIngressService:
                 "ok": True,
                 "skipped": True,
                 "reason": "synthetic_or_empty_or_in_flight",
+                "put_executed": False,
+            }
+        if self._registration_circuit_open():
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": f"circuit_open:{self._circuit_reason}",
                 "put_executed": False,
             }
         skipped = self._skip_put_if_actual_kabu_matches()
@@ -982,6 +1128,8 @@ class MarketIngressService:
                         },
                     )
                     evidence["drift_reput"] = True
+                if ok and verified:
+                    self._had_verified_exact50 = True
                 self._publish_ingress_registration_result(
                     verified=True,
                     actual_symbols=list(self.registered_symbols),
@@ -1010,6 +1158,9 @@ class MarketIngressService:
             self._write_status()
             return {**evidence, "meta": meta}
         except Exception as exc:
+            from small_paper.kabu_token_authority import AUTH_INVALID, RATE_LIMIT, classify_kabu_api_error
+
+            err_cls = classify_kabu_api_error(exc)
             evidence = {
                 "ok": False,
                 "verified": False,
@@ -1025,9 +1176,34 @@ class MarketIngressService:
                 "reason": reason,
                 "error": str(exc)[:800],
                 "error_type": type(exc).__name__,
+                "error_class": err_cls,
                 "owner": "MARKET_INGRESS_SERVICE",
                 "verification_basis": "register_exception",
             }
+            self._register_retry_count += 1
+            keep_exact = bool(self._had_verified_exact50 or self._register_put_ok)
+            if err_cls == AUTH_INVALID:
+                evidence["reason"] = "AUTHORITY_TOKEN_INVALIDATED"
+                if not keep_exact:
+                    self.registered_symbols = []
+                    self._register_put_ok = False
+                self._register_evidence = evidence
+                self._write_register_evidence(evidence)
+                self._handle_auth_invalidated(source=f"register:{reason}")
+                self._write_status()
+                self.sm.last_error = type(exc).__name__
+                return evidence
+            if err_cls == RATE_LIMIT:
+                evidence["reason"] = "RATE_LIMIT"
+                if not keep_exact:
+                    self.registered_symbols = []
+                    self._register_put_ok = False
+                self._register_evidence = evidence
+                self._write_register_evidence(evidence)
+                self._handle_rate_limit(source=f"register:{reason}")
+                self._write_status()
+                self.sm.last_error = type(exc).__name__
+                return evidence
             self.registered_symbols = []
             self._register_put_ok = False
             self._register_evidence = evidence
@@ -1162,7 +1338,22 @@ class MarketIngressService:
         # Apply any pre-written desired universe before first register attempt
         self._poll_desired_universe_apply_only()
         rest = KabuNativeRestClient(default_base_url())
-        token = rest.issue_token_from_env()
+        from small_paper.kabu_token_authority import owner_issue_context, publish_owned_token
+
+        with owner_issue_context(
+            native_root=self.native_root,
+            trading_date=self.trading_date,
+            pid=os.getpid(),
+            session_id=self.session_id,
+            caller="ingress_connect",
+        ):
+            token = rest.issue_token_from_env()
+        publish_owned_token(
+            token,
+            native_root=self.native_root,
+            trading_date=self.trading_date,
+            caller="ingress_connect",
+        )
         push = KabuNativePushClient(rest, token)
         self._push_client = push
         self.sm.transition(REGISTERING, reason="register")
@@ -1322,7 +1513,22 @@ class MarketIngressService:
         load_kabu_env(repo_root=self.native_root)
         self._poll_desired_universe_apply_only()
         rest = KabuNativeRestClient(default_base_url())
-        token = rest.issue_token_from_env()
+        from small_paper.kabu_token_authority import owner_issue_context, publish_owned_token
+
+        with owner_issue_context(
+            native_root=self.native_root,
+            trading_date=self.trading_date,
+            pid=os.getpid(),
+            session_id=self.session_id,
+            caller="ingress_recovery",
+        ):
+            token = rest.issue_token_from_env()
+        publish_owned_token(
+            token,
+            native_root=self.native_root,
+            trading_date=self.trading_date,
+            caller="ingress_recovery",
+        )
         push = KabuNativePushClient(rest, token)
         self._push_client = push
         # Force re-PUT on recovery even if generation/symbols unchanged
