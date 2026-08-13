@@ -1003,12 +1003,21 @@ def resolve_day_fixed_am_runtime_universe(
 ) -> dict[str, Any]:
     """Resolve DAY_FIXED_AM_RUNTIME_UNIVERSE_V1 for live Primary.
 
-    SoT:
-      - same-day AM Core10+Dynamic40 CSV (not refresh1000 / not PM / not prior-day)
-      - same-day Market Ingress registration manifest (must match when present)
+    SoT after V8 freeze:
+      - SAME_DAY_AM_FROZEN_UNIVERSE canonical50 (not later AM CSV bytes)
+      - same-day Market Ingress registration manifest (must match frozen when present)
 
-    Never invents symbols from the binding manifest (contract-only, no symbols body).
+    Before freeze, same-day AM CSV remains the SoT. Never invents symbols from
+    the binding manifest (contract-only, no symbols body).
     """
+    from small_paper.day_fixed_am_registration import (
+        FROZEN_AM_UNIVERSE_MISMATCH,
+        FROZEN_AM_UNIVERSE_SOURCE_DRIFT,
+        SAME_DAY_AM_FROZEN_AUTHORITY,
+        canonical_membership_sha,
+        load_am_canonical_50,
+        load_frozen_am_universe,
+    )
     from small_paper.market_capture_registration import (
         load_symbols_from_universe_csv,
         read_registration_manifest,
@@ -1020,12 +1029,19 @@ def resolve_day_fixed_am_runtime_universe(
     am_path = (
         root / "results" / "reports" / f"universe_core10_dynamic40_price_risk_am_{day}.csv"
     )
-    am_syms = (
-        [_norm_sym(s) for s in load_symbols_from_universe_csv(am_path)]
-        if am_path.is_file()
-        else []
-    )
-    am_syms = [s for s in am_syms if s]
+    frozen = load_frozen_am_universe(root, day)
+    loaded = load_am_canonical_50(root, day)
+    if frozen.get("present"):
+        am_syms = [_norm_sym(s) for s in (loaded.get("symbols") or []) if _norm_sym(s)]
+        if loaded.get("universe_path"):
+            am_path = Path(str(loaded.get("universe_path")))
+    else:
+        am_syms = (
+            [_norm_sym(s) for s in load_symbols_from_universe_csv(am_path)]
+            if am_path.is_file()
+            else []
+        )
+        am_syms = [s for s in am_syms if s]
 
     man = read_registration_manifest(root)
     man_day = str(man.get("trading_date") or "")
@@ -1047,21 +1063,42 @@ def resolve_day_fixed_am_runtime_universe(
         "ingress_count": len(man_syms),
         "am_count": len(am_syms),
         "reason": "",
+        "authority": SAME_DAY_AM_FROZEN_AUTHORITY if frozen.get("present") else "",
+        "canonical_membership_sha": canonical_membership_sha(am_syms) if am_syms else "",
     }
+
+    if frozen.get("present") and not frozen.get("ok"):
+        base["reason"] = str(frozen.get("reason") or FROZEN_AM_UNIVERSE_MISMATCH)
+        base["symbols"] = list(am_syms)
+        base["symbol_count"] = len(am_syms)
+        return base
+
+    if frozen.get("present") and loaded.get("source_drift"):
+        base["reason"] = FROZEN_AM_UNIVERSE_SOURCE_DRIFT
+        base["symbols"] = list(am_syms)
+        base["symbol_count"] = len(am_syms)
+        return base
 
     if not am_syms and not man_syms:
         base["reason"] = "universe_unresolved_same_day"
         return base
 
     if am_syms and man_syms and not symbols_equal(am_syms, man_syms):
-        base["reason"] = "am_csv_ingress_membership_mismatch"
+        base["reason"] = (
+            FROZEN_AM_UNIVERSE_MISMATCH
+            if frozen.get("present")
+            else "am_csv_ingress_membership_mismatch"
+        )
         base["symbols"] = list(am_syms)
         base["symbol_count"] = len(am_syms)
         return base
 
     if am_syms:
         symbols = list(dict.fromkeys(am_syms))
-        source = "am_csv+registration_manifest" if man_syms else "am_csv"
+        if frozen.get("present"):
+            source = SAME_DAY_AM_FROZEN_AUTHORITY
+        else:
+            source = "am_csv+registration_manifest" if man_syms else "am_csv"
     else:
         # Same-day ingress only (still day-fixed; never prior-day CSV)
         symbols = list(dict.fromkeys(man_syms))
@@ -1073,6 +1110,7 @@ def resolve_day_fixed_am_runtime_universe(
         base["symbol_count"] = len(symbols)
         base["source"] = source
         base["ingress_match"] = bool(man_syms and symbols_equal(symbols, man_syms))
+        base["canonical_membership_sha"] = canonical_membership_sha(symbols)
         return base
 
     return {
@@ -1083,6 +1121,7 @@ def resolve_day_fixed_am_runtime_universe(
         "source": source,
         "ingress_match": bool(man_syms and symbols_equal(symbols, man_syms)),
         "reason": "",
+        "canonical_membership_sha": canonical_membership_sha(symbols),
     }
 
 

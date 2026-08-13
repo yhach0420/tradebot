@@ -582,17 +582,72 @@ class MarketIngressService:
             pass
 
     def _apply_desired_from_control_or_am(self, *, register: bool) -> dict[str, Any]:
-        """Accept same-day desired file, else same-day AM CSV. Never PUT a stale date."""
+        """Accept frozen AM50 (or same-day AM CSV before freeze). Never PUT a stale date or post-bind CSV."""
         from small_paper.day_fixed_am_registration import (
+            FROZEN_AM_UNIVERSE_MISMATCH,
+            SAME_DAY_AM_FROZEN_AUTHORITY,
             STALE_DESIRED_UNIVERSE,
             bind_same_day_am_desired_universe,
+            canonical_membership_sha,
             load_am_canonical_50,
+            load_frozen_am_universe,
         )
         from small_paper.ingress_control_channel import read_desired_universe
 
         req = read_desired_universe(self.native_root, requested_trading_date=self.trading_date)
         accepted: Optional[dict[str, Any]] = None
-        if req and not req.get("rejected") and list(req.get("symbols") or []):
+        frozen = load_frozen_am_universe(self.native_root, self.trading_date)
+        if frozen.get("present"):
+            if not frozen.get("ok"):
+                self._desired_reject_reason = str(frozen.get("reason") or FROZEN_AM_UNIVERSE_MISMATCH)
+                return {
+                    "ok": False,
+                    "reason": self._desired_reject_reason,
+                    "allow_put": False,
+                    "allow_put_new50": False,
+                }
+            frozen_syms = list(frozen.get("canonical_symbols") or [])
+            frozen_sha = str(frozen.get("canonical_membership_sha") or "")
+            if req and not req.get("rejected") and list(req.get("symbols") or []):
+                req_sha = canonical_membership_sha(list(req.get("symbols") or []))
+                if req_sha != frozen_sha:
+                    self._desired_reject_reason = FROZEN_AM_UNIVERSE_MISMATCH
+                    return {
+                        "ok": False,
+                        "reason": FROZEN_AM_UNIVERSE_MISMATCH,
+                        "allow_put": False,
+                        "allow_put_new50": False,
+                        "authority": SAME_DAY_AM_FROZEN_AUTHORITY,
+                    }
+                accepted = req
+                self._desired_reject_reason = ""
+            else:
+                bound = bind_same_day_am_desired_universe(
+                    self.native_root,
+                    self.trading_date,
+                    symbols=frozen_syms,
+                    source_path=str(frozen.get("frozen_csv_path") or frozen.get("source_csv_path") or ""),
+                    source_sha256=str(frozen.get("source_csv_sha") or ""),
+                )
+                if not bound.get("ok"):
+                    self._desired_reject_reason = str(bound.get("reason") or FROZEN_AM_UNIVERSE_MISMATCH)
+                    return {
+                        "ok": False,
+                        "reason": self._desired_reject_reason,
+                        "allow_put": False,
+                        "allow_put_new50": False,
+                    }
+                accepted = {
+                    "symbols": frozen_syms,
+                    "generation": int((bound.get("desired") or {}).get("generation") or 0),
+                    "position_symbols": [],
+                    "source_path": str(bound.get("source_path") or ""),
+                    "source_sha256": str(bound.get("source_sha256") or ""),
+                    "source_trading_date": self.trading_date,
+                    "trading_date": self.trading_date,
+                }
+                self._desired_reject_reason = ""
+        elif req and not req.get("rejected") and list(req.get("symbols") or []):
             accepted = req
             self._desired_reject_reason = ""
         else:

@@ -1762,7 +1762,11 @@ class PaperTradeCheckedRunner:
 
     def step_universe_resolve(self) -> bool:
         started = time.time()
-        from small_paper.day_fixed_am_registration import load_am_canonical_50
+        from small_paper.day_fixed_am_registration import (
+            SAME_DAY_AM_FROZEN_AUTHORITY,
+            freeze_same_day_am_universe,
+            load_am_canonical_50,
+        )
 
         resolved = load_am_canonical_50(self.native_root, self.trading_date)
         ok = bool(resolved.get("ok")) and int(resolved.get("symbol_count") or 0) == 50
@@ -1778,6 +1782,32 @@ class PaperTradeCheckedRunner:
                 "universe_path": resolved.get("universe_path"),
                 "universe_sha256": "",
             }
+        if ok:
+            frozen = freeze_same_day_am_universe(
+                self.native_root,
+                self.trading_date,
+                symbols=list(resolved.get("symbols") or []),
+                source_path=str(resolved.get("universe_path") or ""),
+                source_sha256=str(resolved.get("universe_sha256") or ""),
+            )
+            if not frozen.get("ok"):
+                ok = False
+                resolved = {**resolved, **frozen, "ok": False}
+            else:
+                resolved = load_am_canonical_50(self.native_root, self.trading_date)
+                resolved["freeze"] = {
+                    k: frozen.get(k)
+                    for k in (
+                        "authority",
+                        "canonical_membership_sha",
+                        "source_csv_path",
+                        "source_csv_sha",
+                        "built_at",
+                        "generation",
+                        "id",
+                    )
+                }
+                resolved["authority"] = SAME_DAY_AM_FROZEN_AUTHORITY
         step = self._record(
             "universe_resolve",
             5,
@@ -1785,7 +1815,17 @@ class PaperTradeCheckedRunner:
             exit_code=0 if ok else 1,
             started=started,
             stdout=json.dumps(
-                {k: resolved.get(k) for k in ("ok", "symbol_count", "universe_path", "reason")},
+                {
+                    k: resolved.get(k)
+                    for k in (
+                        "ok",
+                        "symbol_count",
+                        "universe_path",
+                        "reason",
+                        "authority",
+                        "canonical_membership_sha",
+                    )
+                },
                 ensure_ascii=False,
             ),
             result="PASS" if ok else "FAIL",

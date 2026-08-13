@@ -425,6 +425,29 @@ def _build_am_universe_price_risk(state: DailyRunnerState, feature_rows: list[di
 
 
 def build_am_universe(state: DailyRunnerState) -> dict[str, Any]:
+    from small_paper.day_fixed_am_registration import (
+        POST_BIND_UNIVERSE_MUTATION,
+        load_frozen_am_universe,
+        note_post_bind_universe_mutation_attempt,
+    )
+
+    frozen = load_frozen_am_universe(state.native_root, state.options.day_stamp)
+    if frozen.get("present"):
+        blocked = note_post_bind_universe_mutation_attempt(
+            state.native_root, state.options.day_stamp
+        )
+        return {
+            "ok": False,
+            "error": POST_BIND_UNIVERSE_MUTATION,
+            "reason": POST_BIND_UNIVERSE_MUTATION,
+            "universe_mode": state.options.universe_mode,
+            "post_bind_universe_rebuild_count": 0,
+            "post_bind_universe_mutation_count": int(
+                blocked.get("post_bind_universe_mutation_count") or 0
+            ),
+            "canonical_membership_sha": str(frozen.get("canonical_membership_sha") or ""),
+        }
+
     feat_path, feature_rows = ensure_features_csv(
         state, generate=state.options.generate_features
     )
@@ -1886,13 +1909,26 @@ def _run_daily_runner_body(state: DailyRunnerState) -> int:
         return 2
 
     if not state.options.skip_am:
-        state.am_prep = build_am_universe(state)
+        from small_paper.day_fixed_am_registration import reuse_frozen_am_universe
+
+        reused = reuse_frozen_am_universe(
+            native_root=state.native_root,
+            trading_date=state.options.day_stamp,
+            repo_root=state.repo_root,
+        )
+        if reused.get("attempted"):
+            state.am_prep = reused
+        else:
+            state.am_prep = build_am_universe(state)
         _apply_core_price_risk_cautions(state)
         _apply_price_risk_focus_cautions(state)
         if not state.am_prep.get("ok"):
+            fail_reason = str(
+                state.am_prep.get("reason") or state.am_prep.get("error") or "am_universe"
+            )
             state.verdict = "universe_generation_failed"
             state.verdict_notes.append("AM universe generation or validation failed")
-            state.stopped_reason = "am_universe"
+            state.stopped_reason = fail_reason
             write_outputs(state)
             return 2
 

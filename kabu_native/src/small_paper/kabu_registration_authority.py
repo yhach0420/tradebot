@@ -471,6 +471,10 @@ def verify_exact50_membership(
     """AM == desired == manifest == actual Kabu. Self-record 50 is not READY if actual is empty."""
     day = str(trading_date)
     am = load_am_canonical_50(Path(native_root), day)
+    from small_paper.day_fixed_am_registration import (
+        FROZEN_AM_UNIVERSE_MISMATCH,
+        load_frozen_am_universe,
+    )
     from small_paper.ingress_control_channel import read_desired_universe
     from small_paper.market_capture_registration import read_registration_manifest
 
@@ -479,6 +483,8 @@ def verify_exact50_membership(
     am_set = set(canonical_symbols(list(am.get("symbols") or [])))
     des_set = set(canonical_symbols(list(desired_payload.get("symbols") or [])))
     man_set = set(canonical_symbols(list(man.get("registered_symbols") or man.get("actual_symbols") or [])))
+    frozen = load_frozen_am_universe(Path(native_root), day)
+    frozen_set = set(canonical_symbols(list(frozen.get("canonical_symbols") or [])))
 
     actual_src = "injected"
     if actual_symbols is None:
@@ -519,8 +525,14 @@ def verify_exact50_membership(
         and str(desired_payload.get("trading_date") or "") == day
         and str(desired_payload.get("source_trading_date") or day) == day
     )
+    if frozen.get("present") and frozen.get("ok"):
+        if am_set != frozen_set or (des_set and des_set != frozen_set):
+            exact = False
     fail_reason = ""
-    if require_actual_kabu and self_record_n == EXPECTED_SYMBOLS and not act_set:
+    if frozen.get("present") and frozen.get("ok") and des_set and des_set != frozen_set:
+        fail_reason = FROZEN_AM_UNIVERSE_MISMATCH
+        exact = False
+    elif require_actual_kabu and self_record_n == EXPECTED_SYMBOLS and not act_set:
         fail_reason = "actual_kabu_empty_self_record_mismatch"
         exact = False
     elif require_actual_kabu and not exact:
@@ -544,6 +556,8 @@ def verify_exact50_membership(
         "actual_source": actual_src,
         "self_record_n": self_record_n,
         "canonical_membership_sha": canonical_membership_sha(am_set) if am_set else "",
+        "authority": str(am.get("authority") or ""),
+        "source_drift": bool(am.get("source_drift")),
         "submit_cancel_live": "0/0/0",
     }
 
