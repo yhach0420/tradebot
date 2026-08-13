@@ -1,0 +1,17 @@
+{
+  "verdict": "V1R_EXIT_V2_RUNTIME_ACTIVATION_V10_FROZEN",
+  "activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V10",
+  "activation_sha": "84d76713fd8492a8e518b64d2818f724657572588adbb371b6364439ebd7c0b2",
+  "parent_activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V9",
+  "parent_activation_sha": "858f21fa785ac508b92b8d54c10a7c6ec7cb3483157b80936caf167e9684f7f1",
+  "supersede_reason": "RUNTIME_NATIVE_FULL_PUSH_INGEST_AND_PASSIVE_FILL_PARITY_FIX",
+  "runtime_code_git_commit": "c6c7196c65a1b0d817f0c1cfc03a3d7eac4469d3",
+  "runtime_dependency_count": 30,
+  "inventory_match_after_bind": true,
+  "inventory_matched": 30,
+  "strategy_sha": "9ad4ba2730892d40c757d940b82480e620e502e3e789839120e90b18be082547",
+  "precommit_sha": "acd3fee10c94f84b9ae2b1d4bddd9402ed4ab588af0ba06be0063cb8a0662100",
+  "selector_path": "results/research/v1r_exit_v2_prospective_activation/active_v1r_activation.json",
+  "startup_binding_ok": true,
+  "created_at": "2026-08-13T13:26:20.237053+09:00"
+}
