@@ -103,7 +103,7 @@ def test_pending_expired_delivery_audit(tmp_path: Path, monkeypatch):
             "fresh_sec": 0.1,
         },
     ]
-    eng.on_tick_fill_check(event_t=t0 + 1.0)
+    eng.on_tick_fill_check(event_t=t0 + 1.0 + 1e-6)
 
     kinds = [c["kind"] for c in calls]
     assert "ENTRY" in kinds

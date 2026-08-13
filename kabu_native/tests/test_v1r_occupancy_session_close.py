@@ -170,7 +170,7 @@ def test_expired_decrements_pending_not_native_open(tmp_path: Path):
     eng.pending[po.symbol] = po
     assert eng.pending_n == 1
     assert eng.exposure() == 1
-    done = eng.on_tick_fill_check(event_t=t0 + 1.0, payload=_payload(t0 + 1.0, bid=1.0, ask=2.0))
+    done = eng.on_tick_fill_check(event_t=t0 + 1.0 + 1e-6, payload=_payload(t0 + 1.0 + 1e-6, bid=1.0, ask=2.0))
     assert any(e.get("kind") == "V1R_EXPIRED" for e in done)
     assert eng.pending_n == 0
     assert eng.open_n == 0

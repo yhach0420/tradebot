@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -291,6 +292,14 @@ class V1RNativeEntryLive:
     anchor_fires: int = 0
     last_anchor: Optional[str] = None
     trading_date: str = ""
+    notify_enabled: bool = True
+    native_ingest_count: int = 0
+    native_ingest_skip_duplicate: int = 0
+    native_ingest_skip_universe: int = 0
+    last_ingested_sequence: Optional[int] = None
+    event_time_watermark: float = 0.0
+    _ingested_sequences: set[int] = field(default_factory=set)
+    ingest_audit: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=256))
 
     @property
     def open_n(self) -> int:
@@ -345,24 +354,109 @@ class V1RNativeEntryLive:
             "fresh_sec": np.asarray([r["fresh_sec"] for r in rows], dtype=float),
         }
 
-    def ingest_push(self, *, symbol: str, payload: dict[str, Any], event_t: Optional[float] = None) -> None:
+    def _payload_sequence(self, payload: Mapping[str, Any]) -> Optional[int]:
+        raw = payload.get("__ingress_sequence__")
+        if raw is None:
+            raw = payload.get("sequence")
+        if raw is None or raw == "":
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def ingest_push(self, *, symbol: str, payload: dict[str, Any], event_t: Optional[float] = None) -> dict[str, Any]:
+        """Append one board row. Exactly-once per raw sequence when sequence is present."""
         sym = str(symbol).replace(".T", "")
-        if self.universe and sym not in self.universe and f"{sym}.T" not in self.universe:
-            # still keep board if already pending/open
-            if sym not in self.pending and sym not in self.open_symbols and sym not in self.boards:
-                return
-        # Board.t = causal Capture/ingress recorded_at axis (Frozen load_board_events).
-        # Do NOT stamp consumer wall clock when payload carries ingress received_at.
+        seq_i = self._payload_sequence(payload)
         t = float(
             event_t
             if event_t is not None
             else board_event_epoch_from_payload(payload)
         )
+        if t == t:  # not NaN
+            self.event_time_watermark = max(float(self.event_time_watermark or 0.0), float(t))
+        if seq_i is not None and seq_i in self._ingested_sequences:
+            self.native_ingest_skip_duplicate += 1
+            rec = {
+                "ingested": False,
+                "reason": "duplicate_sequence",
+                "sequence": seq_i,
+                "native_ingest_sequence": seq_i,
+                "raw_sequence": seq_i,
+                "symbol": sym,
+                "event_t": t,
+            }
+            self.ingest_audit.append(rec)
+            return rec
+        if self.universe and sym not in self.universe and f"{sym}.T" not in self.universe:
+            if sym not in self.pending and sym not in self.open_symbols and sym not in self.boards:
+                self.native_ingest_skip_universe += 1
+                rec = {
+                    "ingested": False,
+                    "reason": "not_in_universe",
+                    "sequence": seq_i,
+                    "native_ingest_sequence": seq_i,
+                    "raw_sequence": seq_i,
+                    "symbol": sym,
+                    "event_t": t,
+                }
+                self.ingest_audit.append(rec)
+                return rec
+        # Board.t = causal Capture/ingress recorded_at axis (Frozen load_board_events).
+        # Do NOT stamp consumer wall clock when payload carries ingress received_at.
         row = extract_board_row(payload, t)
+        row["sequence"] = seq_i
+        row["received_at"] = (
+            payload.get("received_at")
+            or payload.get("recorded_at")
+            or payload.get("__ingress_received_at__")
+        )
         self.boards.setdefault(sym, []).append(row)
-        # trim memory
-        if len(self.boards[sym]) > 5000:
-            self.boards[sym] = self.boards[sym][-4000:]
+        # Full-PUSH ingest is denser than the old 5s eval cadence. Keep enough
+        # history for 180s/300s features; never drop the current last-event<=t0.
+        if len(self.boards[sym]) > 25000:
+            self.boards[sym] = self.boards[sym][-20000:]
+        if seq_i is not None:
+            self._ingested_sequences.add(seq_i)
+            self.last_ingested_sequence = seq_i
+        self.native_ingest_count += 1
+        rec = {
+            "ingested": True,
+            "reason": "",
+            "sequence": seq_i,
+            "native_ingest_sequence": seq_i,
+            "raw_sequence": seq_i,
+            "symbol": sym,
+            "event_t": t,
+        }
+        self.ingest_audit.append(rec)
+        return rec
+
+    def process_market_push(
+        self,
+        *,
+        symbol: str,
+        payload: dict[str, Any],
+        event_t: Optional[float] = None,
+    ) -> dict[str, Any]:
+        """Every-PUSH native ingest + anchor fire + pending fill (PBv2-independent)."""
+        t = float(
+            event_t
+            if event_t is not None
+            else board_event_epoch_from_payload(payload)
+        )
+        ing = self.ingest_push(symbol=symbol, payload=payload, event_t=t)
+        if not ing.get("ingested") and ing.get("reason") == "duplicate_sequence":
+            ing["fill_checked"] = False
+            ing["anchor_fired"] = False
+            return ing
+        fired = self.maybe_fire_anchor(now_t=t)
+        fills = self.on_tick_fill_check(event_t=t, payload=payload)
+        ing["fill_checked"] = True
+        ing["anchor_fired"] = bool(fired)
+        ing["fill_n"] = len(fills or [])
+        return ing
 
     def note_pbv2_shadow_accept(
         self, *, symbol: str, entry_price: float, entry_time: str
@@ -440,14 +534,18 @@ class V1RNativeEntryLive:
         key = self._anchor_key(dt)
         if key is None or key in self.fired_anchors:
             return []
-        # only fire in the first 2s of the minute to avoid late decisions
+        t0 = dt.replace(second=0, microsecond=0).timestamp()
+        # Sequence-ordered ingest: wait until event-time has strictly passed t0
+        # so every last-event<=t0 row is already in the ring. Snapshot still cuts at t0.
+        if now_t is not None and float(now_t) <= float(t0) + 1e-12:
+            return []
+        # only fire in the first 2s of the minute to avoid late decisions (wall-clock path)
         if dt.second > 2 and now_t is None:
             return []
         self.fired_anchors.add(key)
         anchor = f"{dt.hour:02d}:{dt.minute:02d}"
         self.last_anchor = anchor
         self.anchor_fires += 1
-        t0 = dt.replace(second=0, microsecond=0).timestamp()
         day = dt.strftime("%Y%m%d")
         self.trading_date = day
         return self._run_anchor(anchor=anchor, t0=t0, day=day, session="AM" if dt.hour < 12 else "PM")
@@ -477,23 +575,54 @@ class V1RNativeEntryLive:
         self.on_tick_fill_check(event_t=float(t0))
         out: list[dict[str, Any]] = []
         events: list[dict[str, Any]] = []
+        snapshots: list[dict[str, Any]] = []
         for sym in list(self.universe):
             s = str(sym).replace(".T", "")
+            rows = self.boards.get(s) or []
             board = self._board_arrays(s)
+            snap: dict[str, Any] = {
+                "kind": "ANCHOR_SYMBOL_SNAPSHOT",
+                "symbol": s,
+                "anchor": anchor,
+                "anchor_t0": float(t0),
+                "snapshot_sequence": None,
+                "snapshot_received_at": None,
+                "snapshot_age_ms": None,
+                "Buy1": None,
+                "Sell1": None,
+                "model_score": None,
+                "rank": None,
+                "admitted": False,
+            }
             if board["t"].size == 0:
+                snapshots.append(snap)
                 continue
+            # Research contract: last event with received_at / board.t <= t0.
+            i = int(np.searchsorted(board["t"], t0, side="right") - 1)
+            if i < 0:
+                snapshots.append(snap)
+                continue
+            src = rows[i] if i < len(rows) else {}
+            snap_t = float(board["t"][i])
+            snap["snapshot_sequence"] = src.get("sequence")
+            snap["snapshot_received_at"] = src.get("received_at")
+            snap["snapshot_age_ms"] = round((float(t0) - snap_t) * 1000.0, 3)
+            snap["Buy1"] = {"Price": float(board["bid"][i]), "Qty": float(board["bid_qty"][i])}
+            snap["Sell1"] = {"Price": float(board["ask"][i]), "Qty": float(board["ask_qty"][i])}
             feats = preentry_from_board(board, t0)
             if any(feats.get(f) is None or not np.isfinite(feats.get(f)) for f in FEATURE_ORDER):
+                snapshots.append(snap)
                 continue
             score = float(self.score_fn(feats))
             if not np.isfinite(score):
-                continue
-            i = int(np.searchsorted(board["t"], t0, side="right") - 1)
-            if i < 0:
+                snapshots.append(snap)
                 continue
             limit = float(board["bid"][i])
             if not np.isfinite(limit) or limit <= 0:
+                snapshots.append(snap)
                 continue
+            snap["model_score"] = score
+            snap["features"] = {f: feats.get(f) for f in FEATURE_ORDER}
             events.append({
                 "date": day,
                 "symbol": s,
@@ -505,7 +634,10 @@ class V1RNativeEntryLive:
                 **{f: feats.get(f) for f in FEATURE_ORDER},
                 "score_preview": score,
             })
+            snapshots.append(snap)
         if not events:
+            for srow in snapshots:
+                self._emit(srow)
             self._emit({
                 "kind": "ANCHOR_NO_CANDIDATE",
                 "anchor": anchor,
@@ -516,6 +648,20 @@ class V1RNativeEntryLive:
             return out
 
         sim = simulate_joint([dict(e) for e in events], score_fn=self.score_fn)
+        ranked = sorted(
+            [e for e in sim["events"] if e.get("alloc_score") is not None],
+            key=lambda e: (-float(e.get("alloc_score") or 0.0), str(e.get("symbol") or "")),
+        )
+        rank_by_sym = {str(e["symbol"]): i for i, e in enumerate(ranked)}
+        snap_by_sym = {str(s["symbol"]): s for s in snapshots}
+        for e in sim["events"]:
+            ss = snap_by_sym.get(str(e["symbol"]))
+            if ss is not None:
+                ss["model_score"] = e.get("alloc_score")
+                ss["rank"] = rank_by_sym.get(str(e["symbol"]))
+                ss["admitted"] = bool(e.get("admitted"))
+        for srow in snapshots:
+            self._emit(srow)
         for e in sim["events"]:
             if not e.get("admitted"):
                 if e.get("CAPACITY_BLOCKED"):
@@ -541,7 +687,7 @@ class V1RNativeEntryLive:
                 signal_time=float(t0),
                 limit_price=float(e["limit_price"]),
                 score=float(e.get("alloc_score") if e.get("alloc_score") is not None else e.get("score_preview") or 0.0),
-                rank=int(e.get("cohort_rank") or 0),
+                rank=int(e.get("cohort_rank") if e.get("cohort_rank") is not None else rank_by_sym.get(str(e["symbol"]), 0)),
                 anchor=anchor,
                 session=session,
                 date=day,
@@ -580,11 +726,15 @@ class V1RNativeEntryLive:
         Order matches Frozen offline eval: ask-cross FILL first; EXPIRE only if still
         pending after the inclusive [t0, t0+wait] window has been passed on this clock.
         """
-        t_now = float(
-            event_t
-            if event_t is not None
-            else board_event_epoch_from_payload(payload)
-        )
+        t_now = None
+        if event_t is not None:
+            t_now = float(event_t)
+        elif payload is not None:
+            t_now = float(board_event_epoch_from_payload(payload))
+        else:
+            # Heartbeat / occupancy sweep: event-time watermark only — never consumer wall clock.
+            t_now = float(self.event_time_watermark or 0.0)
+        t_now = float(t_now)
         done: list[dict[str, Any]] = []
         for sym, po in list(self.pending.items()):
             board = self._board_arrays(sym)
@@ -602,9 +752,11 @@ class V1RNativeEntryLive:
                 done.append(ev)
                 continue
             lim_t = min(float(po.signal_time) + float(WAIT_SEC), float(sess_end))
-            # After FILL scan (which includes ti == lim_t), expire once clock reaches lim_t.
-            # Fill-first on this same tick preserves Frozen inclusive-window semantics.
-            if t_now >= lim_t - 1e-9:
+            # After FILL scan (which includes ti == lim_t), expire only once the
+            # event-time watermark has passed the inclusive window (watermark > t0+wait).
+            # Do not expire on consumer wall clock. Boundary received_at == t0+1 stays FILL-eligible.
+            wm = max(float(self.event_time_watermark or 0.0), float(t_now))
+            if wm > lim_t + 1e-12:
                 del self.pending[sym]
                 self.primary_expired += 1
                 ev = {
@@ -860,6 +1012,8 @@ class V1RNativeEntryLive:
     def _notify(self, kind: str, payload: dict[str, Any]) -> None:
         """V1R-native Discord notify — ENTRY/EXPIRED→trade-entry; FILL/EXIT→trade-notify."""
         self.notify_sink.append({"kind": kind, "payload": payload, "ts": time.time()})
+        if not self.notify_enabled:
+            return
         p = self._enrich_notify_payload(kind, payload)
         try:
             from notify.v1r_discord_routing import V1RNotifyKind, publish_v1r
@@ -987,9 +1141,54 @@ class V1RNativeEntryLive:
             "primary_fills": self.primary_fills,
             "primary_expired": self.primary_expired,
             "primary_admitted": self.primary_admitted,
+            "native_ingest_count": self.native_ingest_count,
+            "native_ingest_skip_duplicate": self.native_ingest_skip_duplicate,
+            "last_ingested_sequence": self.last_ingested_sequence,
+            "event_time_watermark": self.event_time_watermark,
             "trace_dir": str(self.trace_dir) if self.trace_dir else None,
             "submit_cancel_live": "0/0/0",
         }
+
+
+def apply_v1r_native_every_push(
+    *,
+    symbol: str,
+    payload: Mapping[str, Any],
+    t0_push_received_at: Optional[str] = None,
+    universe: Optional[list[str]] = None,
+    trace_dir: Optional[Path] = None,
+    blocked: bool = False,
+) -> dict[str, Any]:
+    """Pre-PBv2-gate native ingest + fill. Safe to call twice for the same sequence."""
+    from small_paper.v1r_live_dual_lane import live_primary_enabled
+
+    if blocked:
+        return {"ingested": False, "reason": "blocked", "fill_checked": False}
+    if not live_primary_enabled():
+        return {"ingested": False, "reason": "primary_disabled", "fill_checked": False}
+    eng = get_native_entry()
+    if eng is None:
+        eng = ensure_native_entry(
+            universe=list(universe or []),
+            trace_dir=trace_dir,
+        )
+    elif eng.trace_dir is None and trace_dir is not None:
+        eng.trace_dir = Path(trace_dir)
+    if not (eng.ready and eng.universe):
+        return {
+            "ingested": False,
+            "reason": eng.fail_reason or "NOT_READY",
+            "fill_checked": False,
+            "engine_ready": bool(eng.ready),
+        }
+    pay = dict(payload)
+    if t0_push_received_at:
+        if not pay.get("recorded_at"):
+            pay["recorded_at"] = t0_push_received_at
+        if not pay.get("received_at"):
+            pay["received_at"] = t0_push_received_at
+    et = board_event_epoch_from_payload(pay)
+    return eng.process_market_push(symbol=str(symbol), payload=pay, event_t=et)
 
 
 def _norm_sym(s: Any) -> str:

@@ -919,6 +919,50 @@ def _v1r_native_writer_output_dir(ctx: "_PushPipelineContext") -> Optional[Path]
     return Path(od) if od else None
 
 
+def _apply_v1r_native_every_push(
+    ctx: "_PushPipelineContext",
+    payload: Mapping[str, Any],
+    *,
+    symbol: str,
+    t0_push_received_at: Optional[str] = None,
+    message_index: Any = None,
+) -> dict[str, Any]:
+    """V1R native ingest+fill for every PUSH — independent of PBv2 should_evaluate."""
+    from small_paper.v1r_native_entry_live import apply_v1r_native_every_push
+
+    try:
+        out = apply_v1r_native_every_push(
+            symbol=symbol,
+            payload=payload,
+            t0_push_received_at=t0_push_received_at,
+            universe=list(getattr(ctx.state, "v1r_day_fixed_universe", None) or []),
+            trace_dir=_v1r_native_writer_output_dir(ctx),
+            blocked=bool(getattr(ctx.state, "v1r_native_entry_blocked", False)),
+        )
+        if out.get("reason") in ("NOT_READY",) or (
+            out.get("engine_ready") is False and out.get("reason") not in (
+                "blocked",
+                "primary_disabled",
+            )
+        ):
+            from small_paper.v1r_native_entry_live import get_native_entry
+
+            eng = get_native_entry()
+            if eng is not None and not eng.ready and not getattr(ctx.state, "v1r_native_entry_blocked", False):
+                ctx.state.v1r_native_entry_blocked = True
+                ctx.state.v1r_native_block_reason = eng.fail_reason or "NOT_READY"
+        return out
+    except Exception as exc:
+        _log_v1r_native_entry_exception(
+            ctx,
+            exc,
+            where="native_every_push",
+            symbol=str(symbol or ""),
+            message_index=message_index,
+        )
+        return {"ingested": False, "reason": type(exc).__name__, "fill_checked": False}
+
+
 def _log_v1r_native_entry_exception(
     ctx: "_PushPipelineContext",
     exc: BaseException,
@@ -6075,41 +6119,15 @@ def _process_push_payload(
     except Exception:
         pass
     close_info = _observer_open_position_tick(ctx, norm)
-    # V1R-native Primary ENTRY: board ingest + anchor fire + pending fill (independent of PBv2)
+    # Native ingest/fill already ran pre-PBv2-gate (exactly-once per sequence).
+    # PBv2 eval path only flushes the shadow Discord digest.
     try:
         from small_paper.v1r_live_dual_lane import live_primary_enabled
-        from small_paper.v1r_native_entry_live import ensure_native_entry, get_native_entry
+        from small_paper.v1r_native_entry_live import get_native_entry
 
         if live_primary_enabled() and not getattr(ctx.state, "v1r_native_entry_blocked", False):
             eng = get_native_entry()
-            if eng is None:
-                eng = ensure_native_entry(
-                    universe=list(getattr(ctx.state, "v1r_day_fixed_universe", None) or []),
-                    trace_dir=_v1r_native_writer_output_dir(ctx),
-                )
-            elif eng.trace_dir is None:
-                td = _v1r_native_writer_output_dir(ctx)
-                if td is not None:
-                    eng.trace_dir = td
-            if eng.ready and eng.universe:
-                from small_paper.v1r_native_entry_live import board_event_epoch_from_payload
-
-                # Causal Capture/ingress clock (recorded_at/received_at) — not consumer wall.
-                pay_for_t = dict(norm.enriched or norm.payload or {})
-                if t0_push_received_at and not pay_for_t.get("recorded_at"):
-                    pay_for_t["recorded_at"] = t0_push_received_at
-                if t0_push_received_at and not pay_for_t.get("received_at"):
-                    pay_for_t["received_at"] = t0_push_received_at
-                et = board_event_epoch_from_payload(pay_for_t)
-                eng.ingest_push(
-                    symbol=norm.symbol,
-                    payload=pay_for_t,
-                    event_t=et,
-                )
-                eng.maybe_fire_anchor(now_t=et)
-                eng.on_tick_fill_check(event_t=et, payload=pay_for_t)
-                # PBv2 shadow Discord digest: flush on 5m / fixed-anchor boundary
-                # (evaluation continues; this only gates trade-research Discord).
+            if eng is not None and eng.ready:
                 try:
                     from small_paper.v1r_pbv2_shadow_discord_digest import (
                         get_pbv2_shadow_discord_digest,
@@ -6124,9 +6142,8 @@ def _process_push_payload(
                     )
                 except Exception:
                     pass
-            else:
-                # Fail-closed: native ENTRY not ready → no Primary (PBv2 already diverted)
-                if not getattr(ctx.state, "v1r_native_entry_blocked", False):
+            elif eng is not None and not getattr(ctx.state, "v1r_native_entry_blocked", False):
+                if not eng.ready:
                     ctx.state.v1r_native_entry_blocked = True
                     ctx.state.v1r_native_block_reason = eng.fail_reason or "NOT_READY"
                     ctx.writer.append_error(
@@ -7252,6 +7269,13 @@ def run_push_replay_dry_run(
                 market_ts=ts if ts else None,
                 poll_interval_sec=float(poll_interval_sec or 0),
                 ring_only_warmup=False,
+            )
+            _apply_v1r_native_every_push(
+                ctx,
+                push_payload,
+                symbol=sym,
+                t0_push_received_at=str(recorded_at or "") or None,
+                message_index=msg_i,
             )
             if not do_eval:
                 _throttled_state_only_push(ctx, push_payload, symbol=sym)
@@ -8737,7 +8761,8 @@ def run_live_dry_run(
                     if dual is not None:
                         dual.maybe_session_close(event_t=now_t)
                     if eng is not None:
-                        eng.on_tick_fill_check(event_t=now_t)
+                        # Event-time watermark only — never expire PENDING on consumer wall clock.
+                        eng.on_tick_fill_check()
                 except Exception:
                     pass
                 if dual is not None:
@@ -9376,7 +9401,21 @@ def run_live_dry_run(
                                 )
                             except Exception as e:
                                 _log_api_error("push_recorder", e)
-                        # REALTIME_RESYNC warmup: ring update + ACK only (no ENTRY/EXIT eval).
+                        # V1R native ingest+fill EVERY PUSH before PBv2 should_evaluate.
+                        t0_iso_native = str(
+                            payload.get("recorded_at")
+                            or payload.get("received_at")
+                            or payload.get("__ingress_received_at__")
+                            or ""
+                        )
+                        _apply_v1r_native_every_push(
+                            pipeline_ctx,
+                            payload,
+                            symbol=sym,
+                            t0_push_received_at=t0_iso_native or None,
+                            message_index=msg_i,
+                        )
+                        # REALTIME_RESYNC warmup: ring update + ACK only (no PBv2 ENTRY/EXIT eval).
                         if ingress_v2 and bus_bridge is not None and bool(getattr(bus_bridge, "warmup_only", False)):
                             try:
                                 _warmup_ring_only_push(
