@@ -409,12 +409,26 @@ Blockers (non-exhaustive):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Phase687W4S Forward Soak
 
 - Verdict (latest): `READONLY_SOAK_NOT_STARTED`
 - Sessions collected: `0`
 - Readonly success sessions: `0`
-- Probe account_status: `ONLINE_NO_POSITIONS`
+- Probe account_status: `OFFLINE`
 - Production enablement: NOT_AUTHORIZED / NOT_IMPLEMENTED
 
 ## Phase687W4T Token / Read-Only Readiness
