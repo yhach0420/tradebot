@@ -1,0 +1,17 @@
+{
+  "verdict": "V1R_EXIT_V2_RUNTIME_ACTIVATION_V11_FROZEN",
+  "activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V11",
+  "activation_sha": "19a8974dbd453e26664c4f0124c97c32e70c1097f2e01ebd3b497fb483a2673b",
+  "parent_activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V10",
+  "parent_activation_sha": "84d76713fd8492a8e518b64d2818f724657572588adbb371b6364439ebd7c0b2",
+  "supersede_reason": "RUNTIME_KABU_API_SINGLE_AUTHORITY_AND_PM_DIRECT_START_FIX",
+  "runtime_code_git_commit": "cf6f1b59cde5baa10c7f3ee2a81bd0d6e7ae1c70",
+  "runtime_dependency_count": 32,
+  "inventory_match_after_bind": true,
+  "inventory_matched": 32,
+  "strategy_sha": "9ad4ba2730892d40c757d940b82480e620e502e3e789839120e90b18be082547",
+  "precommit_sha": "acd3fee10c94f84b9ae2b1d4bddd9402ed4ab588af0ba06be0063cb8a0662100",
+  "selector_path": "results/research/v1r_exit_v2_prospective_activation/active_v1r_activation.json",
+  "startup_binding_ok": true,
+  "created_at": "2026-08-13T15:32:07.495393+09:00"
+}
