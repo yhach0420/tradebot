@@ -19,9 +19,11 @@ from zoneinfo import ZoneInfo
 
 from small_paper.day_fixed_am_registration import (
     EXPECTED_SYMBOLS,
+    SAME_DAY_AM_FROZEN_AUTHORITY,
     canonical_membership_sha,
     canonical_symbols,
     load_am_canonical_50,
+    load_frozen_am_universe,
 )
 from small_paper.market_ingress_protocol import market_ingress_v2_enabled, now_iso
 
@@ -46,6 +48,8 @@ PREMATURE_PRE_WARMUP_EXIT = "PREMATURE_PRE_WARMUP_EXIT"
 PREMATURE_PRE_WARMUP_EXIT_CODE = 4
 KABU_PROBE_SYMBOL_EVENT = "KABU_SAFETY_PROBE_SYMBOL"
 LEGACY_BOARD_PROBE_SYMBOL = "9984@1"
+NO_REGISTERED_KABU_PROBE_SYMBOL = "NO_REGISTERED_KABU_PROBE_SYMBOL"
+PREFERRED_FROZEN_PROBE_BARE = "285A"
 NATIVE_HEARTBEAT_FRESH_SEC = 20.0
 
 DEFAULT_AM_WARMUP_START = "08:50"
@@ -689,7 +693,7 @@ def board_symbol_key(symbol: Any) -> str:
     return f"{bare}@1" if bare else ""
 
 
-def select_registration_safe_probe_symbol(
+def resolve_registered_probe_symbol(
     native_root: Path,
     trading_date: str,
     *,
@@ -699,17 +703,58 @@ def select_registration_safe_probe_symbol(
     environ: Optional[Mapping[str, str]] = None,
     write_audit: bool = True,
 ) -> dict[str, Any]:
-    """Pick a readonly board probe symbol from actual registered ∩ AM canonical50.
+    """Readonly board probe from actual Kabu ∩ frozen/AM canonical50.
 
-    Never registers a 51st symbol. Never unregisters. Forbidden if proposed
-    symbol is outside the actual registered canonical set.
+    Never falls back to 9984. Never registers a 51st. Never unregisters.
+    Fail-closed with NO_REGISTERED_KABU_PROBE_SYMBOL when intersection is empty,
+    frozen/AM SoT is missing, actual list is unavailable, or trading_date mismatches.
     """
     day = str(trading_date)
     info = ingress_owns_kabu_registration(native_root, day, environ=environ)
     owned = bool(info.get("owned"))
     mutations = 0
+    frozen = load_frozen_am_universe(Path(native_root), day)
     am = load_am_canonical_50(Path(native_root), day)
+    probe_source = (
+        SAME_DAY_AM_FROZEN_AUTHORITY
+        if frozen.get("present") and frozen.get("ok")
+        else ("am_canonical_50" if am.get("ok") else "")
+    )
     am_set = {_bare_board_symbol(s) for s in (am.get("symbols") or []) if _bare_board_symbol(s)}
+    if frozen.get("present") and str(frozen.get("trading_date") or "") not in ("", day):
+        am_set = set()
+
+    def _fail(reason: str, *, registered: bool = False, symbol: str = "") -> dict[str, Any]:
+        out = {
+            "ok": False,
+            "reason": reason,
+            "symbol_key": "",
+            "kabu_probe_symbol": symbol,
+            "kabu_probe_symbol_registered": registered,
+            "kabu_probe_symbol_frozen_member": False,
+            "probe_source": probe_source or SAME_DAY_AM_FROZEN_AUTHORITY,
+            "owned": owned,
+            "exact50": False,
+            "actual_n": 0,
+            "am_n": len(am_set),
+            "actual_source": "",
+            "registration_mutation": mutations,
+            "submit_cancel_live": "0/0/0",
+            "allow_9984_fallback": False,
+        }
+        return out
+
+    if frozen.get("present") and not frozen.get("ok"):
+        out = _fail(NO_REGISTERED_KABU_PROBE_SYMBOL)
+        out["actual_n"] = 0
+        if write_audit:
+            append_authority_audit(native_root, day, KABU_PROBE_SYMBOL_EVENT, out)
+        return out
+    if not am.get("ok") or len(am_set) != EXPECTED_SYMBOLS:
+        out = _fail(NO_REGISTERED_KABU_PROBE_SYMBOL)
+        if write_audit:
+            append_authority_audit(native_root, day, KABU_PROBE_SYMBOL_EVENT, out)
+        return out
 
     actual_src = "injected"
     if actual_symbols is None:
@@ -727,6 +772,7 @@ def select_registration_safe_probe_symbol(
                 actual_src = "actual_unavailable"
 
     act_set = {_bare_board_symbol(s) for s in (actual_symbols or []) if _bare_board_symbol(s)}
+    intersection = am_set & act_set
     exact50 = (
         len(am_set) == EXPECTED_SYMBOLS
         and len(act_set) == EXPECTED_SYMBOLS
@@ -734,35 +780,16 @@ def select_registration_safe_probe_symbol(
         and bool(am.get("ok"))
     )
 
-    proposed_bare = _bare_board_symbol(proposed_symbol) if proposed_symbol else ""
-    if proposed_bare:
-        if proposed_bare not in act_set:
-            out = {
-                "ok": False,
-                "reason": "probe_symbol_not_in_actual_registered_set",
-                "kabu_probe_symbol": board_symbol_key(proposed_bare),
-                "kabu_probe_symbol_registered": False,
-                "owned": owned,
-                "exact50": exact50,
-                "actual_n": len(act_set),
-                "am_n": len(am_set),
-                "actual_source": actual_src,
-                "registration_mutation": mutations,
-                "submit_cancel_live": "0/0/0",
-            }
-            if write_audit:
-                append_authority_audit(native_root, day, KABU_PROBE_SYMBOL_EVENT, out)
-            return out
-
-    use_legacy = not owned
-
-    if use_legacy and not proposed_bare:
+    def _pack(reason: str, *, ok: bool, pick: str = "", registered: bool = False) -> dict[str, Any]:
+        frozen_member = bool(pick and pick in am_set)
         out = {
-            "ok": True,
-            "reason": "legacy_empty_register_probe",
-            "symbol_key": LEGACY_BOARD_PROBE_SYMBOL,
-            "kabu_probe_symbol": LEGACY_BOARD_PROBE_SYMBOL,
-            "kabu_probe_symbol_registered": False,
+            "ok": ok,
+            "reason": reason,
+            "symbol_key": board_symbol_key(pick) if pick else "",
+            "kabu_probe_symbol": board_symbol_key(pick) if pick else "",
+            "kabu_probe_symbol_registered": registered,
+            "kabu_probe_symbol_frozen_member": frozen_member,
+            "probe_source": probe_source or SAME_DAY_AM_FROZEN_AUTHORITY,
             "owned": owned,
             "exact50": exact50,
             "actual_n": len(act_set),
@@ -770,69 +797,72 @@ def select_registration_safe_probe_symbol(
             "actual_source": actual_src,
             "registration_mutation": mutations,
             "submit_cancel_live": "0/0/0",
+            "allow_9984_fallback": False,
         }
         if write_audit:
             append_authority_audit(native_root, day, KABU_PROBE_SYMBOL_EVENT, out)
         return out
+
+    if actual_src == "actual_unavailable" and not act_set:
+        return _pack(NO_REGISTERED_KABU_PROBE_SYMBOL, ok=False)
+
+    proposed_bare = _bare_board_symbol(proposed_symbol) if proposed_symbol else ""
+    if proposed_bare and proposed_bare not in act_set:
+        return _pack(
+            "probe_symbol_not_in_actual_registered_set",
+            ok=False,
+            pick=proposed_bare,
+            registered=False,
+        )
+
+    if (
+        len(am_set) == EXPECTED_SYMBOLS
+        and len(act_set) == EXPECTED_SYMBOLS
+        and am_set != act_set
+    ):
+        return _pack("actual_registered_exact50_required", ok=False)
+
+    if not intersection:
+        return _pack(NO_REGISTERED_KABU_PROBE_SYMBOL, ok=False)
 
     if not exact50:
-        out = {
-            "ok": False,
-            "reason": "actual_registered_exact50_required",
-            "kabu_probe_symbol": "",
-            "kabu_probe_symbol_registered": False,
-            "owned": owned,
-            "exact50": exact50,
-            "actual_n": len(act_set),
-            "am_n": len(am_set),
-            "actual_source": actual_src,
-            "registration_mutation": mutations,
-            "submit_cancel_live": "0/0/0",
-        }
-        if write_audit:
-            append_authority_audit(native_root, day, KABU_PROBE_SYMBOL_EVENT, out)
-        return out
+        return _pack("actual_registered_exact50_required", ok=False)
 
-    pick_bare = proposed_bare or next(
-        (_bare_board_symbol(s) for s in (am.get("symbols") or []) if _bare_board_symbol(s) in act_set),
-        "",
+    if proposed_bare:
+        pick_bare = proposed_bare if proposed_bare in intersection else ""
+    elif PREFERRED_FROZEN_PROBE_BARE in intersection:
+        pick_bare = PREFERRED_FROZEN_PROBE_BARE
+    else:
+        pick_bare = next(
+            (_bare_board_symbol(s) for s in (am.get("symbols") or []) if _bare_board_symbol(s) in intersection),
+            "",
+        )
+    if not pick_bare or pick_bare not in act_set or pick_bare not in am_set:
+        return _pack(NO_REGISTERED_KABU_PROBE_SYMBOL, ok=False)
+
+    return _pack("", ok=True, pick=pick_bare, registered=True)
+
+
+def select_registration_safe_probe_symbol(
+    native_root: Path,
+    trading_date: str,
+    *,
+    actual_symbols: Optional[Sequence[Any]] = None,
+    proposed_symbol: Optional[str] = None,
+    push: Any = None,
+    environ: Optional[Mapping[str, str]] = None,
+    write_audit: bool = True,
+) -> dict[str, Any]:
+    """Alias: live/Paper board probe uses resolve_registered_probe_symbol only."""
+    return resolve_registered_probe_symbol(
+        native_root,
+        trading_date,
+        actual_symbols=actual_symbols,
+        proposed_symbol=proposed_symbol,
+        push=push,
+        environ=environ,
+        write_audit=write_audit,
     )
-    if not pick_bare or pick_bare not in act_set:
-        out = {
-            "ok": False,
-            "reason": "probe_symbol_not_in_actual_registered_set",
-            "kabu_probe_symbol": board_symbol_key(pick_bare) if pick_bare else "",
-            "kabu_probe_symbol_registered": False,
-            "owned": owned,
-            "exact50": exact50,
-            "actual_n": len(act_set),
-            "am_n": len(am_set),
-            "actual_source": actual_src,
-            "registration_mutation": mutations,
-            "submit_cancel_live": "0/0/0",
-        }
-        if write_audit:
-            append_authority_audit(native_root, day, KABU_PROBE_SYMBOL_EVENT, out)
-        return out
-
-    symbol_key = board_symbol_key(pick_bare)
-    out = {
-        "ok": True,
-        "reason": "",
-        "symbol_key": symbol_key,
-        "kabu_probe_symbol": symbol_key,
-        "kabu_probe_symbol_registered": True,
-        "owned": owned,
-        "exact50": True,
-        "actual_n": len(act_set),
-        "am_n": len(am_set),
-        "actual_source": actual_src,
-        "registration_mutation": mutations,
-        "submit_cancel_live": "0/0/0",
-    }
-    if write_audit:
-        append_authority_audit(native_root, day, KABU_PROBE_SYMBOL_EVENT, out)
-    return out
 
 
 def classify_pre_warmup_process_exit(

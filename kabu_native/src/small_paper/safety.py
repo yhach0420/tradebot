@@ -508,13 +508,13 @@ def check_kabu_station_connection(repo_root: Path, *, stale_tick_sec: float = 12
     jst = ZoneInfo("Asia/Tokyo")
     day = datetime.now(jst).strftime("%Y%m%d")
     probe: dict[str, Any] = {}
-    symbol_key = "9984@1"
+    symbol_key = ""
     try:
         from api.kabu_register import resolve_native_root_for_register_state
-        from small_paper.kabu_registration_authority import select_registration_safe_probe_symbol
+        from small_paper.kabu_registration_authority import resolve_registered_probe_symbol
 
         native = resolve_native_root_for_register_state(Path(repo_root))
-        probe = select_registration_safe_probe_symbol(native, day)
+        probe = resolve_registered_probe_symbol(native, day)
         if not probe.get("ok"):
             return SafetyCheck(
                 "kabu_station_connection",
@@ -567,6 +567,8 @@ def check_kabu_station_connection(repo_root: Path, *, stale_tick_sec: float = 12
                 "tick_age_sec": age_sec,
                 "kabu_probe_symbol": symbol_key,
                 "kabu_probe_symbol_registered": bool(probe.get("kabu_probe_symbol_registered")),
+                "kabu_probe_symbol_frozen_member": bool(probe.get("kabu_probe_symbol_frozen_member")),
+                "probe_source": str(probe.get("probe_source") or ""),
                 "registration_mutation": int(probe.get("registration_mutation") or 0),
                 "probe": probe,
             },

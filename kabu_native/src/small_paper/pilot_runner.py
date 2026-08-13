@@ -549,24 +549,57 @@ def _event_from_gate(
     return base
 
 
-def verify_kabu_connection(repo_root: Path, *, symbol_key: str = "9984@1") -> dict[str, Any]:
-    """Token + board probe; no orders."""
+def verify_kabu_connection(
+    repo_root: Path,
+    *,
+    symbol_key: Optional[str] = None,
+    native_root: Optional[Path] = None,
+    trading_date: Optional[str] = None,
+) -> dict[str, Any]:
+    """Token + board probe; no orders. Never defaults to 9984.
+
+    If symbol_key is omitted, resolve from actual registered ∩ frozen AM50.
+    """
     import os
 
+    from api.kabu_register import resolve_native_root_for_register_state
     from api.rest_client import KabuNativeApiError, KabuNativeRestClient, default_base_url, load_kabu_env
+    from small_paper.day_fixed_am_registration import SAME_DAY_AM_FROZEN_AUTHORITY
+    from small_paper.kabu_registration_authority import (
+        NO_REGISTERED_KABU_PROBE_SYMBOL,
+        resolve_registered_probe_symbol,
+    )
+
+    probe: dict[str, Any] = {}
+    key = str(symbol_key or "").strip()
+    if not key:
+        native = Path(native_root) if native_root else resolve_native_root_for_register_state(Path(repo_root))
+        day = str(trading_date or datetime.now(JST).strftime("%Y%m%d"))
+        probe = resolve_registered_probe_symbol(native, day)
+        if not probe.get("ok"):
+            raise KabuNativeApiError(str(probe.get("reason") or NO_REGISTERED_KABU_PROBE_SYMBOL))
+        key = str(probe.get("symbol_key") or probe.get("kabu_probe_symbol") or "").strip()
+        if not key:
+            raise KabuNativeApiError(NO_REGISTERED_KABU_PROBE_SYMBOL)
 
     if not os.environ.get("KABU_API_PASSWORD", "").strip():
         raise KabuNativeApiError("KABU_API_PASSWORD is not set")
     load_kabu_env(repo_root=repo_root)
     client = KabuNativeRestClient(default_base_url())
     token = client.issue_token_from_env()
-    board = client.get_board(symbol_key, token=token)
-    return {
+    board = client.get_board(key, token=token)
+    out = {
         "ok": True,
-        "symbol_key": symbol_key,
+        "symbol_key": key,
+        "kabu_probe_symbol": key,
+        "kabu_probe_symbol_registered": bool(probe.get("kabu_probe_symbol_registered", True)),
+        "kabu_probe_symbol_frozen_member": bool(probe.get("kabu_probe_symbol_frozen_member", True)),
+        "probe_source": str(probe.get("probe_source") or SAME_DAY_AM_FROZEN_AUTHORITY),
         "current_price": board.get("CurrentPrice"),
         "current_price_time": board.get("CurrentPriceTime"),
+        "registration_mutation": int(probe.get("registration_mutation") or 0),
     }
+    return out
 
 
 def _default_post_entry_forward_shadow_session() -> Any:
@@ -8038,7 +8071,28 @@ def run_live_dry_run(
     if full_session and auto_stop:
         duration_sec = sched.seconds_until_end()
 
-    conn = verify_kabu_connection(repo_root)
+    from small_paper.day_fixed_am_registration import SAME_DAY_AM_FROZEN_AUTHORITY
+    from small_paper.kabu_registration_authority import (
+        NO_REGISTERED_KABU_PROBE_SYMBOL,
+        resolve_registered_probe_symbol,
+    )
+
+    probe_day = now.strftime("%Y%m%d")
+    probe = resolve_registered_probe_symbol(Path(native_root), probe_day)
+    if not probe.get("ok"):
+        raise KabuNativeApiError(str(probe.get("reason") or NO_REGISTERED_KABU_PROBE_SYMBOL))
+    probe_key = str(probe.get("symbol_key") or probe.get("kabu_probe_symbol") or "")
+    conn = verify_kabu_connection(
+        repo_root,
+        symbol_key=probe_key,
+        native_root=native_root,
+        trading_date=probe_day,
+    )
+    conn["kabu_probe_symbol"] = probe_key
+    conn["kabu_probe_symbol_registered"] = bool(probe.get("kabu_probe_symbol_registered"))
+    conn["kabu_probe_symbol_frozen_member"] = bool(probe.get("kabu_probe_symbol_frozen_member"))
+    conn["probe_source"] = str(probe.get("probe_source") or SAME_DAY_AM_FROZEN_AUTHORITY)
+    conn["registration_mutation"] = int(probe.get("registration_mutation") or 0)
     from small_paper.core_runtime_mode import get_core_runtime_mode, log_core_runtime_mode
     from small_paper.market_ingress_protocol import market_ingress_v2_enabled
 
