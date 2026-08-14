@@ -19,6 +19,12 @@ from small_paper.config import (
     load_pilot_config,
     resolve_output_dir,
 )
+from small_paper.runtime_clock import now_jst as session_now
+
+
+def safety_trading_date() -> str:
+    """Domain B: which trading day's frozen/registration the safety probe uses."""
+    return session_now().strftime("%Y%m%d")
 
 
 @dataclass
@@ -506,7 +512,7 @@ def check_kabu_station_connection(repo_root: Path, *, stale_tick_sec: float = 12
         )
 
     jst = ZoneInfo("Asia/Tokyo")
-    day = datetime.now(jst).strftime("%Y%m%d")
+    day = safety_trading_date()
     probe: dict[str, Any] = {}
     symbol_key = ""
     try:
@@ -893,16 +899,13 @@ def check_kabu_register_capacity(
     clear_result: dict[str, Any] = {}
     if pre_clear and repo_root is not None:
         try:
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-
             from small_paper.kabu_registration_authority import (
                 forbid_post_ingress_unregister_all,
             )
             from api.kabu_register import resolve_native_root_for_register_state
 
             native = resolve_native_root_for_register_state(Path(repo_root))
-            day = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d")
+            day = safety_trading_date()
             gate = forbid_post_ingress_unregister_all(
                 native, day, caller="safety.check_kabu_register_capacity"
             )

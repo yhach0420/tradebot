@@ -191,3 +191,18 @@ def test_inventory_includes_new_v15_modules() -> None:
 
     assert "src/small_paper/runtime_clock.py" in RUNTIME_DEPENDENCY_RELS
     assert "src/small_paper/paper_full_day_certification.py" in RUNTIME_DEPENDENCY_RELS
+
+
+def test_safety_trading_date_follows_session_clock() -> None:
+    from small_paper.safety import safety_trading_date
+
+    v0 = datetime(2026, 8, 12, 13, 8, 0, tzinfo=JST)
+    bind_session_clock(virtual_start=v0, speed_mult=1.0)
+    assert safety_trading_date() == "20260812"
+
+
+def test_clock_audit_rejects_safety_wall_trading_date() -> None:
+    clock = audit_clock_access()
+    for row in clock.get("rows") or []:
+        if str(row.get("file") or "").endswith("safety.py") and row.get("clock_domain") == "BYPASS":
+            raise AssertionError(row)

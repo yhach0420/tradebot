@@ -296,12 +296,16 @@ def audit_clock_access(*, native_root: Optional[Path] = None) -> dict[str, Any]:
         and "runtime_clock" not in r["snippet"]
         and "now_jst(" not in r["snippet"]
     ]
-    ok = not session_bypass
+    safety_bypass = [
+        r for r in rows if str(r.get("file") or "").endswith("safety.py") and r.get("clock_domain") == "BYPASS"
+    ]
+    ok = not session_bypass and not safety_bypass
     return {
         "ok": ok,
         "n": len(rows),
         "bypass_n": len(bypass),
         "session_clock_bypass": session_bypass,
+        "safety_trading_date_bypass": safety_bypass,
         "rows": rows,
         "verdict": "CLOCK_AUDIT_PASS" if ok else "CLOCK_AUDIT_FAIL",
     }
@@ -349,6 +353,12 @@ def _classify_clock(rel: str, snippet: str, api: str) -> tuple[str, str]:
         return "B", "checked-runner trading date / 15:35"
     if rel.endswith("v1r_paper_primary_launcher.py") and "datetime.now" in s:
         return "B", "launcher day stamp"
+    if rel.endswith("safety.py"):
+        if "%Y%m%d" in s and "datetime.now" in s:
+            return "BYPASS", "safety probe trading date wall clock"
+        if "datetime.now" in s and ("stale" in s.lower() or "tick" in s.lower() or "age" in s.lower()):
+            return "C", "safety tick-age (domain C)"
+        return "C", "safety stamp"
     if api in {"now", "utcnow"}:
         return "C", "wall stamp (log/meta) unless session-critical"
     return "C", "unclassified processing"

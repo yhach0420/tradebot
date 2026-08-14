@@ -120,7 +120,14 @@ def test_case_a_frozen50_9984_nonmember_pilot_probe_registered(tmp_path: Path, m
 def test_case_b_daily_and_pilot_same_resolver_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MARKET_INGRESS_V2", "1")
     monkeypatch.setenv("KABU_API_PASSWORD", "x")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from small_paper.runtime_clock import bind_session_clock
+
+    jst = ZoneInfo("Asia/Tokyo")
     day = "20260813"
+    bind_session_clock(virtual_start=datetime(2026, 8, 13, 9, 15, 0, tzinfo=jst), speed_mult=1.0)
     am = ["285A"] + _am_syms(n=49, start=2000)
     _owned_frozen50(tmp_path, day, am)
     daily = select_registration_safe_probe_symbol(tmp_path, day, actual_symbols=am, write_audit=False)

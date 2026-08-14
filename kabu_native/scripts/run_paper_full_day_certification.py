@@ -89,7 +89,7 @@ def _write_json(path: Path, obj: Any) -> None:
 def _extract_anchor_stream(src: Path, dest: Path, *, max_cruise: int = 80000) -> dict[str, Any]:
     """Ingress-boundary fixture from 8/12 capture: all 16 anchor windows + cruise sample."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    anchors = list(CLOCK_GRID)
+    anchors = [f"{h:02d}:{m:02d}" for h, m in CLOCK_GRID]
     kept = 0
     cruise = 0
     seen_anchors: set[str] = set()
@@ -120,6 +120,7 @@ def _extract_anchor_stream(src: Path, dest: Path, *, max_cruise: int = 80000) ->
             prev_hm = f"{prev_dt.hour:02d}:{prev_dt.minute:02d}"
             if prev_hm in anchors and hm != prev_hm:
                 in_anchor = True
+                seen_anchors.add(prev_hm)
             if in_anchor:
                 fout.write(line if line.endswith("\n") else line + "\n")
                 kept += 1
@@ -178,9 +179,58 @@ def _kabu_precheck() -> dict[str, Any]:
     return out
 
 
-def _invoke_checked_bat(*, env: dict[str, str], timeout_sec: float) -> dict[str, Any]:
+def _stop_cert_children(day: str) -> dict[str, Any]:
+    """Stop leftover Ingress/pilot for the certification trading-date (process=0)."""
+    day_root = NATIVE / "data" / "market_capture" / day
+    day_root.mkdir(parents=True, exist_ok=True)
+    flag = day_root / "operator_stop.flag"
+    flag.write_text("full_day_cert_cleanup\n", encoding="utf-8")
+    killed: list[int] = []
+    try:
+        from small_paper.v1r_pbv2_duplicate_runtime import list_live_ingress
+
+        live = list_live_ingress(trading_date=day, native_root=NATIVE)
+        for row in live or []:
+            pid = int(row.get("pid") or 0)
+            if pid > 0:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                killed.append(pid)
+    except Exception:
+        pass
+    pid_file = day_root / "ingress.pid"
+    if pid_file.is_file():
+        try:
+            pid = int(pid_file.read_text(encoding="utf-8").strip() or "0")
+        except Exception:
+            pid = 0
+        if pid > 0:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/F"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            killed.append(pid)
+    time.sleep(1.5)
+    try:
+        flag.unlink()
+    except Exception:
+        pass
+    return {"killed": sorted(set(killed))}
+
+
+def _invoke_checked_bat(*, env: dict[str, str], timeout_sec: float, log_name: str) -> dict[str, Any]:
     if not CHECKED_BAT.is_file():
         return {"ok": False, "error": "missing_checked_bat", "exit_code": 2}
+    log_dir = CERT_DIR / "run_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = log_dir / f"{log_name}.stdout.txt"
+    stderr_path = log_dir / f"{log_name}.stderr.txt"
     t0 = time.time()
     proc = subprocess.run(
         ["cmd.exe", "/d", "/c", "call", str(CHECKED_BAT), "--full-day-cert", "--no-pause"],
@@ -192,13 +242,79 @@ def _invoke_checked_bat(*, env: dict[str, str], timeout_sec: float) -> dict[str,
         errors="replace",
         timeout=timeout_sec,
     )
+    stdout_path.write_text(proc.stdout or "", encoding="utf-8")
+    stderr_path.write_text(proc.stderr or "", encoding="utf-8")
     return {
         "ok": proc.returncode == 0,
         "exit_code": int(proc.returncode),
         "duration_sec": round(time.time() - t0, 3),
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
         "stdout_tail": (proc.stdout or "")[-4000:],
         "stderr_tail": (proc.stderr or "")[-4000:],
     }
+
+
+def _copy_run_snapshot(name: str, day: str = "20260812") -> dict[str, str]:
+    dest = CERT_DIR / "run_snapshots" / name
+    dest.mkdir(parents=True, exist_ok=True)
+    copied: dict[str, str] = {}
+    reports = NATIVE / "results" / "reports"
+    for fn in (
+        f"phase148_am_pm_daily_runner_{day}.json",
+        f"daily_runner_summary_{day}.json",
+        f"small_paper_safety_{day}.json",
+    ):
+        src = reports / fn
+        if src.is_file():
+            target = dest / fn
+            target.write_bytes(src.read_bytes())
+            copied[fn] = str(target)
+    return copied
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _evaluate_full_day(snap_dir: Path, day: str = "20260812") -> dict[str, Any]:
+    p148 = _load_json(snap_dir / f"phase148_am_pm_daily_runner_{day}.json")
+    summary = _load_json(snap_dir / f"daily_runner_summary_{day}.json")
+    safety = _load_json(snap_dir / f"small_paper_safety_{day}.json")
+    failed_ids = list((safety.get("failed_check_ids") if isinstance(safety, dict) else None) or [])
+    if not failed_ids:
+        failed_ids = list(((p148.get("preflight") or {}).get("safety") or {}).get("failed_check_ids") or [])
+    am_live = p148.get("am_live") or {}
+    pm_live = p148.get("pm_live") or {}
+    am_skip = str(am_live.get("reason") or "") == "SKIPPED_AFTER_SESSION_END"
+    out = {
+        "verdict": str(p148.get("verdict") or summary.get("verdict") or ""),
+        "stopped_reason": str(p148.get("stopped_reason") or summary.get("stopped_reason") or ""),
+        "am_skip": am_skip,
+        "am_token_mutation": int(am_live.get("am_token_mutation") or 0),
+        "am_ok": bool(am_live.get("ok") or am_skip),
+        "pm_ok": bool(pm_live.get("ok")),
+        "safety_failed": failed_ids,
+        "lifecycle_complete": str(p148.get("verdict") or "")
+        in {"am_pm_daily_runner_ready", "completed_with_warnings"},
+    }
+    return out
+
+
+def _leftover_processes(day: str = "20260812") -> list[dict[str, Any]]:
+    try:
+        from small_paper.v1r_pbv2_duplicate_runtime import list_live_ingress, list_live_pilots
+
+        return list(list_live_ingress(trading_date=day, native_root=NATIVE) or []) + list(
+            list_live_pilots(trading_date=day) or []
+        )
+    except Exception:
+        return []
 
 
 def _scan_session_metrics(day: str) -> dict[str, Any]:
@@ -289,14 +405,30 @@ def main() -> int:
         env[ENV_REPLAY_PATH] = str(fixture)
         env[ENV_REPLAY_EPS] = "800"
 
+    stream_ok = bool(fixture_meta.get("ok")) and "CAPTURE_STREAM_MISSING" not in failed
+    _stop_cert_children("20260812")
+
     full_day: dict[str, Any] = {"skipped": True}
-    if fixture_meta.get("ok") and "CAPTURE_STREAM_MISSING" not in failed:
+    full_day_eval: dict[str, Any] = {}
+    if stream_ok:
         try:
-            full_day = _invoke_checked_bat(env=env, timeout_sec=2400)
+            full_day = _invoke_checked_bat(env=env, timeout_sec=2400, log_name="full_day")
         except subprocess.TimeoutExpired as exc:
             full_day = {"ok": False, "error": f"timeout:{exc}", "exit_code": 124}
+        full_day["cleanup"] = _stop_cert_children("20260812")
+        full_day["snapshot"] = _copy_run_snapshot("full_day")
+        full_day_eval = _evaluate_full_day(CERT_DIR / "run_snapshots" / "full_day")
+        full_day["lifecycle"] = full_day_eval
         if not full_day.get("ok"):
             failed.append("FULL_DAY_CHECKED_BAT")
+        if not full_day_eval.get("lifecycle_complete"):
+            failed.append("FULL_DAY_LIFECYCLE")
+        if full_day_eval.get("safety_failed"):
+            failed.append("FULL_DAY_SAFETY:" + ",".join(str(x) for x in full_day_eval["safety_failed"]))
+    leftover = _leftover_processes("20260812")
+    leftover_end = leftover
+    if leftover:
+        failed.append("PROCESS_LEFTOVER_AFTER_FULL_DAY")
 
     metrics = _scan_session_metrics("20260812")
     if str(metrics.get("submit_cancel_live") or "0/0/0") != "0/0/0":
@@ -305,22 +437,30 @@ def main() -> int:
         if int(metrics.get("forced_eval_count") or 0) != 0:
             failed.append("FORCED_EVAL")
 
-    # PM direct-start (clock at 12:30)
-    pm_env = dict(env)
-    bind_session_clock(
-        virtual_start=datetime(2026, 8, 12, 12, 30, 0, tzinfo=JST),
-        speed_mult=48.0,
-        stop=datetime(2026, 8, 12, 15, 35, 0, tzinfo=JST),
-        environ=pm_env,
-    )
     pm_run: dict[str, Any] = {"skipped": True}
-    try:
-        pm_run = _invoke_checked_bat(env=pm_env, timeout_sec=1800)
-    except subprocess.TimeoutExpired as exc:
-        pm_run = {"ok": False, "error": f"timeout:{exc}", "exit_code": 124}
-        failed.append("PM_DIRECT_START")
-    if not pm_run.get("ok"):
-        failed.append("PM_DIRECT_START")
+    if stream_ok:
+        pm_env = dict(env)
+        bind_session_clock(
+            virtual_start=datetime(2026, 8, 12, 12, 30, 0, tzinfo=JST),
+            speed_mult=48.0,
+            stop=datetime(2026, 8, 12, 15, 35, 0, tzinfo=JST),
+            environ=pm_env,
+        )
+        try:
+            pm_run = _invoke_checked_bat(env=pm_env, timeout_sec=1800, log_name="pm_direct_start")
+        except subprocess.TimeoutExpired as exc:
+            pm_run = {"ok": False, "error": f"timeout:{exc}", "exit_code": 124}
+            failed.append("PM_DIRECT_START")
+        pm_run["cleanup"] = _stop_cert_children("20260812")
+        pm_run["snapshot"] = _copy_run_snapshot("pm_direct_start")
+        pm_eval = _evaluate_full_day(CERT_DIR / "run_snapshots" / "pm_direct_start")
+        pm_run["lifecycle"] = pm_eval
+        if not pm_run.get("ok"):
+            failed.append("PM_DIRECT_START")
+        if not pm_eval.get("am_skip"):
+            failed.append("PM_DIRECT_START_AM_NOT_SKIPPED")
+        if int(pm_eval.get("am_token_mutation") or 0) != 0:
+            failed.append("PM_DIRECT_START_AM_TOKEN_MUTATION")
 
     windows: dict[str, Any] = {}
     window_specs = [
@@ -328,17 +468,28 @@ def main() -> int:
         ("B_1120_1245", datetime(2026, 8, 12, 11, 20, 0, tzinfo=JST), datetime(2026, 8, 12, 12, 45, 0, tzinfo=JST), "11:20"),
         ("C_1510_1535", datetime(2026, 8, 12, 15, 10, 0, tzinfo=JST), datetime(2026, 8, 12, 15, 35, 0, tzinfo=JST), "15:10"),
     ]
-    for name, start, end, not_before in window_specs:
-        wenv = dict(env)
-        bind_session_clock(virtual_start=start, speed_mult=1.0, stop=end, environ=wenv)
-        wenv["TRADEBOT_INGRESS_REPLAY_NOT_BEFORE"] = not_before
-        wenv[ENV_REPLAY_EPS] = "150"
-        try:
-            windows[name] = _invoke_checked_bat(env=wenv, timeout_sec=int((end - start).total_seconds()) + 180)
-        except subprocess.TimeoutExpired as exc:
-            windows[name] = {"ok": False, "error": f"timeout:{exc}", "exit_code": 124}
-        if not windows[name].get("ok"):
-            failed.append(f"WINDOW_{name}")
+    if stream_ok:
+        for name, start, end, not_before in window_specs:
+            _stop_cert_children("20260812")
+            wenv = dict(env)
+            bind_session_clock(virtual_start=start, speed_mult=1.0, stop=end, environ=wenv)
+            wenv["TRADEBOT_INGRESS_REPLAY_NOT_BEFORE"] = not_before
+            wenv[ENV_REPLAY_EPS] = "150"
+            try:
+                windows[name] = _invoke_checked_bat(
+                    env=wenv,
+                    timeout_sec=int((end - start).total_seconds()) + 180,
+                    log_name=f"window_{name}",
+                )
+            except subprocess.TimeoutExpired as exc:
+                windows[name] = {"ok": False, "error": f"timeout:{exc}", "exit_code": 124}
+            windows[name]["cleanup"] = _stop_cert_children("20260812")
+            windows[name]["snapshot"] = _copy_run_snapshot(f"window_{name}")
+            if not windows[name].get("ok"):
+                failed.append(f"WINDOW_{name}")
+    leftover_end = _leftover_processes("20260812")
+    if leftover_end:
+        failed.append("PROCESS_LEFTOVER")
 
     identity_after = capture_identity()
     same, mismatches = identities_equal(identity_before, identity_after)
@@ -355,7 +506,11 @@ def main() -> int:
         and all(v.get("ok") for v in windows.values())
     )
     verdicts = {
-        "rehearsal": "V1R_FULL_DAY_PAPER_ENVIRONMENT_REHEARSAL_PASS" if full_day.get("ok") else "FAIL",
+        "rehearsal": (
+            "V1R_FULL_DAY_PAPER_ENVIRONMENT_REHEARSAL_PASS"
+            if full_day_eval.get("lifecycle_complete")
+            else "V1R_FULL_DAY_PAPER_ENVIRONMENT_REHEARSAL_FAIL"
+        ),
         "windows": "V1R_REALTIME_CRITICAL_WINDOWS_PASS"
         if windows and all(v.get("ok") for v in windows.values())
         else "V1R_REALTIME_CRITICAL_WINDOWS_FAIL",
@@ -376,14 +531,19 @@ def main() -> int:
         ],
         "identity_before": identity_before,
         "identity_after": identity_after,
-        "clock_audit": {k: clock.get(k) for k in ("ok", "n", "verdict", "bypass_n", "session_clock_bypass")},
+        "clock_audit": {
+            k: clock.get(k)
+            for k in ("ok", "n", "verdict", "bypass_n", "session_clock_bypass", "safety_trading_date_bypass")
+        },
         "source_gates": src_gates,
         "teardown_nameerror_detectable": nameerr,
         "market_stream": fixture_meta,
         "kabu_precheck": kabu,
         "full_day": full_day,
+        "full_day_lifecycle": full_day_eval,
         "pm_direct_start": pm_run,
         "critical_windows": windows,
+        "leftover_processes_end": leftover_end if stream_ok else leftover,
         "metrics": metrics,
         "submit_cancel_live": metrics.get("submit_cancel_live") or "0/0/0",
         "discord_sink_posts": len(_Sink.records),
