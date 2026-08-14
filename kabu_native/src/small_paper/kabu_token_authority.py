@@ -67,6 +67,14 @@ class TokenUnavailable(ChildTokenIssueBlocked):
     """Consumer requested a token but Ingress has not published one."""
 
 
+STALE_STAGE_TOKEN_REJECTED = "STALE_STAGE_TOKEN_REJECTED"
+
+
+class StaleStageTokenRejected(TokenUnavailable):
+    """Published token belongs to a previous certification stage. Do not board with it."""
+
+
+
 _tls = threading.local()
 
 
@@ -122,6 +130,15 @@ def native_root_default() -> Path:
 
 def token_fingerprint(token: str) -> str:
     return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()[:16]
+
+
+def current_stage_token_identity() -> dict[str, str]:
+    from small_paper.ingress_run_identity import ENV_CERTIFICATION_RUN_ID, ENV_STAGE_RUN_ID
+
+    return {
+        "certification_run_id": str(os.environ.get(ENV_CERTIFICATION_RUN_ID) or "").strip(),
+        "stage_run_id": str(os.environ.get(ENV_STAGE_RUN_ID) or "").strip(),
+    }
 
 
 def station_endpoint_id(base_url: Optional[str] = None) -> str:
@@ -503,7 +520,13 @@ def evaluate_issue_permission(
     if owner_live and owner_pid == my_pid:
         result["reason"] = "authorized_ingress"
     elif owner_pid and not owner_live:
-        result["reason"] = "stale_owner_takeover"
+        stage = current_stage_token_identity()
+        bundle = load_station_bundle(base_url)
+        prev_stage = str(bundle.get("stage_run_id") or owner.get("stage_run_id") or "")
+        if stage.get("stage_run_id") and prev_stage and prev_stage != stage["stage_run_id"]:
+            result["reason"] = "stale_stage_takeover"
+        else:
+            result["reason"] = "stale_owner_takeover"
     return result
 
 
@@ -573,7 +596,11 @@ def publish_owned_token(
         raise ValueError("empty token")
     fp = token_fingerprint(key)
     existing = load_station_bundle(base_url)
-    if str(existing.get("token") or "") == key and str(existing.get("fingerprint") or "") == fp:
+    stage = current_stage_token_identity()
+    same_token = str(existing.get("token") or "") == key and str(existing.get("fingerprint") or "") == fp
+    same_stage = str(existing.get("stage_run_id") or "") == str(stage.get("stage_run_id") or "")
+    same_owner = int(existing.get("pid") or 0) == int(getattr(_tls, "pid", 0) or os.getpid())
+    if same_token and same_stage and same_owner and (not stage.get("stage_run_id") or same_stage):
         body = load_authority(native_root, trading_date) or empty_authority()
         return body
     day_dir = authority_day_dir(native_root, trading_date)
@@ -584,6 +611,13 @@ def publish_owned_token(
     issued_at = _now_iso()
     pid = int(getattr(_tls, "pid", 0) or os.getpid())
     session_id = str(getattr(_tls, "session_id", "") or body.get("session_id") or "")
+    process_start = ""
+    try:
+        from small_paper.ingress_run_identity import capture_process_start_identity
+
+        process_start = str(capture_process_start_identity(pid) or "")
+    except Exception:
+        process_start = ""
     bundle = {
         "generation": gen,
         "token_generation": gen,
@@ -592,12 +626,17 @@ def publish_owned_token(
         "issued_at": issued_at,
         "owner": OWNER_INGRESS,
         "pid": pid,
+        "owner_pid": pid,
+        "owner_process_start": process_start,
         "session_id": session_id,
         "caller": str(caller),
         "trading_date": str(trading_date),
         "station_endpoint": station_endpoint_id(base_url),
+        "endpoint": station_endpoint_id(base_url),
         "issue_reason": str(caller),
         "kabu_token_authority": OWNER_INGRESS,
+        "certification_run_id": stage.get("certification_run_id") or None,
+        "stage_run_id": stage.get("stage_run_id") or None,
     }
     _atomic_write_json(station_dir / BUNDLE_JSON, bundle)
     meta = {k: v for k, v in bundle.items() if k != "token"}
@@ -710,7 +749,12 @@ def issue_station_token(
         if not token:
             raise ChildTokenIssueBlocked("TOKEN_RESPONSE_EMPTY")
         native = Path(getattr(_tls, "native_root", None) or native_root_default())
-        day = str(getattr(_tls, "trading_date", "") or session_now().strftime("%Y%m%d"))
+        try:
+            from small_paper.session_runtime_identity import resolve_runtime_trading_date
+
+            day = str(getattr(_tls, "trading_date", "") or resolve_runtime_trading_date())
+        except Exception:
+            day = str(getattr(_tls, "trading_date", "") or session_now().strftime("%Y%m%d"))
         publish_owned_token(
             token,
             native_root=native,
@@ -732,8 +776,25 @@ def acquire_token_for_readonly(
 
     Leftover day-dir tokens from a dead Ingress are not a live shared token.
     Pre-Ingress consumers must wait; they must not probe Station with a stale key.
+    Previous-stage tokens are STALE_STAGE_TOKEN_REJECTED and must not hit board.
     """
+    from small_paper.runtime_clock import certification_mode
+
     owner_active = ingress_owner_active(native_root, trading_date)
+    stage = current_stage_token_identity()
+    bundle = load_station_bundle()
+    want_stage = str(stage.get("stage_run_id") or "").strip()
+    got_stage = str(bundle.get("stage_run_id") or "").strip()
+    if want_stage:
+        if got_stage and got_stage != want_stage:
+            raise StaleStageTokenRejected(
+                f"{STALE_STAGE_TOKEN_REJECTED} caller={caller} "
+                f"want_stage={want_stage} got_stage={got_stage}"
+            )
+        if not got_stage and certification_mode():
+            raise StaleStageTokenRejected(
+                f"{STALE_STAGE_TOKEN_REJECTED} caller={caller} want_stage={want_stage} got_stage=missing"
+            )
     token = read_shared_token(native_root, trading_date) if owner_active else ""
     gen = read_shared_generation(native_root, trading_date) if owner_active else 0
     if token and owner_active:
@@ -746,6 +807,8 @@ def acquire_token_for_readonly(
             "fingerprint": token_fingerprint(token),
             "caller": caller,
             "may_issue_token": False,
+            "stage_run_id": got_stage or None,
+            "certification_run_id": str(bundle.get("certification_run_id") or "") or None,
         }
     raise TokenUnavailable(
         f"INGRESS_TOKEN_UNAVAILABLE caller={caller} owner_active={owner_active}"

@@ -408,12 +408,23 @@ def main() -> int:
         failed.append("PRECOMMIT_SHA")
 
     fixture_meta: dict[str, Any] = {"ok": False}
-    fixture = CERT_DIR / "ingress_replay_20260812_anchors_cruise.jsonl"
-    if CAPTURE_STREAM.is_file():
-        fixture_meta = _extract_anchor_stream(CAPTURE_STREAM, fixture)
-        fixture_meta["ok"] = bool(fixture_meta.get("anchors_16")) and int(fixture_meta.get("kept") or 0) > 1000
-        if not fixture_meta["ok"]:
-            failed.append("MARKET_STREAM_COVERAGE")
+    fixture = CERT_DIR / "ingress_replay_20260812_full_day_certification.jsonl"
+    from small_paper.certification_input_coverage import (
+        CERTIFICATION_INPUT_COVERAGE_FAIL,
+        CERTIFICATION_ONLY_INPUT,
+        build_full_day_certification_stream,
+        discover_certification_sources,
+    )
+
+    sources = discover_certification_sources(NATIVE)
+    if CAPTURE_STREAM.is_file() and CAPTURE_STREAM not in sources:
+        sources = [CAPTURE_STREAM, *sources]
+    if sources:
+        fixture_meta = build_full_day_certification_stream(sources, fixture, trading_date="20260812")
+        fixture_meta["purpose"] = CERTIFICATION_ONLY_INPUT
+        fixture_meta["strategy_evaluation_forbidden"] = True
+        if not fixture_meta.get("ok"):
+            failed.append(CERTIFICATION_INPUT_COVERAGE_FAIL)
     else:
         failed.append("CAPTURE_STREAM_MISSING")
 
@@ -441,10 +452,12 @@ def main() -> int:
     )
     if fixture.is_file():
         env[ENV_REPLAY_PATH] = str(fixture)
-        env[ENV_REPLAY_EPS] = "800"
+        env[ENV_REPLAY_EPS] = "2500"
+    env["TRADEBOT_TRADING_DATE"] = "20260812"
     env = official_cert_child_env(env)
     certification_run_id = "cert_" + generate_launch_nonce()
     env[ENV_CERTIFICATION_RUN_ID] = certification_run_id
+    env["TRADEBOT_DAILY_RUN_ID"] = "daily_" + certification_run_id[:16]
     activation_sha = str(identity_before.get("activation_sha") or "")
     stale_artifact_excluded_count = 0
     token_by_stage: dict[str, Any] = {}
@@ -458,7 +471,11 @@ def main() -> int:
             "activation_sha": activation_sha,
         }
 
-    stream_ok = bool(fixture_meta.get("ok")) and "CAPTURE_STREAM_MISSING" not in failed
+    stream_ok = (
+        bool(fixture_meta.get("ok"))
+        and "CAPTURE_STREAM_MISSING" not in failed
+        and "CERTIFICATION_INPUT_COVERAGE_FAIL" not in failed
+    )
     _stop_cert_children("20260812")
 
     full_day: dict[str, Any] = {"skipped": True}

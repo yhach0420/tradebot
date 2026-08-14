@@ -7813,10 +7813,15 @@ def _build_live_summary(
     if session_cfg.get("universe_mode"):
         summary.setdefault("universe_mode", session_cfg.get("universe_mode"))
     try:
-        from datetime import datetime as _dt
-        from zoneinfo import ZoneInfo as _ZI
+        from small_paper.session_runtime_identity import resolve_runtime_trading_date, stamp_session_identity
 
-        summary.setdefault("trading_date", _dt.now(_ZI("Asia/Tokyo")).strftime("%Y%m%d"))
+        summary.setdefault("trading_date", resolve_runtime_trading_date())
+        stamp_session_identity(
+            summary,
+            session_id=str(getattr(state, "observer_session_id", "") or ""),
+            session_kind=str((session_cfg.get("am_pm_session") or {}).get("kind") or ""),
+            trading_date=str(summary.get("trading_date") or ""),
+        )
     except Exception:
         pass
     summary.update(_policy_summary_extras(config))
@@ -8366,8 +8371,20 @@ def run_live_dry_run(
             }
 
     entry_eligible: Optional[set[str]] = {t[0] for t in symbols} if enable_intraday_refresh else None
-    day_compact = datetime.now(JST).strftime("%Y%m%d")
+    from small_paper.session_runtime_identity import (
+        resolve_runtime_trading_date,
+        stamp_session_identity,
+        write_session_identity_file,
+    )
+
+    day_compact = resolve_runtime_trading_date()
     session_kind = str(getattr(am_pm_policy, "kind", "am") or "am").lower()
+    write_session_identity_file(
+        output_dir,
+        session_id=output_dir.name,
+        session_kind=session_kind,
+        trading_date=day_compact,
+    )
     universe_meta = _load_symbol_universe_meta_for_day(
         repo_root=repo_root,
         day_compact=day_compact,
@@ -8627,7 +8644,7 @@ def run_live_dry_run(
             if ingress_v2:
                 from small_paper.day_fixed_am_registration import publish_runtime_desired_universe
 
-                day_pub = datetime.now(JST).strftime("%Y%m%d")
+                day_pub = resolve_runtime_trading_date()
                 pub = publish_runtime_desired_universe(
                     native_root,
                     day_pub,
@@ -8648,7 +8665,7 @@ def run_live_dry_run(
                     push,
                     specs,
                     native_root=native_root,
-                    trading_date=datetime.now(JST).strftime("%Y%m%d"),
+                    trading_date=resolve_runtime_trading_date(),
                 )
             code_to_symbol.clear()
             for row in merged:
@@ -8716,7 +8733,7 @@ def run_live_dry_run(
                 from small_paper.market_capture_sidecar import capture_day_dir
 
                 notify_syms = after_syms or [s[0] for s in specs]
-                day = datetime.now(JST).strftime("%Y%m%d")
+                day = resolve_runtime_trading_date()
                 notify_registration_refresh(
                     native_root,
                     trading_date=day,
@@ -8959,7 +8976,7 @@ def run_live_dry_run(
         try:
             from api.kabu_register import format_register_failure_message, register_symbols_cleared
 
-            day = datetime.now(JST).strftime("%Y%m%d")
+            day = resolve_runtime_trading_date()
             if ingress_v2:
                 # Ingress owns Station register; Paper publishes desired universe only.
                 # After freeze this is always frozen AM50, never PM screening membership.
@@ -10076,9 +10093,10 @@ def run_live_dry_run(
         # Phase675 / stop-risk: Discord must not block archive/seal (Summary already on disk).
         # Killable subprocess worker (terminate→kill); never ThreadPoolExecutor fake timeout.
         from small_paper.bounded_side_task import run_subprocess_bounded, telemetry as side_task_telemetry
+        from small_paper.session_runtime_identity import resolve_runtime_trading_date
 
         _stop = str(getattr(state, "stop_reason", "") or summary.get("stop_reason") or "")
-        _day = str(summary.get("trading_date") or datetime.now(JST).strftime("%Y%m%d")).replace("-", "")[:8]
+        _day = str(summary.get("trading_date") or resolve_runtime_trading_date()).replace("-", "")[:8]
         if _stop == "morning_session_close":
             _dedupe = f"am_summary|{_day}"
         elif _stop == "afternoon_session_close":
@@ -10289,6 +10307,16 @@ def run_live_dry_run(
             if seal_path.is_file():
                 try:
                     seal_obj = json.loads(seal_path.read_text(encoding="utf-8"))
+                    from small_paper.session_runtime_identity import stamp_session_identity
+
+                    stamp_session_identity(
+                        seal_obj,
+                        session_id=str(getattr(bridge, "session_id", "") or output_dir.name),
+                        trading_date=str(summary.get("trading_date") or ""),
+                    )
+                    seal_path.write_text(
+                        json.dumps(seal_obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+                    )
                     summary["session_seal_status"] = seal_obj.get("session_seal_status")
                     if str(seal_obj.get("session_seal_status") or "") in ("SEALED_VALID", "SEALED"):
                         from small_paper.bounded_side_task import mark_session_sealed, telemetry as side_task_telemetry
@@ -10300,6 +10328,31 @@ def run_live_dry_run(
                     pass
     except Exception as exc:
         log.warning("post-finalize seal failed: %s", exc)
+    if not (output_dir / "session_seal.json").is_file():
+        try:
+            from small_paper.session_runtime_identity import stamp_session_identity
+
+            incomplete = stamp_session_identity(
+                {
+                    "session_id": str(getattr(bridge, "session_id", "") or output_dir.name),
+                    "session_seal_status": "INCOMPLETE",
+                    "entry_count": 0,
+                    "required_count": 14,
+                    "required_artifact_missing_count": 14,
+                    "missing_required": ["session_seal_build_failed"],
+                    "finalize_locked": False,
+                    "generated_at": session_now().isoformat(timespec="seconds"),
+                },
+                session_id=str(getattr(bridge, "session_id", "") or output_dir.name),
+                trading_date=str(summary.get("trading_date") or ""),
+            )
+            (output_dir / "session_seal.json").write_text(
+                json.dumps(incomplete, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
+            summary["session_seal_status"] = "INCOMPLETE"
+            summary["root_session_seal_written"] = "INCOMPLETE_FALLBACK"
+        except Exception:
+            pass
     try:
         from small_paper.am_pm_summary_preservation import preserve_session_summary_at_end
 

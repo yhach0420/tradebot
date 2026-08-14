@@ -123,6 +123,16 @@ def official_cert_child_env(source: Optional[dict[str, str]] = None) -> dict[str
         env[ENV_MARKET_INPUT_MODE] = MARKET_INPUT_REPLAY
     env.pop(ENV_TOKEN_PREFLIGHT, None)
     env.pop(ENV_CERT_PROBE, None)
+    if session_clock_enabled(environ=env) and not str(env.get("TRADEBOT_TRADING_DATE") or "").strip():
+        v0 = str(env.get(ENV_V0) or "").strip()
+        if v0:
+            try:
+                dt = datetime.fromisoformat(v0)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=JST)
+                env["TRADEBOT_TRADING_DATE"] = dt.astimezone(JST).strftime("%Y%m%d")
+            except Exception:
+                pass
     return env
 
 

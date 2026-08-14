@@ -147,10 +147,9 @@ def execution_scope_from_env(*, environ: Optional[Mapping[str, str]] = None) -> 
 
 
 def stamp_execution_scope(doc: dict[str, Any], *, environ: Optional[Mapping[str, str]] = None) -> dict[str, Any]:
-    scope = execution_scope_from_env(environ=environ)
-    if scope.get("certification_run_id") or scope.get("stage_run_id"):
-        doc.update({k: v for k, v in scope.items() if v})
-    return doc
+    from small_paper.session_runtime_identity import stamp_session_identity
+
+    return stamp_session_identity(doc, environ=environ)
 
 
 def artifact_matches_scope(doc: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:

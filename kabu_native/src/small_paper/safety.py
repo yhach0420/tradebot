@@ -24,7 +24,9 @@ from small_paper.runtime_clock import now_jst as session_now
 
 def safety_trading_date() -> str:
     """Domain B: which trading day's frozen/registration the safety probe uses."""
-    return session_now().strftime("%Y%m%d")
+    from small_paper.session_runtime_identity import resolve_runtime_trading_date
+
+    return resolve_runtime_trading_date()
 
 
 @dataclass
@@ -33,6 +35,86 @@ class SafetyCheck:
     passed: bool
     message: str
     details: dict[str, Any] = field(default_factory=dict)
+
+
+def parse_kabu_http_diagnostic(message: str) -> dict[str, Any]:
+    """Extract HTTP / Kabu Code / Message from an error string. No secrets."""
+    import re
+
+    text = str(message or "")
+    http = None
+    m = re.search(r"HTTP\s+(\d{3})", text, re.I)
+    if m:
+        http = int(m.group(1))
+    code = None
+    cm = re.search(r"\b(4001\d{3})\b", text)
+    if cm:
+        code = cm.group(1)
+    kabu_msg = ""
+    mm = re.search(r"(ログイン認証エラー|APIキー不一致|API実行回数|[^\s]{0,80}エラー)", text)
+    if mm:
+        kabu_msg = mm.group(1)
+    endpoint = ""
+    um = re.search(r"url='([^']+)'", text)
+    if um:
+        endpoint = um.group(1)
+    return {
+        "http_status": http,
+        "kabu_code": code,
+        "kabu_message": kabu_msg,
+        "endpoint": endpoint,
+        "error_text": text[:500],
+    }
+
+
+def safety_failure_diagnostic_payload(
+    check: SafetyCheck,
+    *,
+    exception: Optional[BaseException] = None,
+) -> dict[str, Any]:
+    """Diagnostic-only payload for current-run safety/pilot FAIL. No password/token body."""
+    from small_paper.kabu_token_authority import load_station_bundle, load_station_owner, token_fingerprint
+    from small_paper.session_runtime_identity import session_identity_fields
+
+    ident = session_identity_fields()
+    parsed = parse_kabu_http_diagnostic(check.message)
+    details = dict(check.details or {})
+    if details.get("error"):
+        parsed2 = parse_kabu_http_diagnostic(str(details.get("error")))
+        for k, v in parsed2.items():
+            if v and not parsed.get(k):
+                parsed[k] = v
+    bundle = {}
+    owner = {}
+    try:
+        bundle = load_station_bundle() or {}
+        owner = load_station_owner() or {}
+    except Exception:
+        pass
+    fp = str(bundle.get("fingerprint") or "")
+    token = str(bundle.get("token") or "")
+    if not fp and token:
+        fp = token_fingerprint(token)
+    return {
+        "diagnostic_only": True,
+        "check_id": check.check_id,
+        "passed": bool(check.passed),
+        "message": check.message[:500],
+        "stage_run_id": ident.get("stage_run_id"),
+        "session_id": ident.get("session_id"),
+        "certification_run_id": ident.get("certification_run_id"),
+        "endpoint": parsed.get("endpoint") or details.get("endpoint"),
+        "http_status": parsed.get("http_status"),
+        "kabu_code": parsed.get("kabu_code"),
+        "kabu_message": parsed.get("kabu_message"),
+        "token_generation": bundle.get("generation") or bundle.get("token_generation") or owner.get("token_generation"),
+        "token_fingerprint": fp,
+        "authority_owner": owner.get("owner") or bundle.get("owner"),
+        "authority_owner_pid": owner.get("pid") or bundle.get("pid"),
+        "request_timestamp": session_now().isoformat(timespec="milliseconds"),
+        "stderr_exception_class": type(exception).__name__ if exception is not None else details.get("exception_class"),
+        "root_cause": details.get("root_cause"),
+    }
 
 
 _FORBIDDEN_IMPORT_MARKERS = (
@@ -582,19 +664,25 @@ def check_kabu_station_connection(repo_root: Path, *, stale_tick_sec: float = 12
     except Exception as e:
         err = str(e)
         root = "kabu_api_password" if "KABU_API_PASSWORD" in err else "kabu_station_unreachable"
-        return SafetyCheck(
+        chk = SafetyCheck(
             "kabu_station_connection",
             False,
             f"kabu connection failed: {e}",
             {
                 "root_cause": root,
                 "error": err,
+                "exception_class": type(e).__name__,
                 "kabu_probe_symbol": symbol_key,
                 "kabu_probe_symbol_registered": bool(probe.get("kabu_probe_symbol_registered")),
                 "registration_mutation": int(probe.get("registration_mutation") or 0),
                 "probe": probe,
             },
         )
+        try:
+            chk.details["safety_failure_diagnostic"] = safety_failure_diagnostic_payload(chk, exception=e)
+        except Exception:
+            pass
+        return chk
 
 
 def check_stale_data_probe(repo_root: Path, *, stale_tick_sec: float = 120.0) -> SafetyCheck:

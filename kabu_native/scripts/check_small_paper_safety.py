@@ -66,7 +66,14 @@ def main() -> int:
         return 2
 
     live_mode = args.live or args.full_session
-    day_key = args.report_date or datetime.now(JST).strftime("%Y%m%d")
+    day_key = args.report_date
+    if not day_key:
+        try:
+            from small_paper.session_runtime_identity import resolve_runtime_trading_date
+
+            day_key = resolve_runtime_trading_date()
+        except Exception:
+            day_key = datetime.now(JST).strftime("%Y%m%d")
     session_stamp = datetime.now(JST).strftime("%H%M%S")
 
     from small_paper.config import load_pilot_config
@@ -144,6 +151,24 @@ def main() -> int:
         )
     except Exception:
         pass
+
+    failed_diags = []
+    for c in failed:
+        try:
+            from small_paper.safety import safety_failure_diagnostic_payload
+
+            failed_diags.append(safety_failure_diagnostic_payload(c))
+        except Exception:
+            failed_diags.append({"check_id": c.check_id, "message": c.message[:500]})
+    if failed_diags:
+        report["safety_failure_diagnostics"] = failed_diags
+        diag_path = native_root / "results" / "reports" / f"safety_failure_diagnostics_{day_key}.json"
+        try:
+            diag_path.parent.mkdir(parents=True, exist_ok=True)
+            diag_path.write_text(json.dumps(failed_diags, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            report["safety_failure_diagnostics_path"] = str(diag_path)
+        except Exception:
+            pass
 
     out = native_root / "results" / "reports" / f"small_paper_safety_{day_key}.json"
     out.parent.mkdir(parents=True, exist_ok=True)

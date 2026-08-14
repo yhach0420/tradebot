@@ -176,13 +176,26 @@ class LiveSessionWriter:
         self._enqueue(("jsonl", "discord_entry_delivery.jsonl", dict(record), False), critical=False)
 
     def append_heartbeat(self, record: Mapping[str, Any]) -> None:
-        # Heartbeat is infrequent; write through the same path so order is preserved.
-        self._enqueue(("heartbeat", dict(record)), critical=True)
+        row = dict(record)
+        try:
+            from small_paper.session_runtime_identity import stamp_session_identity
+
+            stamp_session_identity(row, session_id=self.output_dir.name)
+        except Exception:
+            pass
+        self._enqueue(("heartbeat", row), critical=True)
 
     def write_summary(self, summary: Mapping[str, Any]) -> None:
         self.flush(timeout=2.0)
+        body = dict(summary)
+        try:
+            from small_paper.session_runtime_identity import stamp_session_identity
+
+            stamp_session_identity(body, session_id=self.output_dir.name)
+        except Exception:
+            pass
         (self.output_dir / "small_paper_summary.json").write_text(
-            json.dumps(dict(summary), ensure_ascii=False, indent=2),
+            json.dumps(body, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 

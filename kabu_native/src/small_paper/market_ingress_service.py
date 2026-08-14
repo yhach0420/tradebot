@@ -157,8 +157,11 @@ def iter_ingress_replay_records(source: str):
                     continue
 
 
-def make_ingress_session_id() -> str:
-    return f"ing_{trading_date_jst()}_{os.getpid()}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+def make_ingress_session_id(trading_date: Optional[str] = None) -> str:
+    from small_paper.session_runtime_identity import resolve_runtime_trading_date
+
+    day = trading_date or resolve_runtime_trading_date()
+    return f"ing_{day}_{os.getpid()}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
 
 
 def universe_symbol_hash(symbols: Sequence[str]) -> str:
@@ -179,12 +182,17 @@ class MarketIngressService:
         on_notify: Optional[Callable[[str, str], None]] = None,
     ) -> None:
         self.native_root = Path(native_root)
-        self.trading_date = trading_date or trading_date_jst(session_now())
+        try:
+            from small_paper.session_runtime_identity import resolve_runtime_trading_date
+
+            self.trading_date = trading_date or resolve_runtime_trading_date()
+        except Exception:
+            self.trading_date = trading_date or trading_date_jst(session_now())
         self.silence_stale_sec = float(silence_stale_sec)
         self.synthetic = bool(synthetic)
         self._replay_source = ""
         self.on_notify = on_notify
-        self.session_id = make_ingress_session_id()
+        self.session_id = make_ingress_session_id(self.trading_date)
         self.sm = IngressStateMachine()
         self.desired_symbols: list[str] = []
         self.registered_symbols: list[str] = []

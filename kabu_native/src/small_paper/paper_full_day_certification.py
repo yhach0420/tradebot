@@ -494,6 +494,35 @@ def source_regression_gates(*, native_root: Optional[Path] = None) -> dict[str, 
         and ' / "runs" / ' in derived,
         "reason": "cert dest must be certification_run_id/stage_run_id scoped; failed_tests from current evidence",
     }
+    ident_mod = (native / "src/small_paper/session_runtime_identity.py").read_text(encoding="utf-8")
+    cov_mod = (native / "src/small_paper/certification_input_coverage.py").read_text(encoding="utf-8")
+    native_entry = (native / "src/small_paper/v1r_native_entry_live.py").read_text(encoding="utf-8")
+    checked = (native / "src/small_paper/paper_trade_checked_runner.py").read_text(encoding="utf-8")
+    token_src = (native / "src/small_paper/kabu_token_authority.py").read_text(encoding="utf-8")
+    checks["POST_SESSION_CURRENT_RUN_SEAL_SCOPE"] = {
+        "ok": "iter_current_run_soak_snapshots" in checked
+        and "historical_seal_included_count" in checked
+        and "Formal session seal SoT" in checked,
+        "reason": "post-session must evaluate current-run sessions and root session_seal.json only",
+    }
+    checks["RUNTIME_TRADING_DATE_SESSION_CLOCK"] = {
+        "ok": "resolve_runtime_trading_date" in native_entry
+        and "RUNTIME_TRADING_DATE_NOT_PROVEN" in ident_mod
+        and "datetime.now(JST)" not in native_entry.split("def resolve_day_fixed_am_runtime_universe")[1][:800],
+        "reason": "native trading_date must not silent-fallback to wall datetime.now(JST)",
+    }
+    checks["CERT_STAGE_TOKEN_ROLLOVER"] = {
+        "ok": "STALE_STAGE_TOKEN_REJECTED" in token_src
+        and "stale_stage_takeover" in token_src
+        and "stage_run_id" in token_src,
+        "reason": "next stage must not board with previous-stage token; takeover after owner dead",
+    }
+    checks["CERTIFICATION_FULL_DAY_INPUT_COVERAGE"] = {
+        "ok": "CERTIFICATION_INPUT_COVERAGE_FAIL" in cov_mod
+        and "CERTIFICATION_ONLY_INPUT" in cov_mod
+        and "evaluate_full_day_input_coverage" in cov_mod,
+        "reason": "Full-Day must gate actual stream coverage before Runtime start",
+    }
 
     evalr = (native / "src/small_paper/evaluation_reachability.py").read_text(encoding="utf-8")
     checks["NATIVE_FULL_PUSH_THROTTLE_BUG"] = {

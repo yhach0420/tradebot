@@ -218,19 +218,20 @@ def default_pythonpath() -> str:
 
 
 def resolve_session_artifact_paths(snapshot_path: Path) -> dict[str, Optional[Path]]:
-    """Locate manifest/seal near a soak_session_snapshot.json."""
+    """Locate manifest/seal near a soak_session_snapshot.json.
+
+    Formal session seal SoT is <session_root>/session_seal.json only.
+    live_order_safety/session_seal.json and nested subsystem seals are never SoT.
+    """
     snap = Path(snapshot_path)
     candidates_manifest: list[Path] = []
-    candidates_seal: list[Path] = []
-    # typical: <session>/live_order_safety/soak_session_snapshot.json
     safety = snap.parent
     session_root = safety.parent if safety.name == "live_order_safety" else safety
-    for base in (safety, session_root, snap.parent):
+    for base in (session_root, safety, snap.parent):
         candidates_manifest.append(base / "session_manifest.json")
-        candidates_seal.append(base / "session_seal.json")
-    candidates_seal.append(session_root / "session_seal.json")
     man = next((p for p in candidates_manifest if p.is_file()), None)
-    seal = next((p for p in candidates_seal if p.is_file()), None)
+    root_seal = session_root / "session_seal.json"
+    seal = root_seal if root_seal.is_file() else None
     return {"snapshot": snap if snap.is_file() else None, "manifest": man, "seal": seal, "session_root": session_root}
 
 
@@ -515,7 +516,11 @@ def write_qualified_session_fixture(
         "finalize_locked": True,
         "seal_metadata_overlay_applied": True,
     }
+    from small_paper.session_runtime_identity import stamp_session_identity, write_session_identity_file
+
+    stamp_session_identity(seal, session_id=session_id)
     (root / "session_seal.json").write_text(json.dumps(seal, indent=2) + "\n", encoding="utf-8")
+    write_session_identity_file(root, session_id=session_id)
     snap = {
         "schema_version": "687W7A2.1",
         "phase": "687W4S",
@@ -539,6 +544,7 @@ def write_qualified_session_fixture(
         "mapping": {"missing_intent_count": 0, "orphan_intent_count": 0, "duplicate_intent_created_count": 0},
         **prov,
     }
+    stamp_session_identity(snap, session_id=session_id)
     snap_path = safety / "soak_session_snapshot.json"
     snap_path.write_text(json.dumps(snap, indent=2) + "\n", encoding="utf-8")
     return snap_path
@@ -684,7 +690,18 @@ class PaperTradeCheckedRunner:
         self.steps: list[StepResult] = []
         self.paper_call_count = 0
         self.w4s_call_count = 0
-        self.trading_date = trading_date_jst()
+        from small_paper.session_runtime_identity import (
+            ENV_TRADING_DATE,
+            RuntimeTradingDateNotProven,
+            resolve_runtime_trading_date,
+        )
+
+        try:
+            self.trading_date = resolve_runtime_trading_date()
+            os.environ.setdefault(ENV_TRADING_DATE, self.trading_date)
+        except RuntimeTradingDateNotProven:
+            # Orchestrator banner/path only. Never publish wall date as TRADEBOT_TRADING_DATE.
+            self.trading_date = trading_date_jst()
         self.blocked: Optional[dict[str, Any]] = None
         self.paper_exit_code: Optional[int] = None
         self.paper_elapsed_sec: Optional[float] = None
@@ -1468,8 +1485,14 @@ class PaperTradeCheckedRunner:
             self._record("w4s_forward_soak", 9, "SKIPPED", exit_code=0, started=started, result="SKIPPED")
 
         results_root = self.native_root / "results"
+        from small_paper.session_runtime_identity import (
+            expected_current_run_scope,
+            iter_current_run_soak_snapshots,
+        )
+
+        expected_scope = expected_current_run_scope(trading_date=self.trading_date)
         snaps = (
-            sorted(results_root.rglob("soak_session_snapshot.json"), key=lambda p: p.stat().st_mtime)
+            iter_current_run_soak_snapshots(results_root, expected=expected_scope)
             if results_root.is_dir()
             else []
         )
@@ -1617,6 +1640,9 @@ class PaperTradeCheckedRunner:
             "excluded_session_count": excluded_n,
             "excluded_sessions": excluded_sessions[:50],
             "exclusion_reasons": sorted({e.get("reason") or "" for e in excluded_sessions if e.get("reason")}),
+            "current_run_scope": expected_scope,
+            "current_run_snapshot_count": len(snaps),
+            "historical_seal_included_count": 0,
             "readonly_success_sessions": readonly_success,
             "seal_status": seal_status,
             "seal_entry_count": seal_entry,
@@ -2520,7 +2546,17 @@ class PaperTradeCheckedRunner:
                         flush=True,
                     )
                     return 2
-            self.trading_date = trading_date_jst()
+            from small_paper.session_runtime_identity import (
+                ENV_TRADING_DATE,
+                RuntimeTradingDateNotProven,
+                resolve_runtime_trading_date,
+            )
+
+            try:
+                self.trading_date = resolve_runtime_trading_date()
+                os.environ.setdefault(ENV_TRADING_DATE, self.trading_date)
+            except RuntimeTradingDateNotProven:
+                self.trading_date = trading_date_jst()
             self._print_banner()
 
             # Phase687W9/W15B order:

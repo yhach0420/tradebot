@@ -558,9 +558,11 @@ def run_live_order_preflight(
 
         native = resolve_native_root_for_register_state(root)
         try:
+            from small_paper.session_runtime_identity import resolve_runtime_trading_date
+
             acquired = acquire_token_for_readonly(
                 native_root=native,
-                trading_date=session_now().strftime("%Y%m%d"),
+                trading_date=resolve_runtime_trading_date(),
                 caller="live_order_api_wiring",
                 rest=client,
             )

@@ -1022,6 +1022,12 @@ class V1RLiveDualLane:
             "fail_reason": self.fail_reason,
             "identity": self.identity(),
         }
+        try:
+            from small_paper.session_runtime_identity import stamp_session_identity
+
+            stamp_session_identity(row)
+        except Exception:
+            pass
         self.traces.append(row)
         if self.trace_dir:
             p = self.trace_dir / "v1r_dual_lane_trace.jsonl"

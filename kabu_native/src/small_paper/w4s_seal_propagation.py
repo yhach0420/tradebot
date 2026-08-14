@@ -252,25 +252,11 @@ def w4s_seal_success_ok(snap: Mapping[str, Any], seal: Optional[Mapping[str, Any
 
 
 def resolve_seal_path(session_root: Path, safety_dir: Optional[Path] = None) -> Optional[Path]:
-    """Prefer session-root full seal (14 artifacts) over safety-subdir incomplete seal."""
-    candidates: list[Path] = [session_root / "session_seal.json"]
-    if safety_dir is not None:
-        candidates.append(safety_dir / "session_seal.json")
-    best: Optional[Path] = None
-    best_n = -1
-    for p in candidates:
-        if not p.is_file():
-            continue
-        try:
-            seal = json.loads(p.read_text(encoding="utf-8"))
-            n = int(seal.get("entry_count") or 0)
-            if n > best_n:
-                best = p
-                best_n = n
-        except Exception:
-            if best is None:
-                best = p
-    return best
+    """Formal SoT is session-root session_seal.json only. Nested safety seals are never adopted."""
+    root_seal = Path(session_root) / "session_seal.json"
+    if root_seal.is_file():
+        return root_seal
+    return None
 
 
 def _snapshot_entry_rel(seal: Mapping[str, Any]) -> Optional[str]:

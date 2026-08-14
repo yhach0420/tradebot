@@ -51,8 +51,14 @@ def _pct(vals: list[float], p: float) -> Optional[float]:
 
 def find_soak_snapshots(root: Path) -> list[Path]:
     from small_paper.paper_trade_checked_runner import is_excluded_forward_path
+    from small_paper.session_runtime_identity import (
+        expected_current_run_scope,
+        iter_current_run_soak_snapshots,
+    )
 
-    found = sorted(root.rglob("soak_session_snapshot.json"), key=lambda p: p.stat().st_mtime)
+    expected = expected_current_run_scope()
+    # Unproven current-run identity must not rglob historical seals into evaluation.
+    found = iter_current_run_soak_snapshots(root, expected=expected) if expected else []
     out: list[Path] = []
     for p in found:
         excluded, _ = is_excluded_forward_path(p)

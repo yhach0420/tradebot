@@ -1338,7 +1338,31 @@ def resolve_day_fixed_am_runtime_universe(
     )
 
     root = Path(native_root or NATIVE_ROOT)
-    day = str(trading_date or datetime.now(JST).strftime("%Y%m%d"))
+    from small_paper.session_runtime_identity import (
+        RUNTIME_TRADING_DATE_NOT_PROVEN,
+        RuntimeTradingDateNotProven,
+        resolve_runtime_trading_date,
+    )
+
+    try:
+        day = resolve_runtime_trading_date(trading_date)
+    except RuntimeTradingDateNotProven:
+        return {
+            "ok": False,
+            "contract": UNIVERSE_CONTRACT,
+            "trading_date": str(trading_date or ""),
+            "symbols": [],
+            "symbol_count": 0,
+            "universe_path": None,
+            "source": "",
+            "ingress_match": False,
+            "ingress_count": 0,
+            "am_count": 0,
+            "reason": RUNTIME_TRADING_DATE_NOT_PROVEN,
+            "authority": "",
+            "canonical_membership_sha": "",
+            "provenance_source_drift": False,
+        }
     am_path = (
         root / "results" / "reports" / f"universe_core10_dynamic40_price_risk_am_{day}.csv"
     )
@@ -1528,10 +1552,13 @@ def ensure_native_entry(
             )
         if td is not None:
             try:
+                from small_paper.ingress_run_identity import stamp_execution_scope
+
                 td.mkdir(parents=True, exist_ok=True)
                 (td / "v1r_native_universe_wiring.json").write_text(
                     json.dumps(
-                        {
+                        stamp_execution_scope(
+                            {
                             "ts": _now().isoformat(timespec="seconds"),
                             "resolved": resolved,
                             "engine": {
@@ -1541,7 +1568,8 @@ def ensure_native_entry(
                                 "universe_source": _ENGINE.universe_source,
                                 "trace_dir": str(_ENGINE.trace_dir) if _ENGINE.trace_dir else None,
                             },
-                        },
+                            }
+                        ),
                         indent=2,
                         ensure_ascii=False,
                         default=str,

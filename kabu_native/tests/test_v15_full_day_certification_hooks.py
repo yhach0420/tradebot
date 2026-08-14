@@ -47,6 +47,8 @@ def _clear_clock_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TRADEBOT_CERTIFICATION_MODE",
         "TRADEBOT_SKIP_CERT_GATE",
         "TRADEBOT_CERT_CONSUMER_EXTRA_DELAY_SEC",
+        "TRADEBOT_TRADING_DATE",
+        "TRADEBOT_SESSION_TRADING_DATE",
     ):
         monkeypatch.delenv(k, raising=False)
 

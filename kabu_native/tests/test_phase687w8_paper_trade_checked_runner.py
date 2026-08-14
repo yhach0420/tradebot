@@ -7,6 +7,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from small_paper.paper_trade_checked_runner import (
     EXISTING_PAPER_BAT_SHA256_BASELINE,
     PaperTradeCheckedRunner,
@@ -29,6 +31,19 @@ PAPER_BAT = REPO / "run_paper_trade.bat"
 CFG = NATIVE / "configs" / "small_paper_pilot_q070_cap3_entry_price_risk_guard_trailing_mfe_shadow.yaml"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_w8_from_leaked_cert_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        "TRADEBOT_CERTIFICATION_MODE",
+        "TRADEBOT_CERTIFICATION_RUN_ID",
+        "TRADEBOT_CERT_STAGE_RUN_ID",
+        "TRADEBOT_TRADING_DATE",
+        "TRADEBOT_SESSION_CLOCK",
+        "TRADEBOT_SESSION_CLOCK_V0",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 def _design_pass(native: Path) -> None:
     design = (
         native
@@ -39,6 +54,11 @@ def _design_pass(native: Path) -> None:
     )
     design.parent.mkdir(parents=True, exist_ok=True)
     design.write_text(json.dumps({"pass": True, "mismatch_count": 0}), encoding="utf-8")
+    retention = native / "results" / "retention"
+    retention.mkdir(parents=True, exist_ok=True)
+    (retention / "small_paper_retention_baseline.json").write_text(
+        json.dumps({"sessions": []}), encoding="utf-8"
+    )
 
 
 def _ok_runner(cmds: dict[str, int] | None = None, paper_code: int = 0, w4s_verdict: str = "FORWARD_SOAK_IN_PROGRESS"):
