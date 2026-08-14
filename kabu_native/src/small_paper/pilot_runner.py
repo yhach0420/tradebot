@@ -8018,6 +8018,44 @@ def _early_session_summary(
     }
 
 
+def apply_external_backup_teardown_logging(
+    summary: dict[str, Any],
+    ext: Mapping[str, Any] | None = None,
+    *,
+    exc: BaseException | None = None,
+    logger: Any = None,
+) -> dict[str, Any]:
+    """Record external-backup teardown outcome. Warning-only; never raises for logging.
+
+    V13 PM 2026-08-14: ``run_live_dry_run`` used undefined ``log`` on the
+    D-not-connected pending path (pilot_runner.py:10148), then the except
+    handler used the same undefined ``log`` (line 10153). First NameError was
+    swallowed as a backup error; the second escaped and skipped later seal.
+    """
+    import logging
+
+    lg = logger or logging.getLogger(__name__)
+    if exc is not None:
+        lg.warning("external backup error: %s", exc)
+        summary["session_external_backup_error"] = str(exc)
+        summary["session_external_backup"] = {
+            "ok": False,
+            "pending": True,
+            "code": "EXTERNAL_BACKUP_PENDING",
+            "error": str(exc),
+        }
+        return summary
+    body = dict(ext or {})
+    summary["session_external_backup"] = body
+    if body.get("pending"):
+        lg.warning(
+            "external backup pending (D not connected): %s", body.get("session")
+        )
+    elif not body.get("ok") and not body.get("skipped"):
+        lg.warning("external backup failed: %s", body)
+    return summary
+
+
 def run_live_dry_run(
     config: SmallPaperPilotConfig,
     *,
@@ -10143,21 +10181,10 @@ def run_live_dry_run(
             }
         else:
             ext = _eres.value if isinstance(_eres.value, dict) else {"ok": True, "value": _eres.value}
-        summary["session_external_backup"] = ext
-        if ext.get("pending"):
-            log.warning("external backup pending (D not connected): %s", ext.get("session"))
-        elif not ext.get("ok") and not ext.get("skipped"):
-            log.warning("external backup failed: %s", ext)
+        apply_external_backup_teardown_logging(summary, ext)
         writer.write_summary(summary)
     except Exception as exc:
-        log.warning("external backup error: %s", exc)
-        summary["session_external_backup_error"] = str(exc)
-        summary["session_external_backup"] = {
-            "ok": False,
-            "pending": True,
-            "code": "EXTERNAL_BACKUP_PENDING",
-            "error": str(exc),
-        }
+        apply_external_backup_teardown_logging(summary, exc=exc)
         try:
             writer.write_summary(summary)
         except Exception:
