@@ -293,7 +293,20 @@ def test_cross_process_second_issuer_blocked(station_tmp: Path) -> None:
     assert len(blocked) == 1
 
 
-def test_cert_precheck_source_has_no_issue_token() -> None:
+def test_leftover_day_dir_token_without_live_owner_is_unavailable(station_tmp: Path) -> None:
+    """V19 cert FAIL: 20260812 leftover token reused pre-Ingress → Wallet 4001009."""
+    (station_tmp / ".kabu_session_token").write_text("stale-leftover-token", encoding="utf-8")
+    owner_path = station_tmp / "kabu_station_owner.json"
+    owner_path.write_text(
+        json.dumps({"owner": OWNER_INGRESS, "pid": 2147483646, "token_generation": 21}),
+        encoding="utf-8",
+    )
+    with pytest.raises(TokenUnavailable):
+        acquire_token_for_readonly(
+            native_root=station_tmp,
+            trading_date="20260812",
+            caller="kabu_readonly_readiness",
+        )
     src = (NATIVE / "scripts" / "run_paper_full_day_certification.py").read_text(encoding="utf-8")
     assert "issue_token_from_env" not in src
     pre = (NATIVE / "scripts" / "run_market_ingress_v2_preflight.py").read_text(encoding="utf-8")

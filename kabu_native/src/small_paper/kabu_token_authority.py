@@ -728,17 +728,20 @@ def acquire_token_for_readonly(
     caller: str,
     rest: Any = None,
 ) -> dict[str, Any]:
-    """Board/probe access. Reuses published token only. Never POSTs /token."""
-    token = read_shared_token(native_root, trading_date)
-    gen = read_shared_generation(native_root, trading_date)
-    body = load_authority(native_root, trading_date)
+    """Board/probe access. Reuses published token only. Never POSTs /token.
+
+    Leftover day-dir tokens from a dead Ingress are not a live shared token.
+    Pre-Ingress consumers must wait; they must not probe Station with a stale key.
+    """
     owner_active = ingress_owner_active(native_root, trading_date)
-    if token:
+    token = read_shared_token(native_root, trading_date) if owner_active else ""
+    gen = read_shared_generation(native_root, trading_date) if owner_active else 0
+    if token and owner_active:
         return {
             "token": token,
             "issued": False,
             "reused": True,
-            "owner": OWNER_INGRESS if owner_active else str(body.get("owner") or OWNER_INGRESS),
+            "owner": OWNER_INGRESS,
             "token_generation": gen,
             "fingerprint": token_fingerprint(token),
             "caller": caller,
