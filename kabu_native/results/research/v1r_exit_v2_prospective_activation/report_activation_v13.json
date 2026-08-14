@@ -1,0 +1,17 @@
+{
+  "verdict": "V1R_EXIT_V2_RUNTIME_ACTIVATION_V13_FROZEN",
+  "activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V13",
+  "activation_sha": "36fcee66a59fa708699c33e1671470153bd78c275d2cd5428876dfd179f31c13",
+  "parent_activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V12",
+  "parent_activation_sha": "934c082e402020b9ac2d4b3c7d240a06bc67ebf9cd11d8d1d9b04214f5f11982",
+  "supersede_reason": "RUNTIME_FROZEN_UNIVERSE_SOT_AND_PM_REBUILD_ISOLATION_FIX",
+  "runtime_code_git_commit": "b9c7beb4f5c10dff700bee71ad482e7c8e29b263",
+  "runtime_dependency_count": 36,
+  "inventory_match_after_bind": true,
+  "inventory_matched": 36,
+  "strategy_sha": "9ad4ba2730892d40c757d940b82480e620e502e3e789839120e90b18be082547",
+  "precommit_sha": "acd3fee10c94f84b9ae2b1d4bddd9402ed4ab588af0ba06be0063cb8a0662100",
+  "selector_path": "results/research/v1r_exit_v2_prospective_activation/active_v1r_activation.json",
+  "startup_binding_ok": true,
+  "created_at": "2026-08-14T13:34:31.762970+09:00"
+}
