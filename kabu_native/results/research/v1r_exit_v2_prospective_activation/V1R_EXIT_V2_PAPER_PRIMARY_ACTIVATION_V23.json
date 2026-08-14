@@ -1,0 +1,293 @@
+{
+  "manifest_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V23",
+  "parent_activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V22",
+  "parent_activation_sha": "6c2d05dde6f64b4838a6b69c009c34981bf054ad4a253d85aa3aefdd05f29d34",
+  "parent_activation_status": "SUPERSEDED_IMMUTABLE_HISTORY",
+  "supersede_reason": "RUNTIME_SESSION_DAY_IDENTITY_POSTSESSION_SCOPE_AND_CERT_STREAM_FIX",
+  "runtime_roles": {
+    "primary": "PAPER_PRIMARY",
+    "strategy": "PASSIVE_ASYMMETRIC_EXIT_V2_FULL_STRATEGY",
+    "strategy_sha": "9ad4ba2730892d40c757d940b82480e620e502e3e789839120e90b18be082547",
+    "entry_source": "v1r_native",
+    "entry_manifest": "PASSIVE_FILL_ENTRY_V1",
+    "control_fixed600": "SHADOW_CONTROL",
+    "control_strategy": "PASSIVE_FIXED600_FULL_STRATEGY_V1R",
+    "control_strategy_sha": "dfd311d4dc32a802b8e55f6d28d75a2db12d4192a71fb53b48d5308573a58e0a",
+    "pbv2": "SHADOW_ONLY",
+    "capital_1m": "SHADOW_ONLY_DIAGNOSTIC"
+  },
+  "strategy_sha": "9ad4ba2730892d40c757d940b82480e620e502e3e789839120e90b18be082547",
+  "precommit_sha": "acd3fee10c94f84b9ae2b1d4bddd9402ed4ab588af0ba06be0063cb8a0662100",
+  "entry_strategy_sha": "dfd311d4dc32a802b8e55f6d28d75a2db12d4192a71fb53b48d5308573a58e0a",
+  "entry_sha": "f2887bb2be539cc173aee438a43ee8afb8cfa2b8c31380937ecd843e90dd9b29",
+  "execution_sha": "040fa4b061e575d3f6cdb2a11ffd3f862da5351b298567b31363de923a590869",
+  "model_sha": "f63f7f88e9ff6ea5b84a89b0949baa76166d697525620287a7c230f821e7356b",
+  "universe_binding_sha": "45b2fb20d02abbe7d557a55fecc87da3e7c19126eb7415ce9bdc4579aca39fee",
+  "universe_contract": "DAY_FIXED_AM_RUNTIME_UNIVERSE_V1",
+  "anchor_sha": "4a2f176ef6f52458cb0e5b38764275e6ddafc01e1849693965b116089514eac2",
+  "exit_v2_candidate_sha": "6cc3b8aade76e323682ec39dfd06878aab0ff1a99dd42922744b0054a7ea3255",
+  "exit_contract_sha": "9e3494c38e8040acb47ecbf057d6b0bbaa25682492308e7335ae74c1d47d4b19",
+  "control_strategy_sha": "dfd311d4dc32a802b8e55f6d28d75a2db12d4192a71fb53b48d5308573a58e0a",
+  "control_exit_sha": "2c9fcc6e92971c252c8df93716066dda515fcbff0283d748b03293379c5eb62c",
+  "guard": {
+    "id": "IMB_p5_t-10",
+    "persist_sec": 5.0,
+    "imbalance_lte": -0.1,
+    "monitor_to_sec": 120.0
+  },
+  "continuation": {
+    "id": "MFE60_IMB10",
+    "mfe_gte_bps": 60.0,
+    "imbalance_gte": 0.1
+  },
+  "cap": 5,
+  "qty": 100,
+  "wait_sec": 1.0,
+  "freshness_sec": 5.0,
+  "runtime_code_git_commit": "0c3531e6d2b6e11cdacb82985e875cecf9046798",
+  "runtime_file_sha256": {
+    "src/small_paper/v1r_activation_binding.py": "1d97be6840f3853a4cfb30ad31c4e06617d87d021a5885cede1f160c9d0ae27c",
+    "src/small_paper/v1r_paper_primary_launcher.py": "892aa1a427d9f81c108f78c0b5b07409d965e597b32862890d599525a9b551f6",
+    "src/small_paper/v1r_exit_v2_activation_gate.py": "18870d54cea4f8e52338f17f222de9350b162d42761924f4e07ca4a658d72938",
+    "src/small_paper/v1r_native_entry_live.py": "7b221d708b191adac8f74a9338a23635e18d5855459c3b1793dd995b096d0aa2",
+    "src/small_paper/v1r_live_dual_lane.py": "ba47c46c1cf7ea7d38b9d2734d38c8561765836856b13c24565be7f2776a5376",
+    "src/small_paper/v1r_pbv2_shadow_discord_digest.py": "a5948cb774ca8471d9a78fb3dd176489be41e4fd9fa10dec6159e4b4e390ad89",
+    "src/small_paper/v1r_pbv2_notification_routing.py": "e527301c9ed4383c06277db0710bc7b3a6492b0497ec84790196e0cf95904768",
+    "src/small_paper/v1r_pbv2_duplicate_runtime.py": "d803d079e7a981f525e2366a94fe69d6c62e45a60649e589786792222cd55a0e",
+    "src/small_paper/v1r_prospective_day_gate.py": "ddfa0595b7a49f41fe84b4880b68186fb4eb6328c6f670a6c8b8208daba70235",
+    "src/small_paper/runtime_clock.py": "41968d5124c92add00da91cc51b65537f22a241307d323ffd6da47b7248d50bb",
+    "src/small_paper/paper_full_day_certification.py": "330fca51e19a159cd44a152ef618e71710f5b144a1ce3d1434aa6b4c0a1cc347",
+    "src/small_paper/pilot_runner.py": "14c3179905aa0e2eade4c1f1f7dbc24452f7194ff435be036aa3b45b38041d02",
+    "src/small_paper/paper_market_bus_consumer.py": "55190fbece85a86d1c2a3304e23a1b231c6ffd63cbd02e0bcd3fdc1c24d9e231",
+    "src/small_paper/paper_trade_checked_runner.py": "f09ab3751eb20ceecaa9551ca6fd70100ecd100e793357cb2dacb07b9a5613ca",
+    "src/small_paper/market_ingress_spawn.py": "1597449e31f646589f2e668c9b596fa40ff038a7a077cb5855a13dafe267d9e7",
+    "src/small_paper/ingress_run_identity.py": "4a401276c03f89c5c3027fc92ec9a0d9ac489280e3c7b5c009a12ef08f23d617",
+    "src/small_paper/session_runtime_identity.py": "490e59ff8f199d5b360d454a348754e45bcfc9b20f485a7d3ec6245c4912dd32",
+    "src/small_paper/certification_input_coverage.py": "759c8bdcee6423be6d3cb7228730c1bfc787fcda07ececd3268fca2403210f95",
+    "src/small_paper/derived_artifact_contract.py": "b849f97afe6991557d7c564d179be84418d737fbadd44270b1ec231edd8685bc",
+    "src/small_paper/discord_notifier.py": "1b1c03d926d4df00c16ee424af442b68714e40a7359563c49f1f2e751dfba807",
+    "src/small_paper/v1r_primary_runtime.py": "c413d594ce4b5f15ea7dcae9fc96c90a355a97fb5dc89b9f018f5494362bc4b5",
+    "src/small_paper/v1r_exit_v2_contract.py": "ee928e2702669dc974aaf8973e8279aded5949ec3eba9b06baf08b156c4e7f2c",
+    "src/small_paper/v1r_primary_activation_gate.py": "f4377d5e73738c18d4131bd7ac5a536b08b2dd353f0cccb77169971ddd294d05",
+    "src/notify/v1r_discord_routing.py": "cc590240356fc2ea026764feec9cb65e5dfa9e96749e7c5b8032e1b04fbb4516",
+    "src/notify/v1r_discord_embeds.py": "7f1ef521b74311c86bb5e8a3e23aa811edd6d5f415bc39cd001f9079b0f1c19a",
+    "src/research/e1_x34a_execution_policy/arms.py": "f721d055ec4eb9a417ce6458560d62cb9b49908eef028c47592509852e883b93",
+    "src/small_paper/day_fixed_am_registration.py": "63044d7af78d4f239b8096b3417ea764885d54431a04f2781d4738fa1fc5c8f1",
+    "src/small_paper/kabu_registration_authority.py": "7b25c63a67c8f9bcea06375f7a489dd175a0b698f4be0984290da332c24426bc",
+    "src/small_paper/kabu_token_authority.py": "dbc966d27b6c11cd328eccb05599b3fc27c84fb4799dd6edcbc2bc21e05dee74",
+    "src/small_paper/kabu_readonly_readiness.py": "695d46b1ba878c5a49f866fd9f894f1c9caf271653c0c3e0e19aa0439fd16e5b",
+    "src/api/rest_client.py": "6978706e5dbb5218565da4fbcb90d969bf2336eb1d5a17f6da452c7b459366de",
+    "src/small_paper/ingress_control_channel.py": "e597df78d24e6c3f3f88b2ae77d952b52e3ad790535df69a544b2d091f22333d",
+    "src/small_paper/market_capture_registration.py": "8657aee717956a9d2139aecac0707081e22490af3b91d99b09dcda7f37bac13d",
+    "src/small_paper/market_ingress_service.py": "de5ed6b1aa8d039596ab5c700dee6eef9157c0e023d07c091c30d55dda980f28",
+    "src/small_paper/consumer_ack_state.py": "dcfc4bb6689c8b1356c507cccd3d05c8fe02b68affe2f8e762d1197391376f9a",
+    "src/small_paper/evaluation_reachability.py": "6281c1752dfe5706b80a983a063573998eaef376f60fc8d54c3103dee5fd2077",
+    "src/small_paper/live_writer.py": "f7790b3d3a5131be29112e98bf5fcf8abfb0b874cf3d6de523d78029a5d76bce",
+    "src/small_paper/consumer_push_telemetry.py": "640d6ef59d5e6415e45b873db327c63b76c23dd978fb9ba2c92bfeaf1f123485",
+    "src/api/kabu_register.py": "3e32aae2cc5c98999750a961cb5cbb612bb7f514c1465775123a4e59e01841e3",
+    "src/small_paper/safety.py": "0e1804f749ca89dea2ccd25ef127c2d9cb1638df64c8d73973cf59157b13da02",
+    "src/small_paper/registration_lifetime.py": "6aeb10b0d82f74124e59e168e0d14dc509b7780e8eafd6f81e93135dc7eb56b5",
+    "src/runner/am_pm_daily_runner.py": "f431586a488b14b0335b13dc1948098783a956f7ff78397622db64251409f618",
+    "src/universe/core10_dynamic40_price_risk.py": "7f7865681146e9dc054e09633bade319c6b3f00427a74f8630c1d99fbab7d584"
+  },
+  "runtime_contracts": {
+    "live_residency": {
+      "launcher_stub_forbidden": true,
+      "path": "launcher -> daily_runner/pilot -> MarketBus consumer",
+      "premature_exit_fail": true
+    },
+    "primary_entry_source": {
+      "source": "v1r_native",
+      "pbv2_hitchhike_forbidden": true,
+      "non_v1r_native_primary_admission_forbidden": true,
+      "pbv2_fallback_forbidden": true,
+      "native_unavailable_fail_closed": true
+    },
+    "universe_contract": {
+      "id": "DAY_FIXED_AM_RUNTIME_UNIVERSE_V1",
+      "am_core10_dynamic40": 50,
+      "same_membership_all_16_anchors": true,
+      "pm_refresh_membership_change_forbidden": true,
+      "prior_day_fallback_forbidden": true,
+      "ingress_registration_50_50_required": true
+    },
+    "native_trace": {
+      "trace_dir": "writer.output_dir",
+      "anchor_no_candidate_disk_record": true
+    },
+    "symbol_contract": {
+      "canonical_format": "bare_code",
+      "equivalence": [
+        "6098",
+        "6098.T",
+        "6098"
+      ],
+      "single_canonical_function_required": true
+    },
+    "fill_snapshot_bind": [
+      "event_time",
+      "Buy1.price",
+      "Buy1.qty",
+      "Sell1.price",
+      "Sell1.qty",
+      "CurrentPrice",
+      "freshness",
+      "special_quote",
+      "imbalance"
+    ],
+    "dual_lane": {
+      "primary": "PASSIVE_ASYMMETRIC_EXIT_V2_FULL_STRATEGY / PAPER_PRIMARY",
+      "control": "PASSIVE_FIXED600_FULL_STRATEGY_V1R / SHADOW_CONTROL",
+      "same_v1r_native_fill_start": true,
+      "independent_occupancy_after_fill": true,
+      "slot_release_on_actual_exit_only": true,
+      "trigger_time_release_forbidden": true
+    },
+    "timestamp_contract": {
+      "canonical_live_board_fill_clock": "Ingress received_at",
+      "t0": "fixed_anchor_minute_floor_signal_time",
+      "window": "[t0, t0+1.0s] inclusive",
+      "order": "find_ask_cross_fill first; EXPIRE only if still pending and t_now >= lim_t",
+      "consumer_time_time_as_fill_clock_forbidden": true,
+      "wait_price_qty_fresh_special_same_session_unchanged": true,
+      "lineage_verdict": "V1R_PASSIVE_FILL_TIMESTAMP_LINEAGE_RECONCILED_RUNTIME_ONLY",
+      "known_limitation_14d_capture_remap": "NOT_PROVEN"
+    },
+    "discord_contract": {
+      "v1r_pending_expired": "trade-entry",
+      "v1r_fill_exit": "trade-notify",
+      "pbv2": "trade-research / SHADOW_ONLY",
+      "silent_exception_forbidden": true,
+      "delivery_errors_audit_required": true
+    },
+    "pbv2_digest_contract": {
+      "internal_eval_continues": true,
+      "per_push_discord_forbidden": true,
+      "digest_cadence": "5m_or_fixed_anchor",
+      "primary_occupancy_mutation": 0
+    },
+    "fail_closed_contract": {
+      "native_not_ready_blocks_primary": true,
+      "activation_sha_mismatch_blocks_primary": true,
+      "duplicate_ingress_spawn_rejected": true
+    }
+  },
+  "evidence_status": {
+    "overall_e2e_evidence": "V1R_PAPER_TRADE_E2E_RUNTIME_PARTIALLY_PROVEN",
+    "LIVE_PROVEN": [
+      "Market Ingress",
+      "Capture",
+      "Universe 50",
+      "AM/PM same membership",
+      "Fixed Anchor",
+      "candidate/admission",
+      "PENDING",
+      "EXPIRED",
+      "Discord PENDING/EXPIRED",
+      "PBv2 isolation",
+      "PBv2 digest",
+      "heartbeat",
+      "AM->PM lifecycle",
+      "session close",
+      "submit/cancel/live=0/0/0"
+    ],
+    "LIVE_REPLAY_PARITY_PROVEN": {
+      "passive_fill_corrected_semantics": true,
+      "day": "20260812_PM",
+      "research": {
+        "pending": 40,
+        "fills": 7,
+        "expired": 33
+      },
+      "corrected_runtime": {
+        "pending": 40,
+        "fills": 7,
+        "expired": 33
+      },
+      "match": "40/40",
+      "fill_time_price_match": true
+    },
+    "DEMO_REGRESSION_PROVEN": [
+      "Guard EXIT",
+      "Primary 600 EXIT",
+      "Primary 750 extension->EXIT",
+      "FIXED600 Control EXIT",
+      "actual EXIT slot release",
+      "Discord FILL",
+      "Discord EXIT",
+      "6098/6098.T canonical regression"
+    ],
+    "NOT_YET_LIVE_PROVEN_AFTER_ALL_FIXES": [
+      "one healthy real-market trade: PENDING->FILL->Discord FILL->Primary+Control->Guard/600/750->EXIT->Discord EXIT->slot release"
+    ],
+    "MANDATORY_FIRST_LIVE_FILL_EXIT_WATCH": true
+  },
+  "known_limitations": [
+    "full_14_day_Capture_remap=NOT_PROVEN",
+    "early_Capture_coverage_incomplete_or_strict_join_unavailable_on_some_days",
+    "no_post_fix_healthy_live_FILL_EXIT_chain_yet"
+  ],
+  "invalid_prospective_days": {
+    "20260810": {
+      "status": "RETROSPECTIVE_REFERENCE",
+      "prospective_count_forbidden": true
+    },
+    "20260811": {
+      "status": "INVALID_RUNTIME_NOT_ACTUALLY_PROSPECTIVE",
+      "reason": "Old V1 live launcher/runtime did not process live market correctly; not a valid Prospective day.",
+      "supersedes_prior_label": "20260811_CLEAN_PROSPECTIVE_ELIGIBLE",
+      "prior_label_note": "Prior label was pre-check (unused market data); later runtime-stub findings invalidate Prospective credit. Original report not mutated."
+    },
+    "20260812": {
+      "status": "INVALID / OPERATIONAL_VALIDATION_ONLY",
+      "reasons": [
+        "PBv2 Primary contamination",
+        "empty native universe",
+        "symbol key EXIT mismatch",
+        "Discord notification bug",
+        "PBv2 Discord flood",
+        "Passive Fill consumer-wall-clock parity bug",
+        "runtime fixes applied during the day"
+      ],
+      "late_day_recovery_not_prospective": true
+    },
+    "20260813": {
+      "status": "OPERATIONAL_DIAGNOSTIC_ONLY / INVALID_FOR_STRATEGY_EVALUATION",
+      "reason": "V10 live operational validation failed (KABU_API_TOKEN_OWNERSHIP_CONFLICT / POST_SESSION_AM_SAFETY_SIDE_EFFECT / INGRESS_REGISTRATION_RETRY_STORM). V11 is the runtime fix; not Prospective."
+    },
+    "20260814": {
+      "status": "V1R_20260814_PROSPECTIVE_DAY1_INVALID_RUNTIME_FAIL",
+      "reason": "Prior V12 consumer-lag death spiral plus V12 PM EMPTY_UNIVERSE from PM_REBUILD_OVERWROTE_FROZEN_SOURCE. PnL excluded from Strategy evaluation. V13 is the runtime frozen-SoT fix; not Prospective Day1.",
+      "v13_opval": "V1R_20260814_V13_PM_OPERATIONAL_VALIDATION_PASS",
+      "note": "V13 PM Operational Validation PASS is unchanged. 2026-08-14 remains INVALID_FOR_STRATEGY_EVALUATION / NOT_PROSPECTIVE_DAY1. V23 binds session-day identity, current-run post-session seal scope, stage token rollover, and Full-Day certification input coverage. V22 is immutable parent."
+    }
+  },
+  "prospective_evidence_days": 0,
+  "day1_rule": {
+    "id": "FIRST_FULLY_UNSEEN_TRADING_DAY_AFTER_ACTIVATION_V2_FREEZE",
+    "requirements": [
+      "Activation V2 freeze complete",
+      "market data for that day not used in prior research",
+      "no Strategy change",
+      "no Runtime change after this freeze",
+      "startup identity exact match to V2",
+      "submit/cancel/live=0/0/0",
+      "activation parity PASS before first anchor"
+    ],
+    "fixed_calendar_date_not_speculated": true
+  },
+  "paper_only": true,
+  "order_enabled": false,
+  "live_trading_enabled": false,
+  "submit_cancel_live": "0/0/0",
+  "no_fallback_to_fixed600_primary": true,
+  "no_fallback_to_pbv2_primary": true,
+  "created_at": "2026-08-15T07:23:38.834216+09:00",
+  "hash_policy": {
+    "sot": "working_tree_path_read_bytes_sha256",
+    "normalize_newlines": false,
+    "selector_excluded_from_inventory": true,
+    "binding_module": "small_paper.v1r_activation_binding"
+  },
+  "sha256": "cc116075c66971d438d5f49fa437eb54155d29f20fb2b83d014f6c3e2a66146d"
+}
