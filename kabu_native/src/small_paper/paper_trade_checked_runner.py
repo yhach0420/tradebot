@@ -709,6 +709,10 @@ class PaperTradeCheckedRunner:
         self._shutdown_reason = "normal_exit"
         self._signal_handlers_installed = False
         self.demo_push_summary: dict[str, Any] = {}
+        from small_paper.derived_artifact_contract import ENV_RUNTIME_RUN_ID, ensure_runtime_run_id
+
+        ensure_runtime_run_id()
+        self.runtime_run_id = str(os.environ.get(ENV_RUNTIME_RUN_ID) or "")
         self.comm_fault_summary: dict[str, Any] = {}
 
     def _env(self) -> dict[str, str]:
@@ -1112,34 +1116,33 @@ class PaperTradeCheckedRunner:
 
     def step_design_consistency(self) -> bool:
         started = time.time()
-        script = self.native_root / "scripts" / "check_live_order_design_consistency.py"
-        cmd = self._py(str(script))
-        code, out, err = self.run_command(cmd, self._env(), self.native_root)
-        ok = code == 0
-        if ok:
-            # also require JSON pass flag when present
-            design_path = (
-                self.native_root
-                / "results"
-                / "reports"
-                / "phase687w3_e2e_readonly_reconciliation"
-                / "phase687w3_design_consistency.json"
-            )
-            if design_path.is_file():
-                try:
-                    payload = json.loads(design_path.read_text(encoding="utf-8"))
-                    if payload.get("pass") is False:
-                        ok = False
-                except Exception:
-                    ok = False
+        from small_paper.derived_artifact_contract import evaluate_or_recompute_design_consistency
+
+        eval_result = evaluate_or_recompute_design_consistency(
+            self.native_root,
+            trading_date=str(self.trading_date or ""),
+            config_path=self.config_path if Path(self.config_path).is_file() else None,
+        )
+        ok = bool(eval_result.get("pass"))
         step = self._record(
             "design_consistency",
             0,
-            cmd,
-            exit_code=0 if ok else (code or 1),
+            "evaluate_or_recompute_design_consistency",
+            exit_code=0 if ok else 1,
             started=started,
-            stdout=out,
-            stderr=err,
+            stdout=json.dumps(
+                {
+                    "pass": eval_result.get("pass"),
+                    "recomputed": eval_result.get("recomputed"),
+                    "status": eval_result.get("status"),
+                    "reject_code": eval_result.get("reject_code"),
+                    "mismatch_count": eval_result.get("mismatch_count"),
+                    "stale_derived_artifact_rejected": eval_result.get("stale_derived_artifact_rejected"),
+                    "input_manifest_sha": eval_result.get("input_manifest_sha"),
+                },
+                ensure_ascii=False,
+            ),
+            stderr="",
             result="PASS" if ok else "FAIL",
             blocked_reason="" if ok else "design consistency mismatch",
         )

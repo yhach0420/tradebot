@@ -479,6 +479,22 @@ def source_regression_gates(*, native_root: Optional[Path] = None) -> dict[str, 
         "reason": "PM direct-start must skip ended AM",
     }
 
+    recovery = (native / "src/small_paper/operational_recovery.py").read_text(encoding="utf-8")
+    derived = (native / "src/small_paper/derived_artifact_contract.py").read_text(encoding="utf-8")
+    checks["STALE_DERIVED_RUNTIME_ARTIFACT"] = {
+        "ok": "evaluate_or_recompute_design_consistency" in recovery
+        and "STALE_DERIVED_ARTIFACT_REJECTED" in derived
+        and "input_manifest_sha" in derived
+        and "CURRENT_DESIGN_CONSISTENCY_NOT_PROVEN" in derived,
+        "reason": "design consistency must re-evaluate current inputs; leftover JSON is not SoT",
+    }
+    checks["CERT_DEST_RUN_SCOPE"] = {
+        "ok": "cert_stage_dest" in cert_script
+        and "failed_tests_from_current_stage" in cert_script
+        and ' / "runs" / ' in derived,
+        "reason": "cert dest must be certification_run_id/stage_run_id scoped; failed_tests from current evidence",
+    }
+
     evalr = (native / "src/small_paper/evaluation_reachability.py").read_text(encoding="utf-8")
     checks["NATIVE_FULL_PUSH_THROTTLE_BUG"] = {
         "ok": "forced_eval" in evalr.lower() or "pbv2" in evalr.lower(),
@@ -629,4 +645,152 @@ def session_metrics_in_scope(
         "max_consumer_processing_delay_sec": pb.get("max_consumer_processing_delay_sec"),
         "heartbeat": {k: hb.get(k) for k in ("pid", "state", "v1r_exit_v2") if k in hb},
     }
+
+
+def evaluate_current_stage_lifecycle(
+    *,
+    copied: Mapping[str, str],
+    expected_scope: Mapping[str, Any],
+    snap_dir: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Evaluate only files copied for this certification_run_id + stage_run_id."""
+    from small_paper.ingress_run_identity import artifact_matches_scope
+
+    empty = {
+        "verdict": "",
+        "stopped_reason": "CURRENT_STAGE_ARTIFACTS_MISSING",
+        "am_skip": False,
+        "am_token_mutation": 0,
+        "am_ok": False,
+        "pm_ok": False,
+        "safety_failed": [],
+        "lifecycle_complete": False,
+        "from_current_evidence": True,
+        "current_evidence_count": 0,
+        "certification_run_id": str(expected_scope.get("certification_run_id") or ""),
+        "stage_run_id": str(expected_scope.get("stage_run_id") or ""),
+    }
+    if not copied:
+        return empty
+
+    def _scoped(fn: str) -> dict[str, Any]:
+        loc = copied.get(fn)
+        if not loc:
+            return {}
+        path = Path(str(loc))
+        if not path.is_file() and snap_dir is not None:
+            path = Path(snap_dir) / fn
+        if not path.is_file():
+            return {}
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(doc, dict) or not artifact_matches_scope(doc, expected_scope):
+            return {}
+        return doc
+
+    day_hint = ""
+    for name in copied:
+        if name.startswith("phase148_am_pm_daily_runner_") and name.endswith(".json"):
+            day_hint = name[len("phase148_am_pm_daily_runner_") : -len(".json")]
+            break
+        if name.startswith("daily_runner_summary_") and name.endswith(".json"):
+            day_hint = name[len("daily_runner_summary_") : -len(".json")]
+            break
+    day = day_hint or "20260812"
+    p148 = _scoped(f"phase148_am_pm_daily_runner_{day}.json")
+    summary = _scoped(f"daily_runner_summary_{day}.json")
+    safety = _scoped(f"small_paper_safety_{day}.json")
+    evidence_n = sum(1 for d in (p148, summary, safety) if d)
+    if not p148 and not summary:
+        out = dict(empty)
+        out["current_evidence_count"] = evidence_n
+        return out
+    failed_ids = list((safety.get("failed_check_ids") if isinstance(safety, dict) else None) or [])
+    if not failed_ids:
+        failed_ids = list(((p148.get("preflight") or {}).get("safety") or {}).get("failed_check_ids") or [])
+    am_live = p148.get("am_live") or {}
+    pm_live = p148.get("pm_live") or {}
+    am_skip = str(am_live.get("reason") or "") == "SKIPPED_AFTER_SESSION_END"
+    return {
+        "verdict": str(p148.get("verdict") or summary.get("verdict") or ""),
+        "stopped_reason": str(p148.get("stopped_reason") or summary.get("stopped_reason") or ""),
+        "am_skip": am_skip,
+        "am_token_mutation": int(am_live.get("am_token_mutation") or 0),
+        "am_ok": bool(am_live.get("ok") or am_skip),
+        "pm_ok": bool(pm_live.get("ok")),
+        "safety_failed": failed_ids,
+        "lifecycle_complete": str(p148.get("verdict") or "")
+        in {"am_pm_daily_runner_ready", "completed_with_warnings"},
+        "from_current_evidence": True,
+        "current_evidence_count": evidence_n,
+        "certification_run_id": str(p148.get("certification_run_id") or summary.get("certification_run_id") or ""),
+        "stage_run_id": str(p148.get("stage_run_id") or summary.get("stage_run_id") or ""),
+    }
+
+
+def failed_tests_from_current_stage(
+    *,
+    stage: str,
+    invoke_ok: bool,
+    lifecycle: Mapping[str, Any],
+    copied: Mapping[str, Any],
+) -> list[str]:
+    """Build failed_tests from this stage's invoke + in-scope copied evidence only."""
+    failed: list[str] = []
+    has_current = bool(copied) and bool(lifecycle.get("from_current_evidence"))
+    if stage == "full_day":
+        if not invoke_ok:
+            failed.append("FULL_DAY_CHECKED_BAT")
+        elif not lifecycle.get("lifecycle_complete"):
+            failed.append("FULL_DAY_LIFECYCLE")
+        if has_current and lifecycle.get("safety_failed"):
+            failed.append("FULL_DAY_SAFETY:" + ",".join(str(x) for x in lifecycle["safety_failed"]))
+        return failed
+    if stage == "pm_direct":
+        if not invoke_ok:
+            failed.append("PM_DIRECT_START")
+        if has_current:
+            if not lifecycle.get("am_skip"):
+                failed.append("PM_DIRECT_START_AM_NOT_SKIPPED")
+            if int(lifecycle.get("am_token_mutation") or 0) != 0:
+                failed.append("PM_DIRECT_START_AM_TOKEN_MUTATION")
+        return failed
+    if stage.startswith("window_"):
+        if not invoke_ok:
+            failed.append(f"WINDOW_{stage[len('window_'):]}")
+        return failed
+    if not invoke_ok:
+        failed.append(stage.upper())
+    return failed
+
+
+def count_stale_dest_artifacts(cert_dir: Path, certification_run_id: str) -> int:
+    """Count leftover dest files that current evaluation must not read."""
+    from small_paper.derived_artifact_contract import cert_run_root
+
+    n = 0
+    current = cert_run_root(cert_dir, certification_run_id)
+    try:
+        current_res = current.resolve()
+    except Exception:
+        current_res = current
+    legacy = Path(cert_dir) / "run_snapshots"
+    if legacy.is_dir():
+        n += sum(1 for p in legacy.rglob("*") if p.is_file())
+    runs = Path(cert_dir) / "runs"
+    if runs.is_dir():
+        for child in runs.iterdir():
+            if not child.is_dir():
+                continue
+            try:
+                if child.resolve() == current_res:
+                    continue
+            except Exception:
+                if child.name == str(certification_run_id):
+                    continue
+            n += sum(1 for p in child.rglob("*") if p.is_file())
+    return n
+
 

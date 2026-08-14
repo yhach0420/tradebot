@@ -791,7 +791,34 @@ def run_safety_check(state: DailyRunnerState) -> dict[str, Any]:
     report_path = state.reports_dir / f"small_paper_safety_{state.options.day_stamp}.json"
     report: dict[str, Any] = {}
     if report_path.is_file():
-        report = json.loads(report_path.read_text(encoding="utf-8"))
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except Exception:
+            report = {}
+        try:
+            from small_paper.derived_artifact_contract import (
+                current_derived_scope,
+                validate_derived_artifact,
+            )
+
+            native = Path(__file__).resolve().parents[2]
+            expected = current_derived_scope(
+                native_root=native,
+                trading_date=str(state.options.day_stamp),
+                config_path=cfg_path if cfg_path.is_file() else None,
+            )
+            require_cert = bool(expected.get("certification_run_id") or expected.get("stage_run_id"))
+            valid = validate_derived_artifact(report, expected, require_cert_ids=require_cert)
+            if not valid.get("ok"):
+                report = {
+                    "stale_derived_artifact_rejected": True,
+                    "reject_code": valid.get("reject_code"),
+                    "failed_check_ids": [],
+                    "overall_pass": proc.returncode == 0,
+                    "ready_for_live_session": proc.returncode == 0,
+                }
+        except Exception:
+            pass
     _dual_write_runtime_artifacts(state)
     return {
         "exit_code": proc.returncode,

@@ -553,6 +553,18 @@ def main() -> int:
     args = parser.parse_args()
     result = check()
     if args.write and not args.no_write:
+        try:
+            from small_paper.derived_artifact_contract import stamp_derived_artifact
+
+            stamp_derived_artifact(
+                result,
+                artifact_type="design_consistency",
+                native_root=NATIVE_ROOT,
+                producer="check_live_order_design_consistency",
+            )
+        except Exception:
+            pass
+    if args.write and not args.no_write:
         REPORT_DIR.mkdir(parents=True, exist_ok=True)
         out = REPORT_DIR / "phase687w3_design_consistency.json"
         out.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

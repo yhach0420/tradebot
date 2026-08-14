@@ -673,21 +673,10 @@ def probe_current_workspace(
         except RuntimeError as exc:
             submit_hard_fail = "HARD_FAIL" in str(exc)
 
-    design_path = (
-        root
-        / "results"
-        / "reports"
-        / "phase687w3_e2e_readonly_reconciliation"
-        / "phase687w3_design_consistency.json"
-    )
-    design_ok = False
-    if design_path.is_file():
-        try:
-            import json
+    from small_paper.derived_artifact_contract import evaluate_or_recompute_design_consistency
 
-            design_ok = bool(json.loads(design_path.read_text(encoding="utf-8")).get("pass"))
-        except Exception:
-            design_ok = False
+    design = evaluate_or_recompute_design_consistency(root)
+    design_ok = bool(design.get("pass"))
 
     evidence = ProductionEnablementEvidence(
         # Soak unknown → block

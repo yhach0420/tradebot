@@ -45,6 +45,7 @@ RUNTIME_DEPENDENCY_RELS: tuple[str, ...] = (
     "src/small_paper/paper_trade_checked_runner.py",
     "src/small_paper/market_ingress_spawn.py",
     "src/small_paper/ingress_run_identity.py",
+    "src/small_paper/derived_artifact_contract.py",
     "src/small_paper/discord_notifier.py",
     "src/small_paper/v1r_primary_runtime.py",
     "src/small_paper/v1r_exit_v2_contract.py",

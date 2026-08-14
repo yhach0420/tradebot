@@ -132,8 +132,16 @@ def main() -> int:
     }
     try:
         from small_paper.ingress_run_identity import stamp_execution_scope
+        from small_paper.derived_artifact_contract import stamp_derived_artifact
 
         stamp_execution_scope(report)
+        stamp_derived_artifact(
+            report,
+            artifact_type="small_paper_safety",
+            native_root=native_root,
+            trading_date=str(day_key),
+            producer="check_small_paper_safety",
+        )
     except Exception:
         pass
 

@@ -38,7 +38,10 @@ from small_paper.paper_full_day_certification import (
     audit_clock_access,
     capture_identity,
     copy_scoped_run_snapshot,
+    count_stale_dest_artifacts,
     detect_teardown_nameerror_would_fail_v13,
+    evaluate_current_stage_lifecycle,
+    failed_tests_from_current_stage,
     identities_equal,
     session_metrics_in_scope,
     source_regression_gates,
@@ -51,10 +54,13 @@ from small_paper.runtime_clock import (
     bind_session_clock,
     official_cert_child_env,
 )
+from small_paper.derived_artifact_contract import (
+    cert_stage_dest,
+    evaluate_or_recompute_design_consistency,
+)
 from small_paper.ingress_run_identity import (
     ENV_CERTIFICATION_RUN_ID,
     ENV_STAGE_RUN_ID,
-    artifact_matches_scope,
     generate_launch_nonce,
 )
 from small_paper.v1r_primary_runtime import CLOCK_GRID
@@ -291,59 +297,34 @@ def _copy_run_snapshot(
     expected_scope: dict[str, Any],
     day: str = "20260812",
 ) -> dict[str, Any]:
-    dest = CERT_DIR / "run_snapshots" / name
-    return copy_scoped_run_snapshot(
+    dest = cert_stage_dest(
+        CERT_DIR,
+        str(expected_scope.get("certification_run_id") or ""),
+        str(expected_scope.get("stage_run_id") or name),
+    )
+    result = copy_scoped_run_snapshot(
         dest=dest,
         reports_dir=NATIVE / "results" / "reports",
         day=day,
         expected_scope=expected_scope,
     )
+    result["dest"] = str(dest)
+    result["stage_name"] = name
+    return result
 
 
-def _load_json(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _evaluate_full_day(snap_dir: Path, day: str = "20260812") -> dict[str, Any]:
-    p148 = _load_json(snap_dir / f"phase148_am_pm_daily_runner_{day}.json")
-    summary = _load_json(snap_dir / f"daily_runner_summary_{day}.json")
-    safety = _load_json(snap_dir / f"small_paper_safety_{day}.json")
-    if not p148 and not summary:
-        return {
-            "verdict": "",
-            "stopped_reason": "CURRENT_STAGE_ARTIFACTS_MISSING",
-            "am_skip": False,
-            "am_token_mutation": 0,
-            "am_ok": False,
-            "pm_ok": False,
-            "safety_failed": [],
-            "lifecycle_complete": False,
-        }
-    failed_ids = list((safety.get("failed_check_ids") if isinstance(safety, dict) else None) or [])
-    if not failed_ids:
-        failed_ids = list(((p148.get("preflight") or {}).get("safety") or {}).get("failed_check_ids") or [])
-    am_live = p148.get("am_live") or {}
-    pm_live = p148.get("pm_live") or {}
-    am_skip = str(am_live.get("reason") or "") == "SKIPPED_AFTER_SESSION_END"
-    out = {
-        "verdict": str(p148.get("verdict") or summary.get("verdict") or ""),
-        "stopped_reason": str(p148.get("stopped_reason") or summary.get("stopped_reason") or ""),
-        "am_skip": am_skip,
-        "am_token_mutation": int(am_live.get("am_token_mutation") or 0),
-        "am_ok": bool(am_live.get("ok") or am_skip),
-        "pm_ok": bool(pm_live.get("ok")),
-        "safety_failed": failed_ids,
-        "lifecycle_complete": str(p148.get("verdict") or "")
-        in {"am_pm_daily_runner_ready", "completed_with_warnings"},
-        "certification_run_id": str(p148.get("certification_run_id") or summary.get("certification_run_id") or ""),
-        "stage_run_id": str(p148.get("stage_run_id") or summary.get("stage_run_id") or ""),
-    }
-    return out
+def _evaluate_full_day(
+    snap_dir: Path,
+    day: str = "20260812",
+    *,
+    copied: Optional[dict[str, str]] = None,
+    expected_scope: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    return evaluate_current_stage_lifecycle(
+        copied=copied or {},
+        expected_scope=expected_scope or {},
+        snap_dir=snap_dir,
+    )
 
 
 def _leftover_processes(day: str = "20260812") -> list[dict[str, Any]]:
@@ -501,19 +482,25 @@ def main() -> int:
         snap = _copy_run_snapshot("full_day", expected_scope=full_day_scope)
         stale_artifact_excluded_count += int(snap.get("stale_artifact_excluded_count") or 0)
         full_day["snapshot"] = snap
-        full_day_eval = _evaluate_full_day(CERT_DIR / "run_snapshots" / "full_day")
+        full_day_eval = _evaluate_full_day(
+            Path(str(snap.get("dest") or "")),
+            copied=snap.get("copied") or {},
+            expected_scope=full_day_scope,
+        )
         full_day["lifecycle"] = full_day_eval
         print(
             f"CERT_STAGE=FULL_DAY done exit={full_day.get('exit_code')} "
             f"verdict={full_day_eval.get('verdict')} stopped={full_day_eval.get('stopped_reason')}",
             flush=True,
         )
-        if not full_day.get("ok"):
-            failed.append("FULL_DAY_CHECKED_BAT")
-        if not full_day_eval.get("lifecycle_complete"):
-            failed.append("FULL_DAY_LIFECYCLE")
-        if full_day_eval.get("safety_failed"):
-            failed.append("FULL_DAY_SAFETY:" + ",".join(str(x) for x in full_day_eval["safety_failed"]))
+        failed.extend(
+            failed_tests_from_current_stage(
+                stage="full_day",
+                invoke_ok=bool(full_day.get("ok")),
+                lifecycle=full_day_eval,
+                copied=snap.get("copied") or {},
+            )
+        )
         if int(token_by_stage["full_day"].get("overlap_count") or 0) != 0:
             failed.append("TOKEN_SECOND_ISSUER_OVERLAP")
     leftover = _leftover_processes("20260812")
@@ -553,20 +540,25 @@ def main() -> int:
             )
         except subprocess.TimeoutExpired as exc:
             pm_run = {"ok": False, "error": f"timeout:{exc}", "exit_code": 124}
-            failed.append("PM_DIRECT_START")
         token_by_stage["pm_direct_start"] = _token_delta(token0, station_issue_audit_summary())
         pm_run["cleanup"] = _stop_cert_children("20260812")
         snap = _copy_run_snapshot("pm_direct_start", expected_scope=pm_scope)
         stale_artifact_excluded_count += int(snap.get("stale_artifact_excluded_count") or 0)
         pm_run["snapshot"] = snap
-        pm_eval = _evaluate_full_day(CERT_DIR / "run_snapshots" / "pm_direct_start")
+        pm_eval = _evaluate_full_day(
+            Path(str(snap.get("dest") or "")),
+            copied=snap.get("copied") or {},
+            expected_scope=pm_scope,
+        )
         pm_run["lifecycle"] = pm_eval
-        if not pm_run.get("ok"):
-            failed.append("PM_DIRECT_START")
-        if not pm_eval.get("am_skip"):
-            failed.append("PM_DIRECT_START_AM_NOT_SKIPPED")
-        if int(pm_eval.get("am_token_mutation") or 0) != 0:
-            failed.append("PM_DIRECT_START_AM_TOKEN_MUTATION")
+        failed.extend(
+            failed_tests_from_current_stage(
+                stage="pm_direct",
+                invoke_ok=bool(pm_run.get("ok")),
+                lifecycle=pm_eval,
+                copied=snap.get("copied") or {},
+            )
+        )
 
     windows: dict[str, Any] = {}
     window_specs = [
@@ -605,9 +597,16 @@ def main() -> int:
             windows[name]["cleanup"] = _stop_cert_children("20260812")
             snap = _copy_run_snapshot(f"window_{name}", expected_scope=wscope)
             stale_artifact_excluded_count += int(snap.get("stale_artifact_excluded_count") or 0)
+            windows[name]["stage_run_id"] = wscope["stage_run_id"]
             windows[name]["snapshot"] = snap
-            if not windows[name].get("ok"):
-                failed.append(f"WINDOW_{name}")
+            failed.extend(
+                failed_tests_from_current_stage(
+                    stage=f"window_{name}",
+                    invoke_ok=bool(windows[name].get("ok")),
+                    lifecycle={"from_current_evidence": True},
+                    copied=snap.get("copied") or {},
+                )
+            )
     leftover_end = _leftover_processes("20260812")
     if leftover_end:
         failed.append("PROCESS_LEFTOVER")
@@ -625,6 +624,59 @@ def main() -> int:
     if overlap_n:
         failed.append("TOKEN_SECOND_ISSUER_OVERLAP")
     ingress_identity = _read_ingress_current_identity("20260812")
+
+    dc_live = evaluate_or_recompute_design_consistency(
+        NATIVE, trading_date="20260812", write=False
+    )
+    log_text = ""
+    stdout_path = Path(str(full_day.get("stdout_path") or ""))
+    if stdout_path.is_file():
+        try:
+            log_text = stdout_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            log_text = str(full_day.get("stdout_tail") or "")
+    else:
+        log_text = str(full_day.get("stdout_tail") or "")
+    design_recomputed = bool(dc_live.get("recomputed")) or (
+        '"recomputed": true' in log_text or '"recomputed":true' in log_text
+    )
+    stale_derived_n = log_text.count("STALE_DERIVED_ARTIFACT_REJECTED")
+    if dc_live.get("stale_derived_artifact_rejected") and stale_derived_n == 0:
+        stale_derived_n = 1
+    if '"stale_derived_artifact_rejected": true' in log_text and stale_derived_n == 0:
+        stale_derived_n = 1
+
+    def _copied_n(obj: dict[str, Any]) -> int:
+        return len(((obj or {}).get("snapshot") or {}).get("copied") or {})
+
+    current_run_artifact_count = _copied_n(full_day) + _copied_n(pm_run)
+    for wobj in windows.values():
+        current_run_artifact_count += _copied_n(wobj)
+    if dc_live.get("pass") is not None:
+        current_run_artifact_count += 1
+    stale_dest_n = count_stale_dest_artifacts(CERT_DIR, certification_run_id)
+    stage_run_ids = {
+        "full_day": full_day_scope.get("stage_run_id"),
+        "pm_direct": pm_scope.get("stage_run_id"),
+        **{
+            f"window_{name}": str((windows.get(name) or {}).get("stage_run_id") or "")
+            for name, *_rest in window_specs
+        },
+    }
+    stage_evidence_counts = {
+        "full_day": {
+            "copied": _copied_n(full_day),
+            "lifecycle": int((full_day_eval or {}).get("current_evidence_count") or 0),
+        },
+        "pm_direct": {
+            "copied": _copied_n(pm_run),
+            "lifecycle": int(((pm_run.get("lifecycle") or {}) if isinstance(pm_run, dict) else {}).get("current_evidence_count") or 0),
+        },
+        **{
+            f"window_{name}": {"copied": _copied_n(windows.get(name) or {}), "lifecycle": 0}
+            for name, *_rest in window_specs
+        },
+    }
 
     full_pass = (
         not failed
@@ -670,6 +722,20 @@ def main() -> int:
         "token_authority_audit": token_audit,
         "token_by_stage": token_by_stage,
         "certification_run_id": certification_run_id,
+        "stage_run_ids": stage_run_ids,
+        "stage_evidence_counts": stage_evidence_counts,
+        "current_run_artifact_count": current_run_artifact_count,
+        "stale_derived_artifact_rejected_count": stale_derived_n,
+        "stale_dest_artifact_excluded_count": stale_dest_n,
+        "design_consistency_recomputed": design_recomputed,
+        "design_consistency_input_manifest_sha": dc_live.get("input_manifest_sha"),
+        "design_consistency_current": {
+            "pass": dc_live.get("pass"),
+            "status": dc_live.get("status"),
+            "recomputed": dc_live.get("recomputed"),
+            "reject_code": dc_live.get("reject_code"),
+            "input_manifest_sha": dc_live.get("input_manifest_sha"),
+        },
         "ingress_current_run": ingress_identity,
         "stale_status_rejected_count": int(ingress_identity.get("stale_status_rejected_count") or 0),
         "stale_artifact_excluded_count": stale_artifact_excluded_count,

@@ -1842,26 +1842,19 @@ def evaluate_config_sha_match(
     return out
 
 
-def evaluate_design_consistency_artifact(native_root: Path) -> dict[str, Any]:
-    design_path = (
-        Path(native_root)
-        / "results"
-        / "reports"
-        / "phase687w3_e2e_readonly_reconciliation"
-        / "phase687w3_design_consistency.json"
+def evaluate_design_consistency_artifact(
+    native_root: Path,
+    *,
+    trading_date: Optional[str] = None,
+    config_path: Optional[Path] = None,
+) -> dict[str, Any]:
+    from small_paper.derived_artifact_contract import evaluate_or_recompute_design_consistency
+
+    return evaluate_or_recompute_design_consistency(
+        Path(native_root),
+        trading_date=str(trading_date or ""),
+        config_path=config_path,
     )
-    out: dict[str, Any] = {"path": str(design_path), "exists": design_path.is_file(), "pass": False, "status": "missing"}
-    if not design_path.is_file():
-        return out
-    try:
-        payload = json.loads(design_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        out["status"] = f"corrupt:{exc}"
-        return out
-    out["pass"] = bool(payload.get("pass"))
-    out["status"] = "ok" if out["pass"] else "fail"
-    out["mismatch_count"] = payload.get("mismatch_count")
-    return out
 
 
 def probe_workspace_recovery(
@@ -1888,7 +1881,7 @@ def probe_workspace_recovery(
     except RuntimeError as exc:
         hard = "HARD_FAIL" in str(exc)
 
-    design = evaluate_design_consistency_artifact(root)
+    design = evaluate_design_consistency_artifact(root, trading_date=day, config_path=config_path)
     sha = evaluate_config_sha_match(root, config_path=config_path)
     dg = disk_guard_report(root)
     clk = diagnose_clock()

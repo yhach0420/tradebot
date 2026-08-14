@@ -98,6 +98,10 @@ def main(argv: list[str] | None = None) -> int:
         "design_consistency": {
             "pass": design.get("pass"),
             "status": design.get("status"),
+            "recomputed": design.get("recomputed"),
+            "stale_derived_artifact_rejected": design.get("stale_derived_artifact_rejected"),
+            "reject_code": design.get("reject_code"),
+            "input_manifest_sha": design.get("input_manifest_sha"),
         },
         "production_order_enablement": PRODUCTION_ORDER_ENABLEMENT,
         "flags_mutated": False,
