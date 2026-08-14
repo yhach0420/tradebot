@@ -378,6 +378,14 @@ def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
     env["PYTHONPATH"] = f"{NATIVE / 'src'};{REPO}" + (
         os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
     )
+    try:
+        from small_paper.runtime_clock import arm_session_clock, session_clock_enabled
+
+        if session_clock_enabled():
+            t0_arm = arm_session_clock(environ=env)
+            env["TRADEBOT_SESSION_CLOCK_REAL_T0"] = t0_arm
+    except Exception:
+        pass
     t0 = time.time()
     hb_seq = 0
     proc: Any = None

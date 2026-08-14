@@ -400,7 +400,15 @@ def main() -> int:
     env["KABU_SHADOW_DISCORD_WEBHOOK_URL"] = webhook
     env["KABU_DISCORD_OPERATIONS_WEBHOOK_URL"] = webhook
     env["KABU_DISCORD_MARKET_CAPTURE_WEBHOOK_URL"] = webhook
-    bind_session_clock(virtual_start=v0, speed_mult=48.0, stop=stop, environ=env)
+    arm_file = NATIVE / "data" / "market_capture" / "20260812" / "session_clock_arm.json"
+    bind_session_clock(
+        virtual_start=v0,
+        speed_mult=48.0,
+        stop=stop,
+        environ=env,
+        arm_now=False,
+        arm_file=arm_file,
+    )
     if fixture.is_file():
         env[ENV_REPLAY_PATH] = str(fixture)
         env[ENV_REPLAY_EPS] = "800"
@@ -411,6 +419,7 @@ def main() -> int:
     full_day: dict[str, Any] = {"skipped": True}
     full_day_eval: dict[str, Any] = {}
     if stream_ok:
+        print("CERT_STAGE=FULL_DAY start", flush=True)
         try:
             full_day = _invoke_checked_bat(env=env, timeout_sec=2400, log_name="full_day")
         except subprocess.TimeoutExpired as exc:
@@ -419,6 +428,11 @@ def main() -> int:
         full_day["snapshot"] = _copy_run_snapshot("full_day")
         full_day_eval = _evaluate_full_day(CERT_DIR / "run_snapshots" / "full_day")
         full_day["lifecycle"] = full_day_eval
+        print(
+            f"CERT_STAGE=FULL_DAY done exit={full_day.get('exit_code')} "
+            f"verdict={full_day_eval.get('verdict')} stopped={full_day_eval.get('stopped_reason')}",
+            flush=True,
+        )
         if not full_day.get("ok"):
             failed.append("FULL_DAY_CHECKED_BAT")
         if not full_day_eval.get("lifecycle_complete"):
@@ -445,7 +459,10 @@ def main() -> int:
             speed_mult=48.0,
             stop=datetime(2026, 8, 12, 15, 35, 0, tzinfo=JST),
             environ=pm_env,
+            arm_now=False,
+            arm_file=arm_file,
         )
+        print("CERT_STAGE=PM_DIRECT_START start", flush=True)
         try:
             pm_run = _invoke_checked_bat(env=pm_env, timeout_sec=1800, log_name="pm_direct_start")
         except subprocess.TimeoutExpired as exc:
@@ -472,9 +489,17 @@ def main() -> int:
         for name, start, end, not_before in window_specs:
             _stop_cert_children("20260812")
             wenv = dict(env)
-            bind_session_clock(virtual_start=start, speed_mult=1.0, stop=end, environ=wenv)
+            bind_session_clock(
+                virtual_start=start,
+                speed_mult=1.0,
+                stop=end,
+                environ=wenv,
+                arm_now=False,
+                arm_file=arm_file,
+            )
             wenv["TRADEBOT_INGRESS_REPLAY_NOT_BEFORE"] = not_before
             wenv[ENV_REPLAY_EPS] = "150"
+            print(f"CERT_STAGE=WINDOW_{name} start", flush=True)
             try:
                 windows[name] = _invoke_checked_bat(
                     env=wenv,

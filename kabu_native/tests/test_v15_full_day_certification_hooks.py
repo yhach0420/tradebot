@@ -42,6 +42,7 @@ def _clear_clock_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TRADEBOT_SESSION_CLOCK_REAL_T0",
         "TRADEBOT_SESSION_CLOCK_SPEED",
         "TRADEBOT_SESSION_CLOCK_STOP",
+        "TRADEBOT_SESSION_CLOCK_ARM_FILE",
         "TRADEBOT_INGRESS_REPLAY_PATH",
         "TRADEBOT_CERTIFICATION_MODE",
         "TRADEBOT_SKIP_CERT_GATE",
@@ -184,6 +185,21 @@ def test_source_regression_gates_include_weekly_bugs() -> None:
         "STALE_RECOVERY_FORCE_EVAL_DEATH_SPIRAL",
     ):
         assert gates["checks"][name]["ok"], name
+
+
+def test_session_clock_parks_until_arm(tmp_path: Path) -> None:
+    v0 = datetime(2026, 8, 12, 8, 50, 0, tzinfo=JST)
+    arm = tmp_path / "session_clock_arm.json"
+    bind_session_clock(virtual_start=v0, speed_mult=48.0, arm_now=False, arm_file=arm)
+    import time as _t
+
+    _t.sleep(0.15)
+    assert session_now() == v0
+    from small_paper.runtime_clock import arm_session_clock
+
+    arm_session_clock()
+    _t.sleep(0.15)
+    assert session_now() >= v0 + timedelta(seconds=4)
 
 
 def test_inventory_includes_new_v15_modules() -> None:

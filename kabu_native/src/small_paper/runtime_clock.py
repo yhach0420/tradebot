@@ -8,9 +8,11 @@ Ingress received_at / payload timestamps.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo
 
@@ -21,6 +23,7 @@ ENV_V0 = "TRADEBOT_SESSION_CLOCK_V0"
 ENV_T0 = "TRADEBOT_SESSION_CLOCK_REAL_T0"
 ENV_SPEED = "TRADEBOT_SESSION_CLOCK_SPEED"
 ENV_STOP = "TRADEBOT_SESSION_CLOCK_STOP"
+ENV_ARM_FILE = "TRADEBOT_SESSION_CLOCK_ARM_FILE"
 ENV_REPLAY_PATH = "TRADEBOT_INGRESS_REPLAY_PATH"
 ENV_REPLAY_NOT_BEFORE = "TRADEBOT_INGRESS_REPLAY_NOT_BEFORE"
 ENV_REPLAY_EPS = "TRADEBOT_INGRESS_REPLAY_MAX_EPS"
@@ -90,8 +93,14 @@ def bind_session_clock(
     speed_mult: float = 1.0,
     stop: Optional[datetime] = None,
     environ: Optional[dict[str, str]] = None,
+    arm_now: bool = True,
+    arm_file: Optional[Path] = None,
 ) -> dict[str, str]:
-    """Write session-clock env into os.environ (and optional dict). Inherited by children."""
+    """Write session-clock env into os.environ (and optional dict). Inherited by children.
+
+    arm_now=False parks virtual time at V0 until arm_session_clock() (launcher
+    start). Ingress reads T0 from ENV_ARM_FILE so a sibling process can sync.
+    """
     env = environ if environ is not None else os.environ
     v0 = virtual_start
     if v0.tzinfo is None:
@@ -100,20 +109,83 @@ def bind_session_clock(
         v0 = v0.astimezone(JST)
     env[ENV_ENABLED] = "1"
     env[ENV_V0] = v0.isoformat(timespec="milliseconds")
-    env[ENV_T0] = f"{time.time():.6f}"
     env[ENV_SPEED] = str(float(speed_mult))
+    if arm_file is not None:
+        env[ENV_ARM_FILE] = str(arm_file)
     if stop is not None:
         s = stop if stop.tzinfo is not None else stop.replace(tzinfo=JST)
         env[ENV_STOP] = s.astimezone(JST).isoformat(timespec="milliseconds")
     elif ENV_STOP in env:
         env.pop(ENV_STOP, None)
+    if arm_now:
+        arm_session_clock(environ=env)
+    else:
+        env.pop(ENV_T0, None)
+        os.environ.pop(ENV_T0, None)
+        path = str(env.get(ENV_ARM_FILE) or "")
+        if path:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except Exception:
+                pass
     return {
         ENV_ENABLED: env[ENV_ENABLED],
         ENV_V0: env[ENV_V0],
-        ENV_T0: env[ENV_T0],
+        ENV_T0: str(env.get(ENV_T0) or ""),
         ENV_SPEED: env[ENV_SPEED],
         ENV_STOP: str(env.get(ENV_STOP) or ""),
+        ENV_ARM_FILE: str(env.get(ENV_ARM_FILE) or ""),
     }
+
+
+def arm_session_clock(*, environ: Optional[dict[str, str]] = None) -> str:
+    """Start virtual elapsed time at current wall T0. Safe to call twice (first wins)."""
+    env = environ if environ is not None else os.environ
+    existing = _t0_value(environ=env)
+    if existing is not None:
+        t0 = f"{existing:.6f}"
+        env[ENV_T0] = t0
+        os.environ[ENV_T0] = t0
+        return t0
+    t0 = f"{time.time():.6f}"
+    env[ENV_T0] = t0
+    os.environ[ENV_T0] = t0
+    path = str(env.get(ENV_ARM_FILE) or os.environ.get(ENV_ARM_FILE) or "")
+    if path:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            json.dumps({"t0": t0, "v0": env.get(ENV_V0) or os.environ.get(ENV_V0) or ""}) + "\n",
+            encoding="utf-8",
+        )
+    return t0
+
+
+def _t0_value(*, environ: Optional[dict[str, str]] = None) -> Optional[float]:
+    env = environ if environ is not None else os.environ
+    raw = str(env.get(ENV_T0) or "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+    path = str(env.get(ENV_ARM_FILE) or os.environ.get(ENV_ARM_FILE) or "").strip()
+    if not path:
+        return None
+    p = Path(path)
+    if not p.is_file():
+        return None
+    try:
+        body = json.loads(p.read_text(encoding="utf-8"))
+        return float(body.get("t0"))
+    except Exception:
+        return None
+
+
+def session_clock_armed(*, environ: Optional[dict[str, str]] = None) -> bool:
+    if not session_clock_enabled(environ=environ):
+        return True
+    return _t0_value(environ=environ) is not None
 
 
 def now_jst(*, environ: Optional[dict[str, str]] = None) -> datetime:
@@ -122,15 +194,17 @@ def now_jst(*, environ: Optional[dict[str, str]] = None) -> datetime:
     if not session_clock_enabled(environ=env):
         return datetime.now(JST)
     raw_v0 = str(env.get(ENV_V0) or "").strip()
-    raw_t0 = str(env.get(ENV_T0) or "").strip()
-    if not raw_v0 or not raw_t0:
+    if not raw_v0:
         return datetime.now(JST)
     v0 = datetime.fromisoformat(raw_v0)
     if v0.tzinfo is None:
         v0 = v0.replace(tzinfo=JST)
     else:
         v0 = v0.astimezone(JST)
-    elapsed = max(0.0, time.time() - float(raw_t0))
+    t0 = _t0_value(environ=env)
+    if t0 is None:
+        return v0
+    elapsed = max(0.0, time.time() - t0)
     return v0 + timedelta(seconds=elapsed * speed(environ=env))
 
 

@@ -55,6 +55,8 @@ from small_paper.runtime_clock import (
     replay_max_eps,
     replay_not_before_hhmm,
     scheduled_end_passed,
+    session_clock_armed,
+    session_clock_enabled,
     sleep_until as session_sleep_until,
 )
 
@@ -695,6 +697,11 @@ class MarketIngressService:
             # Keep desired; registration may be off-hours. Still replay through Raw+Bus.
             self.registered_symbols = list(self.desired_symbols)
         self.sm.transition(WAITING_FIRST_PUSH, reason="replay")
+        if session_clock_enabled():
+            while not session_clock_armed():
+                if self._stop.is_set() or self._operator_stop_requested():
+                    return
+                time.sleep(0.05)
         max_eps = replay_max_eps()
         min_interval = 1.0 / max_eps
         last_mono = 0.0
