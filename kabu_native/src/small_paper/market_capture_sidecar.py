@@ -646,7 +646,15 @@ class MarketCaptureSidecar:
                     self.write_heartbeat()
 
                 rest = KabuNativeRestClient(default_base_url())
-                token = rest.issue_token_from_env()
+                from small_paper.kabu_token_authority import acquire_token_for_readonly
+
+                acquired = acquire_token_for_readonly(
+                    native_root=self.native_root,
+                    trading_date=str(self.trading_date),
+                    caller="market_capture_sidecar",
+                    rest=rest,
+                )
+                token = str(acquired.get("token") or "")
                 push = KabuNativePushClient(rest, token)
                 # Passive dual: Sidecar does NOT register/unregister — follower only
                 connected = True

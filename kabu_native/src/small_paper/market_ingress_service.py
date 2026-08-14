@@ -290,11 +290,16 @@ class MarketIngressService:
         # fallback 7203/6758 cannot race a stale prior-day file.
         self._apply_desired_from_control_or_am(register=False)
         replay = ingress_replay_path()
-        if replay:
+        from small_paper.kabu_token_authority import live_kabu_auth_allowed
+        from small_paper.runtime_clock import MARKET_INPUT_SYNTHETIC, market_input_mode
+
+        auth_ok, _auth_reason = live_kabu_auth_allowed(synthetic=bool(self.synthetic))
+        input_mode = market_input_mode()
+        if self.synthetic or input_mode == MARKET_INPUT_SYNTHETIC or not auth_ok:
+            self._thread = threading.Thread(target=self._synthetic_loop, name="ingress-synth", daemon=True)
+        elif replay:
             self._replay_source = replay
             self._thread = threading.Thread(target=self._replay_loop, name="ingress-replay", daemon=True)
-        elif self.synthetic:
-            self._thread = threading.Thread(target=self._synthetic_loop, name="ingress-synth", daemon=True)
         else:
             self._thread = threading.Thread(target=self._live_thread, name="ingress-live", daemon=True)
         self._thread.start()
@@ -647,8 +652,20 @@ class MarketIngressService:
             self.stop()
 
     def _replay_try_register(self) -> dict[str, Any]:
-        """Production token+register without live WebSocket (replay input)."""
+        """Production token+register without live WebSocket (replay input).
+
+        Replay does not imply live POST /token. KABU_AUTH_MODE=LIVE is required.
+        Synthetic / preflight never issue.
+        """
         out: dict[str, Any] = {"ok": False}
+        from small_paper.kabu_token_authority import live_kabu_auth_allowed
+
+        auth_ok, auth_reason = live_kabu_auth_allowed(synthetic=bool(self.synthetic))
+        if not auth_ok:
+            out["ok"] = True
+            out["skipped"] = auth_reason
+            out["token_issued"] = False
+            return out
         try:
             from api.rest_client import KabuNativeRestClient, default_base_url, load_kabu_env
             from small_paper.kabu_token_authority import owner_issue_context, publish_owned_token

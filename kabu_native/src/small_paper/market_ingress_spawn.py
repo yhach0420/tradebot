@@ -65,6 +65,18 @@ def spawn_ingress_process(
     env["PYTHONPATH"] = f"{src};{repo}" if sys.platform == "win32" else f"{src}:{repo}"
     env["PYTHONIOENCODING"] = "utf-8"
     env["MARKET_INGRESS_V2"] = "1"
+    from small_paper.runtime_clock import apply_non_issuer_env, official_cert_child_env
+
+    if synthetic:
+        # TOKEN_CONSUMER_ONLY. Strip TRADEBOT_SESSION_CLOCK* / TRADEBOT_INGRESS_REPLAY*
+        # and certification flags. KABU_AUTH_MODE=NONE — no POST /token.
+        apply_non_issuer_env(env)
+    else:
+        # AUTHORIZED_ISSUER. Keep clock + replay. KABU_AUTH_MODE=LIVE.
+        env = official_cert_child_env(env)
+        env["PYTHONPATH"] = f"{src};{repo}" if sys.platform == "win32" else f"{src}:{repo}"
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["MARKET_INGRESS_V2"] = "1"
     cmd = [
         exe,
         "-m",

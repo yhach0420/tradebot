@@ -9432,7 +9432,15 @@ def run_live_dry_run(
                         )
                         token = str(acquired.get("token") or token)
                         return
-                    token = rest.issue_token_from_env()
+                    from small_paper.kabu_token_authority import acquire_token_for_readonly
+
+                    acquired = acquire_token_for_readonly(
+                        native_root=Path(native_root),
+                        trading_date=probe_day,
+                        caller="pilot_reconnect",
+                        rest=rest,
+                    )
+                    token = str(acquired.get("token") or token)
                     push = KabuNativePushClient(rest, token)
                     register_symbols_cleared(
                         push,

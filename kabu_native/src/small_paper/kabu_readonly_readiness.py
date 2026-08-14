@@ -46,6 +46,7 @@ class TokenProbeStatus(str, Enum):
     TOKEN_ACQUIRED = "TOKEN_ACQUIRED"
     TOKEN_EXPIRED = "TOKEN_EXPIRED"
     TOKEN_EMPTY = "TOKEN_EMPTY"
+    STATION_REACHABLE_AUTH_DEFERRED = "STATION_REACHABLE_AUTH_DEFERRED"
     READONLY_ENDPOINT_FAILED = "READONLY_ENDPOINT_FAILED"
     READONLY_ONLINE_VALID = "READONLY_ONLINE_VALID"
     READONLY_ONLINE_ZERO_BALANCE = "READONLY_ONLINE_ZERO_BALANCE"
@@ -235,28 +236,21 @@ def classify_token_exception(exc: BaseException) -> tuple[TokenProbeStatus, bool
 
 
 def _readonly_or_owned_issue(rest: Any) -> Callable[[], str]:
-    """Reuse Ingress token when live owner is active; otherwise issue (pre-Ingress)."""
+    """Reuse Ingress shared token only. Never POST /token."""
 
     def _issue() -> str:
-        try:
-            from small_paper.kabu_token_authority import (
-                acquire_token_for_readonly,
-                ingress_owner_active,
-            )
+        from small_paper.kabu_token_authority import acquire_token_for_readonly
+        from small_paper.runtime_clock import now_jst as session_now
 
-            native = Path(__file__).resolve().parents[2]
-            day = datetime.now(JST).strftime("%Y%m%d")
-            if ingress_owner_active(native, day):
-                got = acquire_token_for_readonly(
-                    native_root=native,
-                    trading_date=day,
-                    caller="kabu_readonly_readiness",
-                    rest=rest,
-                )
-                return str(got.get("token") or "")
-        except Exception:
-            pass
-        return rest.issue_token_from_env()
+        native = Path(__file__).resolve().parents[2]
+        day = session_now().strftime("%Y%m%d")
+        got = acquire_token_for_readonly(
+            native_root=native,
+            trading_date=day,
+            caller="kabu_readonly_readiness",
+            rest=rest,
+        )
+        return str(got.get("token") or "")
 
     return _issue
 
@@ -386,30 +380,39 @@ def run_readonly_readiness_probe(
         _assert_hard_fails(diag)
         return diag
 
-    token, token_diag = acquire_token_with_policy(issue_fn=_readonly_or_owned_issue(rest))
-    for k in (
-        "token_acquired",
-        "token_present",
-        "token_probe_status",
-        "latency_ms",
-        "retry_attempts",
-        "retryable",
-        "exception_class",
-        "error_category",
-        "masked_error",
-        "http_status",
-        "failure_reason",
-        "token_refresh_count",
-    ):
-        setattr(diag, k, getattr(token_diag, k))
+    from small_paper.kabu_token_authority import TokenUnavailable, acquire_token_for_readonly
+    from small_paper.runtime_clock import now_jst as session_now
+
+    native = Path(__file__).resolve().parents[2]
+    day = session_now().strftime("%Y%m%d")
+    token = ""
+    try:
+        got = acquire_token_for_readonly(
+            native_root=native,
+            trading_date=day,
+            caller="kabu_readonly_readiness",
+            rest=rest,
+        )
+        token = str(got.get("token") or "")
+        diag.token_acquired = bool(token)
+        diag.token_present = bool(token)
+        diag.token_probe_status = (
+            TokenProbeStatus.TOKEN_ACQUIRED.value if token else TokenProbeStatus.STATION_REACHABLE_AUTH_DEFERRED.value
+        )
+    except TokenUnavailable:
+        token = ""
+        diag.token_acquired = False
+        diag.token_present = False
+        diag.token_probe_status = TokenProbeStatus.STATION_REACHABLE_AUTH_DEFERRED.value
+        diag.failure_reason = "auth_deferred_until_ingress"
+        diag.token_endpoint_reachable = True
+        _assert_hard_fails(diag)
+        return diag
 
     if not token:
-        diag.token_endpoint_reachable = False
-        diag.operational_api_available = False
-        # Port reachable but token failed: do not reclassify as station-not-running
-        # solely because process-name detection is false.
-        if diag.station_process_detected is False:
-            diag.process_detection_warning = True
+        diag.token_probe_status = TokenProbeStatus.STATION_REACHABLE_AUTH_DEFERRED.value
+        diag.failure_reason = "auth_deferred_until_ingress"
+        diag.token_endpoint_reachable = True
         _assert_hard_fails(diag)
         return diag
 
@@ -517,6 +520,8 @@ def readiness_exit_code(diag: TokenDiagnostics) -> int:
         return EXIT_SAFETY_INVARIANT_FAILED
     st = diag.token_probe_status
     if diag.ready_for_soak or st.startswith("READONLY_ONLINE"):
+        return EXIT_READONLY_READY
+    if st == TokenProbeStatus.STATION_REACHABLE_AUTH_DEFERRED.value:
         return EXIT_READONLY_READY
     if st in (
         TokenProbeStatus.API_PASSWORD_MISSING.value,

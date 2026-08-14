@@ -29,6 +29,9 @@ def _wait_until(pred, *, timeout_sec: float, interval: float = 0.05) -> bool:
 
 def main() -> int:
     sys.path.insert(0, str(NATIVE / "src"))
+    from small_paper.runtime_clock import apply_non_issuer_env
+
+    apply_non_issuer_env(os.environ)
     os.environ["MARKET_INGRESS_V2"] = "1"
     from small_paper.market_ingress_protocol import market_ingress_v2_enabled
     from small_paper.market_ingress_service import MarketIngressService

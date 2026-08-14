@@ -501,7 +501,18 @@ def register_symbols_cleared(
 def push_client_from_repo(repo_root) -> tuple[KabuNativePushClient, KabuNativeRestClient, str]:
     load_kabu_env(repo_root=Path(repo_root))
     rest = KabuNativeRestClient(default_base_url())
-    token = rest.issue_token_from_env()
+    from small_paper.kabu_token_authority import acquire_token_for_readonly
+    from small_paper.runtime_clock import now_jst as session_now
+
+    native = resolve_native_root_for_register_state(Path(repo_root))
+    day = session_now().strftime("%Y%m%d")
+    acquired = acquire_token_for_readonly(
+        native_root=native,
+        trading_date=day,
+        caller="push_client_from_repo",
+        rest=rest,
+    )
+    token = str(acquired.get("token") or "")
     return KabuNativePushClient(rest, token), rest, token
 
 
@@ -522,12 +533,10 @@ def clear_register_before_session(repo_root) -> dict[str, Any]:
         root = Path(repo_root)
         native = resolve_native_root_for_register_state(root)
         try:
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-
             from small_paper.kabu_registration_authority import forbid_post_ingress_unregister_all
+            from small_paper.runtime_clock import now_jst as session_now
 
-            day = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d")
+            day = session_now().strftime("%Y%m%d")
             gate = forbid_post_ingress_unregister_all(
                 native, day, caller="clear_register_before_session"
             )
@@ -545,7 +554,24 @@ def clear_register_before_session(repo_root) -> dict[str, Any]:
                 }
         except Exception:
             pass
-        push, _, _ = push_client_from_repo(root)
+        try:
+            push, _, _ = push_client_from_repo(root)
+        except Exception as exc:
+            from small_paper.kabu_token_authority import TokenUnavailable
+
+            if isinstance(exc, TokenUnavailable):
+                return {
+                    "ok": True,
+                    "cleared": False,
+                    "skipped": True,
+                    "reason": "AUTH_DEFERRED_UNTIL_INGRESS",
+                    "unregister_all": {"ok": True, "skipped": True, "reason": "no_shared_token"},
+                    "POST_INGRESS_COMMIT_UNREGISTER_ALL": 0,
+                    "register_limit": KABU_PUSH_REGISTER_LIMIT,
+                    "list_registered_symbols_api": False,
+                    "note": "No Ingress shared token yet; unregister/all deferred. Ingress owns live PUT.",
+                }
+            raise
         unr = unregister_all_until_zero(push)
         ok = bool(unr.get("ok"))
         # Phase687W34: Station clear must invalidate local reuse SoT.

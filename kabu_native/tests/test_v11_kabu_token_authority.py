@@ -41,6 +41,16 @@ NATIVE = Path(__file__).resolve().parents[1]
 NOW_1350 = datetime(2026, 8, 13, 13, 50, tzinfo=JST)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_token_auth_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("KABU_AUTH_MODE", "LIVE")
+    monkeypatch.setenv("KABU_STATION_AUTHORITY_DIR", str(tmp_path / "station_auth"))
+    monkeypatch.setenv("KABU_TOKEN_AUTHORITY_DIR", str(tmp_path / "day_auth"))
+    monkeypatch.delenv("KABU_TOKEN_PREFLIGHT", raising=False)
+    monkeypatch.delenv("KABU_CERTIFICATION_PROBE", raising=False)
+    monkeypatch.delenv("MARKET_INPUT_MODE", raising=False)
+
+
 class _FakePush:
     def __init__(self) -> None:
         self.calls: list[list[tuple[str, int]]] = []
@@ -122,6 +132,7 @@ def test_classify_401_429() -> None:
 
 def test_case_d_child_token_issue_blocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KABU_TOKEN_AUTHORITY_DIR", str(tmp_path))
+    monkeypatch.setenv("KABU_STATION_AUTHORITY_DIR", str(tmp_path))
     claim_owner(
         native_root=tmp_path,
         trading_date="20260813",
@@ -139,6 +150,7 @@ def test_case_d_child_token_issue_blocked(tmp_path: Path, monkeypatch: pytest.Mo
 
 def test_case_a_b_safety_reuses_token_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KABU_TOKEN_AUTHORITY_DIR", str(tmp_path))
+    monkeypatch.setenv("KABU_STATION_AUTHORITY_DIR", str(tmp_path))
     claim_owner(
         native_root=tmp_path,
         trading_date="20260813",
@@ -174,6 +186,7 @@ def test_verify_kabu_connection_reuses_when_owner_active(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KABU_TOKEN_AUTHORITY_DIR", str(tmp_path))
+    monkeypatch.setenv("KABU_STATION_AUTHORITY_DIR", str(tmp_path))
     claim_owner(
         native_root=tmp_path,
         trading_date="20260813",
@@ -362,11 +375,15 @@ def test_v10_native_ingest_marker_unchanged() -> None:
 
 
 def test_live_issue_token_callsites_go_through_authority() -> None:
-    """Live startup files must not call issue_token_from_env outside owner/acquire paths."""
+    """Live startup files must not call issue_token_from_env (Ingress excepted)."""
     live_files = [
         NATIVE / "src" / "small_paper" / "pilot_runner.py",
         NATIVE / "src" / "small_paper" / "safety.py",
         NATIVE / "src" / "runner" / "am_pm_daily_runner.py",
+        NATIVE / "src" / "small_paper" / "kabu_readonly_readiness.py",
+        NATIVE / "src" / "api" / "kabu_register.py",
+        NATIVE / "src" / "small_paper" / "market_capture_sidecar.py",
+        NATIVE / "src" / "small_paper" / "live_order_api_wiring.py",
     ]
     for path in live_files:
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -379,14 +396,14 @@ def test_live_issue_token_callsites_go_through_authority() -> None:
                 name = func.attr
             elif isinstance(func, ast.Name):
                 name = func.id
-            if name != "issue_token_from_env":
-                continue
-            # Allowed only in non-ingress_v2 reconnect fallback inside pilot_runner.
-            assert path.name == "pilot_runner.py", f"unexpected issue_token_from_env in {path}"
+            assert name not in {"issue_token_from_env", "post_token_http"}, (
+                f"unexpected {name} in {path}"
+            )
 
 
 def test_owner_context_allows_issue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KABU_TOKEN_AUTHORITY_DIR", str(tmp_path))
+    monkeypatch.setenv("KABU_STATION_AUTHORITY_DIR", str(tmp_path))
     called = {"n": 0}
 
     def _ok() -> None:

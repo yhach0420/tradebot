@@ -36,8 +36,8 @@ class KabuNativeRestClient:
         self.max_retries = max(1, int(max_retries))
         self.retry_backoff_sec = max(0.0, float(retry_backoff_sec))
 
-    def issue_token(self, api_password: str) -> str:
-        _gate_live_token_issue()
+    def post_token_http(self, api_password: str) -> str:
+        """HTTP POST /token. TokenAuthority only — consumers must not call this."""
         url = f"{self.base_url}/token"
         response = self._request(
             "POST",
@@ -53,6 +53,11 @@ class KabuNativeRestClient:
         if not token:
             raise KabuNativeApiError(f"token response missing Token field: {_safe_payload_repr(payload)}")
         return str(token)
+
+    def issue_token(self, api_password: str) -> str:
+        from small_paper.kabu_token_authority import issue_station_token
+
+        return issue_station_token(self, api_password, caller="rest_client.issue_token")
 
     def issue_token_from_env(self) -> str:
         password = require_kabu_password()
@@ -122,12 +127,8 @@ class KabuNativeRestClient:
 
 
 def _gate_live_token_issue() -> None:
-    """Block child POST /token while MARKET_INGRESS_SERVICE owns the live session."""
-    try:
-        from small_paper.kabu_token_authority import gate_token_issue
-    except Exception:
-        return
-    gate_token_issue(caller="rest_client.issue_token")
+    """No-op shim. issue_station_token holds the Station lock; nested gate would deadlock."""
+    return
 
 
 def load_kabu_env(*, repo_root: Path | None = None) -> Path:

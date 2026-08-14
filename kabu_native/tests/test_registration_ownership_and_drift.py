@@ -139,7 +139,23 @@ def test_case_a_legacy_unregister_only_before_ingress(tmp_path: Path, monkeypatc
 
 
 def test_case_b_daily_runner_after_ingress_put_no_unregister(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from small_paper.runtime_clock import (
+        ENV_ARM_FILE,
+        ENV_ENABLED,
+        ENV_SPEED,
+        ENV_STOP,
+        ENV_T0,
+        ENV_V0,
+        bind_session_clock,
+    )
+
     monkeypatch.setenv("MARKET_INGRESS_V2", "1")
+    for k in (ENV_ENABLED, ENV_V0, ENV_T0, ENV_SPEED, ENV_STOP, ENV_ARM_FILE):
+        if k in os.environ:
+            monkeypatch.setenv(k, os.environ[k])
+        else:
+            monkeypatch.delenv(k, raising=False)
+    bind_session_clock(virtual_start=datetime(2026, 8, 13, 9, 0, tzinfo=JST), speed_mult=1.0)
     day = "20260813"
     am = _am_syms()
     _bind_day(tmp_path, day, am)

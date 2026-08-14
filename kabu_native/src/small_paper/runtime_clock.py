@@ -30,6 +30,33 @@ ENV_REPLAY_EPS = "TRADEBOT_INGRESS_REPLAY_MAX_EPS"
 ENV_CERT_MODE = "TRADEBOT_CERTIFICATION_MODE"
 ENV_CONSUMER_DELAY = "TRADEBOT_CERT_CONSUMER_EXTRA_DELAY_SEC"
 ENV_SKIP_CERT_GATE = "TRADEBOT_SKIP_CERT_GATE"
+ENV_MARKET_INPUT_MODE = "MARKET_INPUT_MODE"
+ENV_KABU_AUTH_MODE = "KABU_AUTH_MODE"
+ENV_TOKEN_PREFLIGHT = "KABU_TOKEN_PREFLIGHT"
+ENV_CERT_PROBE = "KABU_CERTIFICATION_PROBE"
+
+MARKET_INPUT_LIVE = "LIVE"
+MARKET_INPUT_REPLAY = "REPLAY"
+MARKET_INPUT_SYNTHETIC = "SYNTHETIC"
+KABU_AUTH_LIVE = "LIVE"
+KABU_AUTH_SHARED = "SHARED"
+KABU_AUTH_NONE = "NONE"
+
+# Certification-only keys that must not leak into research/preflight helpers.
+CERTIFICATION_STRIP_KEYS: tuple[str, ...] = (
+    ENV_ENABLED,
+    ENV_V0,
+    ENV_T0,
+    ENV_SPEED,
+    ENV_STOP,
+    ENV_ARM_FILE,
+    ENV_REPLAY_PATH,
+    ENV_REPLAY_NOT_BEFORE,
+    ENV_REPLAY_EPS,
+    ENV_CERT_MODE,
+    ENV_CONSUMER_DELAY,
+    ENV_SKIP_CERT_GATE,
+)
 
 _TRUE = frozenset({"1", "true", "yes", "on"})
 
@@ -49,6 +76,54 @@ def certification_mode(*, environ: Optional[dict[str, str]] = None) -> bool:
 
 def skip_cert_gate(*, environ: Optional[dict[str, str]] = None) -> bool:
     return _flag(ENV_SKIP_CERT_GATE, environ=environ)
+
+
+def market_input_mode(*, environ: Optional[dict[str, str]] = None) -> str:
+    """LIVE | REPLAY | SYNTHETIC. Independent of Kabu token issuance."""
+    env = environ if environ is not None else os.environ
+    raw = str(env.get(ENV_MARKET_INPUT_MODE, "") or "").strip().upper()
+    if raw in {MARKET_INPUT_LIVE, MARKET_INPUT_REPLAY, MARKET_INPUT_SYNTHETIC}:
+        return raw
+    if ingress_replay_path(environ=env):
+        return MARKET_INPUT_REPLAY
+    return MARKET_INPUT_LIVE
+
+
+def kabu_auth_mode(*, environ: Optional[dict[str, str]] = None) -> str:
+    """LIVE | SHARED | NONE. Replay path must not imply LIVE token POST."""
+    env = environ if environ is not None else os.environ
+    if _flag(ENV_TOKEN_PREFLIGHT, environ=env) or _flag(ENV_CERT_PROBE, environ=env):
+        return KABU_AUTH_NONE
+    raw = str(env.get(ENV_KABU_AUTH_MODE, "") or "").strip().upper()
+    if raw in {KABU_AUTH_LIVE, KABU_AUTH_SHARED, KABU_AUTH_NONE}:
+        return raw
+    return KABU_AUTH_LIVE
+
+
+def apply_non_issuer_env(environ: Optional[dict[str, str]] = None) -> dict[str, str]:
+    """Strip certification clock/replay env and force consumer-only Kabu auth.
+
+    Use for research/preflight helpers that must not inherit TRADEBOT_* and
+    must never POST /token.
+    """
+    env = environ if environ is not None else os.environ
+    for key in CERTIFICATION_STRIP_KEYS:
+        env.pop(key, None)
+    env[ENV_KABU_AUTH_MODE] = KABU_AUTH_NONE
+    env[ENV_MARKET_INPUT_MODE] = MARKET_INPUT_SYNTHETIC
+    env[ENV_TOKEN_PREFLIGHT] = "1"
+    return env
+
+
+def official_cert_child_env(source: Optional[dict[str, str]] = None) -> dict[str, str]:
+    """Env for the official checked-BAT certification graph (Ingress may issue)."""
+    env = dict(source if source is not None else os.environ)
+    env[ENV_KABU_AUTH_MODE] = KABU_AUTH_LIVE
+    if env.get(ENV_REPLAY_PATH):
+        env[ENV_MARKET_INPUT_MODE] = MARKET_INPUT_REPLAY
+    env.pop(ENV_TOKEN_PREFLIGHT, None)
+    env.pop(ENV_CERT_PROBE, None)
+    return env
 
 
 def ingress_replay_path(*, environ: Optional[dict[str, str]] = None) -> str:

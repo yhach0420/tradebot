@@ -54,6 +54,7 @@ RUNTIME_DEPENDENCY_RELS: tuple[str, ...] = (
     "src/small_paper/day_fixed_am_registration.py",
     "src/small_paper/kabu_registration_authority.py",
     "src/small_paper/kabu_token_authority.py",
+    "src/small_paper/kabu_readonly_readiness.py",
     "src/api/rest_client.py",
     "src/small_paper/ingress_control_channel.py",
     "src/small_paper/market_capture_registration.py",

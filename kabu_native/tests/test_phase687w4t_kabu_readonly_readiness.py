@@ -129,13 +129,13 @@ def test_exit_codes():
         token_probe_status=TokenProbeStatus.AUTH_FAILED.value,
     )
     assert readiness_exit_code(d3) == EXIT_AUTH_OR_CONFIG_ERROR
-    d4 = TokenDiagnostics(
+    d5 = TokenDiagnostics(
         submit_hard_fail=True,
         cancel_hard_fail=True,
         flatten_hard_fail=True,
-        token_probe_status=TokenProbeStatus.PORT_UNREACHABLE.value,
+        token_probe_status=TokenProbeStatus.STATION_REACHABLE_AUTH_DEFERRED.value,
     )
-    assert readiness_exit_code(d4) == EXIT_STATION_OR_TOKEN_NOT_READY
+    assert readiness_exit_code(d5) == EXIT_READONLY_READY
 
 
 def test_diagnostics_dict_has_no_secrets():

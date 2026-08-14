@@ -47,6 +47,7 @@ from small_paper.runtime_clock import (
     ENV_REPLAY_PATH,
     ENV_STOP,
     bind_session_clock,
+    official_cert_child_env,
 )
 from small_paper.v1r_primary_runtime import CLOCK_GRID
 
@@ -141,9 +142,14 @@ def _extract_anchor_stream(src: Path, dest: Path, *, max_cruise: int = 80000) ->
 
 
 def _kabu_precheck() -> dict[str, Any]:
+    """No-order Station reachability. Must not POST /token (S1)."""
+    import socket
+    from urllib.parse import urlparse
+
     out: dict[str, Any] = {
         "station_reachable": False,
         "token_acquisition": False,
+        "token_issue_attempted": False,
         "single_authority": True,
         "registlist": False,
         "registration_50_50": False,
@@ -151,26 +157,30 @@ def _kabu_precheck() -> dict[str, Any]:
         "auth_429_readiness": True,
         "submit_cancel_live": "0/0/0",
         "market_push": "MARKET_PUSH_NOT_AVAILABLE_OFF_HOURS",
-        "handoff": "next_morning_startup_preflight_must_reconfirm_live_ingress",
+        "handoff": "authenticated_checks_via_ingress_shared_token",
     }
     try:
-        from api.rest_client import KabuNativeRestClient, default_base_url, load_kabu_env
+        from api.rest_client import default_base_url, load_kabu_env, require_kabu_password
 
         load_kabu_env(repo_root=REPO)
         load_kabu_env(repo_root=NATIVE)
-        rest = KabuNativeRestClient(default_base_url())
-        token = rest.issue_token_from_env()
-        out["token_acquisition"] = bool(token)
+        base = default_base_url()
+        parsed = urlparse(base)
+        host = parsed.hostname or "127.0.0.1"
+        port = int(parsed.port or 18080)
+        sock = socket.create_connection((host, port), timeout=3.0)
+        sock.close()
         out["station_reachable"] = True
+        out["password_configured"] = bool(os.environ.get("KABU_API_PASSWORD", "").strip())
         try:
-            rl = rest.get_json("/register") if hasattr(rest, "get_json") else None
-            out["registlist"] = rl is not None
-        except Exception as exc:
-            out["registlist_error"] = f"{type(exc).__name__}:{exc}"
+            require_kabu_password()
+            out["password_configured"] = True
+        except Exception:
+            out["password_configured"] = False
     except Exception as exc:
         out["error"] = f"{type(exc).__name__}:{exc}"
         out["station_reachable"] = False
-    out["ok"] = bool(out["station_reachable"] and out["token_acquisition"])
+    out["ok"] = bool(out["station_reachable"] and out.get("password_configured"))
     out["verdict"] = (
         "KABU_NO_ORDER_PRECHECK_PASS_WITH_OFF_HOURS_HANDOFF"
         if out["ok"]
@@ -412,6 +422,7 @@ def main() -> int:
     if fixture.is_file():
         env[ENV_REPLAY_PATH] = str(fixture)
         env[ENV_REPLAY_EPS] = "800"
+    env = official_cert_child_env(env)
 
     stream_ok = bool(fixture_meta.get("ok")) and "CAPTURE_STREAM_MISSING" not in failed
     _stop_cert_children("20260812")
@@ -523,6 +534,10 @@ def main() -> int:
 
     sink.shutdown()
 
+    from small_paper.kabu_token_authority import station_issue_audit_summary
+
+    token_audit = station_issue_audit_summary()
+
     full_pass = (
         not failed
         and bool(full_day.get("ok"))
@@ -564,6 +579,7 @@ def main() -> int:
         "teardown_nameerror_detectable": nameerr,
         "market_stream": fixture_meta,
         "kabu_precheck": kabu,
+        "token_authority_audit": token_audit,
         "full_day": full_day,
         "full_day_lifecycle": full_day_eval,
         "pm_direct_start": pm_run,

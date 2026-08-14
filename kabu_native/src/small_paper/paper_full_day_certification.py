@@ -416,9 +416,40 @@ def source_regression_gates(*, native_root: Optional[Path] = None) -> dict[str, 
     }
 
     token = (native / "src/small_paper/kabu_token_authority.py").read_text(encoding="utf-8")
+    clock = (native / "src/small_paper/runtime_clock.py").read_text(encoding="utf-8")
+    rest = (native / "src/api/rest_client.py").read_text(encoding="utf-8")
+    preflight = (native / "scripts/run_market_ingress_v2_preflight.py").read_text(encoding="utf-8")
+    cert_script = (native / "scripts/run_paper_full_day_certification.py").read_text(encoding="utf-8")
     checks["KABU_API_TOKEN_OWNERSHIP_CONFLICT"] = {
-        "ok": "MARKET_INGRESS_SERVICE" in token or "owner_issue_context" in token,
-        "reason": "single token issuer authority",
+        "ok": "TOKEN_SECOND_ISSUER_BLOCKED" in token
+        and "station_issue_lock" in token
+        and "MARKET_INGRESS_SERVICE" in token
+        and "CreateMutexW" in token,
+        "reason": "Station-global single token issuer with OS mutex + file lock",
+    }
+    checks["TOKEN_ISSUE_SOT_SINGLE_ENTRY"] = {
+        "ok": "issue_station_token" in rest and "post_token_http" in rest and "issue_station_token" in token,
+        "reason": "all POST /token must go through TokenAuthority",
+    }
+    checks["REPLAY_AUTH_MODE_SPLIT"] = {
+        "ok": "MARKET_INPUT_MODE" in clock
+        and "KABU_AUTH_MODE" in clock
+        and "apply_non_issuer_env" in clock
+        and "official_cert_child_env" in clock,
+        "reason": "replay input must not imply live token POST",
+    }
+    checks["PREFLIGHT_SYNTHETIC_TOKEN_SIDE_EFFECT"] = {
+        "ok": "apply_non_issuer_env" in preflight,
+        "reason": "S4 preflight must strip cert env and never POST /token",
+    }
+    checks["CERT_PRECHECK_NOT_ISSUER"] = {
+        "ok": "token_issue_attempted" in cert_script and "issue_token_from_env" not in cert_script,
+        "reason": "S1 certification precheck must not POST /token",
+    }
+    spawn = (native / "src/small_paper/market_ingress_spawn.py").read_text(encoding="utf-8")
+    checks["INGRESS_SPAWN_ENV_CONTRACT"] = {
+        "ok": "apply_non_issuer_env" in spawn and "official_cert_child_env" in spawn,
+        "reason": "synthetic spawn strips cert env; live Ingress keeps LIVE auth + replay",
     }
     ingress = (native / "src/small_paper/market_ingress_service.py").read_text(encoding="utf-8")
     checks["INGRESS_AUTH_RETRY_STORM"] = {

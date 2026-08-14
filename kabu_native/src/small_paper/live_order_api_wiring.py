@@ -552,8 +552,24 @@ def run_live_order_preflight(
 
         load_kabu_env(repo_root=root)
         client = KabuOrderReadClient(default_base_url())
-        token = client.issue_token_from_env()
-        _add("PF_TOKEN", True, "token issued")
+        from small_paper.kabu_token_authority import TokenUnavailable, acquire_token_for_readonly
+        from small_paper.runtime_clock import now_jst as session_now
+        from api.kabu_register import resolve_native_root_for_register_state
+
+        native = resolve_native_root_for_register_state(root)
+        try:
+            acquired = acquire_token_for_readonly(
+                native_root=native,
+                trading_date=session_now().strftime("%Y%m%d"),
+                caller="live_order_api_wiring",
+                rest=client,
+            )
+            token = str(acquired.get("token") or "")
+        except TokenUnavailable:
+            _add("PF_TOKEN", True, "token deferred until Ingress publish")
+            report.ready = not report.errors
+            return report
+        _add("PF_TOKEN", True, "token reused")
         probe = client.probe_all(token=token)
         report.api_online = bool(probe.get("ok"))
         for name, res in (probe.get("probes") or {}).items():
