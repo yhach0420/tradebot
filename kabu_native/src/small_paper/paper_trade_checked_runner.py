@@ -2011,6 +2011,13 @@ class PaperTradeCheckedRunner:
                 self.trading_date,
                 timeout_sec=20.0 if self.capture_synthetic else 45.0,
                 require_registered_count=50 if int((self.capture.get("registration") or {}).get("expected_count") or 0) == 50 else 0,
+                expected_launch_nonce=str(spawn.get("launch_nonce") or ""),
+                expected_ingress_run_id=str(spawn.get("ingress_run_id") or ""),
+                expected_activation_id=str(spawn.get("activation_id") or ""),
+                expected_activation_sha=str(spawn.get("activation_sha") or ""),
+                expected_pid=int(spawn.get("pid") or 0),
+                expected_process_start_identity=str(spawn.get("process_start_identity") or ""),
+                expected_bus_identity=str(spawn.get("bus_identity") or ""),
             )
             ok = bool(wait.get("ok"))
             self.capture.update(

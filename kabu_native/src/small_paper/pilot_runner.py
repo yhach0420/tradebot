@@ -10608,9 +10608,11 @@ def _write_outputs(
     positions: list[dict[str, Any]],
     summary: dict[str, Any],
 ) -> None:
+    from small_paper.ingress_run_identity import stamp_execution_scope
+
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "small_paper_summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2),
+        json.dumps(stamp_execution_scope(dict(summary)), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     _write_csv(output_dir / "small_paper_events.csv", EVENT_FIELDS, events)

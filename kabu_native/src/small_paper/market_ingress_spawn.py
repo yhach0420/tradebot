@@ -9,6 +9,27 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from small_paper.ingress_run_identity import (
+    CURRENT_INGRESS_NOT_READY,
+    DEFAULT_HEARTBEAT_MAX_AGE_SEC,
+    ENV_ACTIVATION_ID,
+    ENV_ACTIVATION_SHA,
+    ENV_BUS_IDENTITY,
+    ENV_INGRESS_RUN_ID,
+    ENV_LAUNCH_NONCE,
+    MISSING_EXPECTED_LAUNCH_NONCE,
+    STALE_INGRESS_STATUS_REJECTED,
+    activation_identity,
+    append_wait_audit,
+    capture_process_start_identity,
+    evaluate_current_run_online,
+    generate_launch_nonce,
+    load_ingress_status_json,
+    make_bus_identity,
+    make_ingress_run_id,
+    stale_fingerprint,
+)
+from small_paper.local_market_bus import bus_host, bus_port as default_bus_port
 from small_paper.market_ingress_protocol import now_iso
 
 
@@ -77,6 +98,22 @@ def spawn_ingress_process(
         env["PYTHONPATH"] = f"{src};{repo}" if sys.platform == "win32" else f"{src}:{repo}"
         env["PYTHONIOENCODING"] = "utf-8"
         env["MARKET_INGRESS_V2"] = "1"
+    launch_nonce = generate_launch_nonce()
+    ingress_run_id = make_ingress_run_id(trading_date=str(trading_date), launch_nonce=launch_nonce)
+    activation_id, activation_sha = activation_identity(environ=env)
+    host = bus_host(environ=env)
+    port = int(bus_port) if bus_port else int(default_bus_port(environ=env))
+    bus_identity = make_bus_identity(
+        host=str(host),
+        port=int(port),
+        trading_date=str(trading_date),
+        launch_nonce=launch_nonce,
+    )
+    env[ENV_LAUNCH_NONCE] = launch_nonce
+    env[ENV_INGRESS_RUN_ID] = ingress_run_id
+    env[ENV_BUS_IDENTITY] = bus_identity
+    env[ENV_ACTIVATION_ID] = activation_id
+    env[ENV_ACTIVATION_SHA] = activation_sha
     cmd = [
         exe,
         "-m",
@@ -116,6 +153,12 @@ def spawn_ingress_process(
         "cmd": cmd,
         "trading_date": trading_date,
         "synthetic": synthetic,
+        "launch_nonce": launch_nonce,
+        "ingress_run_id": ingress_run_id,
+        "bus_identity": bus_identity,
+        "activation_id": activation_id,
+        "activation_sha": activation_sha,
+        "process_start_identity": capture_process_start_identity(int(proc.pid)),
     }
     (day / "ingress.pid").write_text(str(proc.pid), encoding="utf-8")
     (day / "ingress_spawn.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -127,28 +170,93 @@ def wait_ingress_online(
     *,
     timeout_sec: float = 45.0,
     require_registered_count: int = 0,
+    expected_launch_nonce: str = "",
+    expected_ingress_run_id: str = "",
+    expected_activation_id: str = "",
+    expected_activation_sha: str = "",
+    expected_pid: int = 0,
+    expected_process_start_identity: str = "",
+    expected_bus_identity: str = "",
+    heartbeat_max_age_sec: float = DEFAULT_HEARTBEAT_MAX_AGE_SEC,
+    query_fn: Any = None,
 ) -> dict[str, Any]:
-    status = Path(native_root) / "data" / "market_capture" / trading_date / "ingress_status.json"
+    """Accept only current-run identity. Stale files are rejected, not ONLINE.
+
+    Does not delete ingress_status.json. Timeout → CURRENT_INGRESS_NOT_READY.
+    """
+    status_path = Path(native_root) / "data" / "market_capture" / trading_date / "ingress_status.json"
+    audit_path = Path(native_root) / "data" / "market_capture" / trading_date / "ingress_wait_audit.jsonl"
+    nonce = str(expected_launch_nonce or "").strip()
+    if not nonce:
+        return {
+            "ok": False,
+            "reason": MISSING_EXPECTED_LAUNCH_NONCE,
+            "status": CURRENT_INGRESS_NOT_READY,
+            "stale_status_rejected_count": 0,
+        }
+    expected = {
+        "launch_nonce": nonce,
+        "ingress_run_id": str(expected_ingress_run_id or "").strip(),
+        "activation_id": str(expected_activation_id or "").strip(),
+        "activation_sha": str(expected_activation_sha or "").strip(),
+        "trading_date": str(trading_date),
+        "pid": int(expected_pid or 0),
+        "process_start_identity": str(expected_process_start_identity or "").strip(),
+        "bus_identity": str(expected_bus_identity or "").strip(),
+    }
     deadline = time.monotonic() + float(timeout_sec)
     last: dict[str, Any] = {}
-    need = int(require_registered_count or 0)
+    last_eval: dict[str, Any] = {}
+    seen_stale: set[str] = set()
+    stale_status_rejected_count = 0
     while time.monotonic() < deadline:
-        if status.is_file():
-            try:
-                last = json.loads(status.read_text(encoding="utf-8"))
-                st = str(last.get("state") or "")
-                if st in (
-                    "RUNNING",
-                    "WAITING_FIRST_PUSH",
-                    "REGISTERING",
-                    "RECOVERED",
-                    "CONNECTING",
-                ):
-                    if need > 0 and int(last.get("registered_symbol_count") or 0) < need:
-                        time.sleep(0.25)
-                        continue
-                    return {"ok": True, "status": st, "pid": last.get("pid"), "snapshot": last}
-            except Exception as exc:
-                last = {"error": type(exc).__name__}
+        payload, err = load_ingress_status_json(status_path)
+        if payload is None:
+            last = {"error": err}
+            time.sleep(0.25)
+            continue
+        last = payload
+        last_eval = evaluate_current_run_online(
+            payload,
+            expected=expected,
+            heartbeat_max_age_sec=heartbeat_max_age_sec,
+            query_fn=query_fn,
+            require_registered_count=require_registered_count,
+        )
+        if last_eval.get("ok"):
+            return {
+                "ok": True,
+                "status": str(payload.get("state") or ""),
+                "pid": payload.get("pid"),
+                "snapshot": payload,
+                "stale_status_rejected_count": stale_status_rejected_count,
+                "launch_nonce": payload.get("launch_nonce"),
+                "ingress_run_id": payload.get("ingress_run_id"),
+                "process_start_identity": payload.get("process_start_identity"),
+            }
+        fp = stale_fingerprint(payload, str(last_eval.get("reject_code") or ""))
+        if fp not in seen_stale:
+            seen_stale.add(fp)
+            stale_status_rejected_count += 1
+            append_wait_audit(
+                audit_path,
+                {
+                    "at_unix": time.time(),
+                    "event": STALE_INGRESS_STATUS_REJECTED,
+                    "reject_code": last_eval.get("reject_code"),
+                    "pid": payload.get("pid"),
+                    "launch_nonce": payload.get("launch_nonce"),
+                    "expected_launch_nonce": nonce,
+                    "ingress_run_id": payload.get("ingress_run_id"),
+                    "trading_date": trading_date,
+                },
+            )
         time.sleep(0.25)
-    return {"ok": False, "reason": "ingress_online_timeout", "last": last}
+    return {
+        "ok": False,
+        "reason": CURRENT_INGRESS_NOT_READY,
+        "status": CURRENT_INGRESS_NOT_READY,
+        "last": last,
+        "last_eval": last_eval,
+        "stale_status_rejected_count": stale_status_rejected_count,
+    }

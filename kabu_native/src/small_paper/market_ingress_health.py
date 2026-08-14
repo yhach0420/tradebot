@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from small_paper.ingress_run_identity import atomic_write_json
 from small_paper.market_ingress_protocol import now_iso
 
 
@@ -17,8 +18,7 @@ def write_heartbeat(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 def write_status_json(path: Path, payload: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(dict(payload), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_json(Path(path), dict(payload))
 
 
 def build_ingress_heartbeat(

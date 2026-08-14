@@ -561,7 +561,18 @@ def main() -> int:
         code_root=NATIVE,
     )
     commands.append(" ".join(str(x) for x in ingress_meta.get("cmd") or []))
-    online = wait_ingress_online(sandbox, DEMO_DAY, timeout_sec=30)
+    online = wait_ingress_online(
+        sandbox,
+        DEMO_DAY,
+        timeout_sec=30,
+        expected_launch_nonce=str(ingress_meta.get("launch_nonce") or ""),
+        expected_ingress_run_id=str(ingress_meta.get("ingress_run_id") or ""),
+        expected_activation_id=str(ingress_meta.get("activation_id") or ""),
+        expected_activation_sha=str(ingress_meta.get("activation_sha") or ""),
+        expected_pid=int(ingress_meta.get("pid") or 0),
+        expected_process_start_identity=str(ingress_meta.get("process_start_identity") or ""),
+        expected_bus_identity=str(ingress_meta.get("bus_identity") or ""),
+    )
     add("ingress_online", bool(online.get("ok")), online)
     ingress_pid = int(ingress_meta.get("pid") or 0)
     snap0 = read_ingress_status(sandbox)

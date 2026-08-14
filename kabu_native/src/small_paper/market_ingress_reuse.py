@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from small_paper.capture_child_cleanup import query_process
+from small_paper.ingress_run_identity import evaluate_current_run_online
 from small_paper.market_ingress_protocol import now_iso
 
 ONLINE_STATES = frozenset(
@@ -118,6 +119,7 @@ def validate_reusable_ingress(
             return out
     checks["pid_file"] = True
 
+    spawn: dict[str, Any] = {}
     if spawn_path.is_file():
         try:
             spawn = _read_json(spawn_path)
@@ -134,43 +136,34 @@ def validate_reusable_ingress(
             return out
     checks["spawn_meta"] = True
 
-    st = str(status.get("state") or "")
-    if st not in ONLINE_STATES:
-        out["reason"] = f"ingress_state_not_online:{st}"
-        checks["state"] = False
+    spawn_nonce = str(spawn.get("launch_nonce") or "")
+    if not spawn_nonce:
+        out["reason"] = "current_run_identity:missing_spawn_launch_nonce"
+        checks["current_run_identity"] = False
         return out
-    checks["state"] = True
-
-    if pid <= 0:
-        out["reason"] = "status_pid_invalid"
-        checks["pid_alive"] = False
+    identity = evaluate_current_run_online(
+        status,
+        expected={
+            "launch_nonce": spawn_nonce,
+            "ingress_run_id": str(spawn.get("ingress_run_id") or ""),
+            "activation_id": str(spawn.get("activation_id") or ""),
+            "activation_sha": str(spawn.get("activation_sha") or ""),
+            "trading_date": day,
+            "pid": pid,
+            "process_start_identity": str(spawn.get("process_start_identity") or ""),
+            "bus_identity": str(spawn.get("bus_identity") or ""),
+        },
+        query_fn=query_process,
+    )
+    if not identity.get("ok"):
+        out["reason"] = f"current_run_identity:{identity.get('reject_code') or identity.get('reason')}"
+        checks["current_run_identity"] = False
         return out
-
-    live = query_process(pid)
-    if not live.get("exists"):
-        out["reason"] = f"pid_not_running:{pid}"
-        checks["pid_alive"] = False
-        return out
+    checks["current_run_identity"] = True
     checks["pid_alive"] = True
-
-    cmd_ok, cmd_reason = _cmdline_ok(str(live.get("cmdline") or ""), native_root=root, trading_date=day)
-    if not cmd_ok:
-        # Windows query_process may omit cmdline; fall back to spawn.json cmd
-        fallback = ""
-        if spawn_path.is_file():
-            try:
-                sp = _read_json(spawn_path)
-                fallback = " ".join(str(x) for x in (sp.get("cmd") or []))
-            except Exception:
-                fallback = ""
-        if fallback:
-            cmd_ok, cmd_reason = _cmdline_ok(fallback, native_root=root, trading_date=day)
-        if not cmd_ok:
-            out["reason"] = cmd_reason
-            checks["cmdline"] = False
-            out["live"] = {k: live.get(k) for k in ("exists", "cmdline", "name")}
-            return out
-    checks["cmdline"] = True
+    checks["state"] = True
+    st = str(status.get("state") or "")
+    live = query_process(pid)
 
     desired = int(status.get("desired_symbol_count") or 0)
     registered = int(status.get("registered_symbol_count") or 0)

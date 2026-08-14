@@ -1511,6 +1511,12 @@ def build_summary_payload(state: DailyRunnerState) -> dict[str, Any]:
         payload["pm_refresh_open_symbols_count"] = ref.get("pm_refresh_open_symbols_count")
         payload["refresh_register_symbol_count_ok"] = ref.get("refresh_register_symbol_count_ok")
         payload["refresh_universe_duplicate_count"] = ref.get("refresh_universe_duplicate_count")
+    try:
+        from small_paper.ingress_run_identity import stamp_execution_scope
+
+        stamp_execution_scope(payload)
+    except Exception:
+        pass
     return payload
 
 
@@ -1594,6 +1600,12 @@ def write_outputs(state: DailyRunnerState) -> dict[str, str]:
             "set_diff_for_session_dirs": True,
         },
     }
+    try:
+        from small_paper.ingress_run_identity import stamp_execution_scope
+
+        stamp_execution_scope(full)
+    except Exception:
+        pass
     paths = {
         "phase148": state.reports_dir / f"phase148_am_pm_daily_runner_{day}.json",
         "summary": state.reports_dir / f"daily_runner_summary_{day}.json",

@@ -130,6 +130,12 @@ def main() -> int:
             "Review small_paper_summary.json after session for Phase40/41/43 re-evaluation",
         ],
     }
+    try:
+        from small_paper.ingress_run_identity import stamp_execution_scope
+
+        stamp_execution_scope(report)
+    except Exception:
+        pass
 
     out = native_root / "results" / "reports" / f"small_paper_safety_{day_key}.json"
     out.parent.mkdir(parents=True, exist_ok=True)

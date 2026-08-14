@@ -21,6 +21,18 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from small_paper.ingress_run_identity import (
+    ENV_BUS_IDENTITY,
+    ENV_INGRESS_RUN_ID,
+    ENV_LAUNCH_NONCE,
+    ROLE_MARKET_INGRESS_SERVICE,
+    STATUS_SCHEMA_VERSION,
+    activation_identity,
+    capture_process_start_identity,
+    generate_launch_nonce,
+    make_bus_identity,
+    make_ingress_run_id,
+)
 from small_paper.local_market_bus import LocalMarketBusPublisher, bus_host, bus_port
 from small_paper.market_ingress_health import build_ingress_heartbeat, write_heartbeat, write_status_json
 from small_paper.market_ingress_protocol import (
@@ -234,6 +246,19 @@ class MarketIngressService:
         self._pending_recovery_success = False
         self.day_root = self.native_root / "data" / "market_capture" / self.trading_date
         self.day_root.mkdir(parents=True, exist_ok=True)
+        self.launch_nonce = str(os.environ.get(ENV_LAUNCH_NONCE) or "").strip() or generate_launch_nonce()
+        self.ingress_run_id = str(os.environ.get(ENV_INGRESS_RUN_ID) or "").strip() or make_ingress_run_id(
+            trading_date=str(self.trading_date),
+            launch_nonce=self.launch_nonce,
+        )
+        self.activation_id, self.activation_sha = activation_identity()
+        self.bus_identity = str(os.environ.get(ENV_BUS_IDENTITY) or "").strip() or make_bus_identity(
+            host=str(self.bus.host),
+            port=int(self.bus.port),
+            trading_date=str(self.trading_date),
+            launch_nonce=self.launch_nonce,
+        )
+        self.process_start_identity = capture_process_start_identity(os.getpid())
 
     def _on_consumer_ack(self, consumer_id: str, result: Any) -> None:
         if consumer_id == "paper_runtime":
@@ -395,6 +420,18 @@ class MarketIngressService:
             recovery_success_count=self.sm.recovery_success_count,
             storage_error_count=self.writer.storage_errors,
             extra={
+                "status_schema_version": STATUS_SCHEMA_VERSION,
+                "activation_id": self.activation_id,
+                "activation_sha": self.activation_sha,
+                "ingress_run_id": self.ingress_run_id,
+                "launch_nonce": self.launch_nonce,
+                "process_start_identity": self.process_start_identity,
+                "trading_date": str(self.trading_date),
+                "role": ROLE_MARKET_INGRESS_SERVICE,
+                "bus_identity": self.bus_identity,
+                "status_written_unix": time.time(),
+                "status_written_monotonic": time.monotonic(),
+                "heartbeat_monotonic_age": 0.0,
                 "receiver_task_count": self._receiver_count if not self.synthetic else 1,
                 "entry_blocked": self.sm.entry_blocked,
                 "entry_block_reason": self.sm.entry_block_reason or None,
@@ -1840,6 +1877,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         while svc.sm.state != STOPPED and not svc._scheduled_end_passed():
             time.sleep(1.0)
+            try:
+                svc._write_status()
+            except Exception:
+                pass
             if svc._stop.is_set() or svc._operator_stop_requested():
                 break
     finally:

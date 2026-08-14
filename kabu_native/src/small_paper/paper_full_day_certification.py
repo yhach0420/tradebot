@@ -12,7 +12,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from small_paper.runtime_clock import (
     ENV_CERT_MODE,
@@ -447,9 +447,24 @@ def source_regression_gates(*, native_root: Optional[Path] = None) -> dict[str, 
         "reason": "S1 certification precheck must not POST /token",
     }
     spawn = (native / "src/small_paper/market_ingress_spawn.py").read_text(encoding="utf-8")
+    identity = (native / "src/small_paper/ingress_run_identity.py").read_text(encoding="utf-8")
     checks["INGRESS_SPAWN_ENV_CONTRACT"] = {
         "ok": "apply_non_issuer_env" in spawn and "official_cert_child_env" in spawn,
         "reason": "synthetic spawn strips cert env; live Ingress keeps LIVE auth + replay",
+    }
+    checks["INGRESS_CURRENT_RUN_IDENTITY"] = {
+        "ok": "STALE_INGRESS_STATUS_REJECTED" in spawn
+        and "expected_launch_nonce" in spawn
+        and "CURRENT_INGRESS_NOT_READY" in spawn
+        and "evaluate_current_run_online" in identity
+        and "process_start_identity" in identity
+        and "status_written_unix" in identity,
+        "reason": "wait_ingress_online must bind launch_nonce/PID/start/heartbeat, not stale files",
+    }
+    health = (native / "src/small_paper/market_ingress_health.py").read_text(encoding="utf-8")
+    checks["INGRESS_STATUS_ATOMIC_WRITE"] = {
+        "ok": "atomic_write_json" in health and "os.replace" in identity,
+        "reason": "ingress_status must be written atomically",
     }
     ingress = (native / "src/small_paper/market_ingress_service.py").read_text(encoding="utf-8")
     checks["INGRESS_AUTH_RETRY_STORM"] = {
@@ -506,3 +521,112 @@ def detect_teardown_nameerror_would_fail_v13() -> dict[str, Any]:
         "gate": "TEARDOWN_EXTERNAL_BACKUP_LOGGER_NAMEERROR",
         "v13_reproduced": detected,
     }
+
+
+def copy_scoped_run_snapshot(
+    *,
+    dest: Path,
+    reports_dir: Path,
+    day: str,
+    expected_scope: Mapping[str, Any],
+    filenames: Optional[tuple[str, ...]] = None,
+) -> dict[str, Any]:
+    """Copy only artifacts whose certification/stage/activation ids match expected_scope."""
+    from small_paper.ingress_run_identity import artifact_matches_scope
+
+    dest.mkdir(parents=True, exist_ok=True)
+    names = filenames or (
+        f"phase148_am_pm_daily_runner_{day}.json",
+        f"daily_runner_summary_{day}.json",
+        f"small_paper_safety_{day}.json",
+    )
+    copied: dict[str, str] = {}
+    excluded: list[dict[str, str]] = []
+    missing: list[str] = []
+    for fn in names:
+        src = Path(reports_dir) / fn
+        if not src.is_file():
+            missing.append(fn)
+            continue
+        try:
+            doc = json.loads(src.read_text(encoding="utf-8"))
+        except Exception:
+            excluded.append({"file": fn, "reason": "unreadable"})
+            continue
+        if not artifact_matches_scope(doc if isinstance(doc, dict) else {}, expected_scope):
+            excluded.append({"file": fn, "reason": "scope_mismatch"})
+            continue
+        target = dest / fn
+        target.write_bytes(src.read_bytes())
+        copied[fn] = str(target)
+    return {
+        "copied": copied,
+        "excluded": excluded,
+        "missing": missing,
+        "stale_artifact_excluded_count": len(excluded),
+    }
+
+
+def session_metrics_in_scope(
+    *,
+    sessions_root: Path,
+    expected_scope: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Use current-run session artifacts only (no glob-latest SoT)."""
+    from small_paper.ingress_run_identity import artifact_matches_scope
+
+    sessions = sorted(sessions_root.glob("live_session_*")) + sorted(sessions_root.glob("v1r_primary_*"))
+    matched: list[Path] = []
+    excluded = 0
+    for cand in sessions:
+        summary_path = cand / "small_paper_summary.json"
+        if not summary_path.is_file():
+            continue
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception:
+            excluded += 1
+            continue
+        if artifact_matches_scope(summary if isinstance(summary, dict) else {}, expected_scope):
+            matched.append(cand)
+        else:
+            excluded += 1
+    latest = matched[-1] if matched else None
+    summary: dict[str, Any] = {}
+    hb: dict[str, Any] = {}
+    if latest and (latest / "small_paper_summary.json").is_file():
+        summary = json.loads((latest / "small_paper_summary.json").read_text(encoding="utf-8"))
+    for cand in reversed(matched):
+        p = cand / "heartbeat.jsonl"
+        if p.is_file():
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+            if lines:
+                try:
+                    hb = json.loads(lines[-1])
+                except Exception:
+                    hb = {}
+            break
+    submit = int(summary.get("submit") or 0)
+    cancel = int(summary.get("cancel") or 0)
+    live = int(summary.get("live") or 0)
+    pb = (hb.get("pbv2_eval") or {}) if isinstance(hb, dict) else {}
+    return {
+        "latest_session": str(latest) if latest else "",
+        "matched_session_count": len(matched),
+        "stale_artifact_excluded_count": excluded,
+        "summary_keys": sorted(summary.keys())[:40],
+        "stop_reason": summary.get("stop_reason"),
+        "fatal_error": summary.get("fatal_error"),
+        "session_external_backup": summary.get("session_external_backup"),
+        "submit": submit,
+        "cancel": cancel,
+        "live": live,
+        "submit_cancel_live": f"{submit}/{cancel}/{live}",
+        "forced_eval_count": int(pb.get("forced_eval_count") or summary.get("forced_eval_count") or 0),
+        "eval_fraction": pb.get("eval_fraction"),
+        "native_ingest": hb.get("native_ingest_count") or hb.get("v1r_native_ingest"),
+        "raw_published": hb.get("ingress_last_sequence") or hb.get("raw_sequence"),
+        "max_consumer_processing_delay_sec": pb.get("max_consumer_processing_delay_sec"),
+        "heartbeat": {k: hb.get(k) for k in ("pid", "state", "v1r_exit_v2") if k in hb},
+    }
+

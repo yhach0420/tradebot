@@ -37,8 +37,10 @@ from small_paper.paper_full_day_certification import (
     PASS_NAME,
     audit_clock_access,
     capture_identity,
+    copy_scoped_run_snapshot,
     detect_teardown_nameerror_would_fail_v13,
     identities_equal,
+    session_metrics_in_scope,
     source_regression_gates,
 )
 from small_paper.runtime_clock import (
@@ -48,6 +50,12 @@ from small_paper.runtime_clock import (
     ENV_STOP,
     bind_session_clock,
     official_cert_child_env,
+)
+from small_paper.ingress_run_identity import (
+    ENV_CERTIFICATION_RUN_ID,
+    ENV_STAGE_RUN_ID,
+    artifact_matches_scope,
+    generate_launch_nonce,
 )
 from small_paper.v1r_primary_runtime import CLOCK_GRID
 
@@ -234,9 +242,19 @@ def _stop_cert_children(day: str) -> dict[str, Any]:
     return {"killed": sorted(set(killed))}
 
 
-def _invoke_checked_bat(*, env: dict[str, str], timeout_sec: float, log_name: str) -> dict[str, Any]:
+def _invoke_checked_bat(
+    *,
+    env: dict[str, str],
+    timeout_sec: float,
+    log_name: str,
+    certification_run_id: str,
+    stage_run_id: str,
+) -> dict[str, Any]:
     if not CHECKED_BAT.is_file():
         return {"ok": False, "error": "missing_checked_bat", "exit_code": 2}
+    child = dict(env)
+    child[ENV_CERTIFICATION_RUN_ID] = certification_run_id
+    child[ENV_STAGE_RUN_ID] = stage_run_id
     log_dir = CERT_DIR / "run_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = log_dir / f"{log_name}.stdout.txt"
@@ -245,7 +263,7 @@ def _invoke_checked_bat(*, env: dict[str, str], timeout_sec: float, log_name: st
     proc = subprocess.run(
         ["cmd.exe", "/d", "/c", "call", str(CHECKED_BAT), "--full-day-cert", "--no-pause"],
         cwd=str(REPO),
-        env=env,
+        env=child,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -262,25 +280,24 @@ def _invoke_checked_bat(*, env: dict[str, str], timeout_sec: float, log_name: st
         "stderr_path": str(stderr_path),
         "stdout_tail": (proc.stdout or "")[-4000:],
         "stderr_tail": (proc.stderr or "")[-4000:],
+        "certification_run_id": certification_run_id,
+        "stage_run_id": stage_run_id,
     }
 
 
-def _copy_run_snapshot(name: str, day: str = "20260812") -> dict[str, str]:
+def _copy_run_snapshot(
+    name: str,
+    *,
+    expected_scope: dict[str, Any],
+    day: str = "20260812",
+) -> dict[str, Any]:
     dest = CERT_DIR / "run_snapshots" / name
-    dest.mkdir(parents=True, exist_ok=True)
-    copied: dict[str, str] = {}
-    reports = NATIVE / "results" / "reports"
-    for fn in (
-        f"phase148_am_pm_daily_runner_{day}.json",
-        f"daily_runner_summary_{day}.json",
-        f"small_paper_safety_{day}.json",
-    ):
-        src = reports / fn
-        if src.is_file():
-            target = dest / fn
-            target.write_bytes(src.read_bytes())
-            copied[fn] = str(target)
-    return copied
+    return copy_scoped_run_snapshot(
+        dest=dest,
+        reports_dir=NATIVE / "results" / "reports",
+        day=day,
+        expected_scope=expected_scope,
+    )
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -296,6 +313,17 @@ def _evaluate_full_day(snap_dir: Path, day: str = "20260812") -> dict[str, Any]:
     p148 = _load_json(snap_dir / f"phase148_am_pm_daily_runner_{day}.json")
     summary = _load_json(snap_dir / f"daily_runner_summary_{day}.json")
     safety = _load_json(snap_dir / f"small_paper_safety_{day}.json")
+    if not p148 and not summary:
+        return {
+            "verdict": "",
+            "stopped_reason": "CURRENT_STAGE_ARTIFACTS_MISSING",
+            "am_skip": False,
+            "am_token_mutation": 0,
+            "am_ok": False,
+            "pm_ok": False,
+            "safety_failed": [],
+            "lifecycle_complete": False,
+        }
     failed_ids = list((safety.get("failed_check_ids") if isinstance(safety, dict) else None) or [])
     if not failed_ids:
         failed_ids = list(((p148.get("preflight") or {}).get("safety") or {}).get("failed_check_ids") or [])
@@ -312,6 +340,8 @@ def _evaluate_full_day(snap_dir: Path, day: str = "20260812") -> dict[str, Any]:
         "safety_failed": failed_ids,
         "lifecycle_complete": str(p148.get("verdict") or "")
         in {"am_pm_daily_runner_ready", "completed_with_warnings"},
+        "certification_run_id": str(p148.get("certification_run_id") or summary.get("certification_run_id") or ""),
+        "stage_run_id": str(p148.get("stage_run_id") or summary.get("stage_run_id") or ""),
     }
     return out
 
@@ -327,45 +357,54 @@ def _leftover_processes(day: str = "20260812") -> list[dict[str, Any]]:
         return []
 
 
-def _scan_session_metrics(day: str) -> dict[str, Any]:
+def _scan_session_metrics(day: str, *, expected_scope: dict[str, Any]) -> dict[str, Any]:
     root = NATIVE / "results" / "small_paper" / day
-    sessions = sorted(root.glob("live_session_*")) + sorted(root.glob("v1r_primary_*"))
-    latest: Optional[Path] = sessions[-1] if sessions else None
-    summary: dict[str, Any] = {}
-    hb: dict[str, Any] = {}
-    if latest and (latest / "small_paper_summary.json").is_file():
-        summary = json.loads((latest / "small_paper_summary.json").read_text(encoding="utf-8"))
-    # heartbeat last line
-    for cand in sessions[::-1]:
-        p = cand / "heartbeat.jsonl"
-        if p.is_file():
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-            if lines:
-                try:
-                    hb = json.loads(lines[-1])
-                except Exception:
-                    hb = {}
-            break
-    submit = int(summary.get("submit") or 0)
-    cancel = int(summary.get("cancel") or 0)
-    live = int(summary.get("live") or 0)
-    pb = (hb.get("pbv2_eval") or {}) if isinstance(hb, dict) else {}
+    return session_metrics_in_scope(sessions_root=root, expected_scope=expected_scope)
+
+
+def _token_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     return {
-        "latest_session": str(latest) if latest else "",
-        "summary_keys": sorted(summary.keys())[:40],
-        "stop_reason": summary.get("stop_reason"),
-        "fatal_error": summary.get("fatal_error"),
-        "session_external_backup": summary.get("session_external_backup"),
-        "submit": submit,
-        "cancel": cancel,
-        "live": live,
-        "submit_cancel_live": f"{submit}/{cancel}/{live}",
-        "forced_eval_count": int(pb.get("forced_eval_count") or summary.get("forced_eval_count") or 0),
-        "eval_fraction": pb.get("eval_fraction"),
-        "native_ingest": hb.get("native_ingest_count") or hb.get("v1r_native_ingest"),
-        "raw_published": hb.get("ingress_last_sequence") or hb.get("raw_sequence"),
-        "max_consumer_processing_delay_sec": pb.get("max_consumer_processing_delay_sec"),
-        "heartbeat": {k: hb.get(k) for k in ("pid", "state", "v1r_exit_v2") if k in hb},
+        "station_post_token_count": int(after.get("authorized_issue_count") or 0)
+        - int(before.get("authorized_issue_count") or 0),
+        "blocked_second_issuer_count": int(after.get("blocked_second_issuer_count") or 0)
+        - int(before.get("blocked_second_issuer_count") or 0),
+        "issuer_roles": ["MARKET_INGRESS_SERVICE"]
+        if int(after.get("authorized_issue_count") or 0) > int(before.get("authorized_issue_count") or 0)
+        else [],
+        "overlap_count": 0,
+        "authorized_issue_count_end": int(after.get("authorized_issue_count") or 0),
+        "owner_pid": after.get("owner_pid"),
+    }
+
+
+def _read_ingress_current_identity(day: str = "20260812") -> dict[str, Any]:
+    status_path = NATIVE / "data" / "market_capture" / day / "ingress_status.json"
+    wait_audit = NATIVE / "data" / "market_capture" / day / "ingress_wait_audit.jsonl"
+    status: dict[str, Any] = {}
+    if status_path.is_file():
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+        except Exception:
+            status = {}
+    stale_n = 0
+    if wait_audit.is_file():
+        for line in wait_audit.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            if str(row.get("event") or "") == "STALE_INGRESS_STATUS_REJECTED":
+                stale_n += 1
+    return {
+        "ingress_run_id": status.get("ingress_run_id"),
+        "launch_nonce": status.get("launch_nonce"),
+        "pid": status.get("pid"),
+        "process_start_identity": status.get("process_start_identity"),
+        "stale_status_rejected_count": stale_n,
+        "status_state": status.get("state"),
+        "status_schema_version": status.get("status_schema_version"),
     }
 
 
@@ -423,20 +462,45 @@ def main() -> int:
         env[ENV_REPLAY_PATH] = str(fixture)
         env[ENV_REPLAY_EPS] = "800"
     env = official_cert_child_env(env)
+    certification_run_id = "cert_" + generate_launch_nonce()
+    env[ENV_CERTIFICATION_RUN_ID] = certification_run_id
+    activation_sha = str(identity_before.get("activation_sha") or "")
+    stale_artifact_excluded_count = 0
+    token_by_stage: dict[str, Any] = {}
+
+    from small_paper.kabu_token_authority import station_issue_audit_summary
+
+    def _stage_scope(stage_run_id: str) -> dict[str, str]:
+        return {
+            "certification_run_id": certification_run_id,
+            "stage_run_id": stage_run_id,
+            "activation_sha": activation_sha,
+        }
 
     stream_ok = bool(fixture_meta.get("ok")) and "CAPTURE_STREAM_MISSING" not in failed
     _stop_cert_children("20260812")
 
     full_day: dict[str, Any] = {"skipped": True}
     full_day_eval: dict[str, Any] = {}
+    full_day_scope = _stage_scope("full_day_" + generate_launch_nonce()[:12])
     if stream_ok:
         print("CERT_STAGE=FULL_DAY start", flush=True)
+        token0 = station_issue_audit_summary()
         try:
-            full_day = _invoke_checked_bat(env=env, timeout_sec=2400, log_name="full_day")
+            full_day = _invoke_checked_bat(
+                env=env,
+                timeout_sec=2400,
+                log_name="full_day",
+                certification_run_id=certification_run_id,
+                stage_run_id=full_day_scope["stage_run_id"],
+            )
         except subprocess.TimeoutExpired as exc:
             full_day = {"ok": False, "error": f"timeout:{exc}", "exit_code": 124}
+        token_by_stage["full_day"] = _token_delta(token0, station_issue_audit_summary())
         full_day["cleanup"] = _stop_cert_children("20260812")
-        full_day["snapshot"] = _copy_run_snapshot("full_day")
+        snap = _copy_run_snapshot("full_day", expected_scope=full_day_scope)
+        stale_artifact_excluded_count += int(snap.get("stale_artifact_excluded_count") or 0)
+        full_day["snapshot"] = snap
         full_day_eval = _evaluate_full_day(CERT_DIR / "run_snapshots" / "full_day")
         full_day["lifecycle"] = full_day_eval
         print(
@@ -450,12 +514,15 @@ def main() -> int:
             failed.append("FULL_DAY_LIFECYCLE")
         if full_day_eval.get("safety_failed"):
             failed.append("FULL_DAY_SAFETY:" + ",".join(str(x) for x in full_day_eval["safety_failed"]))
+        if int(token_by_stage["full_day"].get("overlap_count") or 0) != 0:
+            failed.append("TOKEN_SECOND_ISSUER_OVERLAP")
     leftover = _leftover_processes("20260812")
     leftover_end = leftover
     if leftover:
         failed.append("PROCESS_LEFTOVER_AFTER_FULL_DAY")
 
-    metrics = _scan_session_metrics("20260812")
+    metrics = _scan_session_metrics("20260812", expected_scope=full_day_scope)
+    stale_artifact_excluded_count += int(metrics.get("stale_artifact_excluded_count") or 0)
     if str(metrics.get("submit_cancel_live") or "0/0/0") != "0/0/0":
         failed.append("SUBMIT_CANCEL_LIVE")
     if metrics.get("forced_eval_count") not in (0, None):
@@ -463,6 +530,7 @@ def main() -> int:
             failed.append("FORCED_EVAL")
 
     pm_run: dict[str, Any] = {"skipped": True}
+    pm_scope = _stage_scope("pm_direct_" + generate_launch_nonce()[:12])
     if stream_ok:
         pm_env = dict(env)
         bind_session_clock(
@@ -474,13 +542,23 @@ def main() -> int:
             arm_file=arm_file,
         )
         print("CERT_STAGE=PM_DIRECT_START start", flush=True)
+        token0 = station_issue_audit_summary()
         try:
-            pm_run = _invoke_checked_bat(env=pm_env, timeout_sec=1800, log_name="pm_direct_start")
+            pm_run = _invoke_checked_bat(
+                env=pm_env,
+                timeout_sec=1800,
+                log_name="pm_direct_start",
+                certification_run_id=certification_run_id,
+                stage_run_id=pm_scope["stage_run_id"],
+            )
         except subprocess.TimeoutExpired as exc:
             pm_run = {"ok": False, "error": f"timeout:{exc}", "exit_code": 124}
             failed.append("PM_DIRECT_START")
+        token_by_stage["pm_direct_start"] = _token_delta(token0, station_issue_audit_summary())
         pm_run["cleanup"] = _stop_cert_children("20260812")
-        pm_run["snapshot"] = _copy_run_snapshot("pm_direct_start")
+        snap = _copy_run_snapshot("pm_direct_start", expected_scope=pm_scope)
+        stale_artifact_excluded_count += int(snap.get("stale_artifact_excluded_count") or 0)
+        pm_run["snapshot"] = snap
         pm_eval = _evaluate_full_day(CERT_DIR / "run_snapshots" / "pm_direct_start")
         pm_run["lifecycle"] = pm_eval
         if not pm_run.get("ok"):
@@ -510,17 +588,24 @@ def main() -> int:
             )
             wenv["TRADEBOT_INGRESS_REPLAY_NOT_BEFORE"] = not_before
             wenv[ENV_REPLAY_EPS] = "150"
+            wscope = _stage_scope(f"window_{name}_" + generate_launch_nonce()[:12])
             print(f"CERT_STAGE=WINDOW_{name} start", flush=True)
+            token0 = station_issue_audit_summary()
             try:
                 windows[name] = _invoke_checked_bat(
                     env=wenv,
                     timeout_sec=int((end - start).total_seconds()) + 180,
                     log_name=f"window_{name}",
+                    certification_run_id=certification_run_id,
+                    stage_run_id=wscope["stage_run_id"],
                 )
             except subprocess.TimeoutExpired as exc:
                 windows[name] = {"ok": False, "error": f"timeout:{exc}", "exit_code": 124}
+            token_by_stage[f"window_{name}"] = _token_delta(token0, station_issue_audit_summary())
             windows[name]["cleanup"] = _stop_cert_children("20260812")
-            windows[name]["snapshot"] = _copy_run_snapshot(f"window_{name}")
+            snap = _copy_run_snapshot(f"window_{name}", expected_scope=wscope)
+            stale_artifact_excluded_count += int(snap.get("stale_artifact_excluded_count") or 0)
+            windows[name]["snapshot"] = snap
             if not windows[name].get("ok"):
                 failed.append(f"WINDOW_{name}")
     leftover_end = _leftover_processes("20260812")
@@ -534,9 +619,12 @@ def main() -> int:
 
     sink.shutdown()
 
-    from small_paper.kabu_token_authority import station_issue_audit_summary
-
     token_audit = station_issue_audit_summary()
+    second_issuer = int(token_audit.get("blocked_second_issuer_count") or 0)
+    overlap_n = sum(int((v or {}).get("overlap_count") or 0) for v in token_by_stage.values())
+    if overlap_n:
+        failed.append("TOKEN_SECOND_ISSUER_OVERLAP")
+    ingress_identity = _read_ingress_current_identity("20260812")
 
     full_pass = (
         not failed
@@ -580,6 +668,11 @@ def main() -> int:
         "market_stream": fixture_meta,
         "kabu_precheck": kabu,
         "token_authority_audit": token_audit,
+        "token_by_stage": token_by_stage,
+        "certification_run_id": certification_run_id,
+        "ingress_current_run": ingress_identity,
+        "stale_status_rejected_count": int(ingress_identity.get("stale_status_rejected_count") or 0),
+        "stale_artifact_excluded_count": stale_artifact_excluded_count,
         "full_day": full_day,
         "full_day_lifecycle": full_day_eval,
         "pm_direct_start": pm_run,
