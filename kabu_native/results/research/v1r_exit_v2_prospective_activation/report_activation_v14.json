@@ -1,0 +1,30 @@
+{
+  "verdict": "V1R_EXIT_V2_RUNTIME_ACTIVATION_V14_FROZEN",
+  "verdicts": [
+    "V1R_TEARDOWN_EXTERNAL_BACKUP_LOGGER_FIXED",
+    "V1R_V14_RUNTIME_REGRESSION_PASS",
+    "V1R_EXIT_V2_RUNTIME_ACTIVATION_V14_FROZEN",
+    "V1R_ACTIVATION_V14_STARTUP_BINDING_VERIFIED"
+  ],
+  "activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V14",
+  "activation_sha": "36c48927c36957a20ffc9cd8627e2805b6ea3f17cb9685404254aa5a92e950a2",
+  "parent_activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V13",
+  "parent_activation_sha": "36fcee66a59fa708699c33e1671470153bd78c275d2cd5428876dfd179f31c13",
+  "supersede_reason": "RUNTIME_TEARDOWN_EXTERNAL_BACKUP_LOGGER_FIX",
+  "runtime_code_git_commit": "bf93a26e03689088f46629f8282f12b9d9f6eabb",
+  "runtime_dependency_count": 36,
+  "inventory_match_after_bind": true,
+  "inventory_matched": 36,
+  "strategy_sha": "9ad4ba2730892d40c757d940b82480e620e502e3e789839120e90b18be082547",
+  "precommit_sha": "acd3fee10c94f84b9ae2b1d4bddd9402ed4ab588af0ba06be0063cb8a0662100",
+  "selector_path": "results/research/v1r_exit_v2_prospective_activation/active_v1r_activation.json",
+  "startup_binding_ok": true,
+  "startup_binding_verdict": "V1R_ACTIVATION_V14_STARTUP_BINDING_VERIFIED",
+  "created_at": "2026-08-14T22:36:01.806784+09:00",
+  "v13_opval_unchanged": "V1R_20260814_V13_PM_OPERATIONAL_VALIDATION_PASS",
+  "day_20260814": [
+    "INVALID_FOR_STRATEGY_EVALUATION",
+    "NOT_PROSPECTIVE_DAY1"
+  ],
+  "paper_started": false
+}
