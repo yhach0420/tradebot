@@ -353,6 +353,10 @@ def _classify_clock(rel: str, snippet: str, api: str) -> tuple[str, str]:
         return "B", "checked-runner trading date / 15:35"
     if rel.endswith("v1r_paper_primary_launcher.py") and "datetime.now" in s:
         return "B", "launcher day stamp"
+    if rel.endswith("kabu_token_authority.py"):
+        if "%Y%m%d" in s and "datetime.now" in s:
+            return "BYPASS", "token authority trading date wall clock"
+        return "C", "token authority stamp"
     if rel.endswith("safety.py"):
         if "%Y%m%d" in s and "datetime.now" in s:
             return "BYPASS", "safety probe trading date wall clock"

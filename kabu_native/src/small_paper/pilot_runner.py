@@ -577,7 +577,7 @@ def verify_kabu_connection(
     key = str(symbol_key or "").strip()
     if not key:
         native = Path(native_root) if native_root else resolve_native_root_for_register_state(Path(repo_root))
-        day = str(trading_date or datetime.now(JST).strftime("%Y%m%d"))
+        day = str(trading_date or session_now().strftime("%Y%m%d"))
         probe = resolve_registered_probe_symbol(native, day)
         if not probe.get("ok"):
             raise KabuNativeApiError(str(probe.get("reason") or NO_REGISTERED_KABU_PROBE_SYMBOL))
@@ -590,7 +590,7 @@ def verify_kabu_connection(
     from small_paper.kabu_token_authority import acquire_token_for_readonly, ingress_owner_active
 
     native = Path(native_root) if native_root else resolve_native_root_for_register_state(Path(repo_root))
-    day = str(trading_date or datetime.now(JST).strftime("%Y%m%d"))
+    day = str(trading_date or session_now().strftime("%Y%m%d"))
     if not ingress_owner_active(native, day):
         if not os.environ.get("KABU_API_PASSWORD", "").strip():
             raise KabuNativeApiError("KABU_API_PASSWORD is not set")

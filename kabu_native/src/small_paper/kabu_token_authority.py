@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 from zoneinfo import ZoneInfo
 
+from small_paper.runtime_clock import now_jst as session_now
+
 JST = ZoneInfo("Asia/Tokyo")
 
 OWNER_INGRESS = "MARKET_INGRESS_SERVICE"
@@ -95,7 +97,7 @@ def authority_day_dir(
     if env:
         return Path(env)
     root = Path(native_root) if native_root else native_root_default()
-    day = str(trading_date or datetime.now(JST).strftime("%Y%m%d"))
+    day = str(trading_date or session_now().strftime("%Y%m%d"))
     return root / "data" / "market_capture" / day
 
 

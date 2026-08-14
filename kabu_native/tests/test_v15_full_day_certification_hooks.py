@@ -209,6 +209,14 @@ def test_inventory_includes_new_v15_modules() -> None:
     assert "src/small_paper/paper_full_day_certification.py" in RUNTIME_DEPENDENCY_RELS
 
 
+def test_token_authority_day_follows_session_clock(tmp_path: Path) -> None:
+    from small_paper.kabu_token_authority import authority_day_dir
+
+    v0 = datetime(2026, 8, 12, 8, 50, 0, tzinfo=JST)
+    bind_session_clock(virtual_start=v0, speed_mult=1.0)
+    assert authority_day_dir(tmp_path).name == "20260812"
+
+
 def test_safety_trading_date_follows_session_clock() -> None:
     from small_paper.safety import safety_trading_date
 
