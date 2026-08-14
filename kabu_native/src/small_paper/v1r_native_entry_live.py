@@ -149,6 +149,83 @@ def extract_board_row(payload: dict[str, Any], event_t: float) -> dict[str, Any]
     }
 
 
+class _BoardBuf:
+    """Amortized-O(1) append board arrays. Slice views for fill/anchor."""
+
+    __slots__ = ("n", "t", "bid", "ask", "bid_qty", "ask_qty", "special", "fresh_sec")
+
+    def __init__(self) -> None:
+        self.n = 0
+        self.t = np.empty(64, dtype=float)
+        self.bid = np.empty(64, dtype=float)
+        self.ask = np.empty(64, dtype=float)
+        self.bid_qty = np.empty(64, dtype=float)
+        self.ask_qty = np.empty(64, dtype=float)
+        self.special = np.empty(64, dtype=bool)
+        self.fresh_sec = np.empty(64, dtype=float)
+
+    def append(self, row: Mapping[str, Any]) -> None:
+        if self.n >= self.t.size:
+            new = int(self.t.size * 2)
+
+            def _grow(arr: np.ndarray, dtype: Any) -> np.ndarray:
+                out = np.empty(new, dtype=dtype)
+                out[: self.n] = arr[: self.n]
+                return out
+
+            self.t = _grow(self.t, float)
+            self.bid = _grow(self.bid, float)
+            self.ask = _grow(self.ask, float)
+            self.bid_qty = _grow(self.bid_qty, float)
+            self.ask_qty = _grow(self.ask_qty, float)
+            self.special = _grow(self.special, bool)
+            self.fresh_sec = _grow(self.fresh_sec, float)
+        i = self.n
+        self.t[i] = float(row["t"])
+        self.bid[i] = float(row["bid"]) if row.get("bid") is not None else float("nan")
+        self.ask[i] = float(row["ask"]) if row.get("ask") is not None else float("nan")
+        self.bid_qty[i] = float(row["bid_qty"]) if row.get("bid_qty") is not None else float("nan")
+        self.ask_qty[i] = float(row["ask_qty"]) if row.get("ask_qty") is not None else float("nan")
+        self.special[i] = bool(row.get("special"))
+        self.fresh_sec[i] = float(row.get("fresh_sec") or 0.0)
+        self.n = i + 1
+
+    def compact_tail(self, keep: int) -> None:
+        if self.n <= keep:
+            return
+        start = self.n - keep
+        self.t = np.array(self.t[start : self.n], dtype=float)
+        self.bid = np.array(self.bid[start : self.n], dtype=float)
+        self.ask = np.array(self.ask[start : self.n], dtype=float)
+        self.bid_qty = np.array(self.bid_qty[start : self.n], dtype=float)
+        self.ask_qty = np.array(self.ask_qty[start : self.n], dtype=float)
+        self.special = np.array(self.special[start : self.n], dtype=bool)
+        self.fresh_sec = np.array(self.fresh_sec[start : self.n], dtype=float)
+        self.n = keep
+
+    def view(self) -> dict[str, np.ndarray]:
+        n = self.n
+        if n <= 0:
+            return {
+                "t": np.asarray([], dtype=float),
+                "bid": np.asarray([], dtype=float),
+                "ask": np.asarray([], dtype=float),
+                "bid_qty": np.asarray([], dtype=float),
+                "ask_qty": np.asarray([], dtype=float),
+                "special": np.asarray([], dtype=bool),
+                "fresh_sec": np.asarray([], dtype=float),
+            }
+        return {
+            "t": self.t[:n],
+            "bid": self.bid[:n],
+            "ask": self.ask[:n],
+            "bid_qty": self.bid_qty[:n],
+            "ask_qty": self.ask_qty[:n],
+            "special": self.special[:n],
+            "fresh_sec": self.fresh_sec[:n],
+        }
+
+
 @dataclass
 class PendingOrder:
     symbol: str
@@ -300,6 +377,12 @@ class V1RNativeEntryLive:
     event_time_watermark: float = 0.0
     _ingested_sequences: set[int] = field(default_factory=set)
     ingest_audit: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=256))
+    fill_check_push_count: int = 0
+    fill_check_pending_present_count: int = 0
+    fill_check_actual_count: int = 0
+    last_native_ingest_us: float = 0.0
+    last_fill_check_us: float = 0.0
+    _board_buf: dict[str, _BoardBuf] = field(default_factory=dict)
 
     @property
     def open_n(self) -> int:
@@ -333,6 +416,9 @@ class V1RNativeEntryLive:
         }
 
     def _board_arrays(self, symbol: str) -> dict[str, np.ndarray]:
+        buf = self._board_buf.get(symbol)
+        if buf is not None:
+            return buf.view()
         rows = self.boards.get(symbol) or []
         if not rows:
             return {
@@ -344,15 +430,11 @@ class V1RNativeEntryLive:
                 "special": np.asarray([], dtype=bool),
                 "fresh_sec": np.asarray([], dtype=float),
             }
-        return {
-            "t": np.asarray([r["t"] for r in rows], dtype=float),
-            "bid": np.asarray([r["bid"] for r in rows], dtype=float),
-            "ask": np.asarray([r["ask"] for r in rows], dtype=float),
-            "bid_qty": np.asarray([r["bid_qty"] for r in rows], dtype=float),
-            "ask_qty": np.asarray([r["ask_qty"] for r in rows], dtype=float),
-            "special": np.asarray([r["special"] for r in rows], dtype=bool),
-            "fresh_sec": np.asarray([r["fresh_sec"] for r in rows], dtype=float),
-        }
+        buf = _BoardBuf()
+        for r in rows:
+            buf.append(r)
+        self._board_buf[symbol] = buf
+        return buf.view()
 
     def _payload_sequence(self, payload: Mapping[str, Any]) -> Optional[int]:
         raw = payload.get("__ingress_sequence__")
@@ -413,10 +495,16 @@ class V1RNativeEntryLive:
             or payload.get("__ingress_received_at__")
         )
         self.boards.setdefault(sym, []).append(row)
+        buf = self._board_buf.get(sym)
+        if buf is None:
+            buf = _BoardBuf()
+            self._board_buf[sym] = buf
+        buf.append(row)
         # Full-PUSH ingest is denser than the old 5s eval cadence. Keep enough
         # history for 180s/300s features; never drop the current last-event<=t0.
         if len(self.boards[sym]) > 25000:
             self.boards[sym] = self.boards[sym][-20000:]
+            buf.compact_tail(20000)
         if seq_i is not None:
             self._ingested_sequences.add(seq_i)
             self.last_ingested_sequence = seq_i
@@ -446,13 +534,18 @@ class V1RNativeEntryLive:
             if event_t is not None
             else board_event_epoch_from_payload(payload)
         )
+        t_ing = time.perf_counter()
         ing = self.ingest_push(symbol=symbol, payload=payload, event_t=t)
+        self.last_native_ingest_us = (time.perf_counter() - t_ing) * 1_000_000.0
         if not ing.get("ingested") and ing.get("reason") == "duplicate_sequence":
             ing["fill_checked"] = False
             ing["anchor_fired"] = False
+            self.last_fill_check_us = 0.0
             return ing
         fired = self.maybe_fire_anchor(now_t=t)
-        fills = self.on_tick_fill_check(event_t=t, payload=payload)
+        t_fill = time.perf_counter()
+        fills = self.on_tick_fill_check(event_t=t, payload=payload, symbol=symbol)
+        self.last_fill_check_us = (time.perf_counter() - t_fill) * 1_000_000.0
         ing["fill_checked"] = True
         ing["anchor_fired"] = bool(fired)
         ing["fill_n"] = len(fills or [])
@@ -719,12 +812,12 @@ class V1RNativeEntryLive:
         *,
         event_t: Optional[float] = None,
         payload: Optional[Mapping[str, Any]] = None,
+        symbol: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """Evaluate pending passive fills / expiries using frozen ask-cross SoT.
 
-        Time axis = causal ingress/Capture recorded_at (same as find_ask_cross_fill board.t).
-        Order matches Frozen offline eval: ask-cross FILL first; EXPIRE only if still
-        pending after the inclusive [t0, t0+wait] window has been passed on this clock.
+        PUSH path (symbol=X): only pending[X]. No pending → O(1) no-op.
+        Heartbeat / session-end / replay sweep (symbol=None): all pending.
         """
         t_now = None
         if event_t is not None:
@@ -735,9 +828,22 @@ class V1RNativeEntryLive:
             # Heartbeat / occupancy sweep: event-time watermark only — never consumer wall clock.
             t_now = float(self.event_time_watermark or 0.0)
         t_now = float(t_now)
+        self.fill_check_push_count += 1
+        push_sym = str(symbol).replace(".T", "") if symbol else ""
+        if push_sym:
+            po = self.pending.get(push_sym)
+            if po is None:
+                return []
+            self.fill_check_pending_present_count += 1
+            items = [(push_sym, po)]
+        else:
+            items = list(self.pending.items())
+            if items:
+                self.fill_check_pending_present_count += 1
         done: list[dict[str, Any]] = []
-        for sym, po in list(self.pending.items()):
+        for sym, po in items:
             board = self._board_arrays(sym)
+            self.fill_check_actual_count += 1
             sess_end = po.signal_time + 3 * 3600
             # FILL before EXPIRE on the same tick — never expiry-first.
             fill = find_ask_cross_fill(
@@ -1145,6 +1251,11 @@ class V1RNativeEntryLive:
             "native_ingest_skip_duplicate": self.native_ingest_skip_duplicate,
             "last_ingested_sequence": self.last_ingested_sequence,
             "event_time_watermark": self.event_time_watermark,
+            "fill_check_push_count": self.fill_check_push_count,
+            "fill_check_pending_present_count": self.fill_check_pending_present_count,
+            "fill_check_actual_count": self.fill_check_actual_count,
+            "last_native_ingest_us": round(self.last_native_ingest_us, 3),
+            "last_fill_check_us": round(self.last_fill_check_us, 3),
             "trace_dir": str(self.trace_dir) if self.trace_dir else None,
             "submit_cancel_live": "0/0/0",
         }

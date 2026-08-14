@@ -2709,6 +2709,7 @@ class _PushPipelineContext:
     stage_profiler: Optional[Any] = None
     # Phase687W43F: readiness / recovery evaluation tracker (no PBv2 condition changes)
     evaluation_reachability: Optional[Any] = None
+    consumer_telemetry: Optional[Any] = None
 
 
 def _latency_trace(ctx: _PushPipelineContext) -> Optional[Any]:
@@ -4444,14 +4445,30 @@ def _record_score5_ordinal(ctx: _PushPipelineContext, trade: Mapping[str, Any]) 
 def _replay_reference_now(
     ctx: _PushPipelineContext, payload: Mapping[str, Any]
 ) -> Optional[datetime]:
-    if ctx.source not in ("push-replay", "push_replay"):
-        return None
+    """Event-time (ingress received_at / recorded_at) for freshness.
+
+    Live and push-replay both use market/event time. Consumer wall clock is
+    never mixed into Strategy freshness. Missing stamps → None (caller fallback).
+    """
     from storage.intraday_recorder import parse_kabu_time
 
-    raw = payload.get("recorded_at")
-    if raw is None or str(raw).strip() == "":
-        return None
-    return parse_kabu_time(raw, fallback=datetime.now(JST))
+    for key in ("recorded_at", "received_at", "__ingress_received_at__"):
+        raw = payload.get(key)
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            dt = parse_kabu_time(raw, fallback=datetime.now(JST))
+        except Exception:
+            dt = None
+        if dt is not None:
+            return dt
+    return None
+
+
+def _freshness_reference_now(
+    ctx: _PushPipelineContext, payload: Mapping[str, Any]
+) -> datetime:
+    return _replay_reference_now(ctx, payload) or datetime.now(JST)
 
 
 def _ensure_evaluation_reachability(ctx: _PushPipelineContext) -> Any:
@@ -4939,7 +4956,7 @@ def _stage1_evaluate_freshness(
             continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
             quality_tier="",
         )
-        ref_now = _replay_reference_now(ctx, enriched) or datetime.now(JST)
+        ref_now = _freshness_reference_now(ctx, enriched)
         return Stage1FreshnessResult(
             ref_now=ref_now,
             stale_reason=stale_reason,
@@ -4956,7 +4973,7 @@ def _stage1_evaluate_freshness(
             continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
             quality_tier="",
         )
-        ref_now = _replay_reference_now(ctx, enriched) or datetime.now(JST)
+        ref_now = _freshness_reference_now(ctx, enriched)
         return Stage1FreshnessResult(
             ref_now=ref_now,
             stale_reason=stale_reason,
@@ -4972,7 +4989,7 @@ def _stage1_evaluate_freshness(
             continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
             quality_tier="",
         )
-        ref_now = _replay_reference_now(ctx, enriched) or datetime.now(JST)
+        ref_now = _freshness_reference_now(ctx, enriched)
         return Stage1FreshnessResult(
             ref_now=ref_now,
             stale_reason=stale_reason,
@@ -4993,7 +5010,7 @@ def _stage1_evaluate_freshness(
             continuation_quality_score=float(trade.get("continuation_quality_score") or 0),
             quality_tier="",
         )
-        ref_now = _replay_reference_now(ctx, enriched) or datetime.now(JST)
+        ref_now = _freshness_reference_now(ctx, enriched)
         return Stage1FreshnessResult(
             ref_now=ref_now,
             stale_reason=stale_reason,
@@ -5012,7 +5029,7 @@ def _stage1_evaluate_freshness(
             PRICE_FRESHNESS_LIQUIDITY_STALE_TRADE,
         )
 
-        ref_now = _replay_reference_now(ctx, enriched) or datetime.now(JST)
+        ref_now = _freshness_reference_now(ctx, enriched)
         freshness = compute_entry_freshness(
             enriched, pipeline_source=ctx.source, reference_now=ref_now
         )
@@ -5281,7 +5298,7 @@ def _stage6_record_candidate(
             compute_entry_freshness,
         )
 
-        ref_now = fresh.ref_now or _replay_reference_now(ctx, enriched) or datetime.now(JST)
+        ref_now = _freshness_reference_now(ctx, enriched)
         try:
             fresh_log = compute_entry_freshness(
                 enriched, pipeline_source=ctx.source, reference_now=ref_now
@@ -7110,7 +7127,9 @@ def run_push_replay_dry_run(
     gate_cfg = replay_config.exposure_gate_config()
     feature_bridge = LiveFeatureBridge(replay_config.feature_bridge_config())
     output_dir.mkdir(parents=True, exist_ok=True)
-    writer = LiveSessionWriter(output_dir, incremental=True, event_fields=EVENT_FIELDS)
+    writer = LiveSessionWriter(
+        output_dir, incremental=True, event_fields=EVENT_FIELDS, async_io=True
+    )
     state = _LiveRunState(started_mono=time.monotonic())
     _init_position_cap_tracking(replay_config, state)
     _init_extension_stack_for_mode(replay_config, state, repo_root=root)
@@ -7257,6 +7276,9 @@ def run_push_replay_dry_run(
         symbol_universe_meta=universe_meta,
         extension_bus=extension_bus,
         stage_profiler=stage_profiler,
+        consumer_telemetry=__import__(
+            "small_paper.consumer_push_telemetry", fromlist=["ConsumerPushTelemetry"]
+        ).ConsumerPushTelemetry(),
     )
 
     last_eval_ts: dict[str, float] = {}
@@ -8215,7 +8237,9 @@ def run_live_dry_run(
 
     trade_date = datetime.now(JST).date().isoformat()
     incremental = full_session
-    writer = LiveSessionWriter(output_dir, incremental=incremental, event_fields=EVENT_FIELDS)
+    writer = LiveSessionWriter(
+        output_dir, incremental=incremental, event_fields=EVENT_FIELDS, async_io=True
+    )
     state = _LiveRunState(started_mono=time.monotonic())
     _init_order_latency_dryrun(config, state, output_dir)
     _init_position_cap_tracking(config, state)
@@ -8328,6 +8352,9 @@ def run_live_dry_run(
             writer=writer,
             output_dir=output_dir,
         ),
+        consumer_telemetry=__import__(
+            "small_paper.consumer_push_telemetry", fromlist=["ConsumerPushTelemetry"]
+        ).ConsumerPushTelemetry(),
     )
     if pipeline_ctx.extension_bus is not None and pipeline_ctx.extension_bus.latency_trace is not None:
         print("[PAPER TRADE] entry_latency_trace_enabled=true", flush=True)
@@ -8801,6 +8828,28 @@ def run_live_dry_run(
                 hb["v1r_native_entry_blocked"] = bool(
                     getattr(state, "v1r_native_entry_blocked", False)
                 )
+                try:
+                    tr = getattr(pipeline_ctx, "evaluation_reachability", None)
+                    if tr is not None:
+                        hb["pbv2_eval"] = {
+                            "push_count": int(tr.push_count),
+                            "pbv2_eval_count": int(tr.pbv2_eval_count),
+                            "pbv2_throttled_count": int(tr.pbv2_throttled_count),
+                            "forced_eval_count": int(tr.forced_eval_count),
+                            "recovery_eval_count": int(tr.recovery_eval_count),
+                            "eval_fraction": (
+                                float(tr.pbv2_eval_count) / float(tr.push_count)
+                                if tr.push_count
+                                else 0.0
+                            ),
+                            "last_consumer_processing_delay_sec": tr.last_consumer_processing_delay_sec,
+                            "max_consumer_processing_delay_sec": tr.max_consumer_processing_delay_sec,
+                        }
+                    tel_hb = getattr(pipeline_ctx, "consumer_telemetry", None)
+                    if tel_hb is not None:
+                        hb["consumer_stage_us"] = tel_hb.summary()
+                except Exception:
+                    pass
         except Exception:
             pass
         writer.append_heartbeat(hb)
@@ -9441,6 +9490,9 @@ def run_live_dry_run(
                             or payload.get("__ingress_received_at__")
                             or ""
                         )
+                        tel = getattr(pipeline_ctx, "consumer_telemetry", None)
+                        if tel is not None:
+                            tel.begin_push()
                         _apply_v1r_native_every_push(
                             pipeline_ctx,
                             payload,
@@ -9448,6 +9500,15 @@ def run_live_dry_run(
                             t0_push_received_at=t0_iso_native or None,
                             message_index=msg_i,
                         )
+                        try:
+                            from small_paper.v1r_native_entry_live import get_native_entry as _gne
+
+                            _eng_tel = _gne()
+                            if tel is not None and _eng_tel is not None:
+                                tel.record_us("native_ingest_us", float(_eng_tel.last_native_ingest_us))
+                                tel.record_us("fill_check_us", float(_eng_tel.last_fill_check_us))
+                        except Exception:
+                            pass
                         # REALTIME_RESYNC warmup: ring update + ACK only (no PBv2 ENTRY/EXIT eval).
                         if ingress_v2 and bus_bridge is not None and bool(getattr(bus_bridge, "warmup_only", False)):
                             try:
@@ -9497,24 +9558,55 @@ def run_live_dry_run(
                                     bus_bridge.ack_processed(payload)
                                 continue
                             tracker = _ensure_evaluation_reachability(pipeline_ctx)
+                            ev_dt = _replay_reference_now(pipeline_ctx, payload)
+                            wall_now = datetime.now(JST)
+                            tracker.note_consumer_delay(event_time=ev_dt, wall_now=wall_now)
+                            prev_enter = int(tracker.recovery_enter_count)
                             # Timestamp/readiness peek only — avoid double ring/feature update
                             _reachability_update_from_push(
-                                pipeline_ctx, payload, symbol=sym, reference_now=datetime.now(JST)
+                                pipeline_ctx, payload, symbol=sym, reference_now=ev_dt
                             )
+                            if int(tracker.recovery_enter_count) > prev_enter:
+                                t_aud = time.perf_counter()
+                                pipeline_ctx.writer.append_event(
+                                    {
+                                        "event_type": "recovery",
+                                        "kind": "RECOVERY_ENTER",
+                                        "symbol": sym,
+                                        "consumer_processing_delay_sec": tracker.last_consumer_processing_delay_sec,
+                                    }
+                                )
+                                if tel is not None:
+                                    tel.record_sec("audit_enqueue_us", time.perf_counter() - t_aud)
+                            market_ts = ev_dt.timestamp() if ev_dt is not None else None
+                            t_sched = time.perf_counter()
                             do_eval, _skip_reason, cycle_id = tracker.should_evaluate(
                                 sym,
                                 now_mono=ev_now,
-                                market_ts=None,
+                                market_ts=market_ts,
                                 poll_interval_sec=float(poll_interval_sec or 0),
                                 ring_only_warmup=False,
                             )
+                            if tel is not None:
+                                tel.record_sec("pbv2_schedule_us", time.perf_counter() - t_sched)
                             if not do_eval:
                                 _throttled_state_only_push(
                                     pipeline_ctx, payload, symbol=sym
                                 )
                                 if ingress_v2 and bus_bridge is not None:
+                                    t_ack = time.perf_counter()
                                     bus_bridge.ack_processed(payload)
+                                    if tel is not None:
+                                        tel.record_sec("ack_us", time.perf_counter() - t_ack)
                                 continue
+                            if tracker.get(sym).recovery_state == "RECOVERY_ELIGIBLE":
+                                pipeline_ctx.writer.append_event(
+                                    {
+                                        "event_type": "recovery",
+                                        "kind": "RECOVERY_EVAL",
+                                        "symbol": sym,
+                                    }
+                                )
                             pipeline_ctx._current_evaluation_cycle_id = cycle_id  # type: ignore[attr-defined]
                         except Exception:
                             if sym in last_eval and (ev_now - last_eval[sym]) < poll_interval_sec:
@@ -9524,8 +9616,31 @@ def run_live_dry_run(
                         last_eval[sym] = ev_now
                         if ingress_v2 and bus_bridge is not None:
                             try:
+                                t_eval = time.perf_counter()
+                                prev_exit = int(
+                                    getattr(
+                                        getattr(pipeline_ctx, "evaluation_reachability", None),
+                                        "recovery_exit_count",
+                                        0,
+                                    )
+                                    or 0
+                                )
                                 _process_payload(payload, msg_i)
+                                if tel is not None:
+                                    tel.record_sec("pbv2_eval_us", time.perf_counter() - t_eval)
+                                tr_after = getattr(pipeline_ctx, "evaluation_reachability", None)
+                                if tr_after is not None and int(tr_after.recovery_exit_count) > prev_exit:
+                                    pipeline_ctx.writer.append_event(
+                                        {
+                                            "event_type": "recovery",
+                                            "kind": "RECOVERY_EXIT",
+                                            "symbol": sym,
+                                        }
+                                    )
+                                t_ack = time.perf_counter()
                                 bus_bridge.ack_processed(payload)
+                                if tel is not None:
+                                    tel.record_sec("ack_us", time.perf_counter() - t_ack)
                             except Exception as proc_exc:
                                 bus_bridge.mark_process_error(type(proc_exc).__name__)
                                 _log_api_error("ingress_consumer_process", proc_exc)

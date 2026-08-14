@@ -173,10 +173,19 @@ def test_case8_stale_recovery_one_eval():
         history_ticks=6,
     )
     assert tr.get("1000.T").pending_recovery_eval is True
-    ok, _, _ = tr.should_evaluate(
+    assert tr.get("1000.T").recovery_state == "RECOVERY_PENDING"
+    ok, skip, _ = tr.should_evaluate(
         "1000.T",
         now_mono=2.0,
         market_ts=2.0,
+        poll_interval_sec=5.0,
+        ring_only_warmup=False,
+    )
+    assert not ok and skip == "EVALUATION_THROTTLED"
+    ok, _, _ = tr.should_evaluate(
+        "1000.T",
+        now_mono=6.0,
+        market_ts=6.0,
         poll_interval_sec=5.0,
         ring_only_warmup=False,
     )

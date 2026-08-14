@@ -2,7 +2,11 @@
 
 Tracks per-symbol market-state timestamps so freshness uses the latest observed
 board/price times, not only the current payload. Separates throttle from state
-updates and allows one evaluation on not-ready→ready and stale→fresh recovery.
+updates and allows one evaluation on not-ready→ready.
+
+V12: stale-recovery is a reservation (state machine). It MUST NOT bypass the
+PBv2 5s evaluation cadence. Consumer wall-clock delay is a health metric, not
+a Strategy freshness input.
 """
 
 from __future__ import annotations
@@ -26,6 +30,15 @@ SKIP_THROTTLED = "EVALUATION_THROTTLED"
 SKIP_NOT_READY = "DATA_NOT_READY"
 SKIP_DUPLICATE = "EVALUATION_DUPLICATE_SUPPRESSED"
 SKIP_TRUE_STALE = "TRUE_STALE"
+
+RECOVERY_NORMAL = "NORMAL"
+RECOVERY_PENDING = "RECOVERY_PENDING"
+RECOVERY_ELIGIBLE = "RECOVERY_ELIGIBLE"
+RECOVERY_RECOVERED = "RECOVERED"
+
+LOG_RECOVERY_ENTER = "RECOVERY_ENTER"
+LOG_RECOVERY_EVAL = "RECOVERY_EVAL"
+LOG_RECOVERY_EXIT = "RECOVERY_EXIT"
 
 
 def _parse_ts(raw: Any, *, fallback: Optional[datetime] = None) -> Optional[datetime]:
@@ -61,6 +74,7 @@ class SymbolReachabilityState:
     last_skip_reason: Optional[str] = None
     last_evaluation_cycle_id: Optional[str] = None
     pending_recovery_eval: bool = False
+    recovery_state: str = RECOVERY_NORMAL
     pending_ready_eval: bool = False
     price_state_updated_at: Optional[str] = None
     board_state_updated_at: Optional[str] = None
@@ -93,6 +107,17 @@ class EvaluationReachabilityTracker:
     normal_throttle_skip_count: int = 0
     forced_ready_evaluation_count: int = 0
     forced_recovery_evaluation_count: int = 0
+    forced_eval_count: int = 0
+    recovery_eval_count: int = 0
+    recovery_enter_count: int = 0
+    recovery_exit_count: int = 0
+    push_count: int = 0
+    pbv2_eval_count: int = 0
+    pbv2_throttled_count: int = 0
+    last_consumer_processing_delay_sec: Optional[float] = None
+    max_consumer_processing_delay_sec: float = 0.0
+    last_event_age_market_sec: Optional[float] = None
+    recovery_log_events: int = 0
     forced_duplicate_count: int = 0
     pipeline_cycle_count: int = 0
     pipeline_order_valid_count: int = 0
@@ -132,6 +157,7 @@ class EvaluationReachabilityTracker:
             st.readiness = READY_NOT_SUBSCRIBED
             st.pending_ready_eval = False
             st.pending_recovery_eval = False
+            st.recovery_state = RECOVERY_NORMAL
 
     def update_from_payload(
         self,
@@ -222,7 +248,7 @@ class EvaluationReachabilityTracker:
             else:
                 st.readiness = READY_EVALUATION
 
-        # recovery: only after a prior evaluation that was not fresh
+        # recovery: reserve next legal 5s slot. Never force-eval per PUSH.
         if (
             st.last_eval_mono is not None
             and prev_fresh is False
@@ -230,11 +256,15 @@ class EvaluationReachabilityTracker:
             and board_ok
             and st.history_ready
             and st.feature_ready
+            and st.recovery_state in (RECOVERY_NORMAL, RECOVERY_RECOVERED)
             and not st.pending_recovery_eval
         ):
             st.pending_recovery_eval = True
+            st.recovery_state = RECOVERY_PENDING
             self.stale_recovery_count += 1
             self.stale_recovery_ready_count += 1
+            self.recovery_enter_count += 1
+            self.recovery_log_events += 1
 
         if prev_ready and st.readiness != READY_EVALUATION:
             # once ready, do not silently drop to warmup except session reset
@@ -250,6 +280,31 @@ class EvaluationReachabilityTracker:
             "last_board_update_ts": st.last_board_update_ts,
         }
 
+    def note_consumer_delay(
+        self,
+        *,
+        event_time: Optional[datetime],
+        wall_now: Optional[datetime] = None,
+        source_received_at: Optional[datetime] = None,
+    ) -> dict[str, Optional[float]]:
+        """Runtime health only — must not feed Strategy freshness thresholds."""
+        wall = wall_now or datetime.now(JST)
+        delay = None
+        event_age = None
+        if event_time is not None:
+            delay = max(0.0, (wall - event_time).total_seconds())
+            self.last_consumer_processing_delay_sec = delay
+            if delay > self.max_consumer_processing_delay_sec:
+                self.max_consumer_processing_delay_sec = delay
+        src = source_received_at or event_time
+        if event_time is not None and src is not None:
+            event_age = max(0.0, (event_time - src).total_seconds())
+            self.last_event_age_market_sec = event_age
+        return {
+            "consumer_processing_delay_sec": delay,
+            "event_age_market_sec": event_age,
+        }
+
     def should_evaluate(
         self,
         symbol: str,
@@ -259,14 +314,20 @@ class EvaluationReachabilityTracker:
         poll_interval_sec: float,
         ring_only_warmup: bool,
     ) -> tuple[bool, Optional[str], Optional[str]]:
-        """Return (evaluate?, skip_reason, evaluation_cycle_id)."""
+        """Return (evaluate?, skip_reason, evaluation_cycle_id).
+
+        Recovery reservations never bypass poll_interval_sec. Only the first
+        not-ready→ready transition (`pending_ready_eval`) may evaluate immediately.
+        """
         st = self.get(symbol)
+        self.push_count += 1
         if ring_only_warmup:
             self.evaluation_skipped_not_ready_count += 1
             st.last_skip_reason = SKIP_NOT_READY
             return False, SKIP_NOT_READY, None
 
-        force = bool(st.pending_ready_eval or st.pending_recovery_eval)
+        # V12: recovery is NOT a force-eval. pending_ready_eval remains one-shot.
+        force = bool(st.pending_ready_eval)
         if not force and st.readiness != READY_EVALUATION and not st.history_ready:
             self.evaluation_skipped_not_ready_count += 1
             st.last_skip_reason = SKIP_NOT_READY
@@ -277,6 +338,7 @@ class EvaluationReachabilityTracker:
                 if (market_ts - st.last_eval_market_ts) < float(poll_interval_sec):
                     self.evaluation_skipped_throttled_count += 1
                     self.normal_throttle_skip_count += 1
+                    self.pbv2_throttled_count += 1
                     st.last_skip_reason = SKIP_THROTTLED
                     self.state_update_without_eval_count += 1
                     return False, SKIP_THROTTLED, None
@@ -284,15 +346,21 @@ class EvaluationReachabilityTracker:
                 if (now_mono - st.last_eval_mono) < float(poll_interval_sec):
                     self.evaluation_skipped_throttled_count += 1
                     self.normal_throttle_skip_count += 1
+                    self.pbv2_throttled_count += 1
                     st.last_skip_reason = SKIP_THROTTLED
                     self.state_update_without_eval_count += 1
                     return False, SKIP_THROTTLED, None
+
+        if st.pending_recovery_eval and st.recovery_state == RECOVERY_PENDING:
+            st.recovery_state = RECOVERY_ELIGIBLE
+            self.recovery_log_events += 1
 
         self._cycle_seq += 1
         cycle = f"{symbol}:{self._cycle_seq}:{int(now_mono * 1000)}"
         if cycle in self._seen_cycle_ids or st.last_evaluation_cycle_id == cycle:
             self.duplicate_eval_suppressed_count += 1
             return False, SKIP_DUPLICATE, None
+        self.pbv2_eval_count += 1
         return True, None, cycle
 
     def mark_evaluated(
@@ -349,13 +417,22 @@ class EvaluationReachabilityTracker:
             self.forced_ready_evaluation_count += 1
         if was_recovery:
             self.evaluation_recovery_triggered_count += 1
-            self.forced_recovery_evaluation_count += 1
+            self.recovery_eval_count += 1
+            # V12: recovery evals are cadence-legal, not force-per-push.
         st.pending_ready_eval = False
         st.pending_recovery_eval = False
         st.last_fresh_ok = bool(fresh_ok)
         st.last_skip_reason = SKIP_TRUE_STALE if stale_reject else None
         if stale_reject:
             self.evaluation_skipped_stale_count += 1
+            # Re-reserve on the next state update — do not force the following PUSH.
+            st.recovery_state = RECOVERY_NORMAL
+        elif was_recovery:
+            st.recovery_state = RECOVERY_RECOVERED
+            self.recovery_exit_count += 1
+            self.recovery_log_events += 1
+        else:
+            st.recovery_state = RECOVERY_NORMAL
 
     def flush_pending_at_session_end(self) -> None:
         """Count ready/recovery transitions that never received an evaluation."""
@@ -412,6 +489,20 @@ class EvaluationReachabilityTracker:
             "recovery_duplicate_evaluation_count": int(self.recovery_duplicate_evaluation_count),
             "forced_ready_evaluation_count": int(self.forced_ready_evaluation_count),
             "forced_recovery_evaluation_count": int(self.forced_recovery_evaluation_count),
+            "forced_eval_count": int(self.forced_eval_count),
+            "recovery_eval_count": int(self.recovery_eval_count),
+            "recovery_enter_count": int(self.recovery_enter_count),
+            "recovery_exit_count": int(self.recovery_exit_count),
+            "push_count": int(self.push_count),
+            "pbv2_eval_count": int(self.pbv2_eval_count),
+            "pbv2_throttled_count": int(self.pbv2_throttled_count),
+            "eval_fraction": (
+                float(self.pbv2_eval_count) / float(self.push_count) if self.push_count else 0.0
+            ),
+            "last_consumer_processing_delay_sec": self.last_consumer_processing_delay_sec,
+            "max_consumer_processing_delay_sec": float(self.max_consumer_processing_delay_sec),
+            "last_event_age_market_sec": self.last_event_age_market_sec,
+            "recovery_log_events": int(self.recovery_log_events),
             "forced_duplicate_count": int(self.forced_duplicate_count),
             "false_board_stale_prevented_count": int(self.false_board_stale_prevented_count),
             "state_update_without_eval_count": int(self.state_update_without_eval_count),

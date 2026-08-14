@@ -24,6 +24,16 @@ INVALID_PROSPECTIVE_DAYS: dict[str, dict[str, Any]] = {
         "market_data_use": "RETROSPECTIVE_OPERATIONAL_EVIDENCE_ONLY",
         "next_prospective_day1_candidate": "next fully unseen trading day after 20260812",
     },
+    "20260814": {
+        "count_as_valid_prospective_day": False,
+        "prospective_status": "INVALID_RUNTIME_FAIL",
+        "reasons": [
+            "V1R_20260814_PROSPECTIVE_DAY1_INVALID_RUNTIME_FAIL",
+            "CONSUMER_LAG_PERSISTENT_INCREASE",
+        ],
+        "market_data_use": "RUNTIME_RCA_AND_REPLAY_ONLY",
+        "pnl_for_strategy_evaluation": False,
+    },
 }
 
 
