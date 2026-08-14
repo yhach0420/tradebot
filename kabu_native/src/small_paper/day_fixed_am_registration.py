@@ -13,6 +13,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from datetime import datetime
@@ -38,8 +39,21 @@ SAME_DAY_AM_FROZEN_AUTHORITY = "SAME_DAY_AM_FROZEN_UNIVERSE"
 POST_BIND_UNIVERSE_MUTATION = "POST_BIND_UNIVERSE_MUTATION"
 FROZEN_AM_UNIVERSE_MISMATCH = "FROZEN_AM_UNIVERSE_MISMATCH"
 FROZEN_AM_UNIVERSE_SOURCE_DRIFT = "FROZEN_AM_UNIVERSE_SOURCE_DRIFT"
+PROVENANCE_SOURCE_DRIFT = "PROVENANCE_SOURCE_DRIFT"
+FROZEN_ARTIFACT_WRITE_ATTEMPT = "FROZEN_ARTIFACT_WRITE_ATTEMPT"
+PROVENANCE_AM_SOURCE_WRITE_BLOCKED = "PROVENANCE_AM_SOURCE_WRITE_BLOCKED"
 AM_UNIVERSE_REUSED_FROZEN = "AM_UNIVERSE_REUSED_FROZEN"
 AM_UNIVERSE_FROZEN = "AM_UNIVERSE_FROZEN"
+FROZEN_SCHEMA_V13 = "SAME_DAY_AM_FROZEN_UNIVERSE_V13"
+
+_BARE_SYMBOL_RE = re.compile(r"^(\d{4}|\d{3}[A-Z])$", re.IGNORECASE)
+_AM_SOURCE_NAME_RE = re.compile(r"^universe_core10_dynamic40_price_risk_am_(\d{8})\.csv$", re.IGNORECASE)
+_FROZEN_CSV_NAME_RE = re.compile(r"^same_day_am_frozen_universe_(\d{8})\.csv$", re.IGNORECASE)
+_FROZEN_JSON_NAME_RE = re.compile(r"^same_day_am_frozen_universe_(\d{8})\.json$", re.IGNORECASE)
+
+
+class FrozenArtifactWriteError(RuntimeError):
+    """Raised when a writer attempts to mutate the immutable frozen artifact."""
 
 
 def am_csv_path(native_root: Path, trading_date: str) -> Path:
@@ -81,6 +95,65 @@ def canonical_membership_sha(symbols: Sequence[str]) -> str:
 
 def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def is_valid_frozen_symbol(raw: Any) -> bool:
+    key = canonical_symbol_key(raw)
+    return bool(key and _BARE_SYMBOL_RE.match(key))
+
+
+def infer_native_root_from_universe_path(path: Path) -> Path:
+    p = Path(path).resolve()
+    if p.parent.name == "reports" and p.parent.parent.name == "results":
+        return p.parent.parent.parent
+    if p.parent.name == "runtime":
+        return p.parent.parent
+    return p.parent
+
+
+def maybe_block_universe_csv_write(path: Path) -> Optional[dict[str, Any]]:
+    """Block post-freeze writes to frozen artifacts (FATAL) or AM screening CSV.
+
+    Returns None when the write may proceed. Screening-source blocks are
+    non-fatal (skip write + audit). Frozen artifact blocks are fatal.
+    """
+    name = Path(path).name
+    frozen_m = _FROZEN_CSV_NAME_RE.match(name) or _FROZEN_JSON_NAME_RE.match(name)
+    am_m = _AM_SOURCE_NAME_RE.match(name)
+    if not frozen_m and not am_m:
+        return None
+    day = str((frozen_m or am_m).group(1))
+    native_root = infer_native_root_from_universe_path(path)
+    frozen_json = frozen_universe_path(native_root, day)
+    if not frozen_json.is_file():
+        return None
+    if frozen_m:
+        append_frozen_universe_audit(
+            native_root,
+            day,
+            FROZEN_ARTIFACT_WRITE_ATTEMPT,
+            path=str(path),
+        )
+        note_post_bind_universe_mutation_attempt(native_root, day)
+        return {
+            "blocked": True,
+            "fatal": True,
+            "reason": FROZEN_ARTIFACT_WRITE_ATTEMPT,
+            "path": str(path),
+        }
+    append_frozen_universe_audit(
+        native_root,
+        day,
+        PROVENANCE_AM_SOURCE_WRITE_BLOCKED,
+        path=str(path),
+    )
+    note_post_bind_universe_mutation_attempt(native_root, day)
+    return {
+        "blocked": True,
+        "fatal": False,
+        "reason": PROVENANCE_AM_SOURCE_WRITE_BLOCKED,
+        "path": str(path),
+    }
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -235,8 +308,14 @@ def load_am_csv_from_disk(native_root: Path, trading_date: str) -> dict[str, Any
 
 
 def load_frozen_am_universe(native_root: Path, trading_date: str) -> dict[str, Any]:
+    """Load SAME_DAY_AM_FROZEN_UNIVERSE. Runtime SoT is frozen CSV+JSON only.
+
+    provenance_source_csv_* is audit-only (legacy source_csv_* aliases).
+    Frozen artifact integrity failures are fatal. Screening CSV drift is not.
+    """
     day = str(trading_date)
     path = frozen_universe_path(native_root, day)
+    csv_default = frozen_csv_path(native_root, day)
     base: dict[str, Any] = {
         "ok": False,
         "present": path.is_file(),
@@ -246,11 +325,19 @@ def load_frozen_am_universe(native_root: Path, trading_date: str) -> dict[str, A
         "canonical_membership_sha": "",
         "source_csv_path": "",
         "source_csv_sha": "",
-        "frozen_csv_path": str(frozen_csv_path(native_root, day)),
+        "frozen_csv_path": str(csv_default),
+        "runtime_frozen_csv_path": str(csv_default),
+        "runtime_frozen_csv_sha": "",
+        "runtime_membership_sha": "",
+        "runtime_count": 0,
+        "freeze_at": "",
+        "provenance_source_csv_path": "",
+        "provenance_source_csv_sha_at_freeze": "",
         "built_at": "",
         "generation": 0,
         "id": "",
         "reason": "",
+        "schema": "",
     }
     if not path.is_file():
         base["reason"] = "frozen_am_universe_missing"
@@ -259,53 +346,112 @@ def load_frozen_am_universe(native_root: Path, trading_date: str) -> dict[str, A
     if not body:
         base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
         return base
-    body_day = str(body.get("trading_date") or "")
-    symbols = canonical_symbols(list(body.get("canonical_symbols") or []))
-    stored_sha = str(body.get("canonical_membership_sha") or "")
+    raw_symbols = list(body.get("canonical_symbols") or [])
+    symbols = canonical_symbols(raw_symbols)
+    runtime_csv = Path(
+        str(body.get("runtime_frozen_csv_path") or body.get("frozen_csv_path") or csv_default)
+    )
+    runtime_sha_stored = str(body.get("runtime_frozen_csv_sha") or "")
+    stored_sha = str(
+        body.get("runtime_membership_sha") or body.get("canonical_membership_sha") or ""
+    )
+    freeze_at = str(body.get("freeze_at") or body.get("built_at") or "")
+    prov_path = str(
+        body.get("provenance_source_csv_path") or body.get("source_csv_path") or ""
+    )
+    prov_sha = str(
+        body.get("provenance_source_csv_sha_at_freeze") or body.get("source_csv_sha") or ""
+    )
+    runtime_count = int(body.get("runtime_count") or 0)
     recomputed = canonical_membership_sha(symbols) if symbols else ""
     base.update(
         {
             "canonical_symbols": symbols,
             "canonical_membership_sha": stored_sha,
-            "source_csv_path": str(body.get("source_csv_path") or ""),
-            "source_csv_sha": str(body.get("source_csv_sha") or ""),
-            "frozen_csv_path": str(body.get("frozen_csv_path") or frozen_csv_path(native_root, day)),
-            "built_at": str(body.get("built_at") or ""),
+            "source_csv_path": prov_path,
+            "source_csv_sha": prov_sha,
+            "frozen_csv_path": str(runtime_csv),
+            "runtime_frozen_csv_path": str(runtime_csv),
+            "runtime_frozen_csv_sha": runtime_sha_stored,
+            "runtime_membership_sha": stored_sha,
+            "runtime_count": runtime_count or len(symbols),
+            "freeze_at": freeze_at,
+            "provenance_source_csv_path": prov_path,
+            "provenance_source_csv_sha_at_freeze": prov_sha,
+            "built_at": freeze_at,
             "generation": int(body.get("generation") or 0),
             "id": str(body.get("id") or ""),
+            "schema": str(body.get("schema") or ""),
         }
     )
+    body_day = str(body.get("trading_date") or "")
     if body_day != day:
-        base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
-        return base
-    if len(symbols) != EXPECTED_SYMBOLS:
-        base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
-        return base
-    if not stored_sha or stored_sha != recomputed:
         base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
         return base
     if str(body.get("authority") or "") not in ("", SAME_DAY_AM_FROZEN_AUTHORITY):
         base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
         return base
+    if len(raw_symbols) != len(symbols):
+        base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
+        return base
+    if any(not is_valid_frozen_symbol(s) for s in symbols):
+        base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
+        return base
+    if len(symbols) != EXPECTED_SYMBOLS:
+        base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
+        return base
+    if runtime_count and runtime_count != EXPECTED_SYMBOLS:
+        base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
+        return base
+    if not stored_sha or stored_sha != recomputed:
+        base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
+        return base
+    if not runtime_csv.is_file():
+        base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
+        return base
+    csv_syms = canonical_symbols(load_symbols_from_universe_csv(runtime_csv))
+    csv_sha = canonical_membership_sha(csv_syms) if csv_syms else ""
+    if csv_sha != stored_sha or len(csv_syms) != EXPECTED_SYMBOLS:
+        base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
+        return base
+    actual_csv_sha = file_sha256(runtime_csv)
+    if runtime_sha_stored and actual_csv_sha != runtime_sha_stored:
+        base["reason"] = FROZEN_AM_UNIVERSE_MISMATCH
+        return base
+    base["runtime_frozen_csv_sha"] = runtime_sha_stored or actual_csv_sha
     base["ok"] = True
     base["reason"] = ""
     return base
 
 
 def detect_frozen_source_csv_drift(native_root: Path, trading_date: str) -> dict[str, Any]:
+    """Provenance-only: screening source CSV vs SHA recorded at freeze.
+
+    Never fatal for runtime binding. Frozen artifact integrity is separate.
+    """
     frozen = load_frozen_am_universe(native_root, trading_date)
     if not frozen.get("ok"):
         return {
             "ok": False,
             "drift": False,
+            "fatal": False,
             "reason": str(frozen.get("reason") or "frozen_am_universe_missing"),
         }
-    src = Path(str(frozen.get("source_csv_path") or am_csv_path(native_root, trading_date)))
-    expected = str(frozen.get("source_csv_sha") or "")
+    src = Path(
+        str(
+            frozen.get("provenance_source_csv_path")
+            or frozen.get("source_csv_path")
+            or am_csv_path(native_root, trading_date)
+        )
+    )
+    expected = str(
+        frozen.get("provenance_source_csv_sha_at_freeze") or frozen.get("source_csv_sha") or ""
+    )
     if not src.is_file():
         return {
-            "ok": False,
+            "ok": True,
             "drift": True,
+            "fatal": False,
             "reason": FROZEN_AM_UNIVERSE_SOURCE_DRIFT,
             "expected_sha": expected,
             "actual_sha": "",
@@ -313,8 +459,9 @@ def detect_frozen_source_csv_drift(native_root: Path, trading_date: str) -> dict
     actual = file_sha256(src)
     if expected and actual != expected:
         return {
-            "ok": False,
+            "ok": True,
             "drift": True,
+            "fatal": False,
             "reason": FROZEN_AM_UNIVERSE_SOURCE_DRIFT,
             "expected_sha": expected,
             "actual_sha": actual,
@@ -322,6 +469,7 @@ def detect_frozen_source_csv_drift(native_root: Path, trading_date: str) -> dict
     return {
         "ok": True,
         "drift": False,
+        "fatal": False,
         "reason": "",
         "expected_sha": expected,
         "actual_sha": actual,
@@ -410,8 +558,10 @@ def freeze_same_day_am_universe(
         _write_frozen_csv_from_symbols(frozen_csv, symbols)
     built_at = datetime.now(JST).isoformat(timespec="seconds")
     ident = f"am_frozen_{day}_{int(generation)}"
+    frozen_csv_sha = file_sha256(frozen_csv) if frozen_csv.is_file() else ""
     payload = {
         "authority": SAME_DAY_AM_FROZEN_AUTHORITY,
+        "schema": FROZEN_SCHEMA_V13,
         "trading_date": day,
         "canonical_symbols": list(symbols),
         "canonical_membership_sha": membership,
@@ -421,6 +571,13 @@ def freeze_same_day_am_universe(
         "built_at": built_at,
         "generation": int(generation),
         "id": ident,
+        "runtime_frozen_csv_path": str(frozen_csv),
+        "runtime_frozen_csv_sha": frozen_csv_sha,
+        "runtime_membership_sha": membership,
+        "runtime_count": EXPECTED_SYMBOLS,
+        "freeze_at": built_at,
+        "provenance_source_csv_path": str(source_path or src),
+        "provenance_source_csv_sha_at_freeze": str(source_sha256),
     }
     _atomic_write_json(frozen_universe_path(native_root, day), payload)
     _write_frozen_summary(
@@ -494,19 +651,8 @@ def reuse_frozen_am_universe(
             expected_sha=drift.get("expected_sha"),
             actual_sha=drift.get("actual_sha"),
             canonical_membership_sha=frozen.get("canonical_membership_sha"),
+            fatal=False,
         )
-        return {
-            "attempted": True,
-            "reused": True,
-            "ok": False,
-            "reason": FROZEN_AM_UNIVERSE_SOURCE_DRIFT,
-            "authority": SAME_DAY_AM_FROZEN_AUTHORITY,
-            "symbols": list(frozen.get("canonical_symbols") or []),
-            "canonical_membership_sha": str(frozen.get("canonical_membership_sha") or ""),
-            "post_bind_universe_rebuild_count": 0,
-            "post_bind_universe_mutation_count": 0,
-            "allow_put_new50": False,
-        }
     frozen_csv = Path(str(frozen.get("frozen_csv_path") or frozen_csv_path(native_root, day)))
     root = Path(repo_root or native_root)
     try:
@@ -520,6 +666,7 @@ def reuse_frozen_am_universe(
         canonical_membership_sha=frozen.get("canonical_membership_sha"),
         post_bind_universe_rebuild_count=0,
         post_bind_universe_mutation_count=0,
+        provenance_source_drift=bool(drift.get("drift")),
     )
     return {
         "attempted": True,
@@ -540,6 +687,8 @@ def reuse_frozen_am_universe(
         "dynamic_price_risk_excluded_count": 0,
         "dynamic_price_risk_replacement_count": 0,
         "allow_put_new50": False,
+        "provenance_source_drift": bool(drift.get("drift")),
+        "source_drift": bool(drift.get("drift")),
     }
 
 
@@ -554,7 +703,12 @@ def load_am_canonical_50(native_root: Path, trading_date: str) -> dict[str, Any]
     if frozen.get("present"):
         symbols = list(frozen.get("canonical_symbols") or [])
         drift = detect_frozen_source_csv_drift(native_root, day) if frozen.get("ok") else {"drift": False}
-        universe_path = str(frozen.get("frozen_csv_path") or frozen_csv_path(native_root, day))
+        universe_path = str(frozen.get("runtime_frozen_csv_path") or frozen.get("frozen_csv_path") or frozen_csv_path(native_root, day))
+        frozen_csv_sha = str(frozen.get("runtime_frozen_csv_sha") or "")
+        if not frozen_csv_sha:
+            csvp = Path(universe_path)
+            if csvp.is_file():
+                frozen_csv_sha = file_sha256(csvp)
         base: dict[str, Any] = {
             "ok": bool(frozen.get("ok")),
             "contract": UNIVERSE_CONTRACT,
@@ -562,14 +716,15 @@ def load_am_canonical_50(native_root: Path, trading_date: str) -> dict[str, Any]
             "symbols": symbols,
             "symbol_count": len(symbols),
             "universe_path": universe_path,
-            "universe_sha256": str(frozen.get("source_csv_sha") or ""),
+            "universe_sha256": frozen_csv_sha,
             "canonical_membership_sha": str(frozen.get("canonical_membership_sha") or ""),
             "authority": SAME_DAY_AM_FROZEN_AUTHORITY,
             "source_drift": bool(drift.get("drift")),
+            "provenance_source_drift": bool(drift.get("drift")),
             "generation": int(frozen.get("generation") or 0),
             "id": str(frozen.get("id") or ""),
             "built_at": str(frozen.get("built_at") or ""),
-            "source_csv_path": str(frozen.get("source_csv_path") or ""),
+            "source_csv_path": str(frozen.get("provenance_source_csv_path") or frozen.get("source_csv_path") or ""),
             "reason": "",
         }
         if not frozen.get("ok"):
@@ -577,7 +732,6 @@ def load_am_canonical_50(native_root: Path, trading_date: str) -> dict[str, Any]
             return base
         if drift.get("drift"):
             base["reason"] = FROZEN_AM_UNIVERSE_SOURCE_DRIFT
-            # Membership remains frozen; ok stays True so exact50 vs frozen still works.
             base["ok"] = True
             return base
         base["ok"] = True
@@ -685,8 +839,17 @@ def bind_same_day_am_desired_universe(
                     "allow_put_new50": False,
                 }
         symbols = frozen_syms
-        source_path = str(frozen.get("frozen_csv_path") or frozen.get("source_csv_path") or source_path)
-        source_sha256 = str(frozen.get("source_csv_sha") or source_sha256)
+        source_path = str(
+            frozen.get("runtime_frozen_csv_path")
+            or frozen.get("frozen_csv_path")
+            or frozen.get("source_csv_path")
+            or source_path
+        )
+        source_sha256 = str(
+            frozen.get("runtime_frozen_csv_sha")
+            or frozen.get("source_csv_sha")
+            or source_sha256
+        )
         membership = frozen_sha
     elif symbols is None:
         loaded = load_am_canonical_50(native_root, day)
@@ -734,3 +897,41 @@ def bind_same_day_am_desired_universe(
         "authority": SAME_DAY_AM_FROZEN_AUTHORITY if frozen.get("present") else "",
         "allow_put_new50": False if frozen.get("present") else True,
     }
+
+
+def publish_runtime_desired_universe(
+    native_root: Path,
+    trading_date: str,
+    *,
+    fallback_symbols: Optional[Sequence[str]] = None,
+    generation: Optional[int] = None,
+) -> dict[str, Any]:
+    """Paper publishes desired universe. After freeze this is always frozen AM50."""
+    from small_paper.ingress_control_channel import write_desired_universe
+
+    day = str(trading_date)
+    frozen = load_frozen_am_universe(native_root, day)
+    if frozen.get("present"):
+        if not frozen.get("ok"):
+            return {
+                "ok": False,
+                "rejected": True,
+                "reason": str(frozen.get("reason") or FROZEN_AM_UNIVERSE_MISMATCH),
+                "trading_date": day,
+                "allow_put": False,
+            }
+        return bind_same_day_am_desired_universe(
+            native_root, day, generation=generation
+        )
+    symbols = canonical_symbols(list(fallback_symbols or []))
+    if not symbols:
+        loaded = load_am_canonical_50(native_root, day)
+        if not loaded.get("ok"):
+            return loaded
+        symbols = list(loaded.get("symbols") or [])
+    return write_desired_universe(
+        native_root,
+        symbols=symbols,
+        generation=generation,
+        trading_date=day,
+    )

@@ -64,6 +64,7 @@ RUNTIME_DEPENDENCY_RELS: tuple[str, ...] = (
     "src/small_paper/safety.py",
     "src/small_paper/registration_lifetime.py",
     "src/runner/am_pm_daily_runner.py",
+    "src/universe/core10_dynamic40_price_risk.py",
 )
 
 # Forbidden in runtime inventory (would reintroduce selector↔manifest cycles).

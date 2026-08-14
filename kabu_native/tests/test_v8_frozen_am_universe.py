@@ -223,13 +223,14 @@ def test_case_c_csv_overwrite_source_drift_fail_closed_no_new50_put(tmp_path: Pa
     assert refused["reason"] == FROZEN_AM_UNIVERSE_MISMATCH
     assert refused.get("allow_put_new50") is False
     reused = reuse_frozen_am_universe(native_root=tmp_path, trading_date=day, repo_root=tmp_path)
-    assert reused["ok"] is False
-    assert reused["reason"] == FROZEN_AM_UNIVERSE_SOURCE_DRIFT
+    assert reused["ok"] is True
+    assert reused["provenance_source_drift"] is True
     assert reused["symbols"] == am
     resolved = resolve_day_fixed_am_runtime_universe(native_root=tmp_path, trading_date=day)
-    assert resolved["ok"] is False
-    assert resolved["reason"] == FROZEN_AM_UNIVERSE_SOURCE_DRIFT
+    assert resolved["ok"] is True
+    assert resolved["provenance_source_drift"] is True
     assert resolved["symbols"] == am
+    assert resolved["reason"] == ""
     before = len(push.calls)
     svc._poll_desired_universe()
     put_sets = [[s for s, _ in call] for call in push.calls]

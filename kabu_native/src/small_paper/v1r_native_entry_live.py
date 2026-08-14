@@ -1313,16 +1313,15 @@ def resolve_day_fixed_am_runtime_universe(
 ) -> dict[str, Any]:
     """Resolve DAY_FIXED_AM_RUNTIME_UNIVERSE_V1 for live Primary.
 
-    SoT after V8 freeze:
-      - SAME_DAY_AM_FROZEN_UNIVERSE canonical50 (not later AM CSV bytes)
-      - same-day Market Ingress registration manifest (must match frozen when present)
+    SoT after V8/V13 freeze:
+      - SAME_DAY_AM_FROZEN_UNIVERSE canonical50 from frozen CSV+JSON (immutable)
+      - provenance screening CSV drift is audit-only and must not empty the universe
 
     Before freeze, same-day AM CSV remains the SoT. Never invents symbols from
     the binding manifest (contract-only, no symbols body).
     """
     from small_paper.day_fixed_am_registration import (
         FROZEN_AM_UNIVERSE_MISMATCH,
-        FROZEN_AM_UNIVERSE_SOURCE_DRIFT,
         SAME_DAY_AM_FROZEN_AUTHORITY,
         canonical_membership_sha,
         load_am_canonical_50,
@@ -1375,16 +1374,11 @@ def resolve_day_fixed_am_runtime_universe(
         "reason": "",
         "authority": SAME_DAY_AM_FROZEN_AUTHORITY if frozen.get("present") else "",
         "canonical_membership_sha": canonical_membership_sha(am_syms) if am_syms else "",
+        "provenance_source_drift": bool(loaded.get("source_drift") or loaded.get("provenance_source_drift")),
     }
 
     if frozen.get("present") and not frozen.get("ok"):
         base["reason"] = str(frozen.get("reason") or FROZEN_AM_UNIVERSE_MISMATCH)
-        base["symbols"] = list(am_syms)
-        base["symbol_count"] = len(am_syms)
-        return base
-
-    if frozen.get("present") and loaded.get("source_drift"):
-        base["reason"] = FROZEN_AM_UNIVERSE_SOURCE_DRIFT
         base["symbols"] = list(am_syms)
         base["symbol_count"] = len(am_syms)
         return base
@@ -1394,14 +1388,15 @@ def resolve_day_fixed_am_runtime_universe(
         return base
 
     if am_syms and man_syms and not symbols_equal(am_syms, man_syms):
-        base["reason"] = (
-            FROZEN_AM_UNIVERSE_MISMATCH
-            if frozen.get("present")
-            else "am_csv_ingress_membership_mismatch"
-        )
-        base["symbols"] = list(am_syms)
-        base["symbol_count"] = len(am_syms)
-        return base
+        if frozen.get("present") and frozen.get("ok"):
+            # Frozen artifact is SoT. Ingress mismatch is repaired via registration
+            # authority; do not empty native universe.
+            base["ingress_match"] = False
+        else:
+            base["reason"] = "am_csv_ingress_membership_mismatch"
+            base["symbols"] = list(am_syms)
+            base["symbol_count"] = len(am_syms)
+            return base
 
     if am_syms:
         symbols = list(dict.fromkeys(am_syms))

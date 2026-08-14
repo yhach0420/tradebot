@@ -1018,6 +1018,7 @@ def _init_v1r_native_entry_for_live(
     session_symbols: Sequence[str],
 ) -> dict[str, Any]:
     """Wire day-fixed AM universe + session trace_dir. Fail-closed if unresolved."""
+    from small_paper.day_fixed_am_registration import SAME_DAY_AM_FROZEN_AUTHORITY
     from small_paper.v1r_live_dual_lane import live_primary_enabled
     from small_paper.v1r_native_entry_live import (
         ensure_native_entry,
@@ -1029,15 +1030,23 @@ def _init_v1r_native_entry_for_live(
     resolved = resolve_day_fixed_am_runtime_universe(
         native_root=native_root, trading_date=trading_date
     )
-    # Cross-check session watch list when present (must equal day-fixed membership)
+    # Screening session membership may differ from frozen AM50 (PM rebuild).
+    # After freeze, V1R binds frozen50; do not empty native on that diff.
     sess = [str(s).replace(".T", "") for s in session_symbols if str(s).replace(".T", "")]
     if resolved.get("ok") and sess and set(sess) != set(resolved["symbols"]):
-        resolved = {
-            **resolved,
-            "ok": False,
-            "reason": "session_symbols_day_fixed_mismatch",
-            "session_count": len(set(sess)),
-        }
+        if str(resolved.get("authority") or "") == SAME_DAY_AM_FROZEN_AUTHORITY:
+            resolved = {
+                **resolved,
+                "screening_session_diff": True,
+                "session_count": len(set(sess)),
+            }
+        else:
+            resolved = {
+                **resolved,
+                "ok": False,
+                "reason": "session_symbols_day_fixed_mismatch",
+                "session_count": len(set(sess)),
+            }
     trace_dir = Path(writer.output_dir)
     eng = ensure_native_entry(
         universe=list(resolved.get("symbols") or []) if resolved.get("ok") else [],
@@ -8575,18 +8584,23 @@ def run_live_dry_run(
             # Phase242b logs
             register_called = True
             if ingress_v2:
-                from small_paper.ingress_control_channel import write_desired_universe
+                from small_paper.day_fixed_am_registration import publish_runtime_desired_universe
 
-                write_desired_universe(
+                day_pub = datetime.now(JST).strftime("%Y%m%d")
+                pub = publish_runtime_desired_universe(
                     native_root,
-                    symbols=[s[0] for s in specs],
-                    position_symbols=list(open_syms or []),
-                    trading_date=datetime.now(JST).strftime("%Y%m%d"),
+                    day_pub,
+                    fallback_symbols=[s[0] for s in specs],
                 )
+                if not pub.get("ok") and pub.get("rejected"):
+                    raise RuntimeError(
+                        f"desired_universe_publish_failed:{pub.get('reason')}"
+                    )
                 reg_meta = {
-                    "register_count": len(specs),
+                    "register_count": len(list(pub.get("symbols") or specs)),
                     "owner": "MARKET_INGRESS_SERVICE",
                     "paper_register": "DISABLED",
+                    "desired_authority": str(pub.get("authority") or ""),
                 }
             else:
                 register_symbols_cleared(
@@ -8907,15 +8921,20 @@ def run_live_dry_run(
             day = datetime.now(JST).strftime("%Y%m%d")
             if ingress_v2:
                 # Ingress owns Station register; Paper publishes desired universe only.
-                from small_paper.ingress_control_channel import write_desired_universe
+                # After freeze this is always frozen AM50, never PM screening membership.
+                from small_paper.day_fixed_am_registration import publish_runtime_desired_universe
 
-                reg_meta = write_desired_universe(
+                pub = publish_runtime_desired_universe(
                     native_root,
-                    symbols=[s[0] for s in sym_specs],
-                    trading_date=day,
+                    day,
+                    fallback_symbols=[s[0] for s in sym_specs],
                 )
+                if not pub.get("ok") and pub.get("rejected"):
+                    raise RuntimeError(
+                        f"desired_universe_publish_failed:{pub.get('reason')}"
+                    )
                 reg_meta = {
-                    **reg_meta,
+                    **(pub if isinstance(pub, dict) else {}),
                     "owner": "MARKET_INGRESS_SERVICE",
                     "paper_register": "DISABLED",
                     "ok": True,

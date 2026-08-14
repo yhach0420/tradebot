@@ -148,7 +148,8 @@ def load_symbols_from_universe_csv(path: Path, *, limit: int = KABU_PUSH_REGISTE
 def candidate_universe_paths(native_root: Path, trading_date: str) -> list[Path]:
     reports = Path(native_root) / "results" / "reports"
     day = trading_date
-    return [
+    frozen = reports / f"same_day_am_frozen_universe_{day}.csv"
+    rest = [
         reports / f"universe_core10_dynamic40_price_risk_pm_refresh1430_{day}.csv",
         reports / f"universe_core10_dynamic40_price_risk_am_refresh1000_{day}.csv",
         reports / f"universe_core10_dynamic40_price_risk_pm_{day}.csv",
@@ -156,6 +157,9 @@ def candidate_universe_paths(native_root: Path, trading_date: str) -> list[Path]
         reports / f"universe_core10_dynamic40_pm_{day}.csv",
         reports / f"universe_core10_dynamic40_am_{day}.csv",
     ]
+    if frozen.is_file():
+        return [frozen]
+    return rest
 
 
 def resolve_universe_symbols(

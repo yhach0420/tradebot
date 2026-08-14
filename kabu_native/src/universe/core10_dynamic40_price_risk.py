@@ -249,6 +249,18 @@ def enrich_universe_csv_rows(
 
 
 def write_price_risk_universe_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    from small_paper.day_fixed_am_registration import (
+        FrozenArtifactWriteError,
+        maybe_block_universe_csv_write,
+    )
+
+    blocked = maybe_block_universe_csv_write(path)
+    if blocked:
+        if blocked.get("fatal"):
+            raise FrozenArtifactWriteError(
+                str(blocked.get("reason") or "FROZEN_ARTIFACT_WRITE_ATTEMPT")
+            )
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(PRICE_RISK_UNIVERSE_FIELDS), extrasaction="ignore")
@@ -265,7 +277,14 @@ def build_price_risk_universes(
     feature_rows: list[dict[str, str]],
     symbol_meta: Mapping[str, Mapping[str, Any]],
     push_day_dir: Path,
+    write_am: bool = True,
+    write_pm: bool = True,
 ) -> dict[str, Any]:
+    """Build AM/PM price-risk universes.
+
+    PM screening must pass write_am=False so the AM source CSV is never
+    overwritten after SAME_DAY_AM_FROZEN_UNIVERSE is bound.
+    """
     am_path = universe_am_price_risk_path(reports_dir, day_stamp)
     pm_path = universe_pm_price_risk_path(reports_dir, day_stamp)
 
@@ -275,25 +294,31 @@ def build_price_risk_universes(
     am_replacements: list[str] = []
     pm_excluded: list[str] = []
     pm_replacements: list[str] = []
+    am_written = False
+    pm_written = False
 
     if feature_rows:
-        am_rows, am_excluded, am_replacements = build_am_universe_price_risk(
-            core_symbols=core_symbols,
-            feature_rows=feature_rows,
-            symbol_meta=symbol_meta,
-        )
-        pm_rows, pm_excluded, pm_replacements = build_pm_universe_price_risk(
-            core_symbols=core_symbols,
-            feature_rows=feature_rows,
-            symbol_meta=symbol_meta,
-            push_day_dir=push_day_dir,
-        )
-        am_enriched = enrich_universe_csv_rows(am_rows, feature_rows)
-        pm_enriched = enrich_universe_csv_rows(pm_rows, feature_rows)
-        write_price_risk_universe_csv(am_path, am_enriched)
-        write_price_risk_universe_csv(pm_path, pm_enriched)
-        am_rows = am_enriched
-        pm_rows = pm_enriched
+        if write_am:
+            am_rows, am_excluded, am_replacements = build_am_universe_price_risk(
+                core_symbols=core_symbols,
+                feature_rows=feature_rows,
+                symbol_meta=symbol_meta,
+            )
+            am_enriched = enrich_universe_csv_rows(am_rows, feature_rows)
+            write_price_risk_universe_csv(am_path, am_enriched)
+            am_rows = am_enriched
+            am_written = am_path.is_file()
+        if write_pm:
+            pm_rows, pm_excluded, pm_replacements = build_pm_universe_price_risk(
+                core_symbols=core_symbols,
+                feature_rows=feature_rows,
+                symbol_meta=symbol_meta,
+                push_day_dir=push_day_dir,
+            )
+            pm_enriched = enrich_universe_csv_rows(pm_rows, feature_rows)
+            write_price_risk_universe_csv(pm_path, pm_enriched)
+            pm_rows = pm_enriched
+            pm_written = pm_path.is_file()
 
     core_warnings = scan_core_price_risk_warnings(core_symbols, feature_rows)
 
@@ -312,4 +337,8 @@ def build_price_risk_universes(
         "core_price_risk_warnings": core_warnings,
         "am_rows": am_rows,
         "pm_rows": pm_rows,
+        "am_written": am_written,
+        "pm_written": pm_written,
+        "write_am": bool(write_am),
+        "write_pm": bool(write_pm),
     }

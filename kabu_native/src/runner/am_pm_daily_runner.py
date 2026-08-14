@@ -528,6 +528,7 @@ def _build_pm_universe_price_risk(state: DailyRunnerState, feature_rows: list[di
     core_symbols, _ = load_core_watchlist(state.repo_root)
     symbol_meta = load_symbol_meta(state.repo_root, state.native_root)
     push_day_dir = state.push_root / state.trade_date.isoformat()
+    # V13: PM screening never overwrites the AM source CSV. Frozen artifact is SoT.
     build = build_price_risk_universes(
         reports_dir=state.reports_dir,
         day_stamp=state.options.day_stamp,
@@ -535,6 +536,8 @@ def _build_pm_universe_price_risk(state: DailyRunnerState, feature_rows: list[di
         feature_rows=feature_rows,
         symbol_meta=symbol_meta,
         push_day_dir=push_day_dir,
+        write_am=False,
+        write_pm=True,
     )
     pm_csv = Path(build["pm_output"])
     pm_rows = build.get("pm_rows") or []
