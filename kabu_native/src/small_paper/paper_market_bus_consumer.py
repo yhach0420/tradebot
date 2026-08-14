@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
+import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Optional
 
@@ -33,6 +34,7 @@ from small_paper.market_ingress_protocol import (
     kabu_payload_from_envelope,
     now_iso,
 )
+from small_paper.runtime_clock import consumer_extra_delay_sec
 from small_paper.ws_freeze_recovery import make_recv_timeout_tick
 
 
@@ -105,6 +107,9 @@ class PaperMarketBusBridge:
             return
         if env.kind != KIND_MARKET_PUSH:
             return
+        extra = consumer_extra_delay_sec()
+        if extra > 0:
+            time.sleep(extra)
         self.last_sequence = int(env.sequence)
         self.last_event_at = env.event_time or env.received_at
         if env.ingress_session_id:

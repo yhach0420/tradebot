@@ -14,6 +14,10 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from small_paper.runtime_clock import now_jst as session_now
+from small_paper.runtime_clock import sleep_until as session_sleep_until
+from small_paper.runtime_clock import session_clock_enabled
+
 JST = ZoneInfo("Asia/Tokyo")
 
 log = __import__("logging").getLogger(__name__)
@@ -129,7 +133,7 @@ def rel_path(repo_root: Path, p: Path) -> str:
 
 
 def now_jst() -> datetime:
-    return datetime.now(JST)
+    return session_now()
 
 
 def should_skip_am_live_after_session_end(
@@ -304,7 +308,7 @@ def notify_screening_universe_discord(
         return {"sent": False, "skipped": True, "reason": "discord_not_active"}
     syms = load_symbols(universe=universe_csv, native_root=state.native_root)
     watch = symbols_list(syms)
-    generated_at = datetime.now(JST).isoformat(timespec="milliseconds")
+    generated_at = now_jst().isoformat(timespec="milliseconds")
     sent = notifier.notify_universe_screening(
         session_label=session_label,
         watch_symbols=watch,
@@ -727,8 +731,14 @@ def wait_until_hhmm(
                 "target": hhmm,
                 "label": label,
             }
-        # sleep up to 30s chunks
-        sleep_fn(min(30.0, 5.0))
+        today = n.date()
+        target_dt = datetime.combine(today, target_t, tzinfo=JST)
+        if n >= target_dt:
+            continue
+        if session_clock_enabled():
+            session_sleep_until(target_dt, sleep_fn=sleep_fn, poll_sec=0.05)
+        else:
+            sleep_fn(min(30.0, 5.0))
 
 
 def kabu_clear_stale_registrations(state: DailyRunnerState, *, label: str) -> dict[str, Any]:

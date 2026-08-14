@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from small_paper.runtime_clock import now_jst as session_now
+
 JST = ZoneInfo("Asia/Tokyo")
 
 NATIVE_ROOT = Path(__file__).resolve().parents[2]
@@ -196,12 +198,12 @@ def synthetic_provenance_fields() -> dict[str, Any]:
 
 def trading_date_jst(now: Optional[datetime] = None) -> str:
     """Always runtime JST YYYYMMDD — never a fixed date constant for trading."""
-    dt = now or datetime.now(JST)
+    dt = now or session_now()
     return dt.strftime("%Y%m%d")
 
 
 def _now_iso() -> str:
-    return datetime.now(JST).isoformat(timespec="seconds")
+    return session_now().isoformat(timespec="seconds")
 
 
 def redact_secrets(text: str) -> str:
@@ -2490,6 +2492,24 @@ class PaperTradeCheckedRunner:
                 log_webhook_configured(st)
             except Exception:
                 pass
+            try:
+                from small_paper.paper_full_day_certification import enforce_pre_paper_certification_gate
+
+                gate_rc = enforce_pre_paper_certification_gate(
+                    native_root=self.native_root, repo_root=self.repo_root
+                )
+                if int(gate_rc) != 0:
+                    print("[CHECKED RUNNER] blocked by Pre-Paper Certification Gate", flush=True)
+                    return int(gate_rc)
+            except Exception as gate_exc:
+                from small_paper.runtime_clock import certification_mode, skip_cert_gate
+
+                if not (certification_mode() or skip_cert_gate()):
+                    print(
+                        f"[CHECKED RUNNER] certification gate error: {type(gate_exc).__name__}: {gate_exc}",
+                        flush=True,
+                    )
+                    return 2
             self.trading_date = trading_date_jst()
             self._print_banner()
 

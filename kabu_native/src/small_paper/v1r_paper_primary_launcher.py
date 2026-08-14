@@ -29,6 +29,7 @@ from small_paper.kabu_registration_authority import (
     classify_pre_warmup_process_exit,
     evaluate_native_runtime_ready,
 )
+from small_paper.runtime_clock import now_jst as session_now
 
 JST = ZoneInfo("Asia/Tokyo")
 NATIVE = Path(__file__).resolve().parents[2]
@@ -91,8 +92,8 @@ def assert_only() -> int:
 
 def _start_session_dir() -> Path:
     out = (
-        NATIVE / "results" / "small_paper" / datetime.now(JST).strftime("%Y%m%d")
-        / f"v1r_primary_{datetime.now(JST).strftime('%H%M%S')}"
+        NATIVE / "results" / "small_paper" / session_now().strftime("%Y%m%d")
+        / f"v1r_primary_{session_now().strftime('%H%M%S')}"
     )
     out.mkdir(parents=True, exist_ok=True)
     return out
@@ -279,7 +280,7 @@ def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
             set_native_entry,
         )
 
-        day = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d")
+        day = session_now().strftime("%Y%m%d")
         resolved = resolve_day_fixed_am_runtime_universe(native_root=NATIVE, trading_date=day)
         (out / "native_universe_resolve.json").write_text(
             json.dumps(resolved, indent=2, ensure_ascii=False, default=str),
@@ -344,6 +345,8 @@ def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
     cmd = [
         sys.executable,
         str(DAILY_RUNNER),
+        "--day-stamp",
+        session_now().strftime("%Y%m%d"),
         "--universe-mode",
         "core10-dynamic40-price-risk-filter-shadow",
         "--enable-intraday-refresh",

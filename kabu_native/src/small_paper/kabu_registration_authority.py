@@ -15,6 +15,7 @@ import tempfile
 from datetime import datetime, time as dt_time
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
+from small_paper.runtime_clock import now_jst as session_now
 from zoneinfo import ZoneInfo
 
 from small_paper.day_fixed_am_registration import (
@@ -577,7 +578,7 @@ def is_pre_warmup(
     now: Optional[datetime] = None,
     warmup_hhmm: str = DEFAULT_AM_WARMUP_START,
 ) -> bool:
-    n = now or datetime.now(JST)
+    n = now or session_now()
     if n.tzinfo is None:
         n = n.replace(tzinfo=JST)
     else:

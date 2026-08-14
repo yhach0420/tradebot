@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from small_paper.runtime_clock import now_jst as session_now
+from small_paper.runtime_clock import session_clock_enabled
+
 from research.exposure_gate import (
     REJECT_MAX_CONCURRENT,
     ExposureGate,
@@ -8096,7 +8099,7 @@ def run_live_dry_run(
     from storage.push_recorder import PushRecorder
 
     load_kabu_env(repo_root=repo_root)
-    now = datetime.now(JST)
+    now = session_now()
     sched = SessionSchedule(session_start, session_end, now.date())
 
     if full_session and sched.is_after_session(now):
@@ -8228,7 +8231,7 @@ def run_live_dry_run(
         from small_paper.local_market_bus import RESUME_MODE_CONTINUE
         from small_paper.paper_market_bus_consumer import PaperMarketBusBridge
 
-        _day_yyyymmdd = datetime.now(JST).strftime("%Y%m%d")
+        _day_yyyymmdd = session_now().strftime("%Y%m%d")
         _resume_ack, _resume_src = resolve_resume_ack(
             native_root=native_root,
             ingress_session_id="",
@@ -8488,7 +8491,7 @@ def run_live_dry_run(
             return
         from small_paper.session_schedule import parse_hhmm
 
-        if datetime.now(JST).time() < parse_hhmm(refresh_hhmm):
+        if session_now().time() < parse_hhmm(refresh_hhmm):
             return
         # Mark as triggered early to avoid repeated attempts.
         state.intraday_refresh_triggered_count += 1
@@ -9274,7 +9277,7 @@ def run_live_dry_run(
             if full_session and auto_stop and sched.is_after_session():
                 _request_stop("session_end")
                 return True
-            if duration_sec > 0 and (time.monotonic() - start) >= duration_sec:
+            if duration_sec > 0 and not session_clock_enabled() and (time.monotonic() - start) >= duration_sec:
                 _request_stop("duration_elapsed")
                 return True
             if max_polls is not None and msg_i >= max_polls:

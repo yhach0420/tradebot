@@ -49,6 +49,14 @@ from small_paper.market_ingress_state import (
     IngressStateMachine,
 )
 from small_paper.market_raw_writer import MarketRawWriter, session_dir, trading_date_jst
+from small_paper.runtime_clock import (
+    ingress_replay_path,
+    now_jst as session_now,
+    replay_max_eps,
+    replay_not_before_hhmm,
+    scheduled_end_passed,
+    sleep_until as session_sleep_until,
+)
 
 JST = ZoneInfo("Asia/Tokyo")
 NATIVE_ROOT = Path(__file__).resolve().parents[2]
@@ -64,7 +72,7 @@ MARKET_PM_END = dtime(15, 30)
 
 
 def is_market_session_jst(now: Optional[datetime] = None) -> bool:
-    n = now or datetime.now(JST)
+    n = now or session_now()
     t = n.timetz().replace(tzinfo=None)
     if LUNCH_START <= t < LUNCH_END:
         return False
@@ -73,6 +81,66 @@ def is_market_session_jst(now: Optional[datetime] = None) -> bool:
     if LUNCH_END <= t < MARKET_PM_END:
         return True
     return False
+
+
+def _parse_replay_dt(raw: str) -> Optional[datetime]:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=JST)
+        return dt.astimezone(JST)
+    except Exception:
+        return None
+
+
+def replay_payload_from_record(obj: Any) -> Optional[dict[str, Any]]:
+    """Normalize capture envelope / cached stream row to a Kabu PUSH payload."""
+    if not isinstance(obj, dict):
+        return None
+    if "original_payload" in obj or (obj.get("kind") == KIND_MARKET_PUSH and "payload" in obj):
+        body = obj.get("original_payload") or obj.get("payload") or {}
+        if not isinstance(body, dict):
+            return None
+        out = dict(body)
+        rec_at = obj.get("received_at") or body.get("received_at")
+        if rec_at:
+            out["__replay_received_at__"] = rec_at
+        if not out.get("Symbol"):
+            out["Symbol"] = str(obj.get("symbol") or body.get("symbol") or "")
+        return out if out.get("Symbol") else None
+    if obj.get("symbol") or obj.get("Symbol") or obj.get("raw"):
+        skip = {"t", "raw"}
+        out = {k: v for k, v in obj.items() if k not in skip}
+        out["Symbol"] = str(obj.get("Symbol") or obj.get("symbol") or obj.get("raw") or "")
+        if obj.get("received_at"):
+            out["__replay_received_at__"] = obj["received_at"]
+        return out if out.get("Symbol") else None
+    return None
+
+
+def iter_ingress_replay_records(source: str):
+    """Yield JSON objects from a jsonl file or a capture session directory."""
+    path = Path(source)
+    files: list[Path] = []
+    if path.is_file():
+        files = [path]
+    elif path.is_dir():
+        files = sorted(path.glob("push_part_*.jsonl"))
+        if not files:
+            files = sorted(path.glob("*.jsonl"))
+    for fp in files:
+        with fp.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except Exception:
+                    continue
 
 
 def make_ingress_session_id() -> str:
@@ -97,9 +165,10 @@ class MarketIngressService:
         on_notify: Optional[Callable[[str, str], None]] = None,
     ) -> None:
         self.native_root = Path(native_root)
-        self.trading_date = trading_date or trading_date_jst()
+        self.trading_date = trading_date or trading_date_jst(session_now())
         self.silence_stale_sec = float(silence_stale_sec)
         self.synthetic = bool(synthetic)
+        self._replay_source = ""
         self.on_notify = on_notify
         self.session_id = make_ingress_session_id()
         self.sm = IngressStateMachine()
@@ -218,7 +287,11 @@ class MarketIngressService:
         # Bind same-day desired (or AM SoT) before the worker thread so synthetic
         # fallback 7203/6758 cannot race a stale prior-day file.
         self._apply_desired_from_control_or_am(register=False)
-        if self.synthetic:
+        replay = ingress_replay_path()
+        if replay:
+            self._replay_source = replay
+            self._thread = threading.Thread(target=self._replay_loop, name="ingress-replay", daemon=True)
+        elif self.synthetic:
             self._thread = threading.Thread(target=self._synthetic_loop, name="ingress-synth", daemon=True)
         else:
             self._thread = threading.Thread(target=self._live_thread, name="ingress-live", daemon=True)
@@ -431,7 +504,7 @@ class MarketIngressService:
 
     def _on_push(self, payload: dict[str, Any]) -> dict[str, Any]:
         t0 = time.perf_counter()
-        received = now_iso()
+        received = str(payload.pop("__replay_received_at__", "") or "").strip() or now_iso()
         sym = str(payload.get("Symbol") or payload.get("symbol") or "")
         event_time = str(
             payload.get("CurrentPriceTime")
@@ -568,6 +641,98 @@ class MarketIngressService:
             if self._stop.is_set():
                 break
             time.sleep(0.05)
+        if self.sm.state not in (STOPPED, STOPPING):
+            self.stop()
+
+    def _replay_try_register(self) -> dict[str, Any]:
+        """Production token+register without live WebSocket (replay input)."""
+        out: dict[str, Any] = {"ok": False}
+        try:
+            from api.rest_client import KabuNativeRestClient, default_base_url, load_kabu_env
+            from small_paper.kabu_token_authority import owner_issue_context, publish_owned_token
+
+            load_kabu_env(repo_root=self.native_root.parent)
+            load_kabu_env(repo_root=self.native_root)
+            self._poll_desired_universe_apply_only()
+            rest = KabuNativeRestClient(default_base_url())
+            with owner_issue_context(
+                native_root=self.native_root,
+                trading_date=self.trading_date,
+                pid=os.getpid(),
+                session_id=self.session_id,
+                caller="ingress_replay_connect",
+            ):
+                token = rest.issue_token_from_env()
+            publish_owned_token(
+                token,
+                native_root=self.native_root,
+                trading_date=self.trading_date,
+                caller="ingress_replay_connect",
+            )
+            from api.push_client import KabuNativePushClient
+
+            push = KabuNativePushClient(rest, token)
+            self._push_client = push
+            if self.desired_symbols:
+                self._execute_live_register(push, reason="replay_connect")
+            out["ok"] = True
+            out["registered"] = list(self.registered_symbols)
+        except Exception as exc:
+            out["error"] = f"{type(exc).__name__}:{exc}"
+            self.sm.last_error = type(exc).__name__
+        return out
+
+    def _replay_loop(self) -> None:
+        """Recorded capture / production-schema replay at Ingress input (_on_push)."""
+        self.sm.transition(CONNECTING, reason="replay")
+        self.sm.bump_connection()
+        self.sm.transition(REGISTERING, reason="replay")
+        reg = self._replay_try_register()
+        self._register_evidence["replay_register"] = reg
+        if not self.desired_symbols:
+            self._poll_desired_universe_apply_only()
+        if not self.registered_symbols and self.desired_symbols:
+            # Keep desired; registration may be off-hours. Still replay through Raw+Bus.
+            self.registered_symbols = list(self.desired_symbols)
+        self.sm.transition(WAITING_FIRST_PUSH, reason="replay")
+        max_eps = replay_max_eps()
+        min_interval = 1.0 / max_eps
+        last_mono = 0.0
+        try:
+            for rec in iter_ingress_replay_records(self._replay_source):
+                if self._stop.is_set() or self._scheduled_end_passed() or self._operator_stop_requested():
+                    break
+                payload = replay_payload_from_record(rec)
+                if not payload:
+                    continue
+                rec_at = str(payload.get("__replay_received_at__") or "")
+                event_dt = _parse_replay_dt(rec_at)
+                if event_dt is not None:
+                    sess = session_now()
+                    event_dt = event_dt.replace(year=sess.year, month=sess.month, day=sess.day)
+                    payload["__replay_received_at__"] = event_dt.isoformat(timespec="milliseconds")
+                    nb = replay_not_before_hhmm()
+                    if nb and len(nb) >= 4:
+                        try:
+                            hh, mm = int(nb[:2]), int(nb[3:5] if ":" in nb else nb[2:4])
+                            if event_dt.hour < hh or (event_dt.hour == hh and event_dt.minute < mm):
+                                continue
+                        except Exception:
+                            pass
+                    if event_dt.hour < 8 or (event_dt.hour == 8 and event_dt.minute < 50):
+                        continue
+                    if event_dt > sess:
+                        session_sleep_until(event_dt, poll_sec=0.02)
+                wait = min_interval - (time.monotonic() - last_mono)
+                if wait > 0:
+                    time.sleep(wait)
+                last_mono = time.monotonic()
+                self._on_push(payload)
+                self._poll_desired_universe()
+                if int(self.writer.snapshot().get("last_sequence") or 0) % 200 == 0:
+                    self._write_status()
+        except Exception as exc:
+            self.sm.last_error = type(exc).__name__
         if self.sm.state not in (STOPPED, STOPPING):
             self.stop()
 
@@ -1552,9 +1717,7 @@ class MarketIngressService:
             raise TimeoutError("no_first_push")
 
     def _scheduled_end_passed(self) -> bool:
-        y, m, d = int(self.trading_date[:4]), int(self.trading_date[4:6]), int(self.trading_date[6:8])
-        end = datetime(y, m, d, FINALIZE_TIME.hour, FINALIZE_TIME.minute, tzinfo=JST)
-        return datetime.now(JST) >= end
+        return scheduled_end_passed(self.trading_date, finalize_hour=FINALIZE_TIME.hour, finalize_minute=FINALIZE_TIME.minute)
 
     def _operator_stop_requested(self) -> bool:
         """Formal stop path: day_root/operator_stop.flag (checked-runner / cleanup)."""

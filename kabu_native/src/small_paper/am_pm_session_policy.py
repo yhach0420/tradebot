@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from small_paper.allowed_trading_windows import TradingWindow
 from small_paper.config import SmallPaperPilotConfig
 from small_paper.observer_position_tracker import ObserverTrackerConfig
+from small_paper.runtime_clock import now_jst as session_now
 from small_paper.session_schedule import parse_hhmm
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -78,7 +79,7 @@ class AmPmSessionPolicy:
         raise ValueError(f"unknown am_pm_session: {kind!r}")
 
     def _now(self, now: Optional[datetime]) -> datetime:
-        return now if now is not None else datetime.now(JST)
+        return now if now is not None else session_now()
 
     def _today_time(self, hhmm: str, now: Optional[datetime] = None) -> datetime:
         n = self._now(now)

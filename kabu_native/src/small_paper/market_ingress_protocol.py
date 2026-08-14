@@ -7,6 +7,9 @@ from datetime import datetime
 from typing import Any, Mapping, Optional
 from zoneinfo import ZoneInfo
 
+from small_paper.runtime_clock import iso as session_iso
+from small_paper.runtime_clock import session_clock_enabled
+
 JST = ZoneInfo("Asia/Tokyo")
 
 ENV_MARKET_INGRESS_V2 = "MARKET_INGRESS_V2"
@@ -34,6 +37,8 @@ def market_ingress_v2_enabled(*, environ: Optional[Mapping[str, str]] = None) ->
 
 
 def now_iso() -> str:
+    if session_clock_enabled():
+        return session_iso(timespec="milliseconds")
     return datetime.now(JST).isoformat(timespec="milliseconds")
 
 

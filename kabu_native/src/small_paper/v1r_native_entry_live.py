@@ -26,6 +26,7 @@ from research.e1_x36_joint_allocator.replay import simulate_joint
 from research.e1_x36r_freeze_integrity.serialize import score_fn_from_serialized
 from research.e1_x37_prospective.freeze import load_model_artifact, verify_model_identity
 from small_paper.v1r_live_dual_lane import get_dual_lane, live_primary_enabled
+from small_paper.runtime_clock import now_jst as session_now
 from small_paper.v1r_primary_runtime import (
     ANCHOR_SHA,
     BOARD_FRESHNESS_SEC_V1R,
@@ -55,7 +56,7 @@ _ENGINE: Optional["V1RNativeEntryLive"] = None
 
 
 def _now() -> datetime:
-    return datetime.now(JST)
+    return session_now()
 
 
 def _f(v: Any) -> Optional[float]:
@@ -632,8 +633,11 @@ class V1RNativeEntryLive:
         # so every last-event<=t0 row is already in the ring. Snapshot still cuts at t0.
         if now_t is not None and float(now_t) <= float(t0) + 1e-12:
             return []
-        # only fire in the first 2s of the minute to avoid late decisions (wall-clock path)
-        if dt.second > 2 and now_t is None:
+        # only fire in the first 2s of the minute to avoid late decisions (wall-clock path).
+        # Session-clock certification may jump past second=2; first observation still fires.
+        from small_paper.runtime_clock import session_clock_enabled
+
+        if dt.second > 2 and now_t is None and not session_clock_enabled():
             return []
         self.fired_anchors.add(key)
         anchor = f"{dt.hour:02d}:{dt.minute:02d}"

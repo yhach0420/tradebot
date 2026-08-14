@@ -38,6 +38,8 @@ RUNTIME_DEPENDENCY_RELS: tuple[str, ...] = (
     "src/small_paper/v1r_pbv2_notification_routing.py",
     "src/small_paper/v1r_pbv2_duplicate_runtime.py",
     "src/small_paper/v1r_prospective_day_gate.py",
+    "src/small_paper/runtime_clock.py",
+    "src/small_paper/paper_full_day_certification.py",
     "src/small_paper/pilot_runner.py",
     "src/small_paper/paper_market_bus_consumer.py",
     "src/small_paper/paper_trade_checked_runner.py",

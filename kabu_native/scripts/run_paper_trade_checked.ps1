@@ -10,7 +10,8 @@ param(
     [switch]$DemoPushE2E,
     [switch]$CommFaultE2E,
     [switch]$ReuseCapture,
-    [int]$ReuseCapturePid = 0
+    [int]$ReuseCapturePid = 0,
+    [switch]$FullDayCert
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +37,9 @@ if ($DemoPushE2E) {
 }
 if ($CommFaultE2E) {
     $env:TRADEBOT_COMM_FAULT_E2E = "1"
+}
+if ($FullDayCert) {
+    $env:TRADEBOT_CERTIFICATION_MODE = "1"
 }
 
 Set-Location $NativeRoot

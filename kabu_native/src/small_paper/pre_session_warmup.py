@@ -11,6 +11,7 @@ from datetime import date, datetime
 from typing import Any, Mapping, Optional
 
 from small_paper.session_schedule import parse_hhmm, wait_until
+from small_paper.runtime_clock import now_jst as session_now
 from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -79,7 +80,7 @@ def resolve_warmup_init_plan(
     now: Optional[datetime] = None,
 ) -> WarmupInitPlan:
     """Return wait target for connection/register/init."""
-    now = now or datetime.now(JST)
+    now = now or session_now()
     sched_start = datetime.combine(trade_date, parse_hhmm(session_start), tzinfo=JST)
     kind = str(getattr(am_pm_policy, "kind", "am") or "am").lower() if am_pm_policy else "am"
     enabled = (
@@ -133,7 +134,7 @@ def ring_only_warmup_active(
     """
     if not pre_session_warmup_enabled(config) or am_pm_policy is None:
         return False
-    now = now or datetime.now(JST)
+    now = now or session_now()
     if now.tzinfo is None:
         now = now.replace(tzinfo=JST)
     else:

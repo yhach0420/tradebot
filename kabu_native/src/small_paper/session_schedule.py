@@ -7,6 +7,9 @@ from datetime import date, datetime, time, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from small_paper.runtime_clock import now_jst as session_now
+from small_paper.runtime_clock import sleep_until as session_sleep_until
+
 JST = ZoneInfo("Asia/Tokyo")
 
 MORNING_END = time(11, 0)
@@ -38,29 +41,29 @@ class SessionSchedule:
         return datetime.combine(self.trade_date, t, tzinfo=JST)
 
     def is_in_session(self, now: Optional[datetime] = None) -> bool:
-        now = now or datetime.now(JST)
+        now = now or session_now()
         return self.start_dt <= now <= self.end_dt
 
     def is_before_session(self, now: Optional[datetime] = None) -> bool:
-        now = now or datetime.now(JST)
+        now = now or session_now()
         return now < self.start_dt
 
     def is_after_session(self, now: Optional[datetime] = None) -> bool:
-        now = now or datetime.now(JST)
+        now = now or session_now()
         return now > self.end_dt
 
     def seconds_until_start(self, now: Optional[datetime] = None) -> float:
-        now = now or datetime.now(JST)
+        now = now or session_now()
         return max(0.0, (self.start_dt - now).total_seconds())
 
     def seconds_until_end(self, now: Optional[datetime] = None) -> float:
-        now = now or datetime.now(JST)
+        now = now or session_now()
         return max(0.0, (self.end_dt - now).total_seconds())
 
 
 def session_bucket(now: Optional[datetime] = None) -> str:
     """morning | midday | afternoon | outside."""
-    now = now or datetime.now(JST)
+    now = now or session_now()
     t = now.time()
     start = parse_hhmm("09:00")
     if t < start or t > AFTERNOON_END:
@@ -81,11 +84,4 @@ def empty_bucket_summary() -> dict[str, dict[str, int]]:
 
 
 def wait_until(start: datetime, *, poll_sec: float = 30.0) -> None:
-    import time
-
-    while True:
-        now = datetime.now(JST)
-        if now >= start:
-            return
-        sleep_for = min(poll_sec, max(1.0, (start - now).total_seconds()))
-        time.sleep(sleep_for)
+    session_sleep_until(start, poll_sec=poll_sec)

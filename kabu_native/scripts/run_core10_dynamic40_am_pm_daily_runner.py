@@ -173,7 +173,7 @@ def main() -> int:
     day_stamp = (
         normalize_day_stamp(args.day_stamp)
         if args.day_stamp
-        else datetime.now(JST).strftime("%Y%m%d")
+        else __import__("small_paper.runtime_clock", fromlist=["now_jst"]).now_jst().strftime("%Y%m%d")
     )
     config_rel = (
         SHADOW_PILOT_YAML
