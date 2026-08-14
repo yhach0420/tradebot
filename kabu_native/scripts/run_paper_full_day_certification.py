@@ -322,6 +322,24 @@ def main() -> int:
     if not pm_run.get("ok"):
         failed.append("PM_DIRECT_START")
 
+    windows: dict[str, Any] = {}
+    window_specs = [
+        ("A_0850_0920", datetime(2026, 8, 12, 8, 50, 0, tzinfo=JST), datetime(2026, 8, 12, 9, 20, 0, tzinfo=JST), "08:50"),
+        ("B_1120_1245", datetime(2026, 8, 12, 11, 20, 0, tzinfo=JST), datetime(2026, 8, 12, 12, 45, 0, tzinfo=JST), "11:20"),
+        ("C_1510_1535", datetime(2026, 8, 12, 15, 10, 0, tzinfo=JST), datetime(2026, 8, 12, 15, 35, 0, tzinfo=JST), "15:10"),
+    ]
+    for name, start, end, not_before in window_specs:
+        wenv = dict(env)
+        bind_session_clock(virtual_start=start, speed_mult=1.0, stop=end, environ=wenv)
+        wenv["TRADEBOT_INGRESS_REPLAY_NOT_BEFORE"] = not_before
+        wenv[ENV_REPLAY_EPS] = "150"
+        try:
+            windows[name] = _invoke_checked_bat(env=wenv, timeout_sec=int((end - start).total_seconds()) + 180)
+        except subprocess.TimeoutExpired as exc:
+            windows[name] = {"ok": False, "error": f"timeout:{exc}", "exit_code": 124}
+        if not windows[name].get("ok"):
+            failed.append(f"WINDOW_{name}")
+
     identity_after = capture_identity()
     same, mismatches = identities_equal(identity_before, identity_after)
     if not same:
@@ -329,10 +347,18 @@ def main() -> int:
 
     sink.shutdown()
 
-    full_pass = not failed and bool(full_day.get("ok")) and bool(pm_run.get("ok"))
+    full_pass = (
+        not failed
+        and bool(full_day.get("ok"))
+        and bool(pm_run.get("ok"))
+        and bool(windows)
+        and all(v.get("ok") for v in windows.values())
+    )
     verdicts = {
         "rehearsal": "V1R_FULL_DAY_PAPER_ENVIRONMENT_REHEARSAL_PASS" if full_day.get("ok") else "FAIL",
-        "windows": "V1R_REALTIME_CRITICAL_WINDOWS_DEFERRED_TO_1X_RUNS",
+        "windows": "V1R_REALTIME_CRITICAL_WINDOWS_PASS"
+        if windows and all(v.get("ok") for v in windows.values())
+        else "V1R_REALTIME_CRITICAL_WINDOWS_FAIL",
         "cert": "V1R_RUNTIME_PRE_PAPER_CERTIFICATION_PASS" if full_pass else "V1R_RUNTIME_PRE_PAPER_CERTIFICATION_FAIL",
     }
     report = {
@@ -357,6 +383,7 @@ def main() -> int:
         "kabu_precheck": kabu,
         "full_day": full_day,
         "pm_direct_start": pm_run,
+        "critical_windows": windows,
         "metrics": metrics,
         "submit_cancel_live": metrics.get("submit_cancel_live") or "0/0/0",
         "discord_sink_posts": len(_Sink.records),
