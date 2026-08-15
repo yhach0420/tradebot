@@ -1,0 +1,30 @@
+{
+  "verdict": "V1R_EXIT_V2_RUNTIME_ACTIVATION_V24_FROZEN",
+  "activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V24",
+  "activation_sha": "bf06d055bffb790533e116655bd3c9a3b0887fd0289a07a0247603e6368861ae",
+  "parent_activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V23",
+  "parent_activation_sha": "cc116075c66971d438d5f49fa437eb54155d29f20fb2b83d014f6c3e2a66146d",
+  "supersede_reason": "RUNTIME_CERT_STAGE_TOKEN_BINDING_AND_DETERMINISTIC_INPUT_DELIVERY_FIX",
+  "runtime_code_git_commit": "a43a8f47b119f552706dabfe3d266eb4b4b2b1d6",
+  "runtime_dependency_count": 43,
+  "inventory_match_after_bind": true,
+  "inventory_matched": 43,
+  "strategy_sha": "9ad4ba2730892d40c757d940b82480e620e502e3e789839120e90b18be082547",
+  "precommit_sha": "acd3fee10c94f84b9ae2b1d4bddd9402ed4ab588af0ba06be0063cb8a0662100",
+  "selector_path": "results/research/v1r_exit_v2_prospective_activation/active_v1r_activation.json",
+  "startup_binding_ok": true,
+  "created_at": "2026-08-15T09:10:53.363908+09:00",
+  "v13_opval_unchanged": "V1R_20260814_V13_PM_OPERATIONAL_VALIDATION_PASS",
+  "v14_immutable": "36c48927c36957a20ffc9cd8627e2805b6ea3f17cb9685404254aa5a92e950a2",
+  "v18_immutable": "bb301468b9a468589fee530cef6a3df027e8ed20e21e2f82fc955caa9b485882",
+  "v19_immutable": "cb0778016b67bf50e75d95973f13dad10fc9cfc3f04995a39df0bb66a425357e",
+  "v20_immutable": "0bf8e9b2237d7fe281b2dfa735e4a7b709c6da5c85da9eafa5e43b662569dc14",
+  "v21_immutable": "bb5c2ab9e47395f8d72bee6a68a2a42308d38a19df7810cd47f719a098cac52c",
+  "v22_immutable": "6c2d05dde6f64b4838a6b69c009c34981bf054ad4a253d85aa3aefdd05f29d34",
+  "v23_immutable": "cc116075c66971d438d5f49fa437eb54155d29f20fb2b83d014f6c3e2a66146d",
+  "day_20260814": [
+    "INVALID_FOR_STRATEGY_EVALUATION",
+    "NOT_PROSPECTIVE_DAY1"
+  ],
+  "paper_started": false
+}

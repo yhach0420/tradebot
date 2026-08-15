@@ -1,0 +1,127 @@
+{
+  "schema": "RUNTIME_ARTIFACT_DECISION_INVENTORY_V1",
+  "artifact_schema_version": "DERIVED_ARTIFACT_CURRENT_RUN_V1",
+  "classes": {
+    "A": "IMMUTABLE_PINNED_ARTIFACT",
+    "B": "CURRENT_RUN_SOURCE_STATE",
+    "C": "DERIVED_VERDICT_MUST_RECOMPUTE_OR_BIND",
+    "D": "HISTORICAL_AUDIT_ONLY_FORBIDDEN_CURRENT_SOT"
+  },
+  "items": [
+    {
+      "path": "results/research/v1r_exit_v2_prospective_activation/V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_*.json",
+      "class": "A",
+      "use": "activation_pin",
+      "decision": "startup_bind"
+    },
+    {
+      "path": "results/research/v1r_exit_v2_prospective_activation/PASSIVE_ASYMMETRIC_EXIT_V2_FULL_STRATEGY.json",
+      "class": "A",
+      "use": "strategy_pin",
+      "decision": "startup_bind"
+    },
+    {
+      "path": "results/research/v1r_exit_v2_prospective_activation/PROSPECTIVE_PRECOMMIT_V1R_EXIT_V2_U1.json",
+      "class": "A",
+      "use": "precommit_pin",
+      "decision": "startup_bind"
+    },
+    {
+      "path": "data/universe/*frozen* / Frozen AM CSV",
+      "class": "A",
+      "use": "frozen_am50",
+      "decision": "universe_bind"
+    },
+    {
+      "path": "configs/production_config_sha256.pin",
+      "class": "A",
+      "use": "config_pin",
+      "decision": "recovery_config_sha"
+    },
+    {
+      "path": "data/market_capture/{day}/ingress_status.json",
+      "class": "B",
+      "use": "ingress_online",
+      "decision": "wait_ingress_online"
+    },
+    {
+      "path": "data/market_capture/{day}/ingress_spawn.json",
+      "class": "B",
+      "use": "spawn_identity",
+      "decision": "wait/reuse"
+    },
+    {
+      "path": "kabu_station_token_bundle.json",
+      "class": "B",
+      "use": "station_token",
+      "decision": "issue_station_token/acquire_readonly"
+    },
+    {
+      "path": "results/reports/phase687w3_e2e_readonly_reconciliation/phase687w3_design_consistency.json",
+      "class": "C",
+      "use": "design_consistency",
+      "decision": "recovery/enablement"
+    },
+    {
+      "path": "results/reports/small_paper_safety_{day}.json",
+      "class": "C",
+      "use": "safety_verdict",
+      "decision": "daily_runner_preflight"
+    },
+    {
+      "path": "results/reports/phase148_am_pm_daily_runner_{day}.json",
+      "class": "C",
+      "use": "daily_lifecycle",
+      "decision": "certification_evaluate"
+    },
+    {
+      "path": "results/reports/daily_runner_summary_{day}.json",
+      "class": "C",
+      "use": "daily_summary",
+      "decision": "certification_evaluate"
+    },
+    {
+      "path": "results/small_paper/{day}/live_session_*/small_paper_summary.json",
+      "class": "C",
+      "use": "session_summary",
+      "decision": "cert_metrics"
+    },
+    {
+      "path": "results/small_paper/{day}/*/session_seal.json",
+      "class": "B",
+      "use": "session_seal",
+      "decision": "recovery_prior_session"
+    },
+    {
+      "path": "results/small_paper/{day}/live_session_*/session_manifest.json",
+      "class": "B",
+      "use": "prior_session_manifest",
+      "decision": "recovery_prior_session"
+    },
+    {
+      "path": "results/research/paper_runtime_full_day_certification/runs/{certification_run_id}/{stage_run_id}/**",
+      "class": "C",
+      "use": "cert_current_stage_dest",
+      "decision": "cert_evaluate_copied_only"
+    },
+    {
+      "path": "results/research/paper_runtime_full_day_certification/run_snapshots/**",
+      "class": "D",
+      "use": "legacy_cert_dest",
+      "decision": "forbidden_current_sot"
+    },
+    {
+      "path": "results/reports/phase687w4_*/phase687w4_design_consistency.json",
+      "class": "D",
+      "use": "w4_copy",
+      "decision": "audit_only"
+    },
+    {
+      "path": "results/reports/phase687w5_*/phase687w5_design_consistency.json",
+      "class": "D",
+      "use": "w5_copy",
+      "decision": "audit_only"
+    }
+  ],
+  "note": "Runtime PASS/FAIL/READY/BLOCK/RECOVER must not use class D. Class C leftover JSON is never SoT; re-evaluate from current inputs."
+}
