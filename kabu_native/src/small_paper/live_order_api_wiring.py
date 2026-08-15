@@ -552,7 +552,11 @@ def run_live_order_preflight(
 
         load_kabu_env(repo_root=root)
         client = KabuOrderReadClient(default_base_url())
-        from small_paper.kabu_token_authority import TokenUnavailable, acquire_token_for_readonly
+        from small_paper.kabu_token_authority import (
+            CurrentStageTokenIdentityNotProven,
+            TokenUnavailable,
+            acquire_token_for_readonly,
+        )
         from small_paper.runtime_clock import now_jst as session_now
         from api.kabu_register import resolve_native_root_for_register_state
 
@@ -570,6 +574,10 @@ def run_live_order_preflight(
         except TokenUnavailable:
             _add("PF_TOKEN", True, "token deferred until Ingress publish")
             report.ready = not report.errors
+            return report
+        except CurrentStageTokenIdentityNotProven as exc:
+            _add("PF_TOKEN", False, str(exc))
+            report.ready = False
             return report
         _add("PF_TOKEN", True, "token reused")
         probe = client.probe_all(token=token)

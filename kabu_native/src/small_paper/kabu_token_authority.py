@@ -898,29 +898,31 @@ def acquire_token_for_readonly(
 ) -> dict[str, Any]:
     """Board/probe access. Reuses published token only. Never POSTs /token.
 
-    Leftover day-dir tokens from a dead Ingress are not a live shared token.
-    Pre-Ingress consumers must wait; they must not probe Station with a stale key.
-    Previous-stage tokens are STALE_STAGE_TOKEN_REJECTED and must not hit board.
-    Missing stage identity is CURRENT_STAGE_TOKEN_IDENTITY_NOT_PROVEN, not stale.
+    Decision is phase-explicit (auth_lifecycle). PRE_INGRESS missing/unscoped/
+    previous-stage defers until current Ingress issues. POST_INGRESS_PRE_BOARD
+    and later fail-close. Never POSTs /token.
     """
+    from small_paper.auth_lifecycle import (
+        DECISION_PASS,
+        consumer_auth_outcome,
+        raise_for_consumer_decision,
+    )
+
+    outcome = consumer_auth_outcome(
+        native_root=native_root,
+        trading_date=trading_date,
+        caller=str(caller),
+    )
+    decision = outcome["decision"]
+    if str(decision.get("decision") or "") != DECISION_PASS:
+        raise_for_consumer_decision(decision, caller=str(caller))
     owner_active = ingress_owner_active(native_root, trading_date)
     stage = current_stage_token_identity()
     bundle = load_station_bundle()
     classified = classify_token_stage(bundle, want=stage)
     stage_class = str(classified.get("class") or TOKEN_STAGE_NOT_APPLICABLE)
-    want_stage = str(stage.get("stage_run_id") or "").strip()
     got_stage = str(bundle.get("stage_run_id") or "").strip()
-    if stage_class == TOKEN_STAGE_MISSING:
-        raise CurrentStageTokenIdentityNotProven(
-            f"{CURRENT_STAGE_TOKEN_IDENTITY_NOT_PROVEN} caller={caller} "
-            f"want_stage={want_stage} got_stage=missing"
-        )
-    if stage_class == TOKEN_STAGE_MISMATCH:
-        raise StaleStageTokenRejected(
-            f"{STALE_STAGE_TOKEN_REJECTED} caller={caller} "
-            f"want_stage={want_stage} got_stage={got_stage or 'missing'}"
-        )
-    if want_stage and stage_class == TOKEN_STAGE_MATCH and not owner_active:
+    if str(stage.get("stage_run_id") or "").strip() and stage_class == TOKEN_STAGE_MATCH and not owner_active:
         raise TokenUnavailable(
             f"INGRESS_TOKEN_UNAVAILABLE caller={caller} owner_active={owner_active} "
             f"token_stage_class={stage_class}"

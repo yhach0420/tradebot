@@ -747,6 +747,23 @@ def kabu_clear_stale_registrations(state: DailyRunnerState, *, label: str) -> di
     MARKET_INGRESS_V2: after Ingress spawn, Kabu registration owner is
     MARKET_INGRESS_SERVICE — this path must not unregister.
     """
+    try:
+        from small_paper.auth_lifecycle import (
+            PHASE_AM_TO_PM_TRANSITION,
+            PHASE_PRE_INGRESS,
+            PHASE_TEARDOWN,
+            set_auth_phase,
+        )
+
+        lab = str(label or "")
+        if "after_am" in lab:
+            set_auth_phase(PHASE_AM_TO_PM_TRANSITION)
+        elif "after_pm" in lab:
+            set_auth_phase(PHASE_TEARDOWN)
+        elif "before_pm" in lab or "preflight" in lab or "before_am" in lab:
+            set_auth_phase(PHASE_PRE_INGRESS)
+    except Exception:
+        pass
     if state.options.skip_kabu or state.options.dry_run_only:
         return {"skipped": True, "reason": "skip_kabu_or_dry_run_only", "label": label}
     try:
@@ -1283,6 +1300,12 @@ def _write_pilot_checkpoint(state: DailyRunnerState, *, session: AM_PM_KIND) -> 
 
 
 def run_pilot_session(state: DailyRunnerState, *, session: AM_PM_KIND) -> dict[str, Any]:
+    try:
+        from small_paper.auth_lifecycle import PHASE_AM_RUNTIME, PHASE_PM_RUNTIME, set_auth_phase
+
+        set_auth_phase(PHASE_AM_RUNTIME if session == "am" else PHASE_PM_RUNTIME)
+    except Exception:
+        pass
     if session == "am":
         universe_rel = state.am_prep.get("am_csv", "")
     else:

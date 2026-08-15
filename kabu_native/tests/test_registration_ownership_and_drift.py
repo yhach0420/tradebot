@@ -133,8 +133,9 @@ def test_case_a_legacy_unregister_only_before_ingress(tmp_path: Path, monkeypatc
 
     out = clear_register_before_session(tmp_path)
     assert out.get("ok") is True
-    assert out.get("skipped") is not True
-    assert calls == ["unregister_all"]
+    assert out.get("skipped") is True
+    assert out.get("reason") == "AUTH_DEFERRED_UNTIL_INGRESS"
+    assert calls == []
     assert post_ingress_unregister_executed_count(tmp_path, day) == 0
 
 

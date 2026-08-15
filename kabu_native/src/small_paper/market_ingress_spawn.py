@@ -111,6 +111,12 @@ def spawn_ingress_process(
             env.setdefault("TRADEBOT_TRADING_DATE", str(trading_date))
         except Exception:
             pass
+        try:
+            from small_paper.auth_lifecycle import ENV_AUTH_PHASE, PHASE_INGRESS_STARTING
+
+            env[ENV_AUTH_PHASE] = PHASE_INGRESS_STARTING
+        except Exception:
+            pass
     launch_nonce = generate_launch_nonce()
     ingress_run_id = make_ingress_run_id(trading_date=str(trading_date), launch_nonce=launch_nonce)
     activation_id, activation_sha = activation_identity(environ=env)
@@ -237,6 +243,41 @@ def wait_ingress_online(
             require_registered_count=require_registered_count,
         )
         if last_eval.get("ok"):
+            auth_wait: dict[str, Any] = {}
+            try:
+                from small_paper.auth_lifecycle import (
+                    DECISION_PASS,
+                    PHASE_POST_INGRESS_PRE_BOARD,
+                    consumer_auth_outcome,
+                )
+                from small_paper.kabu_token_authority import (
+                    cert_live_auth_required,
+                    current_stage_token_identity,
+                )
+
+                want_stage = str(current_stage_token_identity().get("stage_run_id") or "").strip()
+                require_identity = bool(want_stage) or cert_live_auth_required()
+                if require_identity:
+                    outcome = consumer_auth_outcome(
+                        native_root=Path(native_root),
+                        trading_date=str(trading_date),
+                        caller="wait_ingress_online",
+                        phase=PHASE_POST_INGRESS_PRE_BOARD,
+                    )
+                    auth_wait = dict(outcome.get("decision") or {})
+                    if str(auth_wait.get("decision") or "") != DECISION_PASS:
+                        last_eval = dict(last_eval)
+                        last_eval["auth_decision"] = auth_wait
+                        last_eval["ok"] = False
+                        last_eval["reject_code"] = "current_stage_token_identity_not_proven"
+                        time.sleep(0.25)
+                        continue
+            except Exception as auth_exc:
+                last_eval = dict(last_eval)
+                last_eval["ok"] = False
+                last_eval["auth_wait_error"] = f"{type(auth_exc).__name__}: {auth_exc}"
+                time.sleep(0.25)
+                continue
             return {
                 "ok": True,
                 "status": str(payload.get("state") or ""),
@@ -246,6 +287,7 @@ def wait_ingress_online(
                 "launch_nonce": payload.get("launch_nonce"),
                 "ingress_run_id": payload.get("ingress_run_id"),
                 "process_start_identity": payload.get("process_start_identity"),
+                "auth_decision": auth_wait or {"decision": "PASS", "reason": "identity_not_required"},
             }
         fp = stale_fingerprint(payload, str(last_eval.get("reject_code") or ""))
         if fp not in seen_stale:

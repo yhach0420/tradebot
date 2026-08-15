@@ -841,6 +841,7 @@ class MarketIngressService:
                 # Keep desired; registration may be off-hours. Still replay through Raw+Bus.
                 self.registered_symbols = list(self.desired_symbols)
         self.sm.transition(WAITING_FIRST_PUSH, reason="replay")
+        self._write_status()
         if session_clock_enabled():
             while not session_clock_armed():
                 if self._stop.is_set() or self._operator_stop_requested():

@@ -404,10 +404,21 @@ def run_readonly_readiness_probe(
         diag.token_probe_status = (
             TokenProbeStatus.TOKEN_ACQUIRED.value if token else TokenProbeStatus.STATION_REACHABLE_AUTH_DEFERRED.value
         )
-    except (TokenUnavailable, StaleStageTokenRejected, CurrentStageTokenIdentityNotProven):
+    except (TokenUnavailable, StaleStageTokenRejected, CurrentStageTokenIdentityNotProven) as exc:
+        from small_paper.auth_lifecycle import FAIL_CLOSED_PHASES, current_auth_phase
+
+        phase = current_auth_phase(caller="kabu_readonly_readiness")
         token = ""
         diag.token_acquired = False
         diag.token_present = False
+        if phase in FAIL_CLOSED_PHASES:
+            diag.token_probe_status = TokenProbeStatus.AUTH_FAILED.value
+            diag.failure_reason = "auth_fail_closed"
+            diag.exception_class = type(exc).__name__
+            diag.masked_error = mask_secret_text(str(exc))
+            diag.token_endpoint_reachable = True
+            _assert_hard_fails(diag)
+            return diag
         diag.token_probe_status = TokenProbeStatus.STATION_REACHABLE_AUTH_DEFERRED.value
         diag.failure_reason = "auth_deferred_until_ingress"
         diag.token_endpoint_reachable = True

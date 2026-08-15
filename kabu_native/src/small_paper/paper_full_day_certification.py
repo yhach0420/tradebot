@@ -499,6 +499,8 @@ def source_regression_gates(*, native_root: Optional[Path] = None) -> dict[str, 
     native_entry = (native / "src/small_paper/v1r_native_entry_live.py").read_text(encoding="utf-8")
     checked = (native / "src/small_paper/paper_trade_checked_runner.py").read_text(encoding="utf-8")
     token_src = (native / "src/small_paper/kabu_token_authority.py").read_text(encoding="utf-8")
+    lifecycle = (native / "src/small_paper/auth_lifecycle.py").read_text(encoding="utf-8")
+    kabu_reg = (native / "src/api/kabu_register.py").read_text(encoding="utf-8")
     checks["POST_SESSION_CURRENT_RUN_SEAL_SCOPE"] = {
         "ok": "iter_current_run_soak_snapshots" in checked
         and "historical_seal_included_count" in checked
@@ -535,6 +537,20 @@ def source_regression_gates(*, native_root: Optional[Path] = None) -> dict[str, 
         and "KABU_STATION_TOKEN_BUNDLE_V24" in token_src
         and "_owned_matching_token" in token_src,
         "reason": "current Ingress must issue a new stage-bound generation; MATCH reuse only",
+    }
+    checks["CERT_AUTH_LIFECYCLE_PHASES"] = {
+        "ok": "PHASE_PRE_INGRESS" in lifecycle
+        and "PHASE_POST_INGRESS_PRE_BOARD" in lifecycle
+        and "FAIL_CLOSED_PHASES" in lifecycle
+        and "AUTH_DECISION" in lifecycle
+        and "CURRENT_STAGE_ISSUER_NOT_STARTED" in lifecycle
+        and "set_auth_phase" in checked
+        and "PHASE_PRE_INGRESS" in checked
+        and "PHASE_POST_INGRESS_PRE_BOARD" in checked
+        and "consumer_auth_outcome" in token_src
+        and "AUTH_DEFERRED_UNTIL_INGRESS" in kabu_reg
+        and "ENV_AUTH_PHASE" in spawn,
+        "reason": "token consumers must decide DEFER/CLEANUP/FAIL_CLOSED/REISSUE by lifecycle phase",
     }
     checks["CERT_INGRESS_AUTH_FAIL_CLOSE"] = {
         "ok": "AUTH_FAILED" in ingress

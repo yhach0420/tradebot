@@ -555,11 +555,69 @@ def clear_register_before_session(repo_root) -> dict[str, Any]:
         except Exception:
             pass
         try:
+            from small_paper.auth_lifecycle import (
+                DECISION_CLEANUP,
+                DECISION_DEFER,
+                DECISION_FAIL_CLOSED,
+                FAIL_CLOSED_PHASES,
+                consumer_auth_outcome,
+                current_auth_phase,
+            )
+            from small_paper.runtime_clock import now_jst as session_now
+
+            day = session_now().strftime("%Y%m%d")
+            phase = current_auth_phase(caller="clear_register_before_session")
+            if phase not in FAIL_CLOSED_PHASES:
+                outcome = consumer_auth_outcome(
+                    native_root=native,
+                    trading_date=day,
+                    caller="clear_register_before_session",
+                    phase=phase,
+                )
+                code = str((outcome.get("decision") or {}).get("decision") or "")
+                if code in {DECISION_DEFER, DECISION_CLEANUP}:
+                    sot_path = clear_paper_register_state(
+                        native, reason="pre_ingress_auth_deferred"
+                    )
+                    return {
+                        "ok": True,
+                        "cleared": False,
+                        "skipped": True,
+                        "reason": "AUTH_DEFERRED_UNTIL_INGRESS",
+                        "auth_phase": phase,
+                        "auth_decision": (outcome.get("decision") or {}).get("reason"),
+                        "unregister_all": {"ok": True, "skipped": True, "reason": "current_stage_issuer_not_started"},
+                        "POST_INGRESS_COMMIT_UNREGISTER_ALL": 0,
+                        "paper_register_state_cleared": bool(sot_path),
+                        "paper_register_state_path": str(sot_path) if sot_path else None,
+                        "register_limit": KABU_PUSH_REGISTER_LIMIT,
+                        "list_registered_symbols_api": False,
+                        "note": "PRE_INGRESS: do not unregister with leftover/unscoped token. Ingress issues then owns PUT.",
+                    }
+                if code == DECISION_FAIL_CLOSED:
+                    return {
+                        "ok": False,
+                        "cleared": False,
+                        "skipped": False,
+                        "reason": str((outcome.get("decision") or {}).get("reason") or "FAIL_CLOSED"),
+                        "auth_phase": phase,
+                        "error": str((outcome.get("decision") or {}).get("reason") or "FAIL_CLOSED"),
+                    }
+        except ImportError:
+            pass
+        try:
             push, _, _ = push_client_from_repo(root)
         except Exception as exc:
-            from small_paper.kabu_token_authority import TokenUnavailable
+            from small_paper.kabu_token_authority import (
+                CurrentStageTokenIdentityNotProven,
+                TokenUnavailable,
+            )
 
             if isinstance(exc, TokenUnavailable):
+                sot_path = clear_paper_register_state(
+                    resolve_native_root_for_register_state(root),
+                    reason="pre_ingress_auth_deferred",
+                )
                 return {
                     "ok": True,
                     "cleared": False,
@@ -567,9 +625,35 @@ def clear_register_before_session(repo_root) -> dict[str, Any]:
                     "reason": "AUTH_DEFERRED_UNTIL_INGRESS",
                     "unregister_all": {"ok": True, "skipped": True, "reason": "no_shared_token"},
                     "POST_INGRESS_COMMIT_UNREGISTER_ALL": 0,
+                    "paper_register_state_cleared": bool(sot_path),
+                    "paper_register_state_path": str(sot_path) if sot_path else None,
                     "register_limit": KABU_PUSH_REGISTER_LIMIT,
                     "list_registered_symbols_api": False,
                     "note": "No Ingress shared token yet; unregister/all deferred. Ingress owns live PUT.",
+                }
+            if isinstance(exc, CurrentStageTokenIdentityNotProven):
+                from small_paper.auth_lifecycle import FAIL_CLOSED_PHASES, current_auth_phase
+
+                phase = current_auth_phase(caller="clear_register_before_session")
+                if phase not in FAIL_CLOSED_PHASES:
+                    return {
+                        "ok": True,
+                        "cleared": False,
+                        "skipped": True,
+                        "reason": "AUTH_DEFERRED_UNTIL_INGRESS",
+                        "auth_phase": phase,
+                        "unregister_all": {"ok": True, "skipped": True, "reason": "current_stage_issuer_not_started"},
+                        "POST_INGRESS_COMMIT_UNREGISTER_ALL": 0,
+                        "register_limit": KABU_PUSH_REGISTER_LIMIT,
+                        "list_registered_symbols_api": False,
+                        "note": "PRE_INGRESS identity not proven; defer unregister until Ingress issues.",
+                    }
+                return {
+                    "ok": False,
+                    "cleared": False,
+                    "error": str(exc),
+                    "reason": "FAIL_CLOSED",
+                    "auth_phase": phase,
                 }
             raise
         unr = unregister_all_until_zero(push)

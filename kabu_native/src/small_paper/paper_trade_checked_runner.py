@@ -916,6 +916,9 @@ class PaperTradeCheckedRunner:
 
     def step_legacy_register_preclear(self) -> bool:
         """Unregister/all only before Ingress spawn. Forbidden after Ingress owns Kabu."""
+        from small_paper.auth_lifecycle import PHASE_PRE_INGRESS, set_auth_phase
+
+        set_auth_phase(PHASE_PRE_INGRESS)
         started = time.time()
         if self.capture_synthetic or self.demo_push_e2e or self.comm_fault_e2e or self.reuse_capture:
             self._record(
@@ -1403,6 +1406,12 @@ class PaperTradeCheckedRunner:
             self.paper_exit_code = 1
             return 1
         started = time.time()
+        try:
+            from small_paper.auth_lifecycle import PHASE_AM_RUNTIME, set_auth_phase
+
+            set_auth_phase(PHASE_AM_RUNTIME)
+        except Exception:
+            pass
         bat = Path(self.paper_bat)
         cmd = paper_bat_command(bat)
         self.paper_call_count += 1
@@ -2035,6 +2044,9 @@ class PaperTradeCheckedRunner:
                 from small_paper.capture_child_cleanup import record_owned_from_spawn
 
                 self._owned_capture = record_owned_from_spawn(spawn, native_root=self.native_root)
+            from small_paper.auth_lifecycle import PHASE_POST_INGRESS_PRE_BOARD, set_auth_phase
+
+            set_auth_phase(PHASE_POST_INGRESS_PRE_BOARD)
             wait = wait_ingress_online(
                 self.native_root,
                 self.trading_date,
@@ -2049,6 +2061,10 @@ class PaperTradeCheckedRunner:
                 expected_bus_identity=str(spawn.get("bus_identity") or ""),
             )
             ok = bool(wait.get("ok"))
+            if ok:
+                from small_paper.auth_lifecycle import PHASE_BOARD_ACTIVE, set_auth_phase
+
+                set_auth_phase(PHASE_BOARD_ACTIVE)
             self.capture.update(
                 {
                     "started": ok,
@@ -2521,6 +2537,9 @@ class PaperTradeCheckedRunner:
         self._install_signal_handlers()
         exit_code = 1
         try:
+            from small_paper.auth_lifecycle import PHASE_PRE_INGRESS, PHASE_TEARDOWN, set_auth_phase
+
+            set_auth_phase(PHASE_PRE_INGRESS)
             try:
                 from small_paper.env_loader import ensure_repo_dotenv, log_webhook_configured
 
@@ -2840,6 +2859,12 @@ class PaperTradeCheckedRunner:
             print(f"\n[CHECKED RUNNER] Exception — stopping owned Capture sidecar: {type(exc).__name__}: {exc}")
             raise
         finally:
+            try:
+                from small_paper.auth_lifecycle import PHASE_TEARDOWN, set_auth_phase
+
+                set_auth_phase(PHASE_TEARDOWN)
+            except Exception:
+                pass
             try:
                 self.cleanup_owned_capture(reason=self._shutdown_reason)
             except Exception as cleanup_exc:
