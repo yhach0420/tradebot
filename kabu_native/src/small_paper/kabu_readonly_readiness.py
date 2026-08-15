@@ -380,7 +380,12 @@ def run_readonly_readiness_probe(
         _assert_hard_fails(diag)
         return diag
 
-    from small_paper.kabu_token_authority import TokenUnavailable, acquire_token_for_readonly
+    from small_paper.kabu_token_authority import (
+        CurrentStageTokenIdentityNotProven,
+        StaleStageTokenRejected,
+        TokenUnavailable,
+        acquire_token_for_readonly,
+    )
     from small_paper.runtime_clock import now_jst as session_now
 
     native = Path(__file__).resolve().parents[2]
@@ -399,7 +404,7 @@ def run_readonly_readiness_probe(
         diag.token_probe_status = (
             TokenProbeStatus.TOKEN_ACQUIRED.value if token else TokenProbeStatus.STATION_REACHABLE_AUTH_DEFERRED.value
         )
-    except TokenUnavailable:
+    except (TokenUnavailable, StaleStageTokenRejected, CurrentStageTokenIdentityNotProven):
         token = ""
         diag.token_acquired = False
         diag.token_present = False

@@ -287,6 +287,24 @@ def evaluate_current_run_online(
         out["reject_code"] = "process_start_identity_mismatch"
         return out
     out["process_start_match"] = True
+    from small_paper.kabu_token_authority import (
+        TOKEN_STAGE_MATCH,
+        cert_live_auth_required,
+        current_stage_token_identity,
+    )
+
+    if cert_live_auth_required():
+        want_stage = str(current_stage_token_identity().get("stage_run_id") or "").strip()
+        if want_stage:
+            token_class = str(status.get("token_stage_class") or "")
+            if token_class != TOKEN_STAGE_MATCH:
+                out["reject_code"] = "current_stage_token_not_ready"
+                out["reason"] = CURRENT_INGRESS_NOT_READY
+                return out
+            if need > 0 and not bool(status.get("register_put_ok")):
+                out["reject_code"] = "register_not_verified"
+                out["reason"] = CURRENT_INGRESS_NOT_READY
+                return out
     out["ok"] = True
     out["reason"] = "CURRENT_RUN_ONLINE"
     out["reject_code"] = ""

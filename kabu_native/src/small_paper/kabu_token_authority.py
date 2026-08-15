@@ -15,7 +15,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, Mapping, Optional
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -24,7 +24,9 @@ from small_paper.runtime_clock import (
     ENV_TOKEN_PREFLIGHT,
     KABU_AUTH_LIVE,
     KABU_AUTH_NONE,
+    KABU_AUTH_SHARED,
     MARKET_INPUT_SYNTHETIC,
+    certification_mode,
     kabu_auth_mode,
     market_input_mode,
     now_jst as session_now,
@@ -68,10 +70,24 @@ class TokenUnavailable(ChildTokenIssueBlocked):
 
 
 STALE_STAGE_TOKEN_REJECTED = "STALE_STAGE_TOKEN_REJECTED"
+CURRENT_STAGE_TOKEN_IDENTITY_NOT_PROVEN = "CURRENT_STAGE_TOKEN_IDENTITY_NOT_PROVEN"
+TOKEN_STAGE_MATCH = "TOKEN_STAGE_MATCH"
+TOKEN_STAGE_MISMATCH = "TOKEN_STAGE_MISMATCH"
+TOKEN_STAGE_MISSING = "TOKEN_STAGE_MISSING"
+TOKEN_STAGE_NOT_APPLICABLE = "TOKEN_STAGE_NOT_APPLICABLE"
+BUNDLE_SCHEMA_VERSION = "KABU_STATION_TOKEN_BUNDLE_V24"
 
 
 class StaleStageTokenRejected(TokenUnavailable):
     """Published token belongs to a previous certification stage. Do not board with it."""
+
+
+class CurrentStageTokenIdentityNotProven(RuntimeError):
+    """Certification wants a stage identity but the bundle does not prove it.
+
+    Distinct from previous-stage mismatch. Not a TokenUnavailable — board must
+    fail-close; pre-Ingress readonly may defer.
+    """
 
 
 
@@ -133,12 +149,82 @@ def token_fingerprint(token: str) -> str:
 
 
 def current_stage_token_identity() -> dict[str, str]:
-    from small_paper.ingress_run_identity import ENV_CERTIFICATION_RUN_ID, ENV_STAGE_RUN_ID
+    from small_paper.derived_artifact_contract import ENV_RUNTIME_RUN_ID
+    from small_paper.ingress_run_identity import (
+        ENV_ACTIVATION_ID,
+        ENV_ACTIVATION_SHA,
+        ENV_CERTIFICATION_RUN_ID,
+        ENV_STAGE_RUN_ID,
+        activation_identity,
+    )
 
+    aid, ash = activation_identity()
     return {
         "certification_run_id": str(os.environ.get(ENV_CERTIFICATION_RUN_ID) or "").strip(),
         "stage_run_id": str(os.environ.get(ENV_STAGE_RUN_ID) or "").strip(),
+        "activation_id": str(os.environ.get(ENV_ACTIVATION_ID) or aid or "").strip(),
+        "activation_sha": str(os.environ.get(ENV_ACTIVATION_SHA) or ash or "").strip(),
+        "runtime_run_id": str(os.environ.get(ENV_RUNTIME_RUN_ID) or "").strip(),
     }
+
+
+def cert_live_auth_required(*, synthetic: bool = False) -> bool:
+    if synthetic:
+        return False
+    if not certification_mode():
+        return False
+    return kabu_auth_mode() in {KABU_AUTH_LIVE, KABU_AUTH_SHARED}
+
+
+def classify_token_stage(
+    bundle: Optional[Mapping[str, Any]] = None,
+    *,
+    want: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    """Classify published bundle vs current process stage identity.
+
+    Production (no want_stage) → TOKEN_STAGE_NOT_APPLICABLE.
+    Missing stage key is not previous-stage stale.
+    """
+    ident = dict(want or current_stage_token_identity())
+    body = dict(bundle or {})
+    want_stage = str(ident.get("stage_run_id") or "").strip()
+    want_cert = str(ident.get("certification_run_id") or "").strip()
+    want_act = str(ident.get("activation_sha") or "").strip()
+    stage_key = "stage_run_id" in body
+    got_stage = str(body.get("stage_run_id") or "").strip()
+    got_cert = str(body.get("certification_run_id") or "").strip()
+    got_act = str(body.get("activation_sha") or "").strip()
+    out: dict[str, Any] = {
+        "class": TOKEN_STAGE_NOT_APPLICABLE,
+        "want_stage": want_stage or None,
+        "got_stage": got_stage or ("missing" if (want_stage and not stage_key) else None),
+        "stage_key_present": stage_key,
+        "want_certification_run_id": want_cert or None,
+        "got_certification_run_id": got_cert or None,
+        "want_activation_sha": want_act or None,
+        "got_activation_sha": got_act or None,
+        "code": TOKEN_STAGE_NOT_APPLICABLE,
+    }
+    if not want_stage:
+        return out
+    if not stage_key or not got_stage:
+        out["class"] = TOKEN_STAGE_MISSING
+        out["code"] = CURRENT_STAGE_TOKEN_IDENTITY_NOT_PROVEN
+        out["got_stage"] = "missing"
+        return out
+    mismatch = got_stage != want_stage
+    if want_cert and got_cert != want_cert:
+        mismatch = True
+    if want_act and got_act != want_act:
+        mismatch = True
+    if mismatch:
+        out["class"] = TOKEN_STAGE_MISMATCH
+        out["code"] = STALE_STAGE_TOKEN_REJECTED
+        return out
+    out["class"] = TOKEN_STAGE_MATCH
+    out["code"] = TOKEN_STAGE_MATCH
+    return out
 
 
 def station_endpoint_id(base_url: Optional[str] = None) -> str:
@@ -511,7 +597,17 @@ def evaluate_issue_permission(
     if tls_owner != OWNER_INGRESS:
         result["reason"] = "not_ingress_owner_context"
         return result
+    stage = current_stage_token_identity()
+    bundle = load_station_bundle(base_url)
+    classified = classify_token_stage(bundle, want=stage)
+    result["token_stage_class"] = classified.get("class")
+    leftover_unscoped = classified.get("class") in {TOKEN_STAGE_MISSING, TOKEN_STAGE_MISMATCH}
     if owner_live and owner_pid != my_pid:
+        if certification_mode() and leftover_unscoped:
+            result["allowed"] = True
+            result["code"] = "ALLOWED"
+            result["reason"] = "stale_stage_takeover"
+            return result
         result["reason"] = "station_owner_pid_alive"
         return result
     result["allowed"] = True
@@ -520,10 +616,10 @@ def evaluate_issue_permission(
     if owner_live and owner_pid == my_pid:
         result["reason"] = "authorized_ingress"
     elif owner_pid and not owner_live:
-        stage = current_stage_token_identity()
-        bundle = load_station_bundle(base_url)
         prev_stage = str(bundle.get("stage_run_id") or owner.get("stage_run_id") or "")
         if stage.get("stage_run_id") and prev_stage and prev_stage != stage["stage_run_id"]:
+            result["reason"] = "stale_stage_takeover"
+        elif leftover_unscoped:
             result["reason"] = "stale_stage_takeover"
         else:
             result["reason"] = "stale_owner_takeover"
@@ -598,11 +694,14 @@ def publish_owned_token(
     existing = load_station_bundle(base_url)
     stage = current_stage_token_identity()
     same_token = str(existing.get("token") or "") == key and str(existing.get("fingerprint") or "") == fp
-    same_stage = str(existing.get("stage_run_id") or "") == str(stage.get("stage_run_id") or "")
+    classified = classify_token_stage(existing, want=stage)
     same_owner = int(existing.get("pid") or 0) == int(getattr(_tls, "pid", 0) or os.getpid())
-    if same_token and same_stage and same_owner and (not stage.get("stage_run_id") or same_stage):
-        body = load_authority(native_root, trading_date) or empty_authority()
-        return body
+    # Never restamp an unscoped leftover as current-stage. Idempotent republish
+    # only when Paper has no stage identity, or this process already MATCH-owns it.
+    if same_token and same_owner:
+        if not stage.get("stage_run_id") or classified.get("class") == TOKEN_STAGE_MATCH:
+            body = load_authority(native_root, trading_date) or empty_authority()
+            return body
     day_dir = authority_day_dir(native_root, trading_date)
     station_dir = station_authority_dir(base_url)
     body = load_authority(native_root, trading_date) or empty_authority()
@@ -619,12 +718,14 @@ def publish_owned_token(
     except Exception:
         process_start = ""
     bundle = {
+        "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
         "generation": gen,
         "token_generation": gen,
         "fingerprint": fp,
         "token": key,
         "issued_at": issued_at,
         "owner": OWNER_INGRESS,
+        "owner_role": OWNER_INGRESS,
         "pid": pid,
         "owner_pid": pid,
         "owner_process_start": process_start,
@@ -637,6 +738,9 @@ def publish_owned_token(
         "kabu_token_authority": OWNER_INGRESS,
         "certification_run_id": stage.get("certification_run_id") or None,
         "stage_run_id": stage.get("stage_run_id") or None,
+        "activation_id": stage.get("activation_id") or None,
+        "activation_sha": stage.get("activation_sha") or None,
+        "runtime_run_id": stage.get("runtime_run_id") or None,
     }
     _atomic_write_json(station_dir / BUNDLE_JSON, bundle)
     meta = {k: v for k, v in bundle.items() if k != "token"}
@@ -724,6 +828,23 @@ def read_shared_generation(
     return int(body.get("token_generation") or 0)
 
 
+def _owned_matching_token(base_url: Optional[str] = None) -> str:
+    """Return existing token only when this Ingress process already MATCH-owns it."""
+    if not certification_mode():
+        return ""
+    my_pid = int(getattr(_tls, "pid", 0) or os.getpid())
+    if current_owner_context() != OWNER_INGRESS:
+        return ""
+    bundle = load_station_bundle(base_url)
+    classified = classify_token_stage(bundle)
+    if classified.get("class") != TOKEN_STAGE_MATCH:
+        return ""
+    if int(bundle.get("pid") or bundle.get("owner_pid") or 0) != my_pid:
+        return ""
+    tok = str(bundle.get("token") or "").strip()
+    return tok
+
+
 def issue_station_token(
     client: Any,
     api_password: str,
@@ -735,6 +856,9 @@ def issue_station_token(
     base = str(getattr(client, "base_url", "") or _default_base_url())
     tls_caller = current_issue_caller() or caller
     with station_issue_lock(base_url=base):
+        reused = _owned_matching_token(base)
+        if reused:
+            return reused
         decision = evaluate_issue_permission(caller=tls_caller, base_url=base, synthetic=synthetic)
         if not decision.get("allowed"):
             _record_blocked(caller=tls_caller, decision=decision, base_url=base)
@@ -777,24 +901,30 @@ def acquire_token_for_readonly(
     Leftover day-dir tokens from a dead Ingress are not a live shared token.
     Pre-Ingress consumers must wait; they must not probe Station with a stale key.
     Previous-stage tokens are STALE_STAGE_TOKEN_REJECTED and must not hit board.
+    Missing stage identity is CURRENT_STAGE_TOKEN_IDENTITY_NOT_PROVEN, not stale.
     """
-    from small_paper.runtime_clock import certification_mode
-
     owner_active = ingress_owner_active(native_root, trading_date)
     stage = current_stage_token_identity()
     bundle = load_station_bundle()
+    classified = classify_token_stage(bundle, want=stage)
+    stage_class = str(classified.get("class") or TOKEN_STAGE_NOT_APPLICABLE)
     want_stage = str(stage.get("stage_run_id") or "").strip()
     got_stage = str(bundle.get("stage_run_id") or "").strip()
-    if want_stage:
-        if got_stage and got_stage != want_stage:
-            raise StaleStageTokenRejected(
-                f"{STALE_STAGE_TOKEN_REJECTED} caller={caller} "
-                f"want_stage={want_stage} got_stage={got_stage}"
-            )
-        if not got_stage and certification_mode():
-            raise StaleStageTokenRejected(
-                f"{STALE_STAGE_TOKEN_REJECTED} caller={caller} want_stage={want_stage} got_stage=missing"
-            )
+    if stage_class == TOKEN_STAGE_MISSING:
+        raise CurrentStageTokenIdentityNotProven(
+            f"{CURRENT_STAGE_TOKEN_IDENTITY_NOT_PROVEN} caller={caller} "
+            f"want_stage={want_stage} got_stage=missing"
+        )
+    if stage_class == TOKEN_STAGE_MISMATCH:
+        raise StaleStageTokenRejected(
+            f"{STALE_STAGE_TOKEN_REJECTED} caller={caller} "
+            f"want_stage={want_stage} got_stage={got_stage or 'missing'}"
+        )
+    if want_stage and stage_class == TOKEN_STAGE_MATCH and not owner_active:
+        raise TokenUnavailable(
+            f"INGRESS_TOKEN_UNAVAILABLE caller={caller} owner_active={owner_active} "
+            f"token_stage_class={stage_class}"
+        )
     token = read_shared_token(native_root, trading_date) if owner_active else ""
     gen = read_shared_generation(native_root, trading_date) if owner_active else 0
     if token and owner_active:
@@ -809,6 +939,7 @@ def acquire_token_for_readonly(
             "may_issue_token": False,
             "stage_run_id": got_stage or None,
             "certification_run_id": str(bundle.get("certification_run_id") or "") or None,
+            "token_stage_class": stage_class,
         }
     raise TokenUnavailable(
         f"INGRESS_TOKEN_UNAVAILABLE caller={caller} owner_active={owner_active}"

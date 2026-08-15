@@ -514,14 +514,33 @@ def source_regression_gates(*, native_root: Optional[Path] = None) -> dict[str, 
     checks["CERT_STAGE_TOKEN_ROLLOVER"] = {
         "ok": "STALE_STAGE_TOKEN_REJECTED" in token_src
         and "stale_stage_takeover" in token_src
-        and "stage_run_id" in token_src,
-        "reason": "next stage must not board with previous-stage token; takeover after owner dead",
+        and "stage_run_id" in token_src
+        and "CURRENT_STAGE_TOKEN_IDENTITY_NOT_PROVEN" in token_src
+        and "TOKEN_STAGE_MISSING" in token_src
+        and "TOKEN_STAGE_NOT_APPLICABLE" in token_src,
+        "reason": "next stage must not board with previous-stage or unscoped leftover token",
     }
     checks["CERTIFICATION_FULL_DAY_INPUT_COVERAGE"] = {
         "ok": "CERTIFICATION_INPUT_COVERAGE_FAIL" in cov_mod
         and "CERTIFICATION_ONLY_INPUT" in cov_mod
-        and "evaluate_full_day_input_coverage" in cov_mod,
+        and "evaluate_full_day_input_coverage" in cov_mod
+        and "cert_sequence_continuity_ok" in cov_mod
+        and "file_time_order_ok" in cov_mod
+        and "unique_source_scan" in cov_mod,
         "reason": "Full-Day must gate actual stream coverage before Runtime start",
+    }
+    checks["CERT_CURRENT_STAGE_TOKEN_ISSUE"] = {
+        "ok": "stale_stage_takeover" in token_src
+        and "bundle_schema_version" in token_src
+        and "KABU_STATION_TOKEN_BUNDLE_V24" in token_src
+        and "_owned_matching_token" in token_src,
+        "reason": "current Ingress must issue a new stage-bound generation; MATCH reuse only",
+    }
+    checks["CERT_INGRESS_AUTH_FAIL_CLOSE"] = {
+        "ok": "AUTH_FAILED" in ingress
+        and "CURRENT_STAGE_TOKEN_NOT_READY" in ingress
+        and "cert_live_auth_required" in ingress,
+        "reason": "cert replay must not WAITING_FIRST_PUSH after auth/register/identity failure",
     }
 
     evalr = (native / "src/small_paper/evaluation_reachability.py").read_text(encoding="utf-8")

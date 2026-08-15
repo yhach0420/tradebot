@@ -15,8 +15,10 @@ from small_paper.ingress_run_identity import (
     ENV_ACTIVATION_ID,
     ENV_ACTIVATION_SHA,
     ENV_BUS_IDENTITY,
+    ENV_CERTIFICATION_RUN_ID,
     ENV_INGRESS_RUN_ID,
     ENV_LAUNCH_NONCE,
+    ENV_STAGE_RUN_ID,
     MISSING_EXPECTED_LAUNCH_NONCE,
     STALE_INGRESS_STATUS_REJECTED,
     activation_identity,
@@ -98,6 +100,17 @@ def spawn_ingress_process(
         env["PYTHONPATH"] = f"{src};{repo}" if sys.platform == "win32" else f"{src}:{repo}"
         env["PYTHONIOENCODING"] = "utf-8"
         env["MARKET_INGRESS_V2"] = "1"
+        try:
+            from small_paper.derived_artifact_contract import ENV_RUNTIME_RUN_ID, ensure_runtime_run_id
+
+            ensure_runtime_run_id(environ=env)
+            for key in (ENV_CERTIFICATION_RUN_ID, ENV_STAGE_RUN_ID, ENV_RUNTIME_RUN_ID):
+                val = str(os.environ.get(key) or env.get(key) or "").strip()
+                if val:
+                    env[key] = val
+            env.setdefault("TRADEBOT_TRADING_DATE", str(trading_date))
+        except Exception:
+            pass
     launch_nonce = generate_launch_nonce()
     ingress_run_id = make_ingress_run_id(trading_date=str(trading_date), launch_nonce=launch_nonce)
     activation_id, activation_sha = activation_identity(environ=env)

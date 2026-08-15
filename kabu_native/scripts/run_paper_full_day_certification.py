@@ -417,8 +417,10 @@ def main() -> int:
     )
 
     sources = discover_certification_sources(NATIVE)
-    if CAPTURE_STREAM.is_file() and CAPTURE_STREAM not in sources:
-        sources = [CAPTURE_STREAM, *sources]
+    if CAPTURE_STREAM.is_file():
+        want = str(CAPTURE_STREAM.resolve())
+        if not any(str(Path(s).resolve()) == want for s in sources if Path(s).exists()):
+            sources = [CAPTURE_STREAM, *sources]
     if sources:
         fixture_meta = build_full_day_certification_stream(sources, fixture, trading_date="20260812")
         fixture_meta["purpose"] = CERTIFICATION_ONLY_INPUT

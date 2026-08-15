@@ -43,12 +43,15 @@ from small_paper.market_ingress_protocol import (
     now_iso,
 )
 from small_paper.market_ingress_state import (
+    AUTH_FAILED,
     CLOSING_STALE_SOCKET,
     CONNECTING,
+    CURRENT_STAGE_TOKEN_NOT_READY,
     ENTRY_BLOCKED,
     RECOVERED,
     RECOVERY_FAILED,
     RECONNECTING,
+    REGISTER_FAILED,
     REGISTERING,
     REREGISTERING,
     RUNNING,
@@ -114,23 +117,36 @@ def replay_payload_from_record(obj: Any) -> Optional[dict[str, Any]]:
     """Normalize capture envelope / cached stream row to a Kabu PUSH payload."""
     if not isinstance(obj, dict):
         return None
+    strip = {
+        "t",
+        "raw",
+        "cert_sequence",
+        "source_id",
+        "source_path",
+        "source_original_date",
+        "source_row_index",
+        "source_sequence",
+    }
     if "original_payload" in obj or (obj.get("kind") == KIND_MARKET_PUSH and "payload" in obj):
         body = obj.get("original_payload") or obj.get("payload") or {}
         if not isinstance(body, dict):
             return None
-        out = dict(body)
+        out = {k: v for k, v in body.items() if k not in strip}
         rec_at = obj.get("received_at") or body.get("received_at")
         if rec_at:
             out["__replay_received_at__"] = rec_at
         if not out.get("Symbol"):
             out["Symbol"] = str(obj.get("symbol") or body.get("symbol") or "")
+        if obj.get("cert_sequence") is not None:
+            out["__cert_sequence__"] = obj.get("cert_sequence")
         return out if out.get("Symbol") else None
     if obj.get("symbol") or obj.get("Symbol") or obj.get("raw"):
-        skip = {"t", "raw"}
-        out = {k: v for k, v in obj.items() if k not in skip}
+        out = {k: v for k, v in obj.items() if k not in strip}
         out["Symbol"] = str(obj.get("Symbol") or obj.get("symbol") or obj.get("raw") or "")
         if obj.get("received_at"):
             out["__replay_received_at__"] = obj["received_at"]
+        if obj.get("cert_sequence") is not None:
+            out["__cert_sequence__"] = obj.get("cert_sequence")
         return out if out.get("Symbol") else None
     return None
 
@@ -213,6 +229,9 @@ class MarketIngressService:
         self._lat_pub: list[float] = []
         # Live Kabu register bookkeeping (Ingress is sole PUT owner).
         self._register_put_ok: bool = False
+        self._input_delivered_count: int = 0
+        self._last_cert_sequence: int = 0
+        self._token_stage_class: str = ""
         self._last_register_generation: int = 0
         self._last_register_symbols: tuple[str, ...] = ()
         self._register_evidence: dict[str, Any] = {}
@@ -459,6 +478,9 @@ class MarketIngressService:
                 "backoff_count": int(self._backoff_count),
                 "circuit_open_count": int(self._circuit_open_count),
                 "circuit_reason": self._circuit_reason or None,
+                "token_stage_class": self._token_stage_class or self._classify_bundle_stage(),
+                "input_delivered_count": int(self._input_delivered_count),
+                "last_cert_sequence": int(self._last_cert_sequence),
             },
         )
 
@@ -696,17 +718,44 @@ class MarketIngressService:
         if self.sm.state not in (STOPPED, STOPPING):
             self.stop()
 
+    def _classify_bundle_stage(self) -> str:
+        try:
+            from small_paper.kabu_token_authority import classify_token_stage, load_station_bundle
+
+            return str(classify_token_stage(load_station_bundle()).get("class") or "")
+        except Exception:
+            return ""
+
+    def _cert_auth_required(self) -> bool:
+        from small_paper.kabu_token_authority import cert_live_auth_required
+
+        return cert_live_auth_required(synthetic=bool(self.synthetic))
+
     def _replay_try_register(self) -> dict[str, Any]:
         """Production token+register without live WebSocket (replay input).
 
         Replay does not imply live POST /token. KABU_AUTH_MODE=LIVE is required.
-        Synthetic / preflight never issue.
+        Synthetic / preflight never issue. Certification LIVE/SHARED must not skip
+        or swallow auth/register failure.
         """
-        out: dict[str, Any] = {"ok": False}
-        from small_paper.kabu_token_authority import live_kabu_auth_allowed
+        out: dict[str, Any] = {"ok": False, "token_issued": False}
+        from small_paper.kabu_token_authority import (
+            TOKEN_STAGE_MATCH,
+            cert_live_auth_required,
+            classify_token_stage,
+            live_kabu_auth_allowed,
+            load_station_bundle,
+        )
 
+        required = cert_live_auth_required(synthetic=bool(self.synthetic))
         auth_ok, auth_reason = live_kabu_auth_allowed(synthetic=bool(self.synthetic))
         if not auth_ok:
+            if required:
+                out["fail_code"] = AUTH_FAILED
+                out["skipped"] = auth_reason
+                self.sm.last_error = AUTH_FAILED
+                self._auth_failure_count += 1
+                return out
             out["ok"] = True
             out["skipped"] = auth_reason
             out["token_issued"] = False
@@ -733,17 +782,33 @@ class MarketIngressService:
                 trading_date=self.trading_date,
                 caller="ingress_replay_connect",
             )
+            classified = classify_token_stage(load_station_bundle())
+            self._token_stage_class = str(classified.get("class") or "")
+            if required and self._token_stage_class != TOKEN_STAGE_MATCH:
+                out["fail_code"] = CURRENT_STAGE_TOKEN_NOT_READY
+                out["token_stage_class"] = self._token_stage_class
+                self.sm.last_error = CURRENT_STAGE_TOKEN_NOT_READY
+                return out
             from api.push_client import KabuNativePushClient
 
             push = KabuNativePushClient(rest, token)
             self._push_client = push
             if self.desired_symbols:
                 self._execute_live_register(push, reason="replay_connect")
+            if required and self.desired_symbols and not self._register_put_ok:
+                out["fail_code"] = REGISTER_FAILED
+                self.sm.last_error = REGISTER_FAILED
+                return out
             out["ok"] = True
+            out["token_issued"] = True
+            out["token_stage_class"] = self._token_stage_class
             out["registered"] = list(self.registered_symbols)
         except Exception as exc:
             out["error"] = f"{type(exc).__name__}:{exc}"
             self.sm.last_error = type(exc).__name__
+            if required:
+                out["fail_code"] = AUTH_FAILED
+                self._auth_failure_count += 1
         return out
 
     def _replay_loop(self) -> None:
@@ -753,11 +818,28 @@ class MarketIngressService:
         self.sm.transition(REGISTERING, reason="replay")
         reg = self._replay_try_register()
         self._register_evidence["replay_register"] = reg
+        if self._cert_auth_required() and not reg.get("ok"):
+            fail = str(reg.get("fail_code") or AUTH_FAILED)
+            dest = {
+                AUTH_FAILED: AUTH_FAILED,
+                REGISTER_FAILED: REGISTER_FAILED,
+                CURRENT_STAGE_TOKEN_NOT_READY: CURRENT_STAGE_TOKEN_NOT_READY,
+            }.get(fail, AUTH_FAILED)
+            self.sm.transition(dest, reason=fail)
+            self.sm.block_entry(fail)
+            self._write_status()
+            while not self._stop.is_set() and not self._operator_stop_requested():
+                time.sleep(0.2)
+                self._write_status()
+            if self.sm.state not in (STOPPED, STOPPING):
+                self.stop()
+            return
         if not self.desired_symbols:
             self._poll_desired_universe_apply_only()
         if not self.registered_symbols and self.desired_symbols:
-            # Keep desired; registration may be off-hours. Still replay through Raw+Bus.
-            self.registered_symbols = list(self.desired_symbols)
+            if not self._cert_auth_required():
+                # Keep desired; registration may be off-hours. Still replay through Raw+Bus.
+                self.registered_symbols = list(self.desired_symbols)
         self.sm.transition(WAITING_FIRST_PUSH, reason="replay")
         if session_clock_enabled():
             while not session_clock_armed():
@@ -774,6 +856,11 @@ class MarketIngressService:
                 payload = replay_payload_from_record(rec)
                 if not payload:
                     continue
+                cert_seq = rec.get("cert_sequence")
+                if cert_seq is None:
+                    cert_seq = payload.pop("__cert_sequence__", None)
+                else:
+                    payload.pop("__cert_sequence__", None)
                 rec_at = str(payload.get("__replay_received_at__") or "")
                 event_dt = _parse_replay_dt(rec_at)
                 if event_dt is not None:
@@ -796,6 +883,12 @@ class MarketIngressService:
                 if wait > 0:
                     time.sleep(wait)
                 last_mono = time.monotonic()
+                if cert_seq is not None:
+                    try:
+                        self._last_cert_sequence = int(cert_seq)
+                    except (TypeError, ValueError):
+                        pass
+                self._input_delivered_count += 1
                 self._on_push(payload)
                 self._poll_desired_universe()
                 if int(self.writer.snapshot().get("last_sequence") or 0) % 200 == 0:

@@ -5,6 +5,8 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 from small_paper.ingress_run_identity import (
     CURRENT_INGRESS_NOT_READY,
     ROLE_MARKET_INGRESS_SERVICE,
@@ -19,6 +21,13 @@ from small_paper.paper_full_day_certification import copy_scoped_run_snapshot
 
 DAY = "20260812"
 NONCE = "launch-nonce-current"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_v21_from_cert_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TRADEBOT_CERTIFICATION_MODE", raising=False)
+    monkeypatch.delenv("TRADEBOT_CERT_STAGE_RUN_ID", raising=False)
+    monkeypatch.delenv("TRADEBOT_CERTIFICATION_RUN_ID", raising=False)
 RUN_ID = "ingrun_20260812_launch-nonce-cu"
 ACT_ID = "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V21"
 ACT_SHA = "sha-v21-test"
