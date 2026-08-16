@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, time as dt_time
 from pathlib import Path
 from typing import Any, Mapping, Optional
 from zoneinfo import ZoneInfo
@@ -40,6 +40,11 @@ ENV_SESSION_ID = "TRADEBOT_SESSION_ID"
 ENV_SESSION_KIND = "TRADEBOT_SESSION_KIND"
 
 RUNTIME_TRADING_DATE_NOT_PROVEN = "RUNTIME_TRADING_DATE_NOT_PROVEN"
+
+# Frozen session spans used only to derive expected child topology from a
+# certification window (V0, STOP). Not strategy / admission thresholds.
+_AM_SPAN = (dt_time(8, 50), dt_time(11, 30))
+_PM_SPAN = (dt_time(12, 25), dt_time(15, 35))
 
 SESSION_IDENTITY_KEYS: tuple[str, ...] = (
     "certification_run_id",
@@ -223,34 +228,87 @@ def write_session_identity_file(
     return path
 
 
+def _window_overlaps_span(
+    window_start: datetime,
+    window_end: datetime,
+    span_start: dt_time,
+    span_end: dt_time,
+) -> bool:
+    day = window_start.date()
+    tz = window_start.tzinfo
+    span_s = datetime.combine(day, span_start, tzinfo=tz)
+    span_e = datetime.combine(day, span_end, tzinfo=tz)
+    return window_start < span_e and window_end > span_s
+
+
+def expected_session_kinds(
+    window_start: Optional[datetime],
+    window_end: Optional[datetime],
+) -> frozenset[str]:
+    """Expected Paper child kinds for a certification window. Not a stage-name map.
+
+    Window A 08:50–09:20 → {am}
+    PM_DIRECT 12:30–15:35 → {pm}
+    Window B 11:20–12:45 → {am, pm}
+    Window C 15:10–15:35 → {pm}
+    FULL_DAY 08:50–15:35 → {am, pm}
+    """
+    if window_start is None or window_end is None:
+        return frozenset()
+    start = window_start if window_start.tzinfo is not None else window_start.replace(tzinfo=JST)
+    end = window_end if window_end.tzinfo is not None else window_end.replace(tzinfo=JST)
+    start = start.astimezone(JST)
+    end = end.astimezone(JST)
+    kinds: list[str] = []
+    if _window_overlaps_span(start, end, *_AM_SPAN):
+        kinds.append("am")
+    if _window_overlaps_span(start, end, *_PM_SPAN):
+        kinds.append("pm")
+    return frozenset(kinds)
+
+
 def expected_current_run_scope(
     *,
     trading_date: Optional[str] = None,
     environ: Optional[Mapping[str, str]] = None,
 ) -> dict[str, str]:
+    """Collector filter. Never mints TRADEBOT_RUNTIME_RUN_ID (that would
+    exclude the current SEALED_VALID session stamped by the Paper child).
+    """
     env = environ if environ is not None else os.environ
-    ident = session_identity_fields(trading_date=trading_date, environ=env)
+    aid, ash = activation_identity(environ=env)
     out: dict[str, str] = {}
+    cert = str(env.get(ENV_CERTIFICATION_RUN_ID) or "").strip()
+    stage = str(env.get(ENV_STAGE_RUN_ID) or "").strip()
     rid = str(env.get(ENV_RUNTIME_RUN_ID) or "").strip()
-    ident["runtime_run_id"] = rid or None
-    for key in (
-        "certification_run_id",
-        "stage_run_id",
-        "activation_sha",
-        "runtime_run_id",
-        "daily_run_id",
-    ):
-        val = ident.get(key)
-        if val:
-            out[key] = str(val)
+    daily = str(env.get(ENV_DAILY_RUN_ID) or "").strip()
+    sid = str(env.get(ENV_SESSION_ID) or "").strip()
+    if cert:
+        out["certification_run_id"] = cert
+    if stage:
+        out["stage_run_id"] = stage
+    if aid:
+        out["activation_id"] = aid
+    if ash:
+        out["activation_sha"] = ash
+    if rid:
+        out["runtime_run_id"] = rid
+    if daily:
+        out["daily_run_id"] = daily
+    if sid:
+        out["session_id"] = sid
     # trading_date is a current-run key only when session/env proved it.
     # Wall-clock orchestrator fallback must not exclude same-run fixtures
     # that were stamped without TRADEBOT_TRADING_DATE.
     env_day = _norm_day(str(env.get(ENV_TRADING_DATE) or env.get(ENV_SESSION_TRADING_DATE) or ""))
-    if _valid_yyyymmdd(env_day) or session_clock_enabled(
+    clock_on = session_clock_enabled(
         environ=dict(env) if not isinstance(env, dict) else env
-    ):
-        day = str(ident.get("trading_date") or "").strip()
+    )
+    if _valid_yyyymmdd(env_day) or clock_on:
+        try:
+            day = resolve_runtime_trading_date(trading_date, environ=env)
+        except RuntimeTradingDateNotProven:
+            day = _norm_day(str(trading_date or env_day or ""))
         if _valid_yyyymmdd(day):
             out["trading_date"] = day
     return out

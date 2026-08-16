@@ -177,6 +177,18 @@ def inspect_leftover_auth_state(
     gen = bundle_gen or owner_gen
     got_stage = str(bundle.get("stage_run_id") or "")
     stage_key = "stage_run_id" in bundle
+    ownership: dict[str, Any] = {}
+    try:
+        from small_paper.ownership_classifier import classify_owner
+
+        ownership = classify_owner(
+            owner=owner,
+            bundle=bundle,
+            current=ident,
+            pid_alive_fn=_pid_alive,
+        )
+    except Exception as exc:
+        ownership = {"class": "UNKNOWN", "reason": f"classifier_error:{type(exc).__name__}"}
     return {
         "want_stage": str(ident.get("stage_run_id") or "") or None,
         "got_stage": got_stage or ("missing" if (ident.get("stage_run_id") and not stage_key) else None),
@@ -185,6 +197,10 @@ def inspect_leftover_auth_state(
         "generation": gen,
         "owner_pid": owner_pid,
         "owner_alive": owner_alive,
+        "ownership_class": ownership.get("class"),
+        "ownership_reason": ownership.get("reason"),
+        "process_alive": ownership.get("process_alive"),
+        "process_start_identity": ownership.get("recorded_process_start_identity"),
         "ingress_pid": ingress_pid,
         "ingress_alive": ingress_alive,
         "owner_ingress_pid_match": (owner_pid == ingress_pid) if owner_pid and ingress_pid else None,
@@ -250,6 +266,14 @@ def decide_auth(
     if owner_pid and ingress_pid and owner_pid != ingress_pid and owner_alive and ingress_alive:
         out["decision"] = DECISION_FAIL_CLOSED
         out["reason"] = REASON_DUPLICATE_ISSUER
+        return out
+    ocls = str(residue.get("ownership_class") or "")
+    if ocls in {"PID_REUSED", "CONFLICT"} or (
+        ocls == "UNKNOWN" and bool(residue.get("owner_alive") or residue.get("process_alive"))
+    ):
+        out["decision"] = DECISION_FAIL_CLOSED
+        out["reason"] = ocls
+        out["ownership_class"] = ocls
         return out
     if bool(residue.get("generation_mismatch")) and p in FAIL_CLOSED_PHASES:
         out["decision"] = DECISION_FAIL_CLOSED
@@ -368,17 +392,38 @@ def apply_pre_ingress_cleanup(
     """Mark leftover unscoped/previous token as not reusable. Never kill current-stage owner.
 
     Does not delete the Station bundle (current Ingress publish replaces it).
-    Does not kill PIDs (PID reuse).
+    Does not kill PIDs (PID reuse). Dead managed owners are authority-reclaimed only.
     """
     native = Path(native_root)
     day_dir = native / "data" / "market_capture" / str(trading_date)
     day_dir.mkdir(parents=True, exist_ok=True)
+    reclaim: dict[str, Any] = {
+        "reclaimed": False,
+        "killed_pid": None,
+        "wrong_process_kill": 0,
+        "bundle_deleted": False,
+    }
+    try:
+        from small_paper.kabu_token_authority import reclaim_dead_station_owner
+
+        reclaim = reclaim_dead_station_owner(native_root=native, trading_date=str(trading_date))
+    except Exception as exc:
+        reclaim = {
+            "reclaimed": False,
+            "killed_pid": None,
+            "wrong_process_kill": 0,
+            "bundle_deleted": False,
+            "error": type(exc).__name__,
+        }
     marker = {
         "at": datetime.now(JST).isoformat(timespec="milliseconds"),
         "action": "IGNORE_LEFTOVER_DO_NOT_REUSE",
         "killed_pid": None,
         "bundle_deleted": False,
-        "current_owner_preserved": True,
+        "current_owner_preserved": not bool(reclaim.get("reclaimed")),
+        "dead_owner_reclaimed": bool(reclaim.get("reclaimed")),
+        "wrong_process_kill": 0,
+        "reclaim": reclaim,
         "residue": {
             k: residue.get(k)
             for k in (
@@ -397,7 +442,13 @@ def apply_pre_ingress_cleanup(
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(marker, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)
-    return {"ok": True, "marker": str(path), "killed_pid": None}
+    return {
+        "ok": True,
+        "marker": str(path),
+        "killed_pid": None,
+        "wrong_process_kill": 0,
+        "reclaim": reclaim,
+    }
 
 
 def consumer_auth_outcome(

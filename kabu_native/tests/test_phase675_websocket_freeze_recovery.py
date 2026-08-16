@@ -124,7 +124,7 @@ def test_D_supervisor_detects_heartbeat_stall(tmp_path: Path, monkeypatch: pytes
         "small_paper.paper_runtime_supervisor._pid_alive", lambda pid: True
     )
     monkeypatch.setattr(
-        "small_paper.paper_runtime_supervisor._safe_kill", lambda pid: True
+        "small_paper.paper_runtime_supervisor._safe_kill", lambda pid, **kwargs: True
     )
     monkeypatch.setattr(
         "small_paper.paper_runtime_supervisor.notify_discord_critical",

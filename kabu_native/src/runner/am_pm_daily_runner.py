@@ -15,8 +15,11 @@ from typing import Any, Callable, Literal, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from small_paper.runtime_clock import now_jst as session_now
+from small_paper.runtime_clock import projected_session_now
 from small_paper.runtime_clock import sleep_until as session_sleep_until
 from small_paper.runtime_clock import session_clock_enabled
+from small_paper.runtime_clock import session_clock_stop_reached
+from small_paper.runtime_clock import session_stop
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -723,7 +726,21 @@ def wait_until_hhmm(
     if dry_run_only:
         return {"skipped": True, "reason": "dry_run_only", "target": hhmm, "label": label}
     while True:
-        n = now_jst()
+        n = projected_session_now() if session_clock_enabled() else now_jst()
+        today = n.date()
+        target_dt = datetime.combine(today, target_t, tzinfo=JST)
+        stop = session_stop()
+        # Bounded cert windows must skip a later screen (e.g. PM 12:25) once STOP
+        # is reached, even if replay lag has not yet marked watermark/EOF.
+        if stop is not None and target_dt > stop:
+            if session_clock_stop_reached() or (session_clock_enabled() and n >= stop):
+                return {
+                    "skipped": False,
+                    "reached_at": n.isoformat(timespec="seconds"),
+                    "target": hhmm,
+                    "label": label,
+                    "reason": "session_clock_stop",
+                }
         if n.time() >= target_t:
             return {
                 "skipped": False,
@@ -731,8 +748,6 @@ def wait_until_hhmm(
                 "target": hhmm,
                 "label": label,
             }
-        today = n.date()
-        target_dt = datetime.combine(today, target_t, tzinfo=JST)
         if n >= target_dt:
             continue
         if session_clock_enabled():
@@ -2119,6 +2134,16 @@ def _run_daily_runner_body(state: DailyRunnerState) -> int:
         state.pm_wait["after_am"] = wait_until_hhmm(
             PM_SCREEN_HHMM, dry_run_only=False, label="pm_screening_start"
         )
+        wait_am = state.pm_wait.get("after_am") or {}
+        if str(wait_am.get("reason") or "") == "session_clock_stop":
+            state.verdict = "am_pm_daily_runner_ready"
+            state.verdict_notes.append(
+                "PM skipped: TRADEBOT_SESSION_CLOCK_STOP reached before PM screen"
+            )
+            state.stopped_reason = "session_clock_stop"
+            state.commands = build_commands_json(state)
+            write_outputs(state)
+            return 0
     else:
         state.pm_wait["after_am"] = {"skipped": True, "reason": "skip_am_or_dry_run_only"}
 

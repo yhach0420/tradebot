@@ -203,6 +203,10 @@ def _residue(**kwargs: Any) -> dict[str, Any]:
 def test_inventory_pins_auth_lifecycle() -> None:
     assert "src/small_paper/auth_lifecycle.py" in RUNTIME_DEPENDENCY_RELS
     assert "src/api/kabu_register.py" in RUNTIME_DEPENDENCY_RELS
+    assert "src/small_paper/ownership_classifier.py" in RUNTIME_DEPENDENCY_RELS
+    assert "src/small_paper/runtime_lifecycle.py" in RUNTIME_DEPENDENCY_RELS
+    assert "src/small_paper/runtime_ownership.py" in RUNTIME_DEPENDENCY_RELS
+    assert "src/small_paper/auth_issue_trace.py" in RUNTIME_DEPENDENCY_RELS
 
 
 def test_checked_bat_startup_order_has_no_token_before_issuer_deadlock() -> None:

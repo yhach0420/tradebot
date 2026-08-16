@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import signal
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,8 +14,12 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from small_paper.runtime_clock import ensure_session_clock_armed
 from small_paper.runtime_clock import now_jst as session_now
 from small_paper.runtime_clock import session_clock_enabled
+from small_paper.runtime_clock import session_clock_stop_reached
+
+log = logging.getLogger(__name__)
 
 from research.exposure_gate import (
     REJECT_MAX_CONCURRENT,
@@ -4560,6 +4565,16 @@ def _throttled_state_only_push(
         feed_e1_x5_from_runtime_state(ctx.state, symbol=symbol, payload=payload)
     except Exception:
         pass
+    # V1R EXIT path must see every in-session push, not only PBv2 eval cycles.
+    try:
+        _v1r_dual_lane_on_push(ctx, symbol=symbol, payload=payload)
+    except Exception as exc:
+        _log_v1r_native_entry_exception(
+            ctx,
+            exc,
+            where="dual_lane_throttled_tick",
+            symbol=str(symbol or ""),
+        )
 
 
 def _sync_reachability_summary(
@@ -4756,6 +4771,57 @@ def _stage0_normalize_payload(
     )
 
 
+def _v1r_dual_lane_on_push(
+    ctx: "_PushPipelineContext",
+    *,
+    symbol: str,
+    payload: Mapping[str, Any],
+    message_index: Any = 0,
+    t0_push_received_at: Optional[str] = None,
+) -> None:
+    """V1R dual-lane tick independent of PBv2 should_evaluate / observer occupancy."""
+    from small_paper.v1r_live_dual_lane import ensure_dual_lane, live_primary_enabled
+
+    if not live_primary_enabled():
+        return
+    td = _v1r_native_writer_output_dir(ctx)
+    dual = ensure_dual_lane(trace_dir=td)
+    if dual is None:
+        return
+    if dual.error_sink is None:
+
+        def _dual_err(rec: Mapping[str, Any]) -> None:
+            try:
+                ctx.writer.append_error(dict(rec))
+            except Exception:
+                log.warning("dual_lane error_sink append_error failed: %s", rec.get("error_type"))
+            ctx.state.v1r_native_exception_count = int(
+                getattr(ctx.state, "v1r_native_exception_count", 0) or 0
+            ) + 1
+            if rec.get("error_type") in (
+                "v1r_dual_lane_symbol_lookup_mismatch",
+                "v1r_dual_lane_exception",
+            ):
+                ctx.state.v1r_native_entry_blocked = True
+                ctx.state.v1r_native_block_reason = str(
+                    rec.get("message") or rec.get("error_type") or "dual_fail"
+                )
+
+        dual.set_error_sink(_dual_err)
+    pay = dict(payload) if isinstance(payload, Mapping) else {}
+    if t0_push_received_at:
+        if not pay.get("recorded_at"):
+            pay["recorded_at"] = t0_push_received_at
+        if not pay.get("received_at"):
+            pay["received_at"] = t0_push_received_at
+    seq = int(pay.get("sequence") or pay.get("Sequence") or message_index or 0)
+    dual.on_push_meta(sequence=seq, push_at=str(pay.get("CurrentPriceTime") or _now_iso()))
+    from small_paper.v1r_native_entry_live import board_event_epoch_from_payload
+
+    et = board_event_epoch_from_payload(pay)
+    dual.on_tick(symbol=symbol, payload=pay, event_t=et, push_sequence=seq)
+
+
 def _observer_open_position_tick(
     ctx: _PushPipelineContext, norm: Stage0NormalizedPayload
 ) -> Optional[ObserverCloseOnPush]:
@@ -4779,51 +4845,14 @@ def _observer_open_position_tick(
     close_info: Optional[ObserverCloseOnPush] = None
     # V1R dual-lane always ticks independently (even if classic observer closed)
     try:
-        from small_paper.v1r_live_dual_lane import ensure_dual_lane, live_primary_enabled
-
-        if live_primary_enabled():
-            td = _v1r_native_writer_output_dir(ctx)
-            dual = ensure_dual_lane(trace_dir=td)
-            if dual is not None:
-                if dual.error_sink is None:
-
-                    def _dual_err(rec: Mapping[str, Any]) -> None:
-                        try:
-                            ctx.writer.append_error(dict(rec))
-                        except Exception:
-                            pass
-                        ctx.state.v1r_native_exception_count = int(
-                            getattr(ctx.state, "v1r_native_exception_count", 0) or 0
-                        ) + 1
-                        if rec.get("error_type") in (
-                            "v1r_dual_lane_symbol_lookup_mismatch",
-                            "v1r_dual_lane_exception",
-                        ):
-                            ctx.state.v1r_native_entry_blocked = True
-                            ctx.state.v1r_native_block_reason = str(
-                                rec.get("message") or rec.get("error_type") or "dual_fail"
-                            )
-
-                    dual.set_error_sink(_dual_err)
-                seq = int(payload.get("sequence") or payload.get("Sequence") or msg_i or 0)
-                dual.on_push_meta(
-                    sequence=seq, push_at=str(payload.get("CurrentPriceTime") or _now_iso())
-                )
-                from small_paper.v1r_native_entry_live import board_event_epoch_from_payload
-
-                pay_for_t = dict(enriched if isinstance(enriched, dict) else payload or {})
-                t0_recv = getattr(norm, "t0_push_received_at", None)
-                if t0_recv and not pay_for_t.get("recorded_at"):
-                    pay_for_t["recorded_at"] = t0_recv
-                if t0_recv and not pay_for_t.get("received_at"):
-                    pay_for_t["received_at"] = t0_recv
-                et = board_event_epoch_from_payload(pay_for_t)
-                dual.on_tick(
-                    symbol=sym,
-                    payload=enriched if isinstance(enriched, dict) else dict(payload or {}),
-                    event_t=et,
-                    push_sequence=seq,
-                )
+        t0_recv = getattr(norm, "t0_push_received_at", None)
+        _v1r_dual_lane_on_push(
+            ctx,
+            symbol=sym,
+            payload=enriched if isinstance(enriched, dict) else payload,
+            message_index=msg_i,
+            t0_push_received_at=str(t0_recv) if t0_recv else None,
+        )
     except Exception as exc:
         _log_v1r_native_entry_exception(
             ctx,
@@ -6452,6 +6481,7 @@ def _attach_canonical_summary_fields(
     *,
     config: SmallPaperPilotConfig,
     watch_symbols_count: Optional[int] = None,
+    output_dir: Optional[Path] = None,
 ) -> dict[str, Any]:
     from small_paper.canonical_summary import enrich_summary_with_canonical
 
@@ -6464,6 +6494,7 @@ def _attach_canonical_summary_fields(
         peak_open_slots=int(peak_hint) if peak_hint is not None else None,
         max_concurrent_positions=config.max_concurrent_positions,
         watch_symbols_count=watch_symbols_count,
+        output_dir=output_dir,
     )
 
 
@@ -7402,7 +7433,7 @@ def run_push_replay_dry_run(
                 observer_stats=_observer_stats_dict(observer),
             )
         )
-    _attach_canonical_summary_fields(summary, state.events, config=config)
+    _attach_canonical_summary_fields(summary, state.events, config=config, output_dir=output_dir)
     # Phase687W10A: Shadow finalize BEFORE session-end notify (RESEARCH_SHADOW hook).
     _apply_quality_formula_shadow_finalize(state, summary)
     _apply_trading_value_shadow_finalize(state, summary)
@@ -7917,7 +7948,7 @@ def _build_live_summary(
             config=config,
             state=state,
             am_pm_policy=session_cfg.get("am_pm_session"),
-            trade_date=datetime.now(JST).date(),
+            trade_date=session_now().date(),
         )
     )
     from small_paper.live_capital_manager import capital_summary_fields
@@ -8869,16 +8900,21 @@ def run_live_dry_run(
             **hb_extra,
         }
         try:
-            from small_paper.v1r_live_dual_lane import get_dual_lane, live_primary_enabled
+            from small_paper.v1r_live_dual_lane import (
+                get_dual_lane,
+                live_primary_enabled,
+                session_event_epoch,
+            )
             from small_paper.v1r_native_entry_live import get_native_entry
 
             if live_primary_enabled():
                 dual = get_dual_lane(trace_dir=output_dir)
                 eng = get_native_entry()
-                # Frozen V1R session-close (AM 11:30 / PM 15:00) — independent of
-                # observer.close_all / PBv2 11:25/15:23. Wall clock is live event time.
+                # Frozen V1R session-close (AM 11:30 / PM 15:00). Live uses wall
+                # clock; certification replay must use domain-B session time so an
+                # off-day wall epoch cannot SESSION_CLOSE still-open AM/PM books.
                 try:
-                    now_t = time.time()
+                    now_t = session_event_epoch()
                     if dual is not None:
                         dual.maybe_session_close(event_t=now_t)
                     if eng is not None:
@@ -9291,6 +9327,9 @@ def run_live_dry_run(
         def _should_stop() -> bool:
             if state.stop_requested:
                 return True
+            if session_clock_stop_reached():
+                _request_stop("session_clock_stop")
+                return True
             if full_session and auto_stop and sched.is_after_session():
                 _request_stop("session_end")
                 return True
@@ -9483,6 +9522,10 @@ def run_live_dry_run(
             state.websocket_state = "receiving"
             return True
 
+        # Arm certification session clock only when this process can consume PUSH.
+        # Arming in the launcher burns virtual time during universe/Kabu prebuild
+        # (at 48x, minutes of wall become hours of session clock → AM already closed).
+        ensure_session_clock_armed()
         watcher_task = asyncio.create_task(_lifecycle_watcher())
         try:
             while not _should_stop():
@@ -9633,18 +9676,39 @@ def run_live_dry_run(
                             from small_paper.pre_session_warmup import ring_only_warmup_active
 
                             ring_only = ring_only_warmup_active(
-                                config=config, am_pm_policy=am_pm_policy, now=datetime.now(JST)
+                                config=config, am_pm_policy=am_pm_policy, now=session_now()
                             )
                             if ring_only:
                                 _warmup_ring_only_push(
                                     pipeline_ctx, payload, msg_i, symbol=sym
                                 )
+                                try:
+                                    from small_paper.runtime_clock import record_replay_progress
+
+                                    ev_dt_w = _replay_reference_now(pipeline_ctx, payload)
+                                    if ev_dt_w is not None:
+                                        record_replay_progress(
+                                            consumer_ack_watermark=ev_dt_w,
+                                            paper_last_processed_event_time=ev_dt_w,
+                                        )
+                                except Exception:
+                                    pass
                                 if ingress_v2 and bus_bridge is not None:
                                     bus_bridge.ack_processed(payload)
                                 continue
                             tracker = _ensure_evaluation_reachability(pipeline_ctx)
                             ev_dt = _replay_reference_now(pipeline_ctx, payload)
-                            wall_now = datetime.now(JST)
+                            wall_now = session_now()
+                            try:
+                                from small_paper.runtime_clock import record_replay_progress
+
+                                if ev_dt is not None:
+                                    record_replay_progress(
+                                        consumer_ack_watermark=ev_dt,
+                                        paper_last_processed_event_time=ev_dt,
+                                    )
+                            except Exception:
+                                pass
                             tracker.note_consumer_delay(event_time=ev_dt, wall_now=wall_now)
                             prev_enter = int(tracker.recovery_enter_count)
                             # Timestamp/readiness peek only — avoid double ring/feature update
@@ -9993,6 +10057,7 @@ def run_live_dry_run(
         state.events,
         config=config,
         watch_symbols_count=monitored_n,
+        output_dir=output_dir,
     )
     from small_paper.shadow_registry import is_shadow_runtime_enabled, shadow_portfolio_status
 
@@ -10064,8 +10129,9 @@ def run_live_dry_run(
     if discord:
         summary.update(discord_notify_summary_fields(discord))
     try:
-        from small_paper.session_validity import classify_session_validity
+        from small_paper.session_validity import attach_session_clock_evidence, classify_session_validity
 
+        attach_session_clock_evidence(summary)
         summary.update(classify_session_validity(summary))
     except Exception:
         pass
@@ -10131,15 +10197,15 @@ def run_live_dry_run(
             summary["discord_session_end_ok"] = True
         try:
             writer.write_summary(summary)
-        except Exception:
-            pass
+        except Exception as write_exc:
+            log.warning("discord session_end summary write failed: %s", write_exc)
     except Exception as exc:
         log.warning("discord session_end notify failed: %s", exc)
         summary["discord_session_end_error"] = str(exc)
         try:
             writer.write_summary(summary)
-        except Exception:
-            pass
+        except Exception as write_exc:
+            log.warning("discord session_end summary write failed: %s", write_exc)
     # Phase687W70: session-end archive copy (no source delete / no overwrite).
     # Killable subprocess; timeout → pending retry marker under _side_task_tmp only.
     try:
@@ -10174,8 +10240,8 @@ def run_live_dry_run(
         summary["session_archive_backup_error"] = str(exc)
         try:
             writer.write_summary(summary)
-        except Exception:
-            pass
+        except Exception as write_exc:
+            log.warning("session archive summary write failed: %s", write_exc)
     # Phase687W71: external D:\kabudata sync after C archive (warn/pending if D missing).
     try:
         from small_paper.bounded_side_task import run_subprocess_bounded, telemetry as side_task_telemetry

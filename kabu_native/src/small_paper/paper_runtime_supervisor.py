@@ -33,6 +33,9 @@ from small_paper.ws_freeze_recovery import (
     supervisor_may_restart,
 )
 
+# Ops monitor only. Production lifecycle authority is paper_trade_checked_runner.
+PRODUCTION_LIFECYCLE_ACTIVE = False
+
 
 def _native_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -57,8 +60,41 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def _safe_kill(pid: int) -> bool:
-    if not _pid_alive(pid):
+def _safe_kill(
+    pid: int,
+    *,
+    process_start_identity: str = "",
+    component_role: str = "PAPER_RUNTIME",
+    classified: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """Never PID-only. UNKNOWN / PID_REUSED / CONFLICT → no kill."""
+    if pid <= 0 or not _pid_alive(pid):
+        return False
+    try:
+        from small_paper.ownership_classifier import classify_owner
+        from small_paper.runtime_lifecycle import decide_kill
+
+        doc = {
+            "pid": int(pid),
+            "owner_pid": int(pid),
+            "process_start_identity": str(process_start_identity or ""),
+            "component_role": str(component_role or "PAPER_RUNTIME"),
+            "caller": "paper_runtime_supervisor",
+        }
+        cls = dict(classified) if classified is not None else classify_owner(
+            owner=doc,
+            bundle=doc,
+            current=doc,
+            pid_alive_fn=_pid_alive,
+        )
+        decision = decide_kill(
+            cls,
+            identity_proven=bool(str(process_start_identity or "").strip()),
+            stale_graceful_done=False,
+        )
+        if not decision.get("kill_allowed"):
+            return False
+    except Exception:
         return False
     try:
         if sys.platform == "win32":
@@ -71,6 +107,8 @@ def _safe_kill(pid: int) -> bool:
             if sys.platform == "win32":
                 import subprocess
 
+                if not str(process_start_identity or "").strip():
+                    return False
                 subprocess.run(
                     ["taskkill", "/PID", str(pid), "/T", "/F"],
                     capture_output=True,
@@ -207,7 +245,18 @@ def handle_event_loop_stall(
         f"EVENT_LOOP_STALL pid={runtime_pid} hb_age={snap.get('heartbeat_age_sec')}",
         extra=snap,
     )
-    killed = _safe_kill(int(runtime_pid))
+    recorded_start = ""
+    ident_path = Path(session_dir) / "runtime_process_start_identity.txt"
+    if ident_path.is_file():
+        recorded_start = ident_path.read_text(encoding="utf-8").strip()
+    try:
+        killed = _safe_kill(
+            int(runtime_pid),
+            process_start_identity=recorded_start,
+            component_role="PAPER_RUNTIME",
+        )
+    except TypeError:
+        killed = _safe_kill(int(runtime_pid))
     attempt = record_supervisor_attempt(
         session_dir,
         action="safe_stop",

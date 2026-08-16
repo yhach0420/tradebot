@@ -34,6 +34,9 @@ from small_paper.ingress_run_identity import (
 from small_paper.local_market_bus import bus_host, bus_port as default_bus_port
 from small_paper.market_ingress_protocol import now_iso
 
+# Keep child log handles alive so GC does not close stderr/stdout mid-run.
+_OPEN_CHILD_LOGS: list[Any] = []
+
 
 def _live_ingress_pids(*, native_root: Path, trading_date: str) -> list[dict[str, Any]]:
     """Detect already-running ingress for this trading-date (fail-closed duplex guard)."""
@@ -152,14 +155,34 @@ def spawn_ingress_process(
         cmd.extend(["--symbols", ",".join(symbols)])
     day = Path(native_root) / "data" / "market_capture" / trading_date
     day.mkdir(parents=True, exist_ok=True)
-    stderr_path = day / "ingress_stderr.log"
+    session_dir = day / str(ingress_run_id)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    stderr_path = session_dir / "ingress_stderr.log"
+    stdout_path = session_dir / "ingress_stdout.log"
+    stderr_fh = stderr_path.open("w", encoding="utf-8")
+    stdout_fh = stdout_path.open("w", encoding="utf-8")
+    _OPEN_CHILD_LOGS.append(stderr_fh)
+    _OPEN_CHILD_LOGS.append(stdout_fh)
+    index_row = {
+        "at": now_iso(),
+        "ingress_run_id": ingress_run_id,
+        "launch_nonce": launch_nonce,
+        "stderr": str(stderr_path),
+        "stdout": str(stdout_path),
+        "event": "ingress_spawn_session_logs",
+    }
+    with (day / "ingress_log_index.jsonl").open("a", encoding="utf-8") as index_fh:
+        index_fh.write(json.dumps(index_row, ensure_ascii=False) + "\n")
+    day_stderr = day / "ingress_stderr.log"
+    with day_stderr.open("a", encoding="utf-8") as day_fh:
+        day_fh.write(f"# index {index_row['at']} session={ingress_run_id} path={stderr_path}\n")
     creationflags = 0x00000200 if sys.platform == "win32" else 0
     proc = subprocess.Popen(
         cmd,
         cwd=str(root),
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=stderr_path.open("w", encoding="utf-8"),
+        stdout=stdout_fh,
+        stderr=stderr_fh,
         creationflags=creationflags,
         start_new_session=(sys.platform != "win32"),
     )
@@ -178,9 +201,13 @@ def spawn_ingress_process(
         "activation_id": activation_id,
         "activation_sha": activation_sha,
         "process_start_identity": capture_process_start_identity(int(proc.pid)),
+        "session_dir": str(session_dir),
+        "ingress_stderr_log": str(stderr_path),
+        "ingress_stdout_log": str(stdout_path),
     }
     (day / "ingress.pid").write_text(str(proc.pid), encoding="utf-8")
     (day / "ingress_spawn.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (session_dir / "ingress_spawn.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return meta
 
 def wait_ingress_online(
@@ -235,6 +262,29 @@ def wait_ingress_online(
             time.sleep(0.25)
             continue
         last = payload
+        env_gate = {}
+        if str(payload.get("launch_nonce") or "") == nonce:
+            try:
+                from small_paper.runtime_lifecycle import classify_env_auth_from_status, is_auth_ready
+
+                env_gate = classify_env_auth_from_status(payload)
+                ready, ready_reason = is_auth_ready(status=payload)
+                state = str(payload.get("state") or "")
+                if env_gate.get("blocked") or state == "AUTH_FAILED" or (
+                    not ready and "ENVIRONMENT_AUTH_BLOCKED" in ready_reason
+                ):
+                    return {
+                        "ok": False,
+                        "reason": env_gate.get("reason") or ready_reason or f"state_not_ready:{state}",
+                        "status": state or CURRENT_INGRESS_NOT_READY,
+                        "snapshot": payload,
+                        "REAL_KABUS_AUTH_READY": False,
+                        "http_status": env_gate.get("http_status"),
+                        "kabu_code": env_gate.get("kabu_code"),
+                        "stale_status_rejected_count": stale_status_rejected_count,
+                    }
+            except Exception:
+                env_gate = {}
         last_eval = evaluate_current_run_online(
             payload,
             expected=expected,

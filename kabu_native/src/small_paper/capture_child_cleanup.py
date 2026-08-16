@@ -27,6 +27,7 @@ DEFAULT_TERMINATE_TIMEOUT_SEC = 5.0
 OWNED_MARKERS = (
     "small_paper.market_capture_sidecar",
     "small_paper.market_capture_supervisor",
+    "small_paper.market_ingress_service",
 )
 
 
@@ -44,6 +45,10 @@ class OwnedCaptureProcess:
     create_time: str = ""
     parent_pid_at_spawn: int = 0
     cmdline_fingerprint: str = ""
+    process_start_identity: str = ""
+    component_role: str = ""
+    ingress_run_id: str = ""
+    launch_nonce: str = ""
 
 
 @dataclass
@@ -62,6 +67,9 @@ class CleanupResult:
     already_dead: bool = False
     error: str = ""
     ownership_detail: dict[str, Any] = field(default_factory=dict)
+    ownership_class: str = ""
+    kill_decision: dict[str, Any] = field(default_factory=dict)
+    wrong_process_kill: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -206,6 +214,60 @@ def verify_ownership(owned: OwnedCaptureProcess, live: Optional[Mapping[str, Any
     return detail
 
 
+def _owned_identity_doc(owned: OwnedCaptureProcess) -> dict[str, Any]:
+    cmd = f"{cmdline_fingerprint(owned.cmd)} {owned.cmdline_fingerprint}"
+    role = str(owned.component_role or "").strip()
+    if not role:
+        if "market_ingress_service" in cmd:
+            role = "MARKET_INGRESS_SERVICE"
+        elif "market_capture" in cmd:
+            role = "MARKET_CAPTURE_SIDECAR"
+        else:
+            role = "MARKET_INGRESS_SERVICE"
+    return {
+        "pid": int(owned.pid),
+        "owner_pid": int(owned.pid),
+        "process_start_identity": str(owned.process_start_identity or ""),
+        "component_role": role,
+        "owner_role": role,
+        "owner": role,
+        "caller": "checked_runner_owned_child",
+        "ingress_run_id": str(owned.ingress_run_id or ""),
+        "launch_nonce": str(owned.launch_nonce or ""),
+        "kabu_token_authority": role if role == "MARKET_INGRESS_SERVICE" else "",
+    }
+
+
+def classify_owned_process(owned: OwnedCaptureProcess) -> dict[str, Any]:
+    from small_paper.ownership_classifier import classify_owner
+
+    doc = _owned_identity_doc(owned)
+    return classify_owner(
+        owner=doc,
+        bundle=doc,
+        current=doc,
+        pid_alive_fn=_pid_alive,
+    )
+
+
+def decide_owned_kill(
+    owned: OwnedCaptureProcess,
+    *,
+    identity_proven: bool,
+    stale_graceful_done: bool = False,
+) -> dict[str, Any]:
+    from small_paper.runtime_lifecycle import decide_kill
+
+    classified = classify_owned_process(owned)
+    decision = decide_kill(
+        classified,
+        identity_proven=identity_proven,
+        stale_graceful_done=stale_graceful_done,
+    )
+    decision["classified"] = classified
+    return decision
+
+
 def should_stop_on_shutdown(
     *,
     reason: str,
@@ -235,6 +297,13 @@ def should_stop_on_shutdown(
     if paper_blocked_capture_continues or r == "paper_blocked_capture_continues":
         return False, "paper_blocked_capture_continues"
     if continuing_until_scheduled_end:
+        try:
+            from small_paper.runtime_clock import certification_mode
+
+            if certification_mode():
+                return True, "certification_stage_owned_stop"
+        except Exception:
+            pass
         return False, "capture_continuing_until_scheduled_end"
     if r == "normal_exit":
         return True, "normal_exit"
@@ -548,6 +617,18 @@ def cleanup_owned_capture(
         result.cleanup_duration_sec = round(time.time() - t0, 3)
         return result
 
+    identity_proven = bool(ownership.get("owned"))
+    kill_dec = decide_owned_kill(owned, identity_proven=identity_proven, stale_graceful_done=False)
+    result.ownership_class = str(kill_dec.get("class") or "")
+    result.kill_decision = {k: kill_dec.get(k) for k in ("action", "kill_allowed", "reason", "class")}
+    result.wrong_process_kill = 0
+    if not kill_dec.get("kill_allowed"):
+        result.skipped = True
+        result.skip_reason = str(kill_dec.get("reason") or "kill_not_allowed")
+        result.remaining_processes = [owned.pid]
+        result.cleanup_duration_sec = round(time.time() - t0, 3)
+        return result
+
     # 1) graceful via operator_stop.flag
     result.graceful_stop_requested = request_graceful_stop(
         owned.output_dir,
@@ -563,6 +644,23 @@ def cleanup_owned_capture(
             return result
         time.sleep(0.2)
 
+    # Re-verify identity before terminate/force.
+    live2 = query_process(owned.pid)
+    ownership2 = verify_ownership(owned, live2)
+    kill_dec2 = decide_owned_kill(
+        owned,
+        identity_proven=bool(ownership2.get("owned")),
+        stale_graceful_done=True,
+    )
+    result.kill_decision = {k: kill_dec2.get(k) for k in ("action", "kill_allowed", "reason", "class")}
+    result.ownership_class = str(kill_dec2.get("class") or result.ownership_class)
+    if not ownership2.get("owned") or not kill_dec2.get("kill_allowed"):
+        result.skipped = True
+        result.skip_reason = str(kill_dec2.get("reason") or "identity_changed_before_force")
+        result.remaining_processes = [owned.pid]
+        result.cleanup_duration_sec = round(time.time() - t0, 3)
+        return result
+
     # 2) terminate
     result.terminate_used = True
     _terminate_pid(owned.pid)
@@ -572,6 +670,20 @@ def cleanup_owned_capture(
             result.cleanup_duration_sec = round(time.time() - t0, 3)
             return result
         time.sleep(0.2)
+
+    live3 = query_process(owned.pid)
+    ownership3 = verify_ownership(owned, live3)
+    kill_dec3 = decide_owned_kill(
+        owned,
+        identity_proven=bool(ownership3.get("owned")),
+        stale_graceful_done=True,
+    )
+    if not ownership3.get("owned") or not kill_dec3.get("kill_allowed"):
+        result.skipped = True
+        result.skip_reason = str(kill_dec3.get("reason") or "identity_changed_before_kill")
+        result.remaining_processes = [owned.pid]
+        result.cleanup_duration_sec = round(time.time() - t0, 3)
+        return result
 
     # 3) kill
     result.kill_used = True
@@ -590,7 +702,7 @@ def record_owned_from_spawn(spawn: Mapping[str, Any], *, native_root: Path) -> O
     owned = OwnedCaptureProcess(
         pid=pid,
         cmd=cmd,
-        output_dir=str(spawn.get("output") or ""),
+        output_dir=str(spawn.get("output") or spawn.get("session_dir") or ""),
         native_root=str(native_root),
         trading_date=str(spawn.get("trading_date") or ""),
         synthetic=bool(spawn.get("synthetic")),
@@ -599,6 +711,10 @@ def record_owned_from_spawn(spawn: Mapping[str, Any], *, native_root: Path) -> O
         spawn_mono=time.monotonic(),
         parent_pid_at_spawn=os.getpid(),
         cmdline_fingerprint=cmdline_fingerprint(cmd),
+        process_start_identity=str(spawn.get("process_start_identity") or ""),
+        component_role=str(spawn.get("component_role") or "MARKET_INGRESS_SERVICE"),
+        ingress_run_id=str(spawn.get("ingress_run_id") or ""),
+        launch_nonce=str(spawn.get("launch_nonce") or ""),
     )
     live = query_process(pid)
     if live.get("create_time"):
@@ -606,6 +722,13 @@ def record_owned_from_spawn(spawn: Mapping[str, Any], *, native_root: Path) -> O
     if live.get("cmdline"):
         # Prefer live cmdline for later ownership checks
         owned.cmdline_fingerprint = str(live.get("cmdline"))
+    if not owned.process_start_identity:
+        try:
+            from small_paper.ingress_run_identity import capture_process_start_identity
+
+            owned.process_start_identity = str(capture_process_start_identity(int(pid)) or "")
+        except Exception:
+            owned.process_start_identity = ""
     return owned
 
 

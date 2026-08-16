@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Mapping
@@ -16,10 +17,25 @@ DEFAULT_BASE_URL = "http://localhost:18080/kabusapi"
 _ENV_PASSWORD = "KABU_API_PASSWORD"
 _ENV_BASE = "KABU_API_BASE"
 _RETRYABLE_HTTP = frozenset({502, 503, 504})
+ENVIRONMENT_AUTH_BLOCKED = "ENVIRONMENT_AUTH_BLOCKED"
+_KABU_CODE_RE = re.compile(r'"Code"\s*:\s*(\d+)')
 
 
 class KabuNativeApiError(RuntimeError):
     """HTTP / network / malformed response from kabusapi."""
+
+    def __init__(
+        self,
+        message: str,
+        *args: Any,
+        http_status: int | None = None,
+        failure_class: str = "OTHER",
+        kabu_code: str | None = None,
+    ) -> None:
+        super().__init__(message, *args) if args else super().__init__(message)
+        self.http_status = http_status
+        self.failure_class = str(failure_class or "OTHER")
+        self.kabu_code = str(kabu_code or "") or None
 
 
 class KabuNativeRestClient:
@@ -39,19 +55,81 @@ class KabuNativeRestClient:
     def post_token_http(self, api_password: str) -> str:
         """HTTP POST /token. TokenAuthority only — consumers must not call this."""
         url = f"{self.base_url}/token"
-        response = self._request(
-            "POST",
-            url,
-            json_body={"APIPassword": api_password},
-            op="token issue",
+        from small_paper.auth_issue_trace import (
+            HTTP_ATTEMPT,
+            HTTP_RESULT,
+            POST_TOKEN_HTTP_BEGIN,
+            POST_TOKEN_HTTP_RESULT,
+            record_auth_issue_event,
         )
+
+        record_auth_issue_event(POST_TOKEN_HTTP_BEGIN, result="begin", extra={"url_host": self.base_url})
+        record_auth_issue_event(HTTP_ATTEMPT, result="begin", audit=True, extra={"url_host": self.base_url})
+        try:
+            response = self._request(
+                "POST",
+                url,
+                json_body={"APIPassword": api_password},
+                op="token issue",
+            )
+        except Exception as exc:
+            status = getattr(exc, "http_status", None)
+            klass = str(getattr(exc, "failure_class", "") or "")
+            record_auth_issue_event(
+                POST_TOKEN_HTTP_RESULT,
+                result=klass or "error",
+                exception=exc,
+                http_status=status,
+            )
+            record_auth_issue_event(
+                HTTP_RESULT,
+                result=klass or "error",
+                exception=exc,
+                http_status=status,
+                audit=True,
+                allowed=False,
+            )
+            raise
         try:
             payload = response.json()
         except json.JSONDecodeError as e:
-            raise KabuNativeApiError(f"token response is not JSON: {e}") from e
+            err = KabuNativeApiError(
+                f"token response is not JSON: {e}",
+                http_status=int(response.status_code),
+                failure_class="PARSE",
+            )
+            record_auth_issue_event(
+                POST_TOKEN_HTTP_RESULT, result="parse_error", exception=err, http_status=response.status_code
+            )
+            record_auth_issue_event(
+                HTTP_RESULT, result="parse_error", exception=err, http_status=response.status_code, audit=True, allowed=False
+            )
+            raise err from e
         token = payload.get("Token")
         if not token:
-            raise KabuNativeApiError(f"token response missing Token field: {_safe_payload_repr(payload)}")
+            err = KabuNativeApiError(
+                f"token response missing Token field: {_safe_payload_repr(payload)}",
+                http_status=int(response.status_code),
+                failure_class="PARSE",
+            )
+            record_auth_issue_event(
+                POST_TOKEN_HTTP_RESULT, result="missing_token", exception=err, http_status=response.status_code
+            )
+            record_auth_issue_event(
+                HTTP_RESULT,
+                result="missing_token",
+                exception=err,
+                http_status=response.status_code,
+                audit=True,
+                allowed=False,
+            )
+            raise err
+        record_auth_issue_event(
+            POST_TOKEN_HTTP_RESULT, result="ok", http_status=int(response.status_code)
+        )
+        record_auth_issue_event(
+            HTTP_RESULT, result="ok", http_status=int(response.status_code), audit=True, allowed=True
+        )
         return str(token)
 
     def issue_token(self, api_password: str) -> str:
@@ -60,7 +138,30 @@ class KabuNativeRestClient:
         return issue_station_token(self, api_password, caller="rest_client.issue_token")
 
     def issue_token_from_env(self) -> str:
-        password = require_kabu_password()
+        from small_paper.auth_issue_trace import (
+            API_PASSWORD_RESOLVE_BEGIN,
+            API_PASSWORD_RESOLVE_RESULT,
+            password_present,
+            record_auth_issue_event,
+        )
+
+        record_auth_issue_event(API_PASSWORD_RESOLVE_BEGIN, result="begin")
+        present = password_present()
+        try:
+            password = require_kabu_password()
+        except Exception as exc:
+            record_auth_issue_event(
+                API_PASSWORD_RESOLVE_RESULT,
+                result="missing" if not present else "error",
+                exception=exc,
+                extra={"password_present": present},
+            )
+            raise
+        record_auth_issue_event(
+            API_PASSWORD_RESOLVE_RESULT,
+            result="ok",
+            extra={"password_present": True},
+        )
         return self.issue_token(password)
 
     def get_board(self, symbol_key: str, *, token: str) -> dict[str, Any]:
@@ -104,15 +205,31 @@ class KabuNativeRestClient:
                 if attempt + 1 < self.max_retries:
                     self._sleep_backoff(attempt)
                     continue
-                raise KabuNativeApiError(f"ネットワークエラー ({op} {url}): {e}") from e
+                raise KabuNativeApiError(
+                    f"ネットワークエラー ({op} {url}): {e}",
+                    failure_class="TRANSPORT",
+                ) from e
 
             if response.status_code in _RETRYABLE_HTTP and attempt + 1 < self.max_retries:
-                last_error = KabuNativeApiError(_format_http_error(op, url, response))
+                last_error = KabuNativeApiError(
+                    _format_http_error(op, url, response),
+                    http_status=int(response.status_code),
+                    failure_class="TRANSPORT",
+                )
                 self._sleep_backoff(attempt)
                 continue
 
             if not response.ok:
-                raise KabuNativeApiError(_format_http_error(op, url, response))
+                preview = _response_body_preview(response)
+                kabu_code = _kabu_code_from_text(preview)
+                status = int(response.status_code)
+                klass = _http_failure_class(op=op, status=status, kabu_code=kabu_code)
+                raise KabuNativeApiError(
+                    _format_http_error(op, url, response, body_preview=preview),
+                    http_status=status,
+                    failure_class=klass,
+                    kabu_code=kabu_code,
+                )
             return response
 
         assert last_error is not None
@@ -225,13 +342,54 @@ def _default_repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def _format_http_error(op: str, url: str, response: requests.Response) -> str:
-    body_preview = ""
+def _kabu_code_from_text(text: str) -> str:
+    m = _KABU_CODE_RE.search(str(text or ""))
+    return str(m.group(1)) if m else ""
+
+
+def _http_failure_class(*, op: str, status: int, kabu_code: str) -> str:
+    token_op = str(op or "").lower().startswith("token")
+    if kabu_code == "4001007" or (token_op and status in {401, 403}):
+        return ENVIRONMENT_AUTH_BLOCKED
+    if status in {400, 401, 403}:
+        return "AUTH_REJECTION"
+    return "HTTP_ERROR"
+
+
+def _response_body_preview(response: requests.Response) -> str:
+    raw = b""
     try:
-        body_preview = redact_secrets(response.text[:2000])
+        raw = bytes(response.content or b"")[:2000]
     except Exception:
-        body_preview = "<unreadable body>"
-    return f"{op} failed HTTP {response.status_code} url={url!r} body={body_preview!r}"
+        raw = b""
+    text = ""
+    for enc in ("utf-8", "cp932", "shift_jis"):
+        if not raw:
+            break
+        try:
+            cand = raw.decode(enc)
+        except Exception:
+            continue
+        text = cand
+        if "ログイン" in cand or "認証" in cand:
+            break
+    if not text:
+        try:
+            text = str(response.text or "")[:2000]
+        except Exception:
+            text = "<unreadable body>"
+    return redact_secrets(text)
+
+
+def _format_http_error(
+    op: str,
+    url: str,
+    response: requests.Response,
+    *,
+    body_preview: str | None = None,
+) -> str:
+    preview = body_preview if body_preview is not None else _response_body_preview(response)
+    return f"{op} failed HTTP {response.status_code} url={url!r} body={preview!r}"
 
 
 def _safe_payload_repr(payload: Any) -> str:

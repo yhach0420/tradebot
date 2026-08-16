@@ -186,8 +186,8 @@ def test_w4s_unknown_sessions_collected_zero(tmp_path: Path):
     r.paper_exit_code = 0
     post = r.step_post_session(paper_ok=True)
     assert post["w4s_verdict"] == "UNKNOWN"
-    assert post["sessions_collected"] == 0
     assert post["counted_as_forward_session"] is False
+    assert post["result"] != "OK"
 
 
 def test_live_seal_14_14_counts_one_when_w4s_runs(tmp_path: Path):

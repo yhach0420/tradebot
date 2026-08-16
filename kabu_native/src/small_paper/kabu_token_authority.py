@@ -69,6 +69,10 @@ class TokenUnavailable(ChildTokenIssueBlocked):
     """Consumer requested a token but Ingress has not published one."""
 
 
+class OwnerIdentityFailClosed(ChildTokenIssueBlocked):
+    """PID reuse / unknown / conflict owner. No kill, no token reuse."""
+
+
 STALE_STAGE_TOKEN_REJECTED = "STALE_STAGE_TOKEN_REJECTED"
 CURRENT_STAGE_TOKEN_IDENTITY_NOT_PROVEN = "CURRENT_STAGE_TOKEN_IDENTITY_NOT_PROVEN"
 TOKEN_STAGE_MATCH = "TOKEN_STAGE_MATCH"
@@ -76,6 +80,11 @@ TOKEN_STAGE_MISMATCH = "TOKEN_STAGE_MISMATCH"
 TOKEN_STAGE_MISSING = "TOKEN_STAGE_MISSING"
 TOKEN_STAGE_NOT_APPLICABLE = "TOKEN_STAGE_NOT_APPLICABLE"
 BUNDLE_SCHEMA_VERSION = "KABU_STATION_TOKEN_BUNDLE_V24"
+
+AUTHORITY_CLAIMED_PENDING_TOKEN = "CLAIMED_PENDING_TOKEN"
+AUTHORITY_ACTIVE_TOKEN_OWNER = "ACTIVE_TOKEN_OWNER"
+AUTHORITY_RELEASED_DEAD = "RELEASED_DEAD"
+AUTHORITY_FAILED_ISSUE = "FAILED_ISSUE"
 
 
 class StaleStageTokenRejected(TokenUnavailable):
@@ -353,12 +362,94 @@ def ingress_owner_active(
     trading_date: Optional[str] = None,
 ) -> bool:
     station = load_station_owner()
-    if str(station.get("owner") or "") == OWNER_INGRESS and _pid_alive(int(station.get("pid") or 0)):
-        return True
-    body = load_authority(native_root, trading_date)
-    if str(body.get("owner") or "") != OWNER_INGRESS:
+    bundle = load_station_bundle()
+    state = str(station.get("authority_state") or bundle.get("authority_state") or "").strip()
+    if state in {AUTHORITY_CLAIMED_PENDING_TOKEN, AUTHORITY_FAILED_ISSUE, AUTHORITY_RELEASED_DEAD}:
         return False
-    return _pid_alive(int(body.get("pid") or 0))
+    from small_paper.ownership_classifier import CURRENT_VALID, classify_owner, current_identity_from_env
+
+    classified = classify_owner(
+        owner=station,
+        bundle=bundle,
+        current=current_identity_from_env(pid=os.getpid()),
+        pid_alive_fn=_pid_alive,
+    )
+    if classified.get("class") != CURRENT_VALID:
+        return False
+    if state == AUTHORITY_ACTIVE_TOKEN_OWNER:
+        return True
+    # Legacy bundles published before authority_state existed.
+    return bool(str(bundle.get("token") or "").strip() and (bundle.get("generation") or station.get("token_generation")))
+
+
+def _owner_identity_fields(pid: int, *, session_id: str = "") -> dict[str, Any]:
+    from small_paper.ingress_run_identity import ENV_INGRESS_RUN_ID, ENV_LAUNCH_NONCE, capture_process_start_identity
+
+    start = ""
+    try:
+        start = str(capture_process_start_identity(int(pid)) or "")
+    except Exception:
+        start = ""
+    stage = current_stage_token_identity()
+    return {
+        "pid": int(pid),
+        "owner_pid": int(pid),
+        "owner_process_start": start,
+        "owner_process_start_identity": start,
+        "component_role": OWNER_INGRESS,
+        "owner_role": OWNER_INGRESS,
+        "owner": OWNER_INGRESS,
+        "kabu_token_authority": OWNER_INGRESS,
+        "session_id": str(session_id or ""),
+        "ingress_run_id": str(
+            getattr(_tls, "ingress_run_id", "") or os.environ.get(ENV_INGRESS_RUN_ID) or ""
+        ).strip(),
+        "launch_nonce": str(
+            getattr(_tls, "launch_nonce", "") or os.environ.get(ENV_LAUNCH_NONCE) or ""
+        ).strip(),
+        "stage_id": str(stage.get("stage_run_id") or "").strip() or None,
+        "stage_run_id": stage.get("stage_run_id") or None,
+        "certification_run_id": stage.get("certification_run_id") or None,
+        "activation_id": stage.get("activation_id") or None,
+        "activation_sha": stage.get("activation_sha") or None,
+        "runtime_run_id": stage.get("runtime_run_id") or None,
+    }
+
+
+def _append_previous_owner_history(station: dict[str, Any], *, reason: str) -> list[dict[str, Any]]:
+    history = list(station.get("previous_owner_history") or [])
+    old_pid = int(station.get("pid") or station.get("owner_pid") or 0)
+    if old_pid <= 0:
+        return history
+    history.append(
+        {
+            "pid": old_pid,
+            "owner_pid": old_pid,
+            "owner_process_start_identity": str(
+                station.get("owner_process_start_identity") or station.get("owner_process_start") or ""
+            ),
+            "component_role": str(station.get("component_role") or station.get("owner_role") or station.get("owner") or ""),
+            "ingress_run_id": str(station.get("ingress_run_id") or ""),
+            "launch_nonce": str(station.get("launch_nonce") or ""),
+            "stage_id": str(station.get("stage_id") or station.get("stage_run_id") or ""),
+            "generation": int(station.get("token_generation") or station.get("generation") or 0),
+            "authority_state": str(station.get("authority_state") or ""),
+            "released_at": _now_iso(),
+            "reason": str(reason),
+        }
+    )
+    return history
+
+
+def _classify_station_owner(*, pid: int = 0) -> dict[str, Any]:
+    from small_paper.ownership_classifier import classify_owner, current_identity_from_env
+
+    return classify_owner(
+        owner=load_station_owner(),
+        bundle=load_station_bundle(),
+        current=current_identity_from_env(pid=int(pid or getattr(_tls, "pid", 0) or os.getpid())),
+        pid_alive_fn=_pid_alive,
+    )
 
 
 def claim_owner(
@@ -368,20 +459,68 @@ def claim_owner(
     pid: int,
     session_id: str,
 ) -> dict[str, Any]:
-    day_dir = authority_day_dir(native_root, trading_date)
-    os.environ[ENV_AUTHORITY_DIR] = str(day_dir)
-    body = load_authority(native_root, trading_date) or empty_authority()
-    body.update(
-        {
-            "kabu_token_authority": OWNER_INGRESS,
-            "owner": OWNER_INGRESS,
-            "pid": int(pid),
-            "session_id": str(session_id),
-            "updated_at": _now_iso(),
-        }
+    from small_paper.auth_issue_trace import (
+        CLAIM_OWNER_BEGIN,
+        CLAIM_OWNER_FAIL,
+        CLAIM_OWNER_OK,
+        bind_trace_context,
+        record_auth_issue_event,
     )
-    _write_authority(day_dir, body)
-    return body
+    from small_paper.ownership_classifier import (
+        CONFLICT,
+        CURRENT_VALID,
+        PID_REUSED,
+        UNKNOWN,
+    )
+
+    bind_trace_context(native_root=native_root, trading_date=trading_date)
+    record_auth_issue_event(CLAIM_OWNER_BEGIN, result="begin")
+    try:
+        classified = _classify_station_owner(pid=int(pid))
+        cls = str(classified.get("class") or "")
+        owner_pid = int(classified.get("pid") or 0)
+        if cls == CURRENT_VALID and owner_pid not in {0, int(pid)}:
+            err = TokenSecondIssuerBlocked(
+                f"{BLOCKED_REASON} claim_owner reason=CURRENT_VALID owner_pid={owner_pid}"
+            )
+            record_auth_issue_event(CLAIM_OWNER_FAIL, result="CURRENT_VALID", exception=err)
+            raise err
+        if cls == PID_REUSED or cls == CONFLICT or (cls == UNKNOWN and classified.get("process_alive")):
+            err = OwnerIdentityFailClosed(
+                f"OWNER_IDENTITY_FAIL_CLOSED class={cls} reason={classified.get('reason')} "
+                f"owner_pid={owner_pid} wrong_process_kill=0"
+            )
+            record_auth_issue_event(CLAIM_OWNER_FAIL, result=cls, exception=err)
+            raise err
+        day_dir = authority_day_dir(native_root, trading_date)
+        os.environ[ENV_AUTHORITY_DIR] = str(day_dir)
+        ident = _owner_identity_fields(int(pid), session_id=str(session_id))
+        body = load_authority(native_root, trading_date) or empty_authority()
+        body.update(ident)
+        body["authority_state"] = AUTHORITY_CLAIMED_PENDING_TOKEN
+        body["updated_at"] = _now_iso()
+        # Claim does not stamp token generation as current MATCH / AUTH_READY.
+        _write_authority(day_dir, body)
+        station_dir = station_authority_dir()
+        station = load_station_owner() or empty_authority()
+        history = _append_previous_owner_history(station, reason="claim_pending")
+        station_out = {k: v for k, v in station.items() if k != "token"}
+        station_out.update(ident)
+        station_out["authority_state"] = AUTHORITY_CLAIMED_PENDING_TOKEN
+        station_out["previous_owner_history"] = history
+        station_out["updated_at"] = body["updated_at"]
+        station_out["claimed_at"] = body["updated_at"]
+        _atomic_write_json(station_dir / STATION_OWNER_JSON, station_out)
+        record_auth_issue_event(
+            CLAIM_OWNER_OK,
+            result="CLAIMED_PENDING_TOKEN",
+            extra={"claimed_pid": int(pid), "session_id": str(session_id), "authority_state": AUTHORITY_CLAIMED_PENDING_TOKEN},
+        )
+        return body
+    except Exception as exc:
+        if not isinstance(exc, (TokenSecondIssuerBlocked, OwnerIdentityFailClosed)):
+            record_auth_issue_event(CLAIM_OWNER_FAIL, result="error", exception=exc)
+        raise
 
 
 @contextmanager
@@ -393,25 +532,35 @@ def owner_issue_context(
     session_id: str,
     caller: str,
 ) -> Iterator[None]:
-    claim_owner(
-        native_root=native_root,
-        trading_date=trading_date,
-        pid=pid,
-        session_id=session_id,
-    )
+    from small_paper.auth_issue_trace import OWNER_CONTEXT_ENTER, bind_trace_context, record_auth_issue_event
+
+    bind_trace_context(native_root=native_root, trading_date=trading_date)
+    record_auth_issue_event(OWNER_CONTEXT_ENTER, result="enter", extra={"caller": str(caller)})
+    from small_paper.ingress_run_identity import ENV_INGRESS_RUN_ID, ENV_LAUNCH_NONCE
+
     _tls.owner = OWNER_INGRESS
     _tls.caller = str(caller)
     _tls.native_root = Path(native_root)
     _tls.trading_date = str(trading_date)
     _tls.pid = int(pid)
     _tls.session_id = str(session_id)
+    _tls.launch_nonce = str(os.environ.get(ENV_LAUNCH_NONCE) or "").strip()
+    _tls.ingress_run_id = str(os.environ.get(ENV_INGRESS_RUN_ID) or "").strip()
     try:
+        claim_owner(
+            native_root=native_root,
+            trading_date=trading_date,
+            pid=pid,
+            session_id=session_id,
+        )
         yield
     finally:
         _tls.owner = None
         _tls.caller = ""
         _tls.pid = 0
         _tls.session_id = ""
+        _tls.launch_nonce = ""
+        _tls.ingress_run_id = ""
 
 
 def current_owner_context() -> str:
@@ -569,6 +718,15 @@ def evaluate_issue_permission(
     synthetic: bool = False,
 ) -> dict[str, Any]:
     """Decide POST /token allow/block without touching Station. Call under lock."""
+    from small_paper.ownership_classifier import (
+        CONFLICT,
+        CURRENT_VALID,
+        DEAD_OWNER,
+        PID_REUSED,
+        STALE_PROVEN_OWNED,
+        UNKNOWN,
+    )
+
     allowed_auth, auth_reason = live_kabu_auth_allowed(synthetic=synthetic)
     tls_owner = current_owner_context()
     my_pid = int(getattr(_tls, "pid", 0) or os.getpid())
@@ -576,6 +734,7 @@ def evaluate_issue_permission(
     owner_pid = int(owner.get("pid") or 0)
     owner_live = _station_owner_live(owner)
     old_gen = int(owner.get("token_generation") or load_station_bundle(base_url).get("generation") or 0)
+    ownership = _classify_station_owner(pid=my_pid)
     result: dict[str, Any] = {
         "allowed": False,
         "reason": "",
@@ -585,11 +744,14 @@ def evaluate_issue_permission(
         "role": tls_owner or "TOKEN_CONSUMER_ONLY",
         "owner_pid": owner_pid,
         "owner_live": owner_live,
+        "ownership_class": ownership.get("class"),
+        "process_alive": bool(ownership.get("process_alive")),
         "old_generation": old_gen,
         "station_endpoint": station_endpoint_id(base_url),
         "trading_date": str(getattr(_tls, "trading_date", "") or session_now().strftime("%Y%m%d")),
         "auth_mode": kabu_auth_mode(),
         "input_mode": market_input_mode(),
+        "wrong_process_kill": 0,
     }
     if not allowed_auth:
         result["reason"] = auth_reason
@@ -597,32 +759,33 @@ def evaluate_issue_permission(
     if tls_owner != OWNER_INGRESS:
         result["reason"] = "not_ingress_owner_context"
         return result
+    ocls = str(ownership.get("class") or "")
+    if ocls == PID_REUSED:
+        result["reason"] = PID_REUSED
+        return result
+    if ocls == CONFLICT:
+        result["reason"] = CONFLICT
+        return result
+    if ocls == UNKNOWN and ownership.get("process_alive"):
+        result["reason"] = UNKNOWN
+        return result
     stage = current_stage_token_identity()
     bundle = load_station_bundle(base_url)
     classified = classify_token_stage(bundle, want=stage)
     result["token_stage_class"] = classified.get("class")
     leftover_unscoped = classified.get("class") in {TOKEN_STAGE_MISSING, TOKEN_STAGE_MISMATCH}
-    if owner_live and owner_pid != my_pid:
-        if certification_mode() and leftover_unscoped:
-            result["allowed"] = True
-            result["code"] = "ALLOWED"
-            result["reason"] = "stale_stage_takeover"
-            return result
+    if ocls == CURRENT_VALID and owner_pid not in {0, my_pid}:
         result["reason"] = "station_owner_pid_alive"
         return result
     result["allowed"] = True
     result["code"] = "ALLOWED"
     result["reason"] = "authorized_ingress" if owner_pid in {0, my_pid} else "stale_owner_takeover"
-    if owner_live and owner_pid == my_pid:
+    if owner_pid in {0, my_pid}:
         result["reason"] = "authorized_ingress"
-    elif owner_pid and not owner_live:
-        prev_stage = str(bundle.get("stage_run_id") or owner.get("stage_run_id") or "")
-        if stage.get("stage_run_id") and prev_stage and prev_stage != stage["stage_run_id"]:
-            result["reason"] = "stale_stage_takeover"
-        elif leftover_unscoped:
-            result["reason"] = "stale_stage_takeover"
-        else:
-            result["reason"] = "stale_owner_takeover"
+    elif ocls == DEAD_OWNER:
+        result["reason"] = "stale_owner_takeover"
+    elif leftover_unscoped or ocls == STALE_PROVEN_OWNED:
+        result["reason"] = "stale_stage_takeover"
     return result
 
 
@@ -690,6 +853,15 @@ def publish_owned_token(
     key = str(token or "").strip()
     if not key:
         raise ValueError("empty token")
+    from small_paper.auth_issue_trace import (
+        AUTH_READY,
+        PUBLISH_SUCCESS,
+        PUBLISH_TOKEN_BEGIN,
+        PUBLISH_TOKEN_OK,
+        record_auth_issue_event,
+    )
+
+    record_auth_issue_event(PUBLISH_TOKEN_BEGIN, result="begin")
     fp = token_fingerprint(key)
     existing = load_station_bundle(base_url)
     stage = current_stage_token_identity()
@@ -717,6 +889,10 @@ def publish_owned_token(
         process_start = str(capture_process_start_identity(pid) or "")
     except Exception:
         process_start = ""
+    ident_fields = _owner_identity_fields(pid, session_id=session_id)
+    if process_start:
+        ident_fields["owner_process_start"] = process_start
+        ident_fields["owner_process_start_identity"] = process_start
     bundle = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
         "generation": gen,
@@ -728,7 +904,12 @@ def publish_owned_token(
         "owner_role": OWNER_INGRESS,
         "pid": pid,
         "owner_pid": pid,
-        "owner_process_start": process_start,
+        "owner_process_start": process_start or ident_fields.get("owner_process_start") or "",
+        "owner_process_start_identity": process_start or ident_fields.get("owner_process_start_identity") or "",
+        "component_role": OWNER_INGRESS,
+        "ingress_run_id": ident_fields.get("ingress_run_id") or None,
+        "launch_nonce": ident_fields.get("launch_nonce") or None,
+        "stage_id": stage.get("stage_run_id") or None,
         "session_id": session_id,
         "caller": str(caller),
         "trading_date": str(trading_date),
@@ -741,6 +922,7 @@ def publish_owned_token(
         "activation_id": stage.get("activation_id") or None,
         "activation_sha": stage.get("activation_sha") or None,
         "runtime_run_id": stage.get("runtime_run_id") or None,
+        "authority_state": AUTHORITY_ACTIVE_TOKEN_OWNER,
     }
     _atomic_write_json(station_dir / BUNDLE_JSON, bundle)
     meta = {k: v for k, v in bundle.items() if k != "token"}
@@ -754,6 +936,8 @@ def publish_owned_token(
             "updated_at": issued_at,
             "blocked_child_issue_count": int(station.get("blocked_child_issue_count") or 0),
             "blocked_second_issuer_count": int(station.get("blocked_second_issuer_count") or 0),
+            "authority_state": AUTHORITY_ACTIVE_TOKEN_OWNER,
+            "previous_owner_history": list(station.get("previous_owner_history") or []),
         }
     )
     _atomic_write_json(station_dir / STATION_OWNER_JSON, meta)
@@ -776,6 +960,11 @@ def publish_owned_token(
             "updated_at": issued_at,
             "token_fingerprint": fp,
             "station_endpoint": station_endpoint_id(base_url),
+            "authority_state": AUTHORITY_ACTIVE_TOKEN_OWNER,
+            "owner_process_start_identity": process_start or ident_fields.get("owner_process_start_identity") or "",
+            "component_role": OWNER_INGRESS,
+            "ingress_run_id": ident_fields.get("ingress_run_id") or "",
+            "launch_nonce": ident_fields.get("launch_nonce") or "",
         }
     )
     _write_authority(day_dir, body)
@@ -783,6 +972,7 @@ def publish_owned_token(
         station_dir,
         {
             "at": issued_at,
+            "event": "PUBLISH_SUCCESS",
             "allowed": True,
             "code": "ALLOWED",
             "pid": pid,
@@ -797,7 +987,136 @@ def publish_owned_token(
             "station_endpoint": station_endpoint_id(base_url),
         },
     )
+    record_auth_issue_event(
+        PUBLISH_TOKEN_OK,
+        result="ok",
+        old_generation=gen - 1,
+        new_generation=gen,
+    )
+    record_auth_issue_event(
+        AUTH_READY,
+        result="ok",
+        old_generation=gen - 1,
+        new_generation=gen,
+    )
+    record_auth_issue_event(
+        PUBLISH_SUCCESS,
+        result="ok",
+        old_generation=gen - 1,
+        new_generation=gen,
+        audit=True,
+        allowed=True,
+    )
     return body
+
+
+def mark_issue_failed(*, base_url: Optional[str] = None, reason: str = "") -> None:
+    """Claimed issuer failed POST/publish. Do not treat generation as current AUTH_READY."""
+    station_dir = station_authority_dir(base_url)
+    station = load_station_owner(base_url) or empty_authority()
+    if str(station.get("authority_state") or "") == AUTHORITY_ACTIVE_TOKEN_OWNER:
+        return
+    station["authority_state"] = AUTHORITY_FAILED_ISSUE
+    station["last_issue_failure_reason"] = str(reason or "ISSUE_FAILED")[:500]
+    station["updated_at"] = _now_iso()
+    _atomic_write_json(station_dir / STATION_OWNER_JSON, {k: v for k, v in station.items() if k != "token"})
+    try:
+        body = load_authority() or empty_authority()
+        if str(body.get("authority_state") or "") != AUTHORITY_ACTIVE_TOKEN_OWNER:
+            body["authority_state"] = AUTHORITY_FAILED_ISSUE
+            body["updated_at"] = station["updated_at"]
+            _write_authority(authority_day_dir(), body)
+    except Exception:
+        pass
+
+
+def reclaim_dead_station_owner(
+    *,
+    native_root: Path,
+    trading_date: str,
+    base_url: Optional[str] = None,
+) -> dict[str, Any]:
+    """Release current authority for a proven dead managed Ingress. No PID kill, no token delete."""
+    from small_paper.ownership_classifier import DEAD_OWNER, classify_owner, current_identity_from_env
+
+    classified = classify_owner(
+        owner=load_station_owner(base_url),
+        bundle=load_station_bundle(base_url),
+        current=current_identity_from_env(pid=os.getpid()),
+        pid_alive_fn=_pid_alive,
+    )
+    out: dict[str, Any] = {
+        "ok": True,
+        "reclaimed": False,
+        "killed_pid": None,
+        "wrong_process_kill": 0,
+        "bundle_deleted": False,
+        "token_bytes_deleted": False,
+        "ownership_class": classified.get("class"),
+        "reason": classified.get("reason"),
+        "previous_owner_pid": int(classified.get("pid") or 0) or None,
+    }
+    if classified.get("class") != DEAD_OWNER:
+        out["reason"] = f"not_dead_owner:{classified.get('class')}"
+        return out
+    if not classified.get("managed_previous_ingress"):
+        out["reason"] = "managed_previous_ingress_not_proven"
+        out["ok"] = False
+        return out
+    if not classified.get("reclaim_allowed"):
+        out["reason"] = "reclaim_not_allowed"
+        out["ok"] = False
+        return out
+    station_dir = station_authority_dir(base_url)
+    station = load_station_owner(base_url) or empty_authority()
+    day_dir = authority_day_dir(native_root, trading_date)
+    history = _append_previous_owner_history(station, reason="DEAD_OWNER_RECLAIM")
+    released_at = _now_iso()
+    station_out = {k: v for k, v in station.items() if k != "token"}
+    station_out["previous_owner_history"] = history
+    station_out["authority_state"] = AUTHORITY_RELEASED_DEAD
+    station_out["pid"] = 0
+    station_out["owner_pid"] = 0
+    station_out["owner"] = ""
+    station_out["reclaimed_at"] = released_at
+    station_out["updated_at"] = released_at
+    _atomic_write_json(station_dir / STATION_OWNER_JSON, station_out)
+    bundle = load_station_bundle(base_url)
+    if bundle:
+        bundle_out = dict(bundle)
+        bundle_out["pid"] = 0
+        bundle_out["owner_pid"] = 0
+        bundle_out["authority_state"] = AUTHORITY_RELEASED_DEAD
+        bundle_out["updated_at"] = released_at
+        _atomic_write_json(station_dir / BUNDLE_JSON, bundle_out)
+    body = load_authority(native_root, trading_date) or empty_authority()
+    body["previous_owner_history"] = list(body.get("previous_owner_history") or []) + (
+        history[-1:] if history else []
+    )
+    body["authority_state"] = AUTHORITY_RELEASED_DEAD
+    body["pid"] = 0
+    body["owner_pid"] = 0
+    body["owner"] = ""
+    body["updated_at"] = released_at
+    _write_authority(day_dir, body)
+    _append_audit(
+        station_dir,
+        {
+            "at": released_at,
+            "event": "DEAD_OWNER_RECLAIM",
+            "allowed": False,
+            "code": "RELEASED_DEAD",
+            "pid": 0,
+            "role": OWNER_INGRESS,
+            "reason": "DEAD_OWNER",
+            "previous_owner_pid": out["previous_owner_pid"],
+            "wrong_process_kill": 0,
+            "bundle_deleted": False,
+        },
+    )
+    out["reclaimed"] = True
+    out["reason"] = "RELEASED_DEAD"
+    return out
 
 
 def read_shared_token(
@@ -853,25 +1172,91 @@ def issue_station_token(
     synthetic: bool = False,
 ) -> str:
     """Sole Station POST /token entry. Blocks second issuers before HTTP."""
+    from small_paper.auth_issue_trace import (
+        EXCEPTION,
+        ISSUE_ATTEMPT_BEGIN,
+        ISSUE_EXCEPTION,
+        ISSUE_PERMISSION_ALLOW,
+        ISSUE_PERMISSION_BEGIN,
+        ISSUE_PERMISSION_BLOCK,
+        ISSUE_PERMISSION_RESULT,
+        ISSUE_STATION_TOKEN_ENTER,
+        STATION_LOCK_ACQUIRED,
+        STATION_LOCK_BEGIN,
+        STATION_LOCK_FAIL,
+        record_auth_issue_event,
+    )
+
     base = str(getattr(client, "base_url", "") or _default_base_url())
     tls_caller = current_issue_caller() or caller
-    with station_issue_lock(base_url=base):
+    record_auth_issue_event(ISSUE_STATION_TOKEN_ENTER, result="enter", extra={"caller": str(tls_caller)})
+    record_auth_issue_event(ISSUE_ATTEMPT_BEGIN, result="begin", audit=True, extra={"caller": str(tls_caller)})
+    record_auth_issue_event(STATION_LOCK_BEGIN, result="begin")
+    lock_cm = None
+    try:
+        lock_cm = station_issue_lock(base_url=base)
+        lock_cm.__enter__()
+    except Exception as exc:
+        record_auth_issue_event(STATION_LOCK_FAIL, result="error", exception=exc)
+        record_auth_issue_event(ISSUE_EXCEPTION, result="lock_fail", exception=exc, audit=True, allowed=False)
+        record_auth_issue_event(EXCEPTION, result="lock_fail", exception=exc)
+        raise
+    record_auth_issue_event(STATION_LOCK_ACQUIRED, result="ok")
+    try:
         reused = _owned_matching_token(base)
         if reused:
+            record_auth_issue_event(
+                ISSUE_PERMISSION_RESULT,
+                result="reuse_owned_match",
+                extra={"reused": True},
+            )
             return reused
+        record_auth_issue_event(ISSUE_PERMISSION_BEGIN, result="begin")
         decision = evaluate_issue_permission(caller=tls_caller, base_url=base, synthetic=synthetic)
+        record_auth_issue_event(
+            ISSUE_PERMISSION_RESULT,
+            result=str(decision.get("reason") or decision.get("code") or ""),
+            authority_decision=decision,
+            old_generation=decision.get("old_generation"),
+        )
         if not decision.get("allowed"):
+            record_auth_issue_event(
+                ISSUE_PERMISSION_BLOCK,
+                result=str(decision.get("reason") or ""),
+                authority_decision=decision,
+                old_generation=decision.get("old_generation"),
+                audit=True,
+                allowed=False,
+            )
             _record_blocked(caller=tls_caller, decision=decision, base_url=base)
+            reason = str(decision.get("reason") or "")
+            if reason in {"PID_REUSED", "UNKNOWN", "CONFLICT"}:
+                raise OwnerIdentityFailClosed(
+                    f"OWNER_IDENTITY_FAIL_CLOSED caller={tls_caller} reason={reason} "
+                    f"owner_pid={decision.get('owner_pid')} wrong_process_kill=0"
+                )
             raise TokenSecondIssuerBlocked(
                 f"{BLOCKED_REASON} caller={tls_caller} reason={decision.get('reason')} "
                 f"owner_pid={decision.get('owner_pid')}"
             )
+        record_auth_issue_event(
+            ISSUE_PERMISSION_ALLOW,
+            result=str(decision.get("reason") or "ALLOWED"),
+            authority_decision=decision,
+            old_generation=decision.get("old_generation"),
+            audit=True,
+            allowed=True,
+        )
         post = getattr(client, "post_token_http", None)
         if post is None:
-            raise ChildTokenIssueBlocked("TOKEN_HTTP_ENTRY_MISSING")
+            err = ChildTokenIssueBlocked("TOKEN_HTTP_ENTRY_MISSING")
+            record_auth_issue_event(ISSUE_EXCEPTION, result="http_entry_missing", exception=err, audit=True, allowed=False)
+            raise err
         token = str(post(api_password) or "").strip()
         if not token:
-            raise ChildTokenIssueBlocked("TOKEN_RESPONSE_EMPTY")
+            err = ChildTokenIssueBlocked("TOKEN_RESPONSE_EMPTY")
+            record_auth_issue_event(ISSUE_EXCEPTION, result="empty_token", exception=err, audit=True, allowed=False)
+            raise err
         native = Path(getattr(_tls, "native_root", None) or native_root_default())
         try:
             from small_paper.session_runtime_identity import resolve_runtime_trading_date
@@ -887,6 +1272,21 @@ def issue_station_token(
             base_url=base,
         )
         return token
+    except Exception as exc:
+        if not isinstance(exc, (TokenSecondIssuerBlocked, OwnerIdentityFailClosed)):
+            record_auth_issue_event(ISSUE_EXCEPTION, result="error", exception=exc, audit=True, allowed=False)
+            record_auth_issue_event(EXCEPTION, result="error", exception=exc)
+            try:
+                mark_issue_failed(base_url=base, reason=type(exc).__name__)
+            except Exception:
+                pass
+        raise
+    finally:
+        if lock_cm is not None:
+            try:
+                lock_cm.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 def acquire_token_for_readonly(
@@ -979,6 +1379,9 @@ def station_issue_audit_summary(base_url: Optional[str] = None) -> dict[str, Any
     path = station_authority_dir(base_url) / AUDIT_JSONL
     allowed = 0
     blocked = 0
+    call_attempts = 0
+    http_attempts = 0
+    exceptions = 0
     rows: list[dict[str, Any]] = []
     if path.is_file():
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -989,9 +1392,18 @@ def station_issue_audit_summary(base_url: Optional[str] = None) -> dict[str, Any
             except json.JSONDecodeError:
                 continue
             rows.append(row)
-            if row.get("allowed"):
+            ev = str(row.get("event") or "")
+            if ev == "ISSUE_ATTEMPT_BEGIN":
+                call_attempts += 1
+            if ev == "HTTP_ATTEMPT":
+                http_attempts += 1
+            if ev in {"ISSUE_EXCEPTION"}:
+                exceptions += 1
+            if ev in {"PUBLISH_SUCCESS", "ALLOWED"} or (not ev and row.get("allowed") is True):
                 allowed += 1
-            else:
+            elif ev in {"ISSUE_PERMISSION_BLOCK", "TOKEN_SECOND_ISSUER_BLOCKED"} or (
+                not ev and row.get("allowed") is False
+            ):
                 blocked += 1
     station = load_station_owner(base_url)
     return {
@@ -1003,6 +1415,10 @@ def station_issue_audit_summary(base_url: Optional[str] = None) -> dict[str, Any
         "owner_pid": int(station.get("pid") or 0),
         "token_generation": int(station.get("token_generation") or 0),
         "fingerprint": str(station.get("fingerprint") or ""),
+        "post_token_call_attempt_count": call_attempts,
+        "post_token_http_attempt_count": http_attempts,
+        "post_token_success_count": allowed,
+        "post_token_exception_count": exceptions,
     }
 
 

@@ -144,6 +144,21 @@ def session_end_for_position(*, date: str, session: str, fill_time: float) -> fl
     return float(session_end_epoch(day, sess))
 
 
+def session_event_epoch(*, environ: Optional[dict[str, str]] = None) -> float:
+    """Event time for Frozen session-end sweeps.
+
+    Live production: wall clock (same calendar as the trading session).
+    Certification replay: domain-B now_jst() so an off-day wall clock cannot
+    SESSION_CLOSE positions whose AM 11:30 / PM 15:00 is still in the future
+    on the replay tape.
+    """
+    from small_paper.runtime_clock import now_jst, session_clock_enabled
+
+    if session_clock_enabled(environ=environ):
+        return float(now_jst(environ=environ).timestamp())
+    return float(time.time())
+
+
 @dataclass
 class DualLaneStats:
     primary_fills: int = 0
@@ -1118,6 +1133,11 @@ def _snapshot_summary(snap: Mappingish) -> dict[str, Any]:
 
 # Process-global singleton used by pilot_runner hooks
 _DUAL: Optional[V1RLiveDualLane] = None
+
+
+def peek_dual_lane() -> Optional[V1RLiveDualLane]:
+    """Return the process dual-lane singleton without creating one."""
+    return _DUAL
 
 
 def get_dual_lane(*, trace_dir: Optional[Path] = None) -> Optional[V1RLiveDualLane]:

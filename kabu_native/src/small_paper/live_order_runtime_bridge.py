@@ -896,6 +896,13 @@ def write_soak_session_snapshot(
     except Exception as exc:
         snap["w7a_recovery_error"] = type(exc).__name__
 
+    try:
+        from small_paper.session_runtime_identity import stamp_session_identity
+
+        stamp_session_identity(snap, session_id=str(bridge.session_id or ""))
+    except Exception:
+        pass
+
     path = output_dir / "soak_session_snapshot.json"
     path.write_text(json.dumps(snap, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path

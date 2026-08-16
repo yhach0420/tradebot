@@ -123,7 +123,8 @@ class IngressStateMachine:
             and self.state != STOPPED
             and new_state not in recovery_force
         ):
-            self.last_error = f"illegal_transition:{self.state}->{new_state}"
+            if not self.last_error:
+                self.last_error = f"illegal_transition:{self.state}->{new_state}"
             return False
         prev = self.state
         self.state = new_state

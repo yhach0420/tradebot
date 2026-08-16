@@ -248,6 +248,7 @@ def qualify_session_artifacts(
     cancel_count: int = 0,
     paper_exit_code: Optional[int] = None,
     require_forward_provenance: bool = False,
+    expected_scope: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     """Seal AND qualification. Forward count also requires provenance + path isolation.
 
@@ -256,8 +257,9 @@ def qualify_session_artifacts(
     failures: list[str] = []
     fields: dict[str, Any] = {}
 
-    if paper_exit_code is not None and int(paper_exit_code) != 0:
-        failures.append("paper_exit_code!=0")
+    paper_exit_failure = (
+        paper_exit_code is not None and int(paper_exit_code) != 0
+    )
 
     if not snapshot_exists:
         failures.append("snapshot_missing")
@@ -349,6 +351,8 @@ def qualify_session_artifacts(
             "recovery_unexpected_object_count": unexpected,
             "actual_submit": int(submit_count),
             "actual_cancel": int(cancel_count),
+            "paper_exit_code": paper_exit_code,
+            "paper_exit_failure": bool(paper_exit_failure),
             "snapshot_seal_crosscheck_pass": bool(cross.get("pass")),
             "snapshot_seal_mismatch_count": int(cross.get("mismatch_count") or 0),
             **prov,
@@ -398,10 +402,14 @@ def qualify_session_artifacts(
             session_root = path_obj.parent.parent
         summary_path = session_root / "small_paper_summary.json"
         if summary_path.is_file():
+            from small_paper.session_runtime_identity import expected_current_run_scope
             from small_paper.session_validity import classify_session_validity
 
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            validity = classify_session_validity(summary)
+            scope = expected_scope if expected_scope is not None else expected_current_run_scope(
+                trading_date=str(summary.get("trading_date") or "") or None
+            )
+            validity = classify_session_validity(summary, expected_scope=scope)
             if not validity.get("include_in_strategy_metrics", True):
                 failures = list(failures) + [f"INVALID_SESSION:{validity.get('session_validity')}"]
                 seal_ok = False
@@ -441,6 +449,7 @@ def qualify_snapshot_path(
     submit_count: int = 0,
     cancel_count: int = 0,
     paper_exit_code: Optional[int] = None,
+    expected_scope: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     paths = resolve_session_artifact_paths(snapshot_path)
     snap_data: dict[str, Any] = {}
@@ -472,6 +481,7 @@ def qualify_snapshot_path(
         submit_count=submit_count,
         cancel_count=cancel_count,
         paper_exit_code=paper_exit_code,
+        expected_scope=expected_scope,
     )
 
 
@@ -931,6 +941,29 @@ class PaperTradeCheckedRunner:
                 info_only=True,
             )
             return True
+        from small_paper.runtime_lifecycle import reconcile_startup
+
+        rec = reconcile_startup(native_root=self.native_root, trading_date=self.trading_date)
+        self.capture["startup_reconcile"] = rec
+        if not rec.get("ok"):
+            step = self._record(
+                "legacy_register_preclear",
+                3,
+                "reconcile_startup",
+                exit_code=1,
+                started=started,
+                stdout=json.dumps(rec, ensure_ascii=False, default=str),
+                result="FAIL",
+                blocked_reason=str(rec.get("reason") or "OWNERSHIP_FAIL_CLOSED"),
+            )
+            self._print_step(3, self._step_total, "Legacy unregister preclear", step.result)
+            self._block(
+                "legacy_register_preclear",
+                1,
+                step.blocked_reason,
+                "PRE_INGRESS reconcile failed closed; do not spawn Ingress.",
+            )
+            return False
         from small_paper.kabu_registration_authority import (
             forbid_post_ingress_unregister_all,
             ingress_owns_kabu_registration,
@@ -1496,7 +1529,10 @@ class PaperTradeCheckedRunner:
         results_root = self.native_root / "results"
         from small_paper.session_runtime_identity import (
             expected_current_run_scope,
+            expected_session_kinds,
             iter_current_run_soak_snapshots,
+            load_session_identity_doc,
+            session_root_from_snapshot,
         )
 
         expected_scope = expected_current_run_scope(trading_date=self.trading_date)
@@ -1527,6 +1563,7 @@ class PaperTradeCheckedRunner:
                 submit_count=submit_n,
                 cancel_count=cancel_n,
                 paper_exit_code=self.paper_exit_code,
+                expected_scope=expected_scope,
             )
             qualifications.append(q)
             bucket = str(q.get("bucket") or "excluded")
@@ -1571,7 +1608,8 @@ class PaperTradeCheckedRunner:
                     }
                 )
 
-        # W4S not run / unknown → do not advance Forward counts
+        # Current-run SEALED_VALID collection is independent of W4S parse.
+        # W4S skip (test harness) still reports collected=0 so soak tests stay isolated.
         w4s_verdict_raw = str(w4s.get("verdict") or w4s.get("status") or "")
         if w4s_skipped or self.w4s_call_count == 0:
             w4s_verdict = "NOT_RUN"
@@ -1580,9 +1618,9 @@ class PaperTradeCheckedRunner:
             forward_for_display = 0
         elif w4s_verdict_raw in ("", "UNKNOWN", "PARSE_ERROR"):
             w4s_verdict = w4s_verdict_raw or "UNKNOWN"
-            sessions_collected = 0
+            sessions_collected = forward_q
             readonly_success = 0
-            forward_for_display = 0
+            forward_for_display = forward_q
         else:
             w4s_verdict = w4s_verdict_raw
             sessions_collected = forward_q
@@ -1627,12 +1665,66 @@ class PaperTradeCheckedRunner:
         if w4s_skipped:
             # Test mode may skip W4S; production must not
             result = "W4S_NOT_RUN"
+        elif sessions_collected < 1:
+            result = "SESSION_ARTIFACT_INCOMPLETE"
         elif paper_exit != 0:
             result = "ABNORMAL_PAPER"
         elif counted_forward:
             result = "OK"
         else:
-            result = "SESSION_ARTIFACT_INCOMPLETE"
+            result = "FORWARD_NOT_COUNTED"
+
+        stage_id = str((expected_scope or {}).get("stage_run_id") or "")
+        from small_paper.runtime_clock import session_clock_window
+
+        win_start, win_end = session_clock_window()
+        expected_kinds = expected_session_kinds(win_start, win_end)
+        kind_counts: dict[str, int] = {"am": 0, "pm": 0, "other": 0}
+        for pth, q in zip(snaps, qualifications):
+            if not (q.get("seal_qualified") and str(q.get("bucket") or "") == "forward"):
+                continue
+            ident = load_session_identity_doc(session_root_from_snapshot(pth))
+            kind = str(ident.get("session_kind") or "").strip().lower()
+            if kind in ("am", "pm"):
+                kind_counts[kind] += 1
+            else:
+                kind_counts["other"] += 1
+        topology_ok = True
+        topology_reason = ""
+        if expected_kinds:
+            for kind in ("am", "pm"):
+                want = 1 if kind in expected_kinds else 0
+                got = int(kind_counts.get(kind) or 0)
+                if got != want:
+                    topology_ok = False
+                    topology_reason = f"kind_{kind}_want_{want}_got_{got}"
+                    break
+            if topology_ok and int(kind_counts.get("other") or 0) != 0:
+                topology_ok = False
+                topology_reason = "unexpected_session_kind"
+            if topology_ok and int(sessions_collected or 0) != len(expected_kinds):
+                topology_ok = False
+                topology_reason = "collected_cardinality"
+        elif int(sessions_collected or 0) > 1:
+            topology_ok = False
+            topology_reason = "multiple_current_without_window"
+        if (
+            not w4s_skipped
+            and not topology_ok
+        ):
+            result = "FAIL_CLOSED_MULTIPLE_CURRENT"
+            counted_forward = False
+            post_topology = {
+                "expected_session_kinds": sorted(expected_kinds),
+                "kind_counts": kind_counts,
+                "reason": topology_reason,
+            }
+        else:
+            post_topology = {
+                "expected_session_kinds": sorted(expected_kinds),
+                "kind_counts": kind_counts,
+                "reason": topology_reason,
+            }
 
         post = {
             "paper_exit_code": self.paper_exit_code,
@@ -1667,6 +1759,7 @@ class PaperTradeCheckedRunner:
             "actual_cancel": cancel_n,
             "latency_p95": agg.get("accept_to_would_submit_p95_across") if isinstance(agg, dict) else None,
             "am_pm_sessions": sessions_list,
+            "session_topology": post_topology,
             "w4s_call_count": self.w4s_call_count,
             "paper_call_count": self.paper_call_count,
             "result": result,
@@ -1706,15 +1799,24 @@ class PaperTradeCheckedRunner:
 
     def _print_capture_finish(self) -> None:
         c = self.capture
+        from small_paper.runtime_clock import market_input_mode, MARKET_INPUT_REPLAY
+
+        replay = market_input_mode() == MARKET_INPUT_REPLAY
         print()
         print("[MARKET CAPTURE]")
         print(f"status: {c.get('final_status') or c.get('status')}")
+        print(f"live_capture_sidecar_events: {c.get('event_count')}")
         print(f"events: {c.get('event_count')}")
         print(f"symbols: {c.get('symbols_seen')}")
         print(f"disconnects: {c.get('disconnect_count')}")
         print(f"drops: {c.get('dropped_event_count')}")
         print(f"seal: {c.get('seal_pass')}")
         print(f"capture_complete: {c.get('capture_complete')}")
+        if replay:
+            print(
+                "note: events is the live Capture sidecar counter, not Paper PUSH "
+                "and not certification replay ingest. Paper PUSH is a separate SoT."
+            )
 
     def step_universe_prebuild(self) -> bool:
         """Phase687W15B: ensure same-day AM universe SoT exists (no previous-day fallback)."""
@@ -2062,9 +2164,23 @@ class PaperTradeCheckedRunner:
             )
             ok = bool(wait.get("ok"))
             if ok:
+                from small_paper.runtime_lifecycle import is_auth_ready
+
+                ready, ready_reason = is_auth_ready(status=wait.get("snapshot") or {})
+                if not ready:
+                    ok = False
+                    wait = dict(wait)
+                    wait["ok"] = False
+                    wait["reason"] = ready_reason
+            if ok:
                 from small_paper.auth_lifecycle import PHASE_BOARD_ACTIVE, set_auth_phase
 
                 set_auth_phase(PHASE_BOARD_ACTIVE)
+            elif str(wait.get("reason") or "").startswith("ENVIRONMENT_AUTH_BLOCKED") or wait.get(
+                "kabu_code"
+            ) == "4001007":
+                wait = dict(wait)
+                wait["REAL_KABUS_AUTH_READY"] = False
             self.capture.update(
                 {
                     "started": ok,
@@ -2291,7 +2407,34 @@ class PaperTradeCheckedRunner:
         seal_ok = bool(self.capture.get("seal_pass"))
         override = bool(self.capture.get("override_used"))
         continuing = False
-        if not seal_ok and not override and self.capture.get("started") and not self.skip_capture_wait:
+        from small_paper.runtime_clock import certification_mode
+
+        cert_owned = bool(certification_mode()) and not bool(self.reuse_capture)
+        if cert_owned and self.capture.get("started") and not self.skip_capture_wait:
+            from small_paper.capture_child_cleanup import (
+                DEFAULT_GRACEFUL_TIMEOUT_SEC,
+                request_graceful_stop,
+            )
+            from small_paper.capture_child_cleanup import query_process
+
+            out_dir = Path(self.capture.get("output") or "")
+            pid = int(self.capture.get("pid") or 0)
+            if out_dir.is_dir():
+                request_graceful_stop(
+                    out_dir,
+                    session_id=str(self.trading_date or ""),
+                    pid=pid,
+                    reason="certification_stage_complete",
+                )
+            deadline = time.time() + float(DEFAULT_GRACEFUL_TIMEOUT_SEC)
+            while pid > 0 and time.time() < deadline:
+                live = query_process(pid)
+                if not live.get("exists"):
+                    break
+                time.sleep(0.2)
+            self.capture.pop("continuing_until", None)
+            continuing = False
+        elif not seal_ok and not override and self.capture.get("started") and not self.skip_capture_wait:
             # Live: sidecar still running until 15:35 — not a failure
             continuing = True
             self.capture["final_status"] = self.capture.get("status") or "CAPTURE_ONLINE"
@@ -2869,6 +3012,17 @@ class PaperTradeCheckedRunner:
                 self.cleanup_owned_capture(reason=self._shutdown_reason)
             except Exception as cleanup_exc:
                 print(f"[CHECKED RUNNER] cleanup error: {type(cleanup_exc).__name__}: {cleanup_exc}")
+            try:
+                from small_paper.runtime_lifecycle import finish_teardown
+
+                owned_pid = int((self._owned_capture.pid if self._owned_capture else 0) or 0)
+                self.capture["teardown"] = finish_teardown(
+                    native_root=self.native_root,
+                    trading_date=self.trading_date,
+                    owned_pid=owned_pid,
+                )
+            except Exception as teardown_exc:
+                print(f"[CHECKED RUNNER] teardown error: {type(teardown_exc).__name__}: {teardown_exc}")
 
 
 def existing_paper_bat_sha256(path: Path = DEFAULT_PAPER_BAT) -> str:

@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+from small_paper.operational_validation import (
+    OPVAL_ASSERTION_FAIL,
+    OPVAL_LABELS,
+    operational_validation_mode,
+)
 from small_paper.v1r_exit_v2_activation_gate import (
     ASSERTION_FAIL,
     assert_exit_v2_primary_roles,
@@ -378,14 +383,9 @@ def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
     env["PYTHONPATH"] = f"{NATIVE / 'src'};{REPO}" + (
         os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
     )
-    try:
-        from small_paper.runtime_clock import arm_session_clock, session_clock_enabled
-
-        if session_clock_enabled():
-            t0_arm = arm_session_clock(environ=env)
-            env["TRADEBOT_SESSION_CLOCK_REAL_T0"] = t0_arm
-    except Exception:
-        pass
+    # Do not arm TRADEBOT_SESSION_CLOCK here. Ingress waits for arm; Paper child
+    # arms at receive-loop start so universe/Kabu prebuild does not consume
+    # accelerated virtual time (48x clock/parity).
     t0 = time.time()
     hb_seq = 0
     proc: Any = None
@@ -474,6 +474,11 @@ def launch_primary(
     session_dir: Optional[Path] = None,
     residency_sec: Optional[float] = None,
 ) -> int:
+    if operational_validation_mode() and mode != "live":
+        reason = f"{OPVAL_ASSERTION_FAIL}:OPVAL_REPLAY_PATH_FORBIDDEN"
+        print(format_startup_contract(ready=False, reason=reason), flush=True)
+        print(f"[V1R EXIT V2 PRIMARY] {reason}", flush=True)
+        return 2
     assertion = assert_exit_v2_primary_roles()
     print(assertion.startup_block, flush=True)
     if not assertion.ok:
@@ -524,7 +529,7 @@ def launch_primary(
         print("[V1R EXIT V2] NO PAPER PRIMARY - dual Primary lock held (another live process)", flush=True)
         return 2
     try:
-        (out / "primary_role_bound.json").write_text(json.dumps({
+        bound = {
             "primary": "V1R_EXIT_V2_ARCH_E_PAPER_PRIMARY",
             "control": "FIXED600_SHADOW_CONTROL",
             "pbv2_primary_fallback": False,
@@ -534,7 +539,12 @@ def launch_primary(
             "session_dir": str(out),
             "runtime": "pilot_runner_LOCAL_MARKET_BUS" if residency_sec else "am_pm_daily_runner",
             "identity": assertion.identity,
-        }, indent=2, default=str), encoding="utf-8")
+        }
+        if operational_validation_mode():
+            bound.update(OPVAL_LABELS)
+        (out / "primary_role_bound.json").write_text(
+            json.dumps(bound, indent=2, default=str), encoding="utf-8"
+        )
 
         if residency_sec is not None and float(residency_sec) > 0:
             return _run_residency_live_loop(

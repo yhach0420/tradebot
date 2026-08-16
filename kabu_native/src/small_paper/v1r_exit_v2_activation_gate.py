@@ -14,10 +14,20 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from small_paper.runtime_clock import certification_mode
+from small_paper.operational_validation import (
+    OPVAL_ASSERTION_FAIL,
+    OPVAL_LABELS,
+    operational_validation_mode,
+    opval_startup_blocked_reason,
+)
 from small_paper.v1r_activation_binding import (
     OUT,
+    audit_runtime_inventory_coverage,
     load_activation_manifest,
     load_active_selector,
+    uncertified_paper_blocked_reason,
+    verify_generator_inventory_coverage,
     verify_manifest_self_sha,
     verify_runtime_inventory,
     verify_selector_binding,
@@ -188,6 +198,13 @@ def format_startup_contract(*, ready: bool, reason: str = "") -> str:
             "submit/cancel/live:",
             "0/0/0",
             "",
+            "mode:",
+            (
+                "OPERATIONAL_VALIDATION_ONLY / INVALID_FOR_STRATEGY_EVALUATION / NOT_PROSPECTIVE_DAY1"
+                if operational_validation_mode()
+                else "FORMAL_OR_CERTIFICATION"
+            ),
+            "",
             "READY:",
             "YES" if ready else f"NO ({reason or ASSERTION_FAIL})",
         ]
@@ -207,6 +224,30 @@ def assert_exit_v2_primary_roles() -> RoleAssertionResult:
 
     identity = build_identity(selector=selector, manifest=manifest)
 
+    if operational_validation_mode():
+        blocked = opval_startup_blocked_reason(selector, manifest)
+        checks["opval_contract"] = not bool(blocked)
+        identity.update(OPVAL_LABELS)
+        if blocked:
+            reason = f"{OPVAL_ASSERTION_FAIL}:{blocked}"
+            block = format_startup_contract(ready=False, reason=reason)
+            identity["candidate_status"] = str(manifest.get("candidate_status") or "")
+            identity["formal_paper_allowed"] = bool(manifest.get("formal_paper_allowed", False))
+            return RoleAssertionResult(
+                ok=False, reason=reason, checks=checks, identity=identity, startup_block=block, ready=False
+            )
+    else:
+        blocked = uncertified_paper_blocked_reason(manifest, certification=certification_mode())
+        checks["uncertified_policy"] = not bool(blocked)
+        if blocked:
+            reason = f"{ASSERTION_FAIL}:{blocked}"
+            block = format_startup_contract(ready=False, reason=reason)
+            identity["candidate_status"] = str(manifest.get("candidate_status") or "")
+            identity["formal_paper_allowed"] = bool(manifest.get("formal_paper_allowed", False))
+            return RoleAssertionResult(
+                ok=False, reason=reason, checks=checks, identity=identity, startup_block=block, ready=False
+            )
+
     # A) selector → expected activation id/sha
     bind = verify_selector_binding(selector, manifest)
     checks["selector_activation_id"] = bind["activation_id_match"]
@@ -216,16 +257,24 @@ def assert_exit_v2_primary_roles() -> RoleAssertionResult:
     self_ok, _got, _calc = verify_manifest_self_sha(manifest)
     checks["manifest_self_sha"] = self_ok
 
-    # C) runtime inventory (working-tree bytes)
+    # C) runtime inventory (working-tree bytes) + generator coverage
     inv = verify_runtime_inventory(manifest, native_root=NATIVE)
-    checks["runtime_inventory"] = bool(inv.get("ok"))
+    gen = verify_generator_inventory_coverage(manifest)
+    cov = audit_runtime_inventory_coverage(native_root=NATIVE)
+    checks["runtime_inventory"] = bool(inv.get("ok")) and bool(gen.get("ok")) and bool(cov.get("ok"))
     identity["runtime_inventory"] = {
-        "ok": inv.get("ok"),
+        "ok": checks["runtime_inventory"],
         "matched": inv.get("matched"),
         "expected_n": inv.get("expected_n"),
-        "reason": inv.get("reason"),
+        "reason": inv.get("reason") or gen.get("reason") or cov.get("reason"),
         "mismatch_n": len(inv.get("mismatches") or []),
+        "generator_n": gen.get("generator_n"),
+        "missing_from_manifest": gen.get("missing_from_manifest") or [],
+        "uncovered_runtime_critical": cov.get("runtime_critical_uncovered_files") or [],
+        "unexpected_runtime_critical": cov.get("unexpected_runtime_critical_files") or [],
     }
+    identity["candidate_status"] = str(manifest.get("candidate_status") or "")
+    identity["formal_paper_allowed"] = manifest.get("formal_paper_allowed")
 
     # D) Strategy / Precommit / roles / safety
     checks["primary_strategy"] = identity["primary_strategy"] == PRIMARY_STRATEGY

@@ -117,8 +117,37 @@ def _inc_timeout() -> None:
         _timeout_workers += 1
 
 
-def _kill_process_tree(pid: int) -> None:
+def _kill_process_tree(pid: int, *, process_start_identity: str = "") -> None:
     if pid <= 0:
+        return
+    recorded = str(process_start_identity or "").strip()
+    if recorded:
+        try:
+            from small_paper.ingress_run_identity import capture_process_start_identity
+            from small_paper.ownership_classifier import classify_owner
+            from small_paper.runtime_lifecycle import decide_kill
+
+            live_start = str(capture_process_start_identity(int(pid)) or "").strip()
+            doc = {
+                "pid": int(pid),
+                "owner_pid": int(pid),
+                "process_start_identity": recorded,
+                "component_role": "BOUNDED_SIDE_TASK",
+                "caller": "bounded_side_task",
+            }
+            classified = classify_owner(
+                owner=doc,
+                bundle=doc,
+                current=doc,
+                pid_alive_fn=_pid_alive,
+                live_process_start_fn=lambda _p: live_start,
+            )
+            decision = decide_kill(classified, identity_proven=True, stale_graceful_done=True)
+            if not decision.get("kill_allowed"):
+                return
+        except Exception:
+            return
+    elif not recorded:
         return
     if sys.platform == "win32":
         try:
@@ -318,6 +347,13 @@ def run_subprocess_bounded(
             encoding="utf-8",
             errors="replace",
         )
+        start_identity = ""
+        try:
+            from small_paper.ingress_run_identity import capture_process_start_identity
+
+            start_identity = str(capture_process_start_identity(int(proc.pid or 0)) or "")
+        except Exception:
+            start_identity = ""
         try:
             stdout, stderr = proc.communicate(timeout=float(timeout_sec))
         except subprocess.TimeoutExpired:
@@ -332,7 +368,7 @@ def run_subprocess_bounded(
             except Exception:
                 pass
             if proc.poll() is None:
-                _kill_process_tree(pid)
+                _kill_process_tree(pid, process_start_identity=start_identity)
                 try:
                     proc.wait(timeout=2.0)
                 except Exception:

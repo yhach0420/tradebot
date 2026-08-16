@@ -67,7 +67,11 @@ from small_paper.market_raw_writer import MarketRawWriter, session_dir, trading_
 from small_paper.runtime_clock import (
     ingress_replay_path,
     now_jst as session_now,
+    projected_session_now,
+    reanchor_session_clock,
+    record_replay_progress,
     replay_max_eps,
+    replay_max_publish_lag,
     replay_not_before_hhmm,
     scheduled_end_passed,
     session_clock_armed,
@@ -84,6 +88,8 @@ MAX_FAST_RECOVERY_ATTEMPTS = 3
 FINALIZE_TIME = dtime(15, 35)
 LUNCH_START = dtime(11, 30)
 LUNCH_END = dtime(12, 30)
+# Daily runner PM screening start. After AM child exit + lunch wait, skip leftover AM tape.
+FULL_DAY_PM_RESUME = dtime(12, 25)
 MARKET_AM_START = dtime(9, 0)
 MARKET_PM_END = dtime(15, 30)
 
@@ -255,6 +261,22 @@ class MarketIngressService:
         self._token_refresh_fn: Optional[Callable[[], str]] = None
         self._had_verified_exact50: bool = False
         self._auth_recovery_in_flight: bool = False
+        self._auth_failure_step: str = ""
+        self._auth_failure_type: str = ""
+        self._auth_failure_code: str = ""
+        self._auth_failure_message_sanitized: str = ""
+        self._auth_failure_at: str = ""
+        self._auth_failure_http_status: Any = None
+        self._status_write_lock = threading.Lock()
+        self._status_publish_failures: int = 0
+        self._stale_status_writer_fenced_count: int = 0
+        self._last_status_publish_error: str = ""
+        self._status_writer_fence_reason: str = ""
+        self._paper_consumer_seen: bool = False
+        # After AM Paper exit, Full-Day Ingress must hold tape (not dump).
+        # Once session projected time has crossed lunch, leftover AM events
+        # must not reanchor the clock or be published into the PM child.
+        self._replay_resume_not_before: Optional[datetime] = None
 
         self.session_path = session_dir(self.native_root, self.trading_date, self.session_id)
         self.session_path.mkdir(parents=True, exist_ok=True)
@@ -414,11 +436,126 @@ class MarketIngressService:
         except Exception:
             pass
 
+    def _set_auth_failure(
+        self,
+        *,
+        step: str,
+        code: str,
+        message: str,
+        err_type: str,
+        http_status: Any = None,
+    ) -> None:
+        from small_paper.auth_issue_trace import sanitize_text
+        from small_paper.market_ingress_protocol import now_iso
+
+        self._auth_failure_step = str(step or "")
+        self._auth_failure_type = str(err_type or "")
+        self._auth_failure_code = str(code or "")
+        self._auth_failure_message_sanitized = sanitize_text(message)
+        self._auth_failure_at = now_iso()
+        self._auth_failure_http_status = None
+        if http_status is not None:
+            try:
+                self._auth_failure_http_status = int(http_status)
+                self._auth_failure_code = f"{self._auth_failure_code}|http={int(http_status)}"
+            except (TypeError, ValueError):
+                pass
+
+    def _canonical_status_writer_allowed(self) -> tuple[bool, str]:
+        spawn_path = self.day_root / "ingress_spawn.json"
+        env_nonce = str(os.environ.get(ENV_LAUNCH_NONCE) or "").strip()
+        env_run = str(os.environ.get(ENV_INGRESS_RUN_ID) or "").strip()
+        self_nonce = str(self.launch_nonce or "")
+        self_run = str(self.ingress_run_id or "")
+        if not spawn_path.is_file():
+            if env_nonce and env_run and env_nonce == self_nonce and env_run == self_run:
+                return True, "spawn_pending_env_match"
+            return False, "STALE_STATUS_WRITER_FENCED"
+        try:
+            spawn = json.loads(spawn_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False, "STALE_STATUS_WRITER_FENCED"
+        if not isinstance(spawn, dict):
+            return False, "STALE_STATUS_WRITER_FENCED"
+        try:
+            spawn_pid = int(spawn.get("pid") or 0)
+        except (TypeError, ValueError):
+            spawn_pid = 0
+        if spawn_pid != os.getpid():
+            return False, "STALE_STATUS_WRITER_FENCED"
+        if str(spawn.get("launch_nonce") or "") != self_nonce:
+            return False, "STALE_STATUS_WRITER_FENCED"
+        if str(spawn.get("ingress_run_id") or "") != self_run:
+            return False, "STALE_STATUS_WRITER_FENCED"
+        return True, "current"
+
+    def _record_status_publish_failure(self, where: str, exc: BaseException) -> None:
+        from small_paper.auth_issue_trace import sanitize_text
+
+        self._status_publish_failures = int(self._status_publish_failures) + 1
+        self._last_status_publish_error = sanitize_text(f"{where}:{type(exc).__name__}:{exc}")
+        evidence = {
+            "at": now_iso(),
+            "where": str(where),
+            "exception_type": type(exc).__name__,
+            "sanitized_exception_message": sanitize_text(exc),
+            "pid": os.getpid(),
+            "launch_nonce": self.launch_nonce,
+            "ingress_run_id": self.ingress_run_id,
+            "status_publish_failures": self._status_publish_failures,
+        }
+        try:
+            dest = self.session_path / "status_publish_error.json"
+            tmp = dest.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(tmp, dest)
+        except Exception:
+            try:
+                fallback = self.session_path / "status_publish_error.jsonl"
+                with fallback.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(evidence, ensure_ascii=False, default=str) + "\n")
+            except Exception:
+                return
+
     def _write_status(self) -> None:
-        snap = self.health_snapshot()
-        write_status_json(self.session_path / "status.json", snap)
-        write_status_json(self.day_root / "ingress_status.json", snap)
-        write_heartbeat(self.session_path / "heartbeat.jsonl", snap)
+        """Process-internal single-writer. Canonical day status is fenced to current spawn identity.
+
+        Status I/O failures are recorded and never kill the issuer/replay thread.
+        """
+        with self._status_write_lock:
+            snap = self.health_snapshot()
+            try:
+                write_status_json(self.session_path / "status.json", snap)
+            except Exception as exc:
+                self._record_status_publish_failure("session_status", exc)
+            allowed, reason = self._canonical_status_writer_allowed()
+            if not allowed:
+                self._stale_status_writer_fenced_count = int(self._stale_status_writer_fenced_count) + 1
+                self._status_writer_fence_reason = str(reason)
+                try:
+                    fence = {
+                        "at": now_iso(),
+                        "event": "STALE_STATUS_WRITER_FENCED",
+                        "reason": reason,
+                        "pid": os.getpid(),
+                        "launch_nonce": self.launch_nonce,
+                        "ingress_run_id": self.ingress_run_id,
+                        "stale_status_writer_fenced_count": self._stale_status_writer_fenced_count,
+                    }
+                    dest = self.session_path / "stale_status_writer_fenced.jsonl"
+                    with dest.open("a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(fence, ensure_ascii=False) + "\n")
+                except Exception as exc:
+                    self._record_status_publish_failure("fence_record", exc)
+            else:
+                try:
+                    write_status_json(self.day_root / "ingress_status.json", snap)
+                except Exception as exc:
+                    self._record_status_publish_failure("canonical_status", exc)
+            try:
+                write_heartbeat(self.session_path / "heartbeat.jsonl", snap)
+            except Exception as exc:
+                self._record_status_publish_failure("heartbeat", exc)
 
     def health_snapshot(self) -> dict[str, Any]:
         age = 0.0
@@ -481,6 +618,19 @@ class MarketIngressService:
                 "token_stage_class": self._token_stage_class or self._classify_bundle_stage(),
                 "input_delivered_count": int(self._input_delivered_count),
                 "last_cert_sequence": int(self._last_cert_sequence),
+                "last_error": str(self.sm.last_error or self._auth_failure_message_sanitized or ""),
+                "last_error_type": str(self._auth_failure_type or ""),
+                "auth_failure_step": str(self._auth_failure_step or ""),
+                "auth_failure_type": str(self._auth_failure_type or ""),
+                "auth_failure_code": str(self._auth_failure_code or ""),
+                "auth_failure_message_sanitized": str(self._auth_failure_message_sanitized or ""),
+                "auth_failure_at": str(self._auth_failure_at or ""),
+                "auth_failure_http_status": self._auth_failure_http_status,
+                "password_present": bool(str(os.environ.get("KABU_API_PASSWORD") or "").strip()),
+                "status_publish_failures": int(self._status_publish_failures),
+                "stale_status_writer_fenced_count": int(self._stale_status_writer_fenced_count),
+                "status_writer_fence_reason": str(self._status_writer_fence_reason or "") or None,
+                "last_status_publish_error": str(self._last_status_publish_error or ""),
             },
         )
 
@@ -749,11 +899,27 @@ class MarketIngressService:
 
         required = cert_live_auth_required(synthetic=bool(self.synthetic))
         auth_ok, auth_reason = live_kabu_auth_allowed(synthetic=bool(self.synthetic))
+        from small_paper.auth_issue_trace import (
+            bind_trace_context,
+            failure_fields_for_status,
+            last_event_name,
+            last_failure,
+            record_auth_issue_event,
+            sanitize_text,
+        )
+
+        bind_trace_context(native_root=self.native_root, trading_date=self.trading_date)
         if not auth_ok:
             if required:
                 out["fail_code"] = AUTH_FAILED
                 out["skipped"] = auth_reason
-                self.sm.last_error = AUTH_FAILED
+                self._set_auth_failure(
+                    step="LIVE_KABU_AUTH_NOT_ALLOWED",
+                    code=str(auth_reason),
+                    message=str(auth_reason),
+                    err_type="AuthNotAllowed",
+                )
+                self.sm.last_error = str(auth_reason or AUTH_FAILED)
                 self._auth_failure_count += 1
                 return out
             out["ok"] = True
@@ -804,11 +970,40 @@ class MarketIngressService:
             out["token_stage_class"] = self._token_stage_class
             out["registered"] = list(self.registered_symbols)
         except Exception as exc:
-            out["error"] = f"{type(exc).__name__}:{exc}"
-            self.sm.last_error = type(exc).__name__
+            from small_paper.auth_issue_trace import (
+                EXCEPTION,
+                failure_fields_for_status,
+                last_event_name,
+                last_failure,
+                record_auth_issue_event,
+                sanitize_text,
+            )
+
+            record_auth_issue_event(EXCEPTION, result="replay_register", exception=exc)
+            fail = last_failure() or {}
+            step = str(fail.get("event") or last_event_name() or "EXCEPTION")
+            msg = sanitize_text(exc)
+            fail_class = str(getattr(exc, "failure_class", "") or "")
+            kabu_code = str(getattr(exc, "kabu_code", "") or "")
+            http_status = getattr(exc, "http_status", None)
+            code = str(fail.get("result") or type(exc).__name__)
+            if fail_class == "ENVIRONMENT_AUTH_BLOCKED" or kabu_code == "4001007":
+                code = "ENVIRONMENT_AUTH_BLOCKED"
+                if kabu_code:
+                    code = f"ENVIRONMENT_AUTH_BLOCKED|{kabu_code}"
+            self._set_auth_failure(
+                step=step,
+                code=code,
+                message=msg,
+                err_type=type(exc).__name__,
+                http_status=http_status,
+            )
+            out["error"] = f"{type(exc).__name__}:{msg}"
+            self.sm.last_error = f"{type(exc).__name__}:{msg}"
             if required:
                 out["fail_code"] = AUTH_FAILED
                 self._auth_failure_count += 1
+            out.update({k: v for k, v in failure_fields_for_status().items() if v not in ("", None)})
         return out
 
     def _replay_loop(self) -> None:
@@ -847,57 +1042,177 @@ class MarketIngressService:
                 if self._stop.is_set() or self._operator_stop_requested():
                     return
                 time.sleep(0.05)
+            ready_deadline = time.time() + 120.0
+            while not self.bus.paper_tcp_ready() and time.time() < ready_deadline:
+                if self._stop.is_set() or self._operator_stop_requested():
+                    return
+                time.sleep(0.05)
         max_eps = replay_max_eps()
         min_interval = 1.0 / max_eps
         last_mono = 0.0
         try:
             for rec in iter_ingress_replay_records(self._replay_source):
-                if self._stop.is_set() or self._scheduled_end_passed() or self._operator_stop_requested():
-                    break
-                payload = replay_payload_from_record(rec)
-                if not payload:
-                    continue
-                cert_seq = rec.get("cert_sequence")
-                if cert_seq is None:
-                    cert_seq = payload.pop("__cert_sequence__", None)
-                else:
-                    payload.pop("__cert_sequence__", None)
-                rec_at = str(payload.get("__replay_received_at__") or "")
-                event_dt = _parse_replay_dt(rec_at)
-                if event_dt is not None:
-                    sess = session_now()
-                    event_dt = event_dt.replace(year=sess.year, month=sess.month, day=sess.day)
-                    payload["__replay_received_at__"] = event_dt.isoformat(timespec="milliseconds")
-                    nb = replay_not_before_hhmm()
-                    if nb and len(nb) >= 4:
-                        try:
-                            hh, mm = int(nb[:2]), int(nb[3:5] if ":" in nb else nb[2:4])
-                            if event_dt.hour < hh or (event_dt.hour == hh and event_dt.minute < mm):
-                                continue
-                        except Exception:
-                            pass
-                    if event_dt.hour < 8 or (event_dt.hour == 8 and event_dt.minute < 50):
+                try:
+                    if self._stop.is_set() or self._scheduled_end_passed() or self._operator_stop_requested():
+                        break
+                    payload = replay_payload_from_record(rec)
+                    if not payload:
                         continue
-                    if event_dt > sess:
-                        session_sleep_until(event_dt, poll_sec=0.02)
-                wait = min_interval - (time.monotonic() - last_mono)
-                if wait > 0:
-                    time.sleep(wait)
-                last_mono = time.monotonic()
-                if cert_seq is not None:
-                    try:
-                        self._last_cert_sequence = int(cert_seq)
-                    except (TypeError, ValueError):
-                        pass
-                self._input_delivered_count += 1
-                self._on_push(payload)
-                self._poll_desired_universe()
-                if int(self.writer.snapshot().get("last_sequence") or 0) % 200 == 0:
-                    self._write_status()
+                    cert_seq = rec.get("cert_sequence")
+                    if cert_seq is None:
+                        cert_seq = payload.pop("__cert_sequence__", None)
+                    else:
+                        payload.pop("__cert_sequence__", None)
+                    rec_at = str(payload.get("__replay_received_at__") or "")
+                    event_dt = _parse_replay_dt(rec_at)
+                    if event_dt is not None:
+                        sess = projected_session_now()
+                        event_dt = event_dt.replace(year=sess.year, month=sess.month, day=sess.day)
+                        payload["__replay_received_at__"] = event_dt.isoformat(timespec="milliseconds")
+                        nb = replay_not_before_hhmm()
+                        if nb and len(nb) >= 4:
+                            try:
+                                hh, mm = int(nb[:2]), int(nb[3:5] if ":" in nb else nb[2:4])
+                                if event_dt.hour < hh or (event_dt.hour == hh and event_dt.minute < mm):
+                                    continue
+                            except Exception:
+                                pass
+                        if event_dt.hour < 8 or (event_dt.hour == 8 and event_dt.minute < 50):
+                            continue
+                        resume_before = self._replay_resume_not_before
+                        if resume_before is not None and event_dt < resume_before:
+                            continue
+                        record_replay_progress(
+                            source_event_time=event_dt,
+                            replay_read_watermark=event_dt,
+                        )
+                        self._replay_pace_to_session(event_dt)
+                    self._replay_wait_consumer_lag(event_dt)
+                    if (
+                        event_dt is not None
+                        and self._replay_resume_not_before is not None
+                        and event_dt < self._replay_resume_not_before
+                    ):
+                        continue
+                    wait = min_interval - (time.monotonic() - last_mono)
+                    if wait > 0:
+                        time.sleep(wait)
+                    last_mono = time.monotonic()
+                    if cert_seq is not None:
+                        try:
+                            self._last_cert_sequence = int(cert_seq)
+                        except (TypeError, ValueError):
+                            pass
+                    self._input_delivered_count += 1
+                    self._on_push(payload)
+                    if event_dt is not None:
+                        record_replay_progress(
+                            source_event_time=event_dt,
+                            replay_read_watermark=event_dt,
+                            ingress_publish_watermark=event_dt,
+                        )
+                    self._poll_desired_universe()
+                    if int(self.writer.snapshot().get("last_sequence") or 0) % 200 == 0:
+                        self._write_status()
+                except (PermissionError, OSError) as exc:
+                    self.sm.last_error = type(exc).__name__
+                    self._record_status_publish_failure("replay_loop", exc)
+                    continue
+            record_replay_progress(replay_eof=True, force=True)
         except Exception as exc:
             self.sm.last_error = type(exc).__name__
+            try:
+                self._record_status_publish_failure("replay_loop_fatal", exc)
+            except Exception:
+                pass
         if self.sm.state not in (STOPPED, STOPPING):
             self.stop()
+
+    def _replay_pace_to_session(self, event_dt: datetime) -> None:
+        """Align domain-B clock with replay event_time (certification only).
+
+        Future tape: sleep at SPEED using uncapped projection. Behind tape:
+        reanchor so session close / warmup cannot run on a clock hours ahead
+        of payloads. Does not change live WS receive (this loop is replay input).
+        """
+        if not session_clock_enabled():
+            return
+        if self._paper_consumer_seen and not self.bus.paper_tcp_ready():
+            return
+        sess = projected_session_now()
+        if event_dt > sess:
+            session_sleep_until(event_dt, poll_sec=0.02)
+            return
+        if event_dt < sess:
+            try:
+                reanchor_session_clock(event_dt)
+            except Exception:
+                pass
+
+    def _replay_wait_consumer_lag(self, event_dt: Optional[datetime]) -> None:
+        """Hold replay publish when Paper ACK lag exceeds the cert cap.
+
+        Live WebSocket is not blocked; only this replay loop waits.
+        After Paper has connected once, a disconnect (AM child exit) does not
+        dump the remaining Full-Day tape. Wait for reconnect or operator stop.
+        Do not reanchor during that wait: ARM T0 is shared with the daily
+        runner lunch wait (projected_session_now must keep advancing).
+        """
+        if not session_clock_enabled():
+            return
+        if self.bus.paper_tcp_ready():
+            self._paper_consumer_seen = True
+        elif self._paper_consumer_seen:
+            while not self.bus.paper_tcp_ready():
+                if self._stop.is_set() or self._operator_stop_requested():
+                    return
+                time.sleep(0.05)
+            self._paper_consumer_seen = True
+            self._mark_replay_resume_after_consumer_gap(event_dt)
+        if not self.bus.paper_tcp_ready():
+            return
+        cap = replay_max_publish_lag()
+        while self.bus.max_lag() > cap:
+            if self._stop.is_set() or self._operator_stop_requested():
+                return
+            if event_dt is not None:
+                try:
+                    reanchor_session_clock(event_dt)
+                except Exception:
+                    pass
+            time.sleep(0.01)
+
+    def _mark_replay_resume_after_consumer_gap(self, event_dt: Optional[datetime]) -> None:
+        """AM child end is not Full-Day teardown. After lunch, do not publish AM leftovers.
+
+        Projected clock may already be 12:25+ while the held record is still ~11:25.
+        Jump read/publish watermarks to PM resume so now_jst is not stuck at AM close.
+        """
+        if event_dt is None:
+            return
+        proj = projected_session_now()
+        if (proj.hour, proj.minute) < (FULL_DAY_PM_RESUME.hour, FULL_DAY_PM_RESUME.minute):
+            return
+        if (event_dt.hour, event_dt.minute) >= (FULL_DAY_PM_RESUME.hour, FULL_DAY_PM_RESUME.minute):
+            return
+        resume = event_dt.replace(
+            hour=FULL_DAY_PM_RESUME.hour,
+            minute=FULL_DAY_PM_RESUME.minute,
+            second=0,
+            microsecond=0,
+        )
+        self._replay_resume_not_before = resume
+        try:
+            record_replay_progress(
+                source_event_time=resume,
+                replay_read_watermark=resume,
+                ingress_publish_watermark=resume,
+                consumer_ack_watermark=resume,
+                paper_last_processed_event_time=resume,
+                force=True,
+            )
+        except Exception:
+            pass
 
     def _poll_demo_control(self) -> None:
         """Cross-process demo commands (force_stale / stop). Live path never uses this."""

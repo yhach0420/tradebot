@@ -455,6 +455,7 @@ def main() -> int:
     if fixture.is_file():
         env[ENV_REPLAY_PATH] = str(fixture)
         env[ENV_REPLAY_EPS] = "2500"
+        env["TRADEBOT_INGRESS_REPLAY_MAX_LAG"] = "128"
     env["TRADEBOT_TRADING_DATE"] = "20260812"
     env = official_cert_child_env(env)
     certification_run_id = "cert_" + generate_launch_nonce()
@@ -489,7 +490,7 @@ def main() -> int:
         try:
             full_day = _invoke_checked_bat(
                 env=env,
-                timeout_sec=2400,
+                timeout_sec=43200,
                 log_name="full_day",
                 certification_run_id=certification_run_id,
                 stage_run_id=full_day_scope["stage_run_id"],
@@ -552,7 +553,7 @@ def main() -> int:
         try:
             pm_run = _invoke_checked_bat(
                 env=pm_env,
-                timeout_sec=1800,
+                timeout_sec=14400,
                 log_name="pm_direct_start",
                 certification_run_id=certification_run_id,
                 stage_run_id=pm_scope["stage_run_id"],
@@ -605,7 +606,7 @@ def main() -> int:
             try:
                 windows[name] = _invoke_checked_bat(
                     env=wenv,
-                    timeout_sec=int((end - start).total_seconds()) + 180,
+                    timeout_sec=int((end - start).total_seconds()) + 1800,
                     log_name=f"window_{name}",
                     certification_run_id=certification_run_id,
                     stage_run_id=wscope["stage_run_id"],

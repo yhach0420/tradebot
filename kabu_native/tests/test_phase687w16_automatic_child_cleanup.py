@@ -104,7 +104,8 @@ def _harness(**kwargs):
     return kw
 
 
-def test_should_stop_policy_distinguishes_paper_block_continue():
+def test_should_stop_policy_distinguishes_paper_block_continue(monkeypatch):
+    monkeypatch.delenv("TRADEBOT_CERTIFICATION_MODE", raising=False)
     stop, why = should_stop_on_shutdown(
         reason="normal_exit",
         paper_blocked_capture_continues=True,

@@ -423,12 +423,122 @@ Blockers (non-exhaustive):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Phase687W4S Forward Soak
 
-- Verdict (latest): `READONLY_SOAK_NOT_STARTED`
-- Sessions collected: `0`
-- Readonly success sessions: `0`
-- Probe account_status: `OFFLINE`
+- Verdict (latest): `READONLY_SOAK_IN_PROGRESS`
+- Sessions collected: `1`
+- Readonly success sessions: `1`
+- Probe account_status: `TOKEN_REQUEST_FAILED`
 - Production enablement: NOT_AUTHORIZED / NOT_IMPLEMENTED
 
 ## Phase687W4T Token / Read-Only Readiness

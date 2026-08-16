@@ -6,8 +6,10 @@ Discord Summary reads SUMMARY.json.canonical_summary exclusively (no re-aggregat
 
 from __future__ import annotations
 
+import json
 import logging
 import statistics
+from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from replay.pnl_yen import enrich_trade_pnl_yen, format_pnl_yen_100_display
@@ -77,6 +79,81 @@ def is_canonical_trade(row: Mapping[str, Any]) -> bool:
 
 def collect_canonical_trades(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return [enrich_trade_pnl_yen(dict(e)) for e in events if is_canonical_trade(e)]
+
+
+def v1r_exit_executed_to_canonical_trade(row: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+    """Map dual-lane primary EXIT_EXECUTED (flattened trace) to observer_exit SoT row."""
+    if str(row.get("event") or "") != "EXIT_EXECUTED":
+        return None
+    if str(row.get("lane") or "") != "primary":
+        return None
+    fill = _as_float(row.get("fill_price") if row.get("fill_price") is not None else row.get("entry_price"))
+    exit_p = _as_float(row.get("exit_price"))
+    if fill is None or exit_p is None or fill <= 0:
+        return None
+    pnl_pct = (exit_p - fill) / fill * 100.0
+    reason = str(row.get("reason") or row.get("exit_reason") or "")
+    out = {
+        "event_type": "observer_exit",
+        "source": "v1r_native",
+        "lane": "primary",
+        "symbol": str(row.get("symbol") or ""),
+        "entry_price": fill,
+        "exit_price": exit_p,
+        "pnl_pct": pnl_pct,
+        "exit_reason": reason,
+        "exit_time": row.get("exit_time"),
+        "shadow_only": False,
+        "is_shadow_trade": False,
+        "skipped": False,
+        "notification_only": False,
+        "debug_row": False,
+    }
+    return enrich_trade_pnl_yen(out)
+
+
+def collect_v1r_primary_canonical_trades(
+    traces: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Actual V1R primary executed EXIT only — never Control / shadow / PBv2 / capacity-reject."""
+    seen: set[tuple[str, str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for raw in traces:
+        trade = v1r_exit_executed_to_canonical_trade(raw)
+        if trade is None:
+            continue
+        if not is_canonical_trade(trade):
+            continue
+        key = (
+            str(trade.get("symbol") or ""),
+            str(trade.get("exit_time") or ""),
+            str(trade.get("exit_reason") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(trade)
+    return out
+
+
+def load_v1r_dual_lane_traces(output_dir: Optional[Path]) -> list[dict[str, Any]]:
+    if output_dir is None:
+        return []
+    path = Path(output_dir) / "v1r_dual_lane_trace.jsonl"
+    if not path.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            rows.append(obj)
+    return rows
 
 
 def is_stop_exit(row: Mapping[str, Any]) -> bool:
@@ -374,8 +451,33 @@ def enrich_summary_with_canonical(
     peak_open_slots: Optional[int] = None,
     max_concurrent_positions: int = 3,
     watch_symbols_count: Optional[int] = None,
+    output_dir: Optional[Path] = None,
+    v1r_traces: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> dict[str, Any]:
-    trades = collect_canonical_trades(events)
+    sot = "observer_exit"
+    trades: list[dict[str, Any]]
+    try:
+        from small_paper.v1r_live_dual_lane import live_primary_enabled, peek_dual_lane
+
+        v1r_on = bool(live_primary_enabled())
+    except Exception:
+        v1r_on = False
+        peek_dual_lane = None  # type: ignore[assignment]
+    if v1r_on:
+        traces = list(v1r_traces or [])
+        dual = peek_dual_lane() if peek_dual_lane is not None else None
+        if dual is not None:
+            traces.extend(list(getattr(dual, "traces", None) or []))
+        file_traces = load_v1r_dual_lane_traces(output_dir)
+        traces.extend(file_traces)
+        use_v1r = dual is not None or v1r_traces is not None or bool(file_traces)
+        if use_v1r:
+            trades = collect_v1r_primary_canonical_trades(traces)
+            sot = "v1r_primary_exit_executed"
+        else:
+            trades = collect_canonical_trades(events)
+    else:
+        trades = collect_canonical_trades(events)
     # position_cap_mode: official max_concurrent = observer open peak, not gate peak_open_slots.
     obs_max = summary.get("observer_open_max_positions")
     timeline_peak = peak_concurrent_from_position_events(events)
@@ -398,6 +500,7 @@ def enrich_summary_with_canonical(
     )
     breakdown = session_close_pnl_breakdown(trades)
     canonical.update(breakdown)
+    canonical["source"] = sot
     canonical["max_concurrent_source"] = (
         "observer_open_max_positions"
         if summary.get("position_cap_mode") and obs_max
@@ -405,6 +508,7 @@ def enrich_summary_with_canonical(
     )
     errors = validate_canonical_summary_integrity(canonical, trades)
     summary["canonical_summary"] = canonical
+    summary["canonical_summary_source"] = sot
     summary["total_pnl_pct_raw"] = canonical.get("total_pnl_pct_raw")
 
     # Official PnL SoT = canonical (includes session_close). Avoid dual total_pnl meaning.
