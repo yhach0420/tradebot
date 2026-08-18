@@ -45,9 +45,17 @@ from small_paper.v1r_activation_binding import (
 JST = ZoneInfo("Asia/Tokyo")
 
 ENV_OPVAL_MODE = "TRADEBOT_OPERATIONAL_VALIDATION_MODE"
-OPVAL_ACTIVATION_ID = "V1R_EXIT_V2_PAPER_PRIMARY_OPVAL_20260817"
-OPVAL_TRADING_DATE = "20260817"
+ENV_CAPTURE_TRADING_DATE = "TRADEBOT_CAPTURE_TRADING_DATE"
+ENV_PAPER_TRADING_DATE = "TRADEBOT_PAPER_TRADING_DATE"
+ENV_OPVAL_BOUND_TRADING_DATE = "TRADEBOT_OPVAL_BOUND_TRADING_DATE"
+OPVAL_ACTIVATION_ID = "V1R_EXIT_V2_PAPER_PRIMARY_OPVAL_CURRENT_TRADING_DAY"
+OPVAL_LEGACY_ACTIVATION_ID = "V1R_EXIT_V2_PAPER_PRIMARY_OPVAL_20260817"
+OPVAL_LEGACY_PINNED_DATE = "20260817"
+C6_ID = "V1R_EXIT_V2_PAPER_PRIMARY_CANDIDATE_V26G6_6"
+# Deprecated alias: Live OPVAL no longer pins this calendar day.
+OPVAL_TRADING_DATE = OPVAL_LEGACY_PINNED_DATE
 OPVAL_ASSERTION_FAIL = "V1R_OPVAL_STARTUP_CONTRACT_FAILED"
+OPVAL_HOLIDAY_CALENDAR_YEAR = "2026"
 
 _TRUE = {"1", "true", "yes", "on"}
 
@@ -81,6 +89,124 @@ def _flag(name: str, *, environ: Optional[Mapping[str, str]] = None) -> bool:
 
 def operational_validation_mode(*, environ: Optional[Mapping[str, str]] = None) -> bool:
     return _flag(ENV_OPVAL_MODE, environ=environ)
+
+
+def _norm_day(raw: Any) -> str:
+    return str(raw or "").strip().replace("-", "")[:8]
+
+
+def _valid_yyyymmdd(raw: str) -> bool:
+    s = _norm_day(raw)
+    if len(s) != 8 or not s.isdigit():
+        return False
+    try:
+        datetime.strptime(s, "%Y%m%d")
+        return True
+    except ValueError:
+        return False
+
+
+def opval_clock_day(*, environ: Optional[Mapping[str, str]] = None, clock_day: str = "") -> str:
+    """Production session day from RuntimeClock (not date.today / OS local)."""
+    if _valid_yyyymmdd(clock_day):
+        return _norm_day(clock_day)
+    from small_paper.runtime_clock import now_jst
+
+    env = dict(environ) if environ is not None else None
+    return now_jst(environ=env).strftime("%Y%m%d")
+
+
+def resolve_opval_canonical_trading_date(
+    *,
+    environ: Optional[Mapping[str, str]] = None,
+    explicit: Optional[str] = None,
+    clock_day: str = "",
+) -> tuple[str, str]:
+    """Canonical Live OPVAL trading date.
+
+    Authority: production resolve_runtime_trading_date (RuntimeClock / session
+    context). Not datetime.today(), not an arbitrary CLI date alone.
+    """
+    env = dict(environ) if environ is not None else dict(os.environ)
+    if session_clock_enabled(environ=env):
+        return "", "OPVAL_SESSION_CLOCK_FORBIDDEN"
+    try:
+        from small_paper.session_runtime_identity import (
+            RuntimeTradingDateNotProven,
+            resolve_runtime_trading_date,
+        )
+
+        day = resolve_runtime_trading_date(explicit, environ=env)
+    except RuntimeTradingDateNotProven:
+        return "", "OPVAL_TRADING_DATE_UNRESOLVED"
+    except Exception:
+        return "", "OPVAL_TRADING_DATE_UNRESOLVED"
+    if not _valid_yyyymmdd(day):
+        return "", "OPVAL_TRADING_DATE_UNRESOLVED"
+    day = _norm_day(day)
+    if day[:4] != OPVAL_HOLIDAY_CALENDAR_YEAR:
+        return day, "OPVAL_TRADING_DATE_UNRESOLVED"
+    try:
+        from research.e1_x29_prospective.calendar import is_jpx_trading_day
+    except Exception:
+        return day, "OPVAL_TRADING_DATE_UNRESOLVED"
+    if not is_jpx_trading_day(day):
+        return day, "OPVAL_NON_TRADING_DATE"
+    clock = opval_clock_day(environ=env, clock_day=clock_day)
+    if _valid_yyyymmdd(clock):
+        if day < clock:
+            return day, "OPVAL_HISTORICAL_DATE"
+        if day > clock:
+            return day, "OPVAL_FUTURE_DATE"
+    return day, ""
+
+
+def opval_trading_date_mismatch_reason(
+    *,
+    resolved: str,
+    capture_trading_date: str = "",
+    paper_trading_date: str = "",
+    bound_trading_date: str = "",
+) -> str:
+    cap = _norm_day(capture_trading_date) or resolved
+    paper = _norm_day(paper_trading_date) or resolved
+    bound = _norm_day(bound_trading_date) or resolved
+    if not (_valid_yyyymmdd(resolved) and _valid_yyyymmdd(cap) and _valid_yyyymmdd(paper) and _valid_yyyymmdd(bound)):
+        return "OPVAL_TRADING_DATE_UNRESOLVED"
+    if cap != resolved or paper != resolved or bound != resolved:
+        return "OPVAL_TRADING_DATE_MISMATCH"
+    return ""
+
+
+def build_opval_run_binding(
+    *,
+    activation_id: str,
+    activation_sha: str,
+    source_digest: str,
+    inventory_digest_value: str,
+    resolved_trading_date: str,
+    capture_session_id: str = "",
+    capture_run_id: str = "",
+    paper_stage_run_id: str = "",
+    paper_run_id: str = "",
+) -> dict[str, Any]:
+    return {
+        "schema": "V1R_OPVAL_RUN_BINDING_V1",
+        "mode": CANDIDATE_STATUS_OPVAL,
+        "INVALID_FOR_STRATEGY_EVALUATION": True,
+        "NOT_PROSPECTIVE_DAY1": True,
+        "not_formal_activation": True,
+        "working_activation_id": activation_id,
+        "working_activation_sha": activation_sha,
+        "source_digest": source_digest,
+        "runtime_inventory_digest": inventory_digest_value,
+        "resolved_trading_date": _norm_day(resolved_trading_date),
+        "capture_session_id": capture_session_id or "",
+        "capture_run_id": capture_run_id or "",
+        "paper_stage_run_id": paper_stage_run_id or "",
+        "paper_run_id": paper_run_id or "",
+        "created_at": datetime.now(JST).isoformat(timespec="milliseconds"),
+    }
 
 
 def current_git_head() -> str:
@@ -117,6 +243,11 @@ def opval_startup_blocked_reason(
     *,
     environ: Optional[Mapping[str, str]] = None,
     native_root: Optional[Path] = None,
+    resolved_trading_date: Optional[str] = None,
+    capture_trading_date: Optional[str] = None,
+    paper_trading_date: Optional[str] = None,
+    bound_trading_date: Optional[str] = None,
+    clock_day: str = "",
 ) -> str:
     """Fail-closed OPVAL contract. Empty string means this contract PASSed.
 
@@ -137,7 +268,13 @@ def opval_startup_blocked_reason(
     except OSError:
         return "OPVAL_FORMAL_SELECTOR_SUBSTITUTION"
     aid = str(selector.get("activation_id") or "").strip()
-    if aid == V25_ACTIVATION_ID or aid != OPVAL_ACTIVATION_ID:
+    if aid == V25_ACTIVATION_ID:
+        return "OPVAL_FORMAL_SELECTOR_SUBSTITUTION"
+    if aid == C6_ID:
+        return "OPVAL_CANDIDATE6_FORBIDDEN"
+    if aid == OPVAL_LEGACY_ACTIVATION_ID:
+        return "OPVAL_LEGACY_IDENTITY_FORBIDDEN"
+    if aid != OPVAL_ACTIVATION_ID:
         return "OPVAL_FORMAL_SELECTOR_SUBSTITUTION"
     mid = str(manifest.get("manifest_id") or manifest.get("candidate_id") or "").strip()
     if mid != OPVAL_ACTIVATION_ID:
@@ -151,7 +288,7 @@ def opval_startup_blocked_reason(
         return "OPVAL_PROSPECTIVE_FORBIDDEN"
     if bool(manifest.get("strategy_evaluation_allowed")):
         return "OPVAL_STRATEGY_EVALUATION_FORBIDDEN"
-    if str(manifest.get("candidate_id") or "") == "V1R_EXIT_V2_PAPER_PRIMARY_CANDIDATE_V26G6_6":
+    if str(manifest.get("candidate_id") or "") == C6_ID:
         return "OPVAL_CANDIDATE6_FORBIDDEN"
 
     bind = verify_selector_binding(selector, manifest)
@@ -214,10 +351,22 @@ def opval_startup_blocked_reason(
     if mode in {MARKET_INPUT_REPLAY, MARKET_INPUT_SYNTHETIC}:
         return "OPVAL_REPLAY_PATH_FORBIDDEN"
 
-    day = str(env.get("TRADEBOT_TRADING_DATE") or env.get("TRADEBOT_SESSION_TRADING_DATE") or "").strip()
-    if not day:
-        day = datetime.now(JST).strftime("%Y%m%d")
-    if day != OPVAL_TRADING_DATE:
-        return "OPVAL_HISTORICAL_DATE"
-
+    day, date_reason = resolve_opval_canonical_trading_date(
+        environ=env,
+        explicit=resolved_trading_date,
+        clock_day=clock_day,
+    )
+    if date_reason:
+        return date_reason
+    cap = str(capture_trading_date or env.get(ENV_CAPTURE_TRADING_DATE) or "").strip()
+    paper = str(paper_trading_date or env.get(ENV_PAPER_TRADING_DATE) or env.get("TRADEBOT_TRADING_DATE") or "").strip()
+    bound = str(bound_trading_date or env.get(ENV_OPVAL_BOUND_TRADING_DATE) or "").strip()
+    mismatch = opval_trading_date_mismatch_reason(
+        resolved=day,
+        capture_trading_date=cap,
+        paper_trading_date=paper,
+        bound_trading_date=bound,
+    )
+    if mismatch:
+        return mismatch
     return ""

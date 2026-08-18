@@ -390,6 +390,47 @@ def replay_clock_bind_enabled(*, environ: Optional[dict[str, str]] = None) -> bo
     return bool(ingress_replay_path(environ=env))
 
 
+def _consumer_ack_must_flush(
+    path: str,
+    *,
+    consumer_ack_watermark: Optional[datetime],
+    paper_last_processed_event_time: Optional[datetime],
+    environ: Optional[dict[str, str]] = None,
+) -> bool:
+    """Last consumer ACK must not be dropped by the 0.2s ARM debounce.
+
+    48x PM_DIRECT hung with replay_eof + cons < pub: Paper had already
+    processed the last publish in memory, but debounce left ARM ACK stale,
+    so replay_causal_stop_ready stayed false and Paper waited in
+    DEGRADED_RECONNECT_WAIT. Do not raise the lag cap. Do not inject STOP.
+    """
+    ack = consumer_ack_watermark or paper_last_processed_event_time
+    if ack is None:
+        return False
+    doc = _read_arm_doc(path)
+    if bool(doc.get("replay_eof")):
+        return True
+    pub = _parse_iso_dt(doc.get("ingress_publish_watermark"))
+    if pub is not None and ack >= pub:
+        return True
+    stop = _parse_iso_dt(doc.get("session_stop")) or session_stop(environ=environ)
+    if stop is not None and ack >= stop:
+        return True
+    return False
+
+
+def replay_consumer_caught_publish(*, environ: Optional[dict[str, str]] = None) -> bool:
+    """True when ARM consumer ACK is at or past the last published event time."""
+    wm = load_replay_watermarks(environ=environ)
+    pub = _parse_iso_dt(wm.get("ingress_publish_watermark"))
+    cons = _parse_iso_dt(wm.get("consumer_ack_watermark"))
+    if pub is None:
+        return True
+    if cons is None:
+        return False
+    return cons >= pub
+
+
 def record_replay_progress(
     *,
     source_event_time: Optional[datetime] = None,
@@ -409,7 +450,13 @@ def record_replay_progress(
         return
     now_mono = time.monotonic()
     if not force and replay_eof is not True and (now_mono - _LAST_WATERMARK_WRITE_MONO) < 0.2:
-        return
+        if not _consumer_ack_must_flush(
+            path,
+            consumer_ack_watermark=consumer_ack_watermark,
+            paper_last_processed_event_time=paper_last_processed_event_time,
+            environ=env,
+        ):
+            return
     updates: dict[str, Any] = {}
 
     def _iso(dt: Optional[datetime]) -> Optional[str]:
@@ -461,6 +508,13 @@ def load_replay_watermarks(*, environ: Optional[dict[str, str]] = None) -> dict[
 
 
 def _clock_cap_dt(*, environ: Optional[dict[str, str]] = None) -> Optional[datetime]:
+    """Processing-clock cap: last published (or readable) tape time.
+
+    Do not min() with consumer ACK. min(pub, cons) capped now_jst at the last
+    ACK, so Paper could not drain already-published backlog. Replay then waited
+    forever on lag>128 and session_clock_stop_reached never became true.
+    Causal STOP uses replay_causal_stop_ready() (consumer must ACK last publish).
+    """
     env = environ if environ is not None else os.environ
     path = str(env.get(ENV_ARM_FILE) or os.environ.get(ENV_ARM_FILE) or "").strip()
     if not path:
@@ -470,8 +524,6 @@ def _clock_cap_dt(*, environ: Optional[dict[str, str]] = None) -> Optional[datet
     cons = _parse_iso_dt(doc.get("consumer_ack_watermark"))
     read = _parse_iso_dt(doc.get("replay_read_watermark"))
     src = _parse_iso_dt(doc.get("source_event_time"))
-    if pub and cons:
-        return min(pub, cons)
     return pub or cons or read or src
 
 
@@ -678,9 +730,10 @@ def projected_session_now(*, environ: Optional[dict[str, str]] = None) -> dateti
 def now_jst(*, environ: Optional[dict[str, str]] = None) -> datetime:
     """Domain B session/scheduler now. Production = wall JST.
 
-    Certification replay: causally capped to replay watermarks so STOP /
-    morning_session_close cannot fire while the consumer is still on warmup
-    tape. Does not freeze at STOP.
+    Certification replay: capped to the last published tape time so Paper can
+    drain already-published events. STOP itself is replay_causal_stop_ready()
+    and does not fire while consumer ACK lags the last publish. Does not freeze
+    at STOP.
     """
     env = environ if environ is not None else os.environ
     if not session_clock_enabled(environ=env):
@@ -745,11 +798,47 @@ def session_clock_window(
     return session_clock_v0(environ=environ), session_stop(environ=environ)
 
 
+def replay_causal_stop_ready(*, environ: Optional[dict[str, str]] = None) -> bool:
+    """Replay STOP is ready only after source reached STOP/EOF and consumer drained.
+
+    Does not advance the clock. Does not inject session_clock_stop. Unacked
+    published events keep this False.
+    """
+    env = environ if environ is not None else os.environ
+    if not session_clock_enabled(environ=env):
+        return False
+    stop = session_stop(environ=env)
+    if stop is None:
+        return False
+    if not replay_clock_bind_enabled(environ=env):
+        return now_jst(environ=env) >= stop
+    path = str(env.get(ENV_ARM_FILE) or os.environ.get(ENV_ARM_FILE) or "").strip()
+    doc = _read_arm_doc(path) if path else {}
+    eof = bool(doc.get("replay_eof"))
+    pub = _parse_iso_dt(doc.get("ingress_publish_watermark"))
+    cons = _parse_iso_dt(doc.get("consumer_ack_watermark"))
+    read = _parse_iso_dt(doc.get("replay_read_watermark"))
+    src = _parse_iso_dt(doc.get("source_event_time"))
+    source_reached = bool(eof)
+    for dt in (pub, read, src):
+        if dt is not None and dt >= stop:
+            source_reached = True
+            break
+    if not source_reached:
+        return False
+    if pub is not None and cons is not None:
+        return cons >= pub
+    if eof and cons is not None and cons >= stop:
+        return True
+    return False
+
+
 def session_clock_stop_reached(*, environ: Optional[dict[str, str]] = None) -> bool:
     """True when domain-B now has reached TRADEBOT_SESSION_CLOCK_STOP.
 
-    Certification replay also requires the replay watermark to have reached
-    STOP (or EOF). Does not freeze now_jst() at STOP.
+    Certification replay: source reached STOP or EOF, and Paper ACK has caught
+    the last published event. Does not freeze now_jst() at STOP. Does not treat
+    now_jst()>=STOP alone as causal (that deadlocked 1x drain).
     """
     env = environ if environ is not None else os.environ
     if not session_clock_enabled(environ=env):
@@ -758,18 +847,7 @@ def session_clock_stop_reached(*, environ: Optional[dict[str, str]] = None) -> b
     if stop is None:
         return False
     if replay_clock_bind_enabled(environ=env):
-        path = str(env.get(ENV_ARM_FILE) or os.environ.get(ENV_ARM_FILE) or "").strip()
-        eof = False
-        if path:
-            eof = bool(_read_arm_doc(path).get("replay_eof"))
-        cap = _clock_cap_dt(environ=env)
-        if cap is None and not eof:
-            return False
-        if now_jst(environ=env) < stop:
-            return False
-        if eof:
-            return True
-        return cap is not None and cap >= stop
+        return replay_causal_stop_ready(environ=env)
     return now_jst(environ=env) >= stop
 
 

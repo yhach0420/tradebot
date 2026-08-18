@@ -185,7 +185,8 @@ def test_warmup_barrier_source() -> None:
     assert "record_replay_progress" in src
     clock = (NATIVE / "src/small_paper/runtime_clock.py").read_text(encoding="utf-8")
     assert "replay_clock_bind_enabled" in clock
-    assert "causally capped to replay watermarks" in clock
+    assert "replay_causal_stop_ready" in clock
+    assert "capped to the last published tape time" in clock
 
 
 def test_sealed_valid_collected_when_paper_exit_nonzero(tmp_path: Path) -> None:

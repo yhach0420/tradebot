@@ -35,13 +35,15 @@ from small_paper.runtime_clock import (
     official_cert_child_env,
 )
 from small_paper.operational_validation import OPVAL_ACTIVATION_ID
-from small_paper.v1r_activation_binding import ENV_ACTIVATION_SELECTOR
+from small_paper.v1r_activation_binding import ENV_ACTIVATION_SELECTOR, OUT
 
 JST = ZoneInfo("Asia/Tokyo")
 G6_DIR = NATIVE / "results" / "research" / "v26g6_targeted_rca"
 WORKING_SELECTOR = G6_DIR / "active_v1r_working_v26g6.json"
 OPVAL_SELECTOR = G6_DIR / "active_v1r_opval_20260817.json"
+C6_SELECTOR = OUT / "active_v1r_candidate_v26g6_6.json"
 WORKING_ID = "V1R_EXIT_V2_PAPER_PRIMARY_WORKING_V26G6"
+C6_ID = "V1R_EXIT_V2_PAPER_PRIMARY_CANDIDATE_V26G6_6"
 OPVAL_LABELS = {
     "paper_mode": "OPERATIONAL_VALIDATION_ONLY",
     "INVALID_FOR_STRATEGY_EVALUATION": True,
@@ -821,17 +823,24 @@ def main() -> int:
     parser.add_argument("--no-prekill", action="store_true")
     parser.add_argument(
         "--identity",
-        choices=("working", "opval"),
+        choices=("working", "opval", "candidate6"),
         default="working",
-        help="working=G6 RCA selector; opval=20260817 OPVAL identity (cert/replay harness only)",
+        help="working=G6 RCA selector; opval=20260817 OPVAL; candidate6=UNCERTIFIED C6 selector",
     )
     args = parser.parse_args()
     opval_offline = args.identity == "opval"
-    selector_path = OPVAL_SELECTOR if opval_offline else WORKING_SELECTOR
-    activation_id = OPVAL_ACTIVATION_ID if opval_offline else WORKING_ID
-    ident_script = (
-        "assert_v26g6_opval_identity.py" if opval_offline else "assert_v26g6_working_identity.py"
-    )
+    if args.identity == "candidate6":
+        selector_path = C6_SELECTOR
+        activation_id = C6_ID
+        ident_script = "assert_v26g6_candidate6_identity.py"
+    elif opval_offline:
+        selector_path = OPVAL_SELECTOR
+        activation_id = OPVAL_ACTIVATION_ID
+        ident_script = "assert_v26g6_opval_identity.py"
+    else:
+        selector_path = WORKING_SELECTOR
+        activation_id = WORKING_ID
+        ident_script = "assert_v26g6_working_identity.py"
     if args.seq:
         stages = [x.strip() for x in args.seq.split(",") if x.strip()]
     elif args.stage == "chain_a":
@@ -854,7 +863,12 @@ def main() -> int:
     ident_spec.loader.exec_module(ident_mod)
     ident = ident_mod.check()
     if not ident.get("ok"):
-        verdict = "V1R_OPVAL_IDENTITY_FAIL" if opval_offline else "V1R_V26G6_WORKING_IDENTITY_FAIL"
+        if args.identity == "candidate6":
+            verdict = "V1R_V26G6_CANDIDATE6_IDENTITY_FAIL"
+        elif opval_offline:
+            verdict = "V1R_OPVAL_IDENTITY_FAIL"
+        else:
+            verdict = "V1R_V26G6_WORKING_IDENTITY_FAIL"
         print(json.dumps({"verdict": verdict, **ident}, default=str))
         return 2
     if not selector_path.is_file():

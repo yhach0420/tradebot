@@ -70,12 +70,14 @@ from small_paper.runtime_clock import (
     projected_session_now,
     reanchor_session_clock,
     record_replay_progress,
+    replay_consumer_caught_publish,
     replay_max_eps,
     replay_max_publish_lag,
     replay_not_before_hhmm,
     scheduled_end_passed,
     session_clock_armed,
     session_clock_enabled,
+    session_stop,
     sleep_until as session_sleep_until,
 )
 
@@ -1087,6 +1089,18 @@ class MarketIngressService:
                             replay_read_watermark=event_dt,
                         )
                         self._replay_pace_to_session(event_dt)
+                        stop_dt = session_stop()
+                        if stop_dt is not None and event_dt >= stop_dt:
+                            # Source reached STOP: do not publish past the boundary.
+                            # Drain already-published backlog, then EOF. Do not skip ACK.
+                            self._replay_drain_published_backlog()
+                            record_replay_progress(
+                                source_event_time=event_dt,
+                                replay_read_watermark=event_dt,
+                                replay_eof=True,
+                                force=True,
+                            )
+                            break
                     self._replay_wait_consumer_lag(event_dt)
                     if (
                         event_dt is not None
@@ -1118,6 +1132,7 @@ class MarketIngressService:
                     self.sm.last_error = type(exc).__name__
                     self._record_status_publish_failure("replay_loop", exc)
                     continue
+            self._replay_drain_published_backlog()
             record_replay_progress(replay_eof=True, force=True)
         except Exception as exc:
             self.sm.last_error = type(exc).__name__
@@ -1175,11 +1190,19 @@ class MarketIngressService:
         while self.bus.max_lag() > cap:
             if self._stop.is_set() or self._operator_stop_requested():
                 return
-            if event_dt is not None:
-                try:
-                    reanchor_session_clock(event_dt)
-                except Exception:
-                    pass
+            # Do not reanchor to the unpublished next event. That pinned the
+            # processing clock and prevented drain of already-published backlog.
+            time.sleep(0.01)
+
+    def _replay_drain_published_backlog(self) -> None:
+        """Hold new publish until Paper ACK catches the last published sequence."""
+        if not session_clock_enabled():
+            return
+        if not self.bus.paper_tcp_ready():
+            return
+        while self.bus.max_lag() > 0 or not replay_consumer_caught_publish():
+            if self._stop.is_set() or self._operator_stop_requested():
+                return
             time.sleep(0.01)
 
     def _mark_replay_resume_after_consumer_gap(self, event_dt: Optional[datetime]) -> None:

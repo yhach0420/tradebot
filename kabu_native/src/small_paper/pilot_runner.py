@@ -15,7 +15,9 @@ from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from small_paper.runtime_clock import ensure_session_clock_armed
+from small_paper.runtime_clock import load_replay_watermarks
 from small_paper.runtime_clock import now_jst as session_now
+from small_paper.runtime_clock import record_replay_progress
 from small_paper.runtime_clock import session_clock_enabled
 from small_paper.runtime_clock import session_clock_stop_reached
 
@@ -9181,6 +9183,7 @@ def run_live_dry_run(
 
         start = time.monotonic()
         last_hb = start
+        last_replay_ack_dt: Optional[datetime] = None
         msg_i = 0
         last_eval: dict[str, float] = {}
         from small_paper.data_path_stall_monitor import (
@@ -9327,6 +9330,17 @@ def run_live_dry_run(
         def _should_stop() -> bool:
             if state.stop_requested:
                 return True
+            if last_replay_ack_dt is not None:
+                try:
+                    wm = load_replay_watermarks()
+                    if bool(wm.get("replay_eof")):
+                        record_replay_progress(
+                            consumer_ack_watermark=last_replay_ack_dt,
+                            paper_last_processed_event_time=last_replay_ack_dt,
+                            force=True,
+                        )
+                except Exception:
+                    pass
             if session_clock_stop_reached():
                 _request_stop("session_clock_stop")
                 return True
@@ -9687,6 +9701,7 @@ def run_live_dry_run(
 
                                     ev_dt_w = _replay_reference_now(pipeline_ctx, payload)
                                     if ev_dt_w is not None:
+                                        last_replay_ack_dt = ev_dt_w
                                         record_replay_progress(
                                             consumer_ack_watermark=ev_dt_w,
                                             paper_last_processed_event_time=ev_dt_w,
@@ -9703,6 +9718,7 @@ def run_live_dry_run(
                                 from small_paper.runtime_clock import record_replay_progress
 
                                 if ev_dt is not None:
+                                    last_replay_ack_dt = ev_dt
                                     record_replay_progress(
                                         consumer_ack_watermark=ev_dt,
                                         paper_last_processed_event_time=ev_dt,

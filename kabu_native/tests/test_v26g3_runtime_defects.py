@@ -226,9 +226,13 @@ def test_warmup_uses_session_clock_not_wall() -> None:
     assert ring_only_warmup_active(config=Cfg(), am_pm_policy=Pol(), now=now_jst()) is True
 
 
-def test_replay_catchup_reanchors_clock_to_event_not_dump_ahead() -> None:
+def test_replay_catchup_reanchors_clock_to_event_not_dump_ahead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arm = tmp_path / "arm.json"
+    monkeypatch.setenv(ENV_ARM_FILE, str(arm))
     v0 = datetime(2026, 8, 12, 8, 50, 0, tzinfo=JST)
-    bind_session_clock(virtual_start=v0, speed_mult=48.0, arm_now=True)
+    bind_session_clock(virtual_start=v0, speed_mult=48.0, arm_now=True, arm_file=arm)
     import time as _t
 
     _t.sleep(0.15)
@@ -237,7 +241,8 @@ def test_replay_catchup_reanchors_clock_to_event_not_dump_ahead() -> None:
     assert event_dt < now_jst()
     reanchor_session_clock(event_dt)
     delta = abs((now_jst() - event_dt).total_seconds())
-    assert delta < 0.25
+    # 0.25s virtual is 5ms wall at 48x. Dump-ahead after 0.15s is ~7s virtual.
+    assert delta < 1.5
 
 
 def test_arm_file_is_t0_source_of_truth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -253,16 +258,22 @@ def test_arm_file_is_t0_source_of_truth(tmp_path: Path, monkeypatch: pytest.Monk
 
 
 @pytest.mark.parametrize("speed_mult", [1.0, 4.0, 12.0, 48.0])
-def test_replay_speed_reanchor_parity(speed_mult: float) -> None:
+def test_replay_speed_reanchor_parity(
+    speed_mult: float, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arm = tmp_path / "arm.json"
+    monkeypatch.setenv(ENV_ARM_FILE, str(arm))
     v0 = datetime(2026, 8, 12, 9, 5, 0, tzinfo=JST)
-    bind_session_clock(virtual_start=v0, speed_mult=speed_mult, arm_now=True)
+    bind_session_clock(virtual_start=v0, speed_mult=speed_mult, arm_now=True, arm_file=arm)
     import time as _t
 
     _t.sleep(0.08)
     event_dt = v0 + timedelta(seconds=2)
     reanchor_session_clock(event_dt)
     delta = abs((now_jst() - event_dt).total_seconds())
-    assert delta < 0.25, (speed_mult, delta, now_jst(), event_dt)
+    # 0.25s virtual is 5ms wall at 48x. Allow 40ms wall equivalent; dump-ahead
+    # after 0.08s sleep is 0.08*speed virtual (3.84s at 48x).
+    assert delta < max(0.25, 0.04 * speed_mult), (speed_mult, delta, now_jst(), event_dt)
 
 
 def test_ingress_replay_paces_and_waits_consumer_lag() -> None:

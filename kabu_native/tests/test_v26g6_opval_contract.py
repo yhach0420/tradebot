@@ -2,18 +2,26 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from small_paper.operational_validation import (
+    ENV_CAPTURE_TRADING_DATE,
+    ENV_OPVAL_BOUND_TRADING_DATE,
     ENV_OPVAL_MODE,
+    ENV_PAPER_TRADING_DATE,
     OPVAL_ACTIVATION_ID,
-    OPVAL_TRADING_DATE,
+    OPVAL_LEGACY_ACTIVATION_ID,
+    OPVAL_LEGACY_PINNED_DATE,
     current_config_sha,
     current_git_head,
     operational_validation_mode,
     opval_startup_blocked_reason,
+    opval_trading_date_mismatch_reason,
+    resolve_opval_canonical_trading_date,
 )
 from small_paper.runtime_clock import (
     ENV_ARM_FILE,
@@ -42,6 +50,10 @@ from small_paper.v1r_exit_v2_activation_gate import assert_exit_v2_primary_roles
 NATIVE = Path(__file__).resolve().parents[1]
 OUT = NATIVE / "results" / "research" / "v1r_exit_v2_prospective_activation"
 V25_SHA = "46ce502c2373868f3b231bf8a3762cd47d706132698731b35e770c5f8a575d83"
+C6_ID = "V1R_EXIT_V2_PAPER_PRIMARY_CANDIDATE_V26G6_6"
+C6_SHA = "3ac5cf4b1788f52d38aeb0b7ea059f847f89cf4e026c844ec64d96713fa3563d"
+JST = ZoneInfo("Asia/Tokyo")
+SESSION_DAY = "20260819"
 
 
 def _v25() -> dict:
@@ -102,6 +114,16 @@ def _write_bound(tmp_path: Path, body: dict) -> Path:
     return sp
 
 
+def _bind_session(monkeypatch: pytest.MonkeyPatch, day: str = SESSION_DAY) -> None:
+    dt = datetime.strptime(day, "%Y%m%d").replace(hour=10, minute=0, tzinfo=JST)
+    monkeypatch.setattr("small_paper.runtime_clock.now_jst", lambda environ=None: dt)
+    monkeypatch.setattr("small_paper.session_runtime_identity.now_jst", lambda environ=None: dt)
+    monkeypatch.setenv("TRADEBOT_TRADING_DATE", day)
+    monkeypatch.setenv(ENV_CAPTURE_TRADING_DATE, day)
+    monkeypatch.setenv(ENV_PAPER_TRADING_DATE, day)
+    monkeypatch.setenv(ENV_OPVAL_BOUND_TRADING_DATE, day)
+
+
 def _clean_live_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for k in (
         ENV_CERT_MODE,
@@ -117,7 +139,7 @@ def _clean_live_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "MARKET_INPUT_MODE",
     ):
         monkeypatch.delenv(k, raising=False)
-    monkeypatch.setenv("TRADEBOT_TRADING_DATE", OPVAL_TRADING_DATE)
+    _bind_session(monkeypatch, SESSION_DAY)
 
 
 def _sel_man(
@@ -320,3 +342,129 @@ def test_opval_not_a_generic_uncertified_allow(tmp_path: Path, monkeypatch: pyte
     body["sha256"] = manifest_content_sha(body)
     selector, manifest = _sel_man(tmp_path, body, monkeypatch)
     assert opval_startup_blocked_reason(selector, manifest) == "OPVAL_FORMAL_SELECTOR_SUBSTITUTION"
+
+
+def test_opval_canonical_current_trading_date_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ENV_OPVAL_MODE, "1")
+    body = _opval_body()
+    selector, manifest = _sel_man(tmp_path, body, monkeypatch)
+    day, reason = resolve_opval_canonical_trading_date(clock_day=SESSION_DAY)
+    assert reason == ""
+    assert day == SESSION_DAY
+    assert opval_startup_blocked_reason(selector, manifest, clock_day=SESSION_DAY) == ""
+    assert (
+        opval_trading_date_mismatch_reason(
+            resolved=SESSION_DAY,
+            capture_trading_date=SESSION_DAY,
+            paper_trading_date=SESSION_DAY,
+            bound_trading_date=SESSION_DAY,
+        )
+        == ""
+    )
+
+
+def test_opval_reject_legacy_20260817_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ENV_OPVAL_MODE, "1")
+    monkeypatch.setenv("TRADEBOT_TRADING_DATE", OPVAL_LEGACY_PINNED_DATE)
+    monkeypatch.setenv(ENV_CAPTURE_TRADING_DATE, OPVAL_LEGACY_PINNED_DATE)
+    monkeypatch.setenv(ENV_PAPER_TRADING_DATE, OPVAL_LEGACY_PINNED_DATE)
+    monkeypatch.setenv(ENV_OPVAL_BOUND_TRADING_DATE, OPVAL_LEGACY_PINNED_DATE)
+    body = _opval_body()
+    selector, manifest = _sel_man(tmp_path, body, monkeypatch)
+    assert opval_startup_blocked_reason(selector, manifest, clock_day=SESSION_DAY) == "OPVAL_HISTORICAL_DATE"
+
+
+def test_opval_reject_legacy_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ENV_OPVAL_MODE, "1")
+    body = _opval_body()
+    selector, manifest = _sel_man(tmp_path, body, monkeypatch)
+    selector["activation_id"] = OPVAL_LEGACY_ACTIVATION_ID
+    assert opval_startup_blocked_reason(selector, manifest) == "OPVAL_LEGACY_IDENTITY_FORBIDDEN"
+
+
+def test_opval_reject_future_date(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ENV_OPVAL_MODE, "1")
+    monkeypatch.setenv("TRADEBOT_TRADING_DATE", "20260820")
+    monkeypatch.setenv(ENV_CAPTURE_TRADING_DATE, "20260820")
+    monkeypatch.setenv(ENV_PAPER_TRADING_DATE, "20260820")
+    monkeypatch.setenv(ENV_OPVAL_BOUND_TRADING_DATE, "20260820")
+    body = _opval_body()
+    selector, manifest = _sel_man(tmp_path, body, monkeypatch)
+    assert opval_startup_blocked_reason(selector, manifest, clock_day=SESSION_DAY) == "OPVAL_FUTURE_DATE"
+
+
+def test_opval_reject_weekend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ENV_OPVAL_MODE, "1")
+    weekend = "20260822"
+    monkeypatch.setenv("TRADEBOT_TRADING_DATE", weekend)
+    monkeypatch.setenv(ENV_CAPTURE_TRADING_DATE, weekend)
+    monkeypatch.setenv(ENV_PAPER_TRADING_DATE, weekend)
+    monkeypatch.setenv(ENV_OPVAL_BOUND_TRADING_DATE, weekend)
+    body = _opval_body()
+    selector, manifest = _sel_man(tmp_path, body, monkeypatch)
+    assert opval_startup_blocked_reason(selector, manifest, clock_day=weekend) == "OPVAL_NON_TRADING_DATE"
+
+
+def test_opval_reject_exchange_holiday(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ENV_OPVAL_MODE, "1")
+    holiday = "20260811"
+    monkeypatch.setenv("TRADEBOT_TRADING_DATE", holiday)
+    monkeypatch.setenv(ENV_CAPTURE_TRADING_DATE, holiday)
+    monkeypatch.setenv(ENV_PAPER_TRADING_DATE, holiday)
+    monkeypatch.setenv(ENV_OPVAL_BOUND_TRADING_DATE, holiday)
+    body = _opval_body()
+    selector, manifest = _sel_man(tmp_path, body, monkeypatch)
+    assert opval_startup_blocked_reason(selector, manifest, clock_day=holiday) == "OPVAL_NON_TRADING_DATE"
+
+
+def test_opval_reject_unresolved_exchange_year(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ENV_OPVAL_MODE, "1")
+    future_year = "20270105"
+    monkeypatch.setenv("TRADEBOT_TRADING_DATE", future_year)
+    monkeypatch.setenv(ENV_CAPTURE_TRADING_DATE, future_year)
+    monkeypatch.setenv(ENV_PAPER_TRADING_DATE, future_year)
+    monkeypatch.setenv(ENV_OPVAL_BOUND_TRADING_DATE, future_year)
+    body = _opval_body()
+    selector, manifest = _sel_man(tmp_path, body, monkeypatch)
+    assert opval_startup_blocked_reason(selector, manifest, clock_day=future_year) == "OPVAL_TRADING_DATE_UNRESOLVED"
+
+
+def test_opval_reject_capture_paper_bound_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ENV_OPVAL_MODE, "1")
+    body = _opval_body()
+    selector, manifest = _sel_man(tmp_path, body, monkeypatch)
+    monkeypatch.setenv(ENV_CAPTURE_TRADING_DATE, "20260818")
+    assert opval_startup_blocked_reason(selector, manifest, clock_day=SESSION_DAY) == "OPVAL_TRADING_DATE_MISMATCH"
+    monkeypatch.setenv(ENV_CAPTURE_TRADING_DATE, SESSION_DAY)
+    monkeypatch.setenv(ENV_PAPER_TRADING_DATE, "20260818")
+    assert opval_startup_blocked_reason(selector, manifest, clock_day=SESSION_DAY) == "OPVAL_TRADING_DATE_MISMATCH"
+    monkeypatch.setenv(ENV_PAPER_TRADING_DATE, SESSION_DAY)
+    monkeypatch.setenv(ENV_OPVAL_BOUND_TRADING_DATE, "20260818")
+    assert opval_startup_blocked_reason(selector, manifest, clock_day=SESSION_DAY) == "OPVAL_TRADING_DATE_MISMATCH"
+
+
+def test_opval_reject_candidate6_and_v25_substitution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ENV_OPVAL_MODE, "1")
+    body = _opval_body()
+    selector, manifest = _sel_man(tmp_path, body, monkeypatch)
+    selector["activation_id"] = C6_ID
+    assert opval_startup_blocked_reason(selector, manifest) == "OPVAL_CANDIDATE6_FORBIDDEN"
+    v25_sel = json.loads(SELECTOR_PATH.read_text(encoding="utf-8"))
+    assert opval_startup_blocked_reason(v25_sel, manifest) == "OPVAL_FORMAL_SELECTOR_SUBSTITUTION"
+
+
+def test_strategy_entry_exit_universe_unchanged_vs_c6() -> None:
+    c6 = json.loads((OUT / f"{C6_ID}.json").read_text(encoding="utf-8"))
+    v25 = _v25()
+    assert c6.get("sha256") == C6_SHA
+    assert v25.get("sha256") == V25_SHA
+    for key in (
+        "strategy_sha",
+        "entry_sha",
+        "exit_v2_candidate_sha",
+        "exit_contract_sha",
+        "universe_binding_sha",
+        "universe_contract",
+        "precommit_sha",
+    ):
+        assert c6.get(key) == v25.get(key)
