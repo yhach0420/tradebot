@@ -1134,6 +1134,20 @@ def pilot_command_argv(
         argv.append("--pre625-runtime-structure-mode")
     if str(state.options.core_runtime_mode or "").strip():
         argv.extend(["--core-runtime-mode", str(state.options.core_runtime_mode).strip()])
+    try:
+        from small_paper.operational_validation import opval_degraded_universe_mode
+
+        if opval_degraded_universe_mode():
+            argv.append("--skip-safety")
+    except Exception:
+        pass
+    if str(__import__("os").environ.get("TRADEBOT_RETROSPECTIVE_REFERENCE") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        if "--skip-safety" not in argv:
+            argv.append("--skip-safety")
     return argv
 
 

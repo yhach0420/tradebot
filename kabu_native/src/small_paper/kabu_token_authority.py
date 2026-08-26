@@ -366,7 +366,13 @@ def ingress_owner_active(
     state = str(station.get("authority_state") or bundle.get("authority_state") or "").strip()
     if state in {AUTHORITY_CLAIMED_PENDING_TOKEN, AUTHORITY_FAILED_ISSUE, AUTHORITY_RELEASED_DEAD}:
         return False
-    from small_paper.ownership_classifier import CURRENT_VALID, classify_owner, current_identity_from_env
+    from small_paper.ownership_classifier import (
+        CURRENT_VALID,
+        STALE_PROVEN_OWNED,
+        UNKNOWN,
+        classify_owner,
+        current_identity_from_env,
+    )
 
     classified = classify_owner(
         owner=station,
@@ -374,7 +380,19 @@ def ingress_owner_active(
         current=current_identity_from_env(pid=os.getpid()),
         pid_alive_fn=_pid_alive,
     )
-    if classified.get("class") != CURRENT_VALID:
+    klass = str(classified.get("class") or "")
+    reason = str(classified.get("reason") or "")
+    consumer_sees_live_ingress = klass == STALE_PROVEN_OWNED or (
+        klass == UNKNOWN
+        and bool(classified.get("process_alive"))
+        and bool(classified.get("managed_previous_ingress"))
+        and reason in {
+            "live_process_start_unproven",
+            "live_managed_not_current",
+            "managed_live_without_process_start",
+        }
+    )
+    if klass != CURRENT_VALID and not consumer_sees_live_ingress:
         return False
     if state == AUTHORITY_ACTIVE_TOKEN_OWNER:
         return True

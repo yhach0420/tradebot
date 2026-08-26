@@ -23,8 +23,13 @@ def _bps(a: float, b: float) -> float:
 def attach_path_volume_features(
     grid_rows: list[dict[str, Any]],
     ticks: list[dict[str, Any]],
+    start_index: int = 0,
 ) -> list[dict[str, Any]]:
-    """Causal features from same-symbol grid history + tick path. No board fields."""
+    """Causal features from same-symbol grid history + tick path. No board fields.
+
+    start_index>0 recomputes only grid_rows[start_index:] and restores session
+    high/low from earlier OK rows (incremental T1; default 0 is unchanged).
+    """
     if not grid_rows or not ticks:
         return grid_rows
     times = np.asarray([t["t"] for t in ticks], dtype=float)
@@ -36,8 +41,16 @@ def attach_path_volume_features(
 
     sess_high: dict[str, float] = {}
     sess_low: dict[str, float] = {}
+    start_index = max(0, min(int(start_index), len(grid_rows)))
+    for r in grid_rows[:start_index]:
+        if r.get("quality_status") != "OK" or r.get("CurrentPrice") is None:
+            continue
+        px = float(r["CurrentPrice"])
+        sess = r["session"]
+        sess_high[sess] = max(sess_high.get(sess, px), px)
+        sess_low[sess] = min(sess_low.get(sess, px), px)
 
-    for r in grid_rows:
+    for r in grid_rows[start_index:]:
         for col in FORBIDDEN_BOARD_COLUMNS:
             assert col not in r or r.get(col) is None
         if r.get("quality_status") != "OK" or r.get("CurrentPrice") is None:

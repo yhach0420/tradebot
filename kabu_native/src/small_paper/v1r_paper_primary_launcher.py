@@ -20,6 +20,7 @@ from small_paper.operational_validation import (
     OPVAL_ASSERTION_FAIL,
     OPVAL_LABELS,
     operational_validation_mode,
+    opval_degraded_universe_mode,
 )
 from small_paper.v1r_exit_v2_activation_gate import (
     ASSERTION_FAIL,
@@ -299,24 +300,63 @@ def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
             )
             print("[V1R EXIT V2] PBv2/classic Primary fallback FORBIDDEN", flush=True)
             return 2
-        from small_paper.kabu_registration_authority import verify_exact50_membership
+        from small_paper.operational_validation import (
+            DEGRADED_OPVAL_READY,
+            evaluate_opval_degraded_universe_ready,
+            opval_degraded_universe_mode,
+            persist_opval_degraded_evidence,
+        )
 
-        membership = verify_exact50_membership(
-            NATIVE, day, require_actual_kabu=True, allow_self_record_only=False
-        )
-        (out / "actual_kabu_membership.json").write_text(
-            json.dumps(membership, indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
-        )
-        if not membership.get("ok"):
+        if opval_degraded_universe_mode():
+            expected_pid = int(os.environ.get("TRADEBOT_OPVAL_EXPECTED_CAPTURE_PID") or 0)
+            degraded = evaluate_opval_degraded_universe_ready(
+                native_root=NATIVE,
+                trading_date=day,
+                expected_capture_pid=expected_pid,
+                retry_sample_sec=2.0,
+            )
+            (out / "degraded_opval_membership.json").write_text(
+                json.dumps(degraded, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+            try:
+                persist_opval_degraded_evidence(NATIVE, day, degraded)
+            except OSError:
+                pass
+            if not degraded.get("ready") or str(degraded.get("classification") or "") != DEGRADED_OPVAL_READY:
+                print(
+                    f"[V1R EXIT V2] NO PAPER PRIMARY - degraded OPVAL membership: "
+                    f"{degraded.get('reason')} active={degraded.get('active_universe_count')} "
+                    f"missing={degraded.get('missing')}",
+                    flush=True,
+                )
+                print("[V1R EXIT V2] 49/50 is not PAPER_READY; DEGRADED_OPVAL_READY was not met", flush=True)
+                return 2
             print(
-                f"[V1R EXIT V2] NO PAPER PRIMARY - actual Kabu membership: "
-                f"{membership.get('reason')} actual_n={membership.get('actual_n')} "
-                f"self_record_n={membership.get('self_record_n')}",
+                f"[V1R EXIT V2] {DEGRADED_OPVAL_READY} - frozen=50 terminal_invalid="
+                f"{degraded.get('terminal_invalid')} active={degraded.get('active_universe_count')}",
                 flush=True,
             )
-            print("[V1R EXIT V2] Ingress self-record 50 is not READY if actual Kabu is empty", flush=True)
-            return 2
+            print("[V1R EXIT V2] Normal 50/50 PAPER_READY gate was not used", flush=True)
+        else:
+            from small_paper.kabu_registration_authority import verify_exact50_membership
+
+            membership = verify_exact50_membership(
+                NATIVE, day, require_actual_kabu=True, allow_self_record_only=False
+            )
+            (out / "actual_kabu_membership.json").write_text(
+                json.dumps(membership, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+            if not membership.get("ok"):
+                print(
+                    f"[V1R EXIT V2] NO PAPER PRIMARY - actual Kabu membership: "
+                    f"{membership.get('reason')} actual_n={membership.get('actual_n')} "
+                    f"self_record_n={membership.get('self_record_n')}",
+                    flush=True,
+                )
+                print("[V1R EXIT V2] Ingress self-record 50 is not READY if actual Kabu is empty", flush=True)
+                return 2
         native = boot_v1r_native_entry(
             universe=list(resolved.get("symbols") or []),
             trace_dir=out / "native_entry",
@@ -358,6 +398,10 @@ def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
         "--exit-policy-shadow",
         "trailing-mfe",
     ]
+    if opval_degraded_universe_mode():
+        # Existing daily-runner flag. OPVAL launcher already proved DEGRADED_OPVAL_READY.
+        # Avoid a second Formal exact50 kabu_station_connection that cannot GET /register.
+        cmd.append("--skip-safety")
     (out / "daily_runner_cmd.json").write_text(
         json.dumps({"cmd": cmd, "env_flag": ENV_FLAG, "cwd": str(REPO)}, indent=2),
         encoding="utf-8",

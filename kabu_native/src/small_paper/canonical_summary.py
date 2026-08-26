@@ -537,4 +537,10 @@ def enrich_summary_with_canonical(
         )
     else:
         summary.pop("summary_integrity_error", None)
+    try:
+        from small_paper.canonical_lifecycle_integrity import attach_lifecycle_integrity
+
+        attach_lifecycle_integrity(summary, events, output_dir=output_dir, traces=v1r_traces)
+    except Exception as exc:
+        log.warning("lifecycle integrity attach failed: %s", exc)
     return summary

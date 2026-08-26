@@ -208,7 +208,20 @@ def verify_ownership(owned: OwnedCaptureProcess, live: Optional[Mapping[str, Any
             "create_time_ok": create_ok,
         }
     )
-    owned_ok = bool(marker_ok and native_ok and create_ok)
+    start_ok = True
+    if owned.process_start_identity:
+        live_start = ""
+        try:
+            from small_paper.ingress_run_identity import capture_process_start_identity
+
+            live_start = str(capture_process_start_identity(int(owned.pid)) or "")
+        except Exception:
+            live_start = ""
+        if live_start:
+            start_ok = live_start == str(owned.process_start_identity)
+        detail["process_start_identity_match"] = start_ok
+        detail["live_process_start_identity"] = live_start
+    owned_ok = bool(marker_ok and native_ok and create_ok and start_ok)
     detail["owned"] = owned_ok
     detail["reason"] = "owned" if owned_ok else "ownership_mismatch"
     return detail

@@ -131,6 +131,7 @@ class LanePosition:
     fresh_sec: list[float] = field(default_factory=list)
     mid: list[float] = field(default_factory=list)
     fill_snapshot: dict[str, Any] = field(default_factory=dict)
+    exact_cache: Any = field(default=None, repr=False, compare=False)
 
 
 def session_end_for_position(*, date: str, session: str, fill_time: float) -> float:
@@ -177,6 +178,20 @@ class DualLaneStats:
     exceptions: int = 0
     last_seq: int = 0
     last_push_at: str = ""
+    last_event_t: float = 0.0
+    last_event_wall: float = 0.0
+    publisher_last_seq: int = 0
+    prev_seq_lag: int = 0
+    prev_event_lag_sec: float = 0.0
+    max_event_lag_sec: float = 0.0
+    max_seq_lag: int = 0
+    backlog_direction: str = "unknown"
+    exact_cache_fallback: int = 0
+    cache_hit: int = 0
+    cache_miss: int = 0
+    guard_incremental_update: int = 0
+    path_materialization: int = 0
+    consumer_ack_seq: int = 0
     state: str = "INIT"  # WAITING_MARKET | RUNNING | STOPPING | STOPPED | FAIL_CLOSED
 
 
@@ -227,11 +242,91 @@ class V1RLiveDualLane:
             "symbol_key": "canonical_bare_no_dot_T",
         }
 
-    def on_push_meta(self, *, sequence: int, push_at: str) -> None:
+    def on_push_meta(
+        self,
+        *,
+        sequence: int,
+        push_at: str,
+        publisher_last_sequence: Optional[int] = None,
+        consumer_ack_sequence: Optional[int] = None,
+    ) -> None:
         self.stats.last_seq = int(sequence)
         self.stats.last_push_at = str(push_at)
+        if consumer_ack_sequence is not None:
+            self.stats.consumer_ack_seq = int(consumer_ack_sequence)
+        if publisher_last_sequence is not None:
+            self.stats.publisher_last_seq = int(publisher_last_sequence)
+        self._update_seq_lag_direction()
         if self.stats.state == "WAITING_MARKET":
             self.stats.state = "RUNNING"
+
+    def note_ingress_cursors(
+        self,
+        *,
+        publisher_last_sequence: int = 0,
+        consumer_ack_sequence: int = 0,
+    ) -> None:
+        """Heartbeat visibility: actual Ingress publisher_seq - consumer_ack_seq."""
+        self.on_push_meta(
+            sequence=int(self.stats.last_seq or 0),
+            push_at=self.stats.last_push_at or "",
+            publisher_last_sequence=int(publisher_last_sequence),
+            consumer_ack_sequence=int(consumer_ack_sequence),
+        )
+
+    def _paper_consumer_seq_lag(self) -> int:
+        pub = int(self.stats.publisher_last_seq or 0)
+        ack = int(self.stats.consumer_ack_seq or 0)
+        if pub <= 0:
+            return 0
+        return max(0, pub - ack)
+
+    def _update_seq_lag_direction(self) -> None:
+        pub = int(self.stats.publisher_last_seq or 0)
+        if pub <= 0:
+            return
+        lag = self._paper_consumer_seq_lag()
+        if lag > self.stats.max_seq_lag:
+            self.stats.max_seq_lag = lag
+        prev = int(self.stats.prev_seq_lag)
+        if lag > prev + 1:
+            self.stats.backlog_direction = "increasing"
+        elif lag < prev - 1:
+            self.stats.backlog_direction = "decreasing"
+        else:
+            self.stats.backlog_direction = "stable"
+        self.stats.prev_seq_lag = lag
+
+    def _refresh_seq_lag_from_ingress_status(self) -> None:
+        """Fallback: ingress_status.json publisher_last_sequence - paper_consumer_last_ack."""
+        try:
+            from small_paper.consumer_lag_policy import read_ingress_status
+
+            native = Path(__file__).resolve().parents[2]
+            day = ""
+            for book in (self.primary, self.control):
+                for pos in book.values():
+                    if pos.date:
+                        day = str(pos.date)
+                        break
+                if day:
+                    break
+            if not day and self.stats.last_event_t:
+                day = datetime.fromtimestamp(float(self.stats.last_event_t), JST).strftime("%Y%m%d")
+            if not day:
+                day = _now().strftime("%Y%m%d")
+            st = read_ingress_status(native, day)
+            if not st:
+                return
+            pub = int(st.get("publisher_last_sequence") or 0)
+            ack = int(st.get("paper_consumer_last_ack") or 0)
+            if pub > 0:
+                self.stats.publisher_last_seq = pub
+            if "paper_consumer_last_ack" in st:
+                self.stats.consumer_ack_seq = ack
+            self._update_seq_lag_direction()
+        except Exception:
+            return
 
     def try_admit_fill(
         self,
@@ -370,6 +465,20 @@ class V1RLiveDualLane:
         raw = str(symbol)
         sym = canonical_symbol_key(symbol)
         t = float(event_t if event_t is not None else time.time())
+        self.stats.last_event_t = t
+        self.stats.last_event_wall = time.time()
+        _elag = float(self.stats.last_event_wall - t)
+        if _elag > self.stats.max_event_lag_sec:
+            self.stats.max_event_lag_sec = _elag
+        _prev = float(self.stats.prev_event_lag_sec)
+        if int(self.stats.publisher_last_seq or 0) <= 0 and self.stats.ticks > 0:
+            if _elag > _prev + 0.05:
+                self.stats.backlog_direction = "increasing"
+            elif _elag < _prev - 0.05:
+                self.stats.backlog_direction = "decreasing"
+            else:
+                self.stats.backlog_direction = "stable"
+        self.stats.prev_event_lag_sec = _elag
         self.stats.ticks += 1
         exits: list[dict[str, Any]] = []
         try:
@@ -405,8 +514,9 @@ class V1RLiveDualLane:
                 pos = book.get(sym)
                 if pos is None or pos.closed:
                     continue
-                self._trace_decisions(pos)
-                decision = self._evaluate(pos)
+                ctx = self._decision_context(pos)
+                self._trace_decisions(pos, ctx)
+                decision = self._evaluate(pos, ctx)
                 if decision and decision.get("exit"):
                     if not pos.traced_exit_trigger:
                         pos.traced_exit_trigger = True
@@ -625,7 +735,12 @@ class V1RLiveDualLane:
                 break
         special = bool(payload.get("SpecialQuote") or payload.get("special"))
         mid = (float(bid) + float(ask)) / 2.0
-        pos.t.append(float(t))
+        t_use = float(t)
+        if pos.t and t_use + 1e-15 < float(pos.t[-1]):
+            # Truncated/out-of-order clock: keep series non-decreasing so
+            # duplicate-timestamp last-index attach matches SoT (V26G8).
+            t_use = float(pos.t[-1])
+        pos.t.append(t_use)
         pos.bid.append(float(bid))
         pos.ask.append(float(ask))
         pos.bid_qty.append(float(bq))
@@ -633,6 +748,513 @@ class V1RLiveDualLane:
         pos.special.append(bool(special))
         pos.fresh_sec.append(float(fresh))
         pos.mid.append(float(mid))
+
+
+    def _fill_rec(self, pos: LanePosition) -> dict[str, Any]:
+        return {
+            "date": pos.date or _now().strftime("%Y%m%d"),
+            "symbol": pos.symbol,
+            "session": pos.session,
+            "fill_time": pos.fill_time,
+            "fill_price": pos.fill_price,
+            "anchor_id": "live",
+        }
+
+    def _new_exact_cache(self, pos: LanePosition) -> dict[str, Any]:
+        se = session_end_for_position(
+            date=pos.date, session=pos.session, fill_time=pos.fill_time
+        )
+        return {
+            "fill_time": float(pos.fill_time),
+            "fill_price": float(pos.fill_price),
+            "session": str(pos.session),
+            "date": str(pos.date),
+            "symbol": str(pos.symbol),
+            "sess_end": float(se),
+            "board_n": 0,
+            "er_i0": 0,
+            "last_attach_valid": -1,
+            "offs": [],
+            "rets": [],
+            "mids": [],
+            "times": [],
+            "imb": [],
+            "spread": [],
+            "bid_qty": [],
+            "ask_qty": [],
+            "event_rate": [],
+            "imb0": None,
+            "spread0": None,
+            "bid_qty0": None,
+            "er0": None,
+            "guard_frozen": False,
+            "guard_hit": False,
+            "guard_hit_index": -1,
+            "guard_monitor_passed": False,
+            "pol_frozen": False,
+            "pol": None,
+        }
+
+    def _cache_identity_ok(self, pos: LanePosition, cache: dict[str, Any]) -> bool:
+        return (
+            cache.get("symbol") == pos.symbol
+            and cache.get("session") == pos.session
+            and cache.get("date") == pos.date
+            and abs(float(cache.get("fill_time") or 0.0) - float(pos.fill_time)) <= 1e-12
+            and abs(float(cache.get("fill_price") or 0.0) - float(pos.fill_price)) <= 1e-12
+        )
+
+    def _row_valid_bid(self, pos: LanePosition, i: int) -> bool:
+        from research.e1_x28_executable_joint import BOARD_FRESHNESS_SEC, MIN_QTY
+
+        if pos.special[i]:
+            return False
+        fresh_raw = pos.fresh_sec[i]
+        fresh = float(fresh_raw) if np.isfinite(fresh_raw) else 0.0
+        if fresh > BOARD_FRESHNESS_SEC + 1e-12:
+            return False
+        qty = pos.bid_qty[i]
+        if not np.isfinite(qty) or qty < MIN_QTY:
+            return False
+        bid = pos.bid[i]
+        return bool(np.isfinite(bid) and bid > 0)
+
+    def _row_valid_both(self, pos: LanePosition, i: int) -> bool:
+        from research.e1_x28_executable_joint import MIN_QTY
+
+        if not self._row_valid_bid(pos, i):
+            return False
+        aq = pos.ask_qty[i]
+        ask = pos.ask[i]
+        if not np.isfinite(aq) or aq < MIN_QTY:
+            return False
+        return bool(np.isfinite(ask) and ask > 0)
+
+    def _row_attach_valid(self, pos: LanePosition, i: int) -> bool:
+        from research.e1_x28_executable_joint import BOARD_FRESHNESS_SEC, MIN_QTY
+
+        if pos.special[i]:
+            return False
+        bid = pos.bid[i]
+        ask = pos.ask[i]
+        bq = pos.bid_qty[i]
+        aq = pos.ask_qty[i]
+        fresh_raw = pos.fresh_sec[i]
+        if not (np.isfinite(bid) and np.isfinite(ask) and bid > 0 and ask > 0):
+            return False
+        if not (np.isfinite(bq) and np.isfinite(aq) and bq >= MIN_QTY and aq >= MIN_QTY):
+            return False
+        fresh = float(fresh_raw) if np.isfinite(fresh_raw) else 0.0
+        return fresh <= BOARD_FRESHNESS_SEC + 1e-12
+
+    def _exact_update_guard(self, cache: dict[str, Any]) -> None:
+        if str(FROZEN_GUARD.get("kind") or "") != "imbalance":
+            return
+        offs = cache["offs"]
+        imb = cache["imb"]
+        if not offs:
+            return
+        i = len(offs) - 1
+        o = float(offs[i])
+        monitor_to = float(FROZEN_GUARD.get("monitor_to") or 120.0)
+        if o > monitor_to + 1e-12:
+            cache["guard_frozen"] = True
+            cache["guard_hit"] = False
+            return
+        thr = float(FROZEN_GUARD.get("imb_threshold") or -0.1)
+        pers = float(FROZEN_GUARD.get("persist_sec") or 5.0)
+        vi = imb[i]
+        if not (np.isfinite(vi) and float(vi) <= thr + 1e-12 and o >= pers - 1e-12):
+            return
+        lo = o - pers
+        k0 = 0
+        while k0 <= i and float(offs[k0]) < lo:
+            k0 += 1
+        window = imb[k0 : i + 1]
+        if window and all(np.isfinite(x) and float(x) <= thr + 1e-12 for x in window):
+            cache["guard_hit"] = True
+            cache["guard_frozen"] = True
+
+    def _exact_fill_attach(self, pos: LanePosition, cache: dict[str, Any], k: int, board_i: int) -> None:
+        j = int(cache["last_attach_valid"])
+        if j >= 0:
+            bb = float(pos.bid[j])
+            aa = float(pos.ask[j])
+            bqq = float(pos.bid_qty[j])
+            aqq = float(pos.ask_qty[j])
+            midv = (bb + aa) / 2.0
+            imb = (bqq - aqq) / (bqq + aqq)
+            spr = (aa - bb) / midv * 10000.0
+        else:
+            imb = np.nan
+            spr = np.nan
+            bqq = np.nan
+            aqq = np.nan
+        cache["imb"][k] = imb
+        cache["spread"][k] = spr
+        cache["bid_qty"][k] = bqq
+        cache["ask_qty"][k] = aqq
+        ti = float(cache["times"][k])
+        i0 = int(cache["er_i0"])
+        while i0 < board_i and float(pos.t[i0]) < ti - 30.0:
+            i0 += 1
+        cache["event_rate"][k] = (board_i + 1 - i0) / 30.0
+
+    def _exact_guard_window_hit(self, offs: list[Any], imb: list[Any], i: int) -> bool:
+        """Exact persist-window hit at index i. Lookback is O(points in persist_sec), not O(board_n)."""
+        monitor_to = float(FROZEN_GUARD.get("monitor_to") or 120.0)
+        pers = float(FROZEN_GUARD.get("persist_sec") or 5.0)
+        thr = float(FROZEN_GUARD.get("imb_threshold") or -0.1)
+        o = float(offs[i])
+        if o > monitor_to + 1e-12:
+            return False
+        vi = imb[i]
+        if not (np.isfinite(vi) and float(vi) <= thr + 1e-12 and o >= pers - 1e-12):
+            return False
+        lo = o - pers
+        j = i
+        while j >= 0 and float(offs[j]) >= lo:
+            x = imb[j]
+            if not (np.isfinite(x) and float(x) <= thr + 1e-12):
+                return False
+            j -= 1
+        return True
+
+    def _exact_guard_incremental(self, cache: dict[str, Any], *, rewrite_from: int) -> None:
+        """previous exact guard + current tick (and duplicate-ts rewrite region) = current exact guard.
+
+        Must match `_exact_recompute_guard` / full-history scan on every event.
+        """
+        if str(FROZEN_GUARD.get("kind") or "") != "imbalance":
+            return
+        offs = cache["offs"]
+        imb = cache["imb"]
+        n = len(offs)
+        if n == 0:
+            return
+        self.stats.guard_incremental_update += 1
+        start = int(rewrite_from)
+        if start >= n:
+            return
+        monitor_to = float(FROZEN_GUARD.get("monitor_to") or 120.0)
+        hit_idx = int(cache.get("guard_hit_index", -1))
+        if bool(cache.get("guard_hit")) and hit_idx >= 0 and hit_idx < start:
+            cache["guard_frozen"] = True
+            return
+        if bool(cache.get("guard_monitor_passed")) and not bool(cache.get("guard_hit")):
+            cache["guard_frozen"] = True
+            cache["guard_hit"] = False
+            return
+        if hit_idx >= start:
+            cache["guard_hit"] = False
+            cache["guard_hit_index"] = -1
+            cache["guard_frozen"] = False
+            cache["guard_monitor_passed"] = False
+        for i in range(start, n):
+            o = float(offs[i])
+            if o > monitor_to + 1e-12:
+                if not cache.get("guard_hit"):
+                    cache["guard_frozen"] = True
+                    cache["guard_hit"] = False
+                    cache["guard_hit_index"] = -1
+                    cache["guard_monitor_passed"] = True
+                else:
+                    cache["guard_frozen"] = True
+                return
+            if self._exact_guard_window_hit(offs, imb, i):
+                cache["guard_hit"] = True
+                cache["guard_frozen"] = True
+                cache["guard_hit_index"] = i
+                cache["guard_monitor_passed"] = False
+                return
+
+    def _exact_recompute_guard(self, cache: dict[str, Any]) -> None:
+        """Full-history reference. Used on exact fallback and parity tests. Not the live hot path."""
+        cache["guard_frozen"] = False
+        cache["guard_hit"] = False
+        cache["guard_hit_index"] = -1
+        cache["guard_monitor_passed"] = False
+        if str(FROZEN_GUARD.get("kind") or "") != "imbalance":
+            return
+        offs = cache["offs"]
+        imb = cache["imb"]
+        monitor_to = float(FROZEN_GUARD.get("monitor_to") or 120.0)
+        thr = float(FROZEN_GUARD.get("imb_threshold") or -0.1)
+        pers = float(FROZEN_GUARD.get("persist_sec") or 5.0)
+        for i, o_raw in enumerate(offs):
+            o = float(o_raw)
+            if o > monitor_to + 1e-12:
+                cache["guard_frozen"] = True
+                cache["guard_hit"] = False
+                cache["guard_hit_index"] = -1
+                cache["guard_monitor_passed"] = True
+                return
+            vi = imb[i]
+            if not (np.isfinite(vi) and float(vi) <= thr + 1e-12 and o >= pers - 1e-12):
+                continue
+            lo = o - pers
+            k0 = 0
+            while k0 <= i and float(offs[k0]) < lo:
+                k0 += 1
+            window = imb[k0 : i + 1]
+            if window and all(np.isfinite(x) and float(x) <= thr + 1e-12 for x in window):
+                cache["guard_hit"] = True
+                cache["guard_frozen"] = True
+                cache["guard_hit_index"] = i
+                cache["guard_monitor_passed"] = False
+                return
+
+    def _exact_append_row(
+        self, pos: LanePosition, cache: dict[str, Any], i: int, *, skip_guard: bool = False
+    ) -> None:
+        ti = float(pos.t[i])
+        if i > 0 and ti + 1e-15 < float(pos.t[i - 1]):
+            # Board append clamps rewinds; if a cache rebuild still sees one,
+            # treat as duplicate of the previous timestamp (do not fail-closed).
+            ti = float(pos.t[i - 1])
+        if self._row_attach_valid(pos, i):
+            cache["last_attach_valid"] = i
+        entry_t = float(pos.fill_time)
+        sess_end = float(cache["sess_end"])
+        if ti + 1e-12 < entry_t:
+            return
+        if ti > sess_end + 1e-12:
+            return
+        if self._row_valid_bid(pos, i):
+            bid = float(pos.bid[i])
+            entry_price = float(pos.fill_price)
+            ret = (bid / entry_price - 1.0) * 10000.0
+            mid_ret = np.nan
+            if self._row_valid_both(pos, i):
+                mid = (float(pos.ask[i]) + bid) / 2.0
+                mid_ret = (mid / entry_price - 1.0) * 10000.0
+            cache["offs"].append(ti - entry_t)
+            cache["rets"].append(ret)
+            cache["mids"].append(mid_ret)
+            cache["times"].append(ti)
+            cache["imb"].append(np.nan)
+            cache["spread"].append(np.nan)
+            cache["bid_qty"].append(np.nan)
+            cache["ask_qty"].append(np.nan)
+            cache["event_rate"].append(np.nan)
+            while int(cache["er_i0"]) < i and float(pos.t[int(cache["er_i0"])]) < ti - 30.0:
+                cache["er_i0"] = int(cache["er_i0"]) + 1
+        rewrite_from: Optional[int] = None
+        k = len(cache["times"]) - 1
+        while k >= 0 and abs(float(cache["times"][k]) - ti) <= 1e-12:
+            self._exact_fill_attach(pos, cache, k, i)
+            rewrite_from = k
+            k -= 1
+        if cache["imb"]:
+            v0 = cache["imb"][0]
+            cache["imb0"] = float(v0) if np.isfinite(v0) else None
+            s0 = cache["spread"][0]
+            cache["spread0"] = float(s0) if np.isfinite(s0) else None
+            b0 = cache["bid_qty"][0]
+            cache["bid_qty0"] = float(b0) if np.isfinite(b0) else None
+            e0 = cache["event_rate"][0]
+            cache["er0"] = float(e0) if np.isfinite(e0) else None
+        if (
+            (not skip_guard)
+            and pos.lane == "primary"
+            and cache["times"]
+            and rewrite_from is not None
+        ):
+            self._exact_guard_incremental(cache, rewrite_from=rewrite_from)
+
+    def _path_from_cache(self, cache: dict[str, Any]) -> dict[str, Any]:
+        if not cache["offs"]:
+            return {"ok": False, "offs": np.array([]), "rets": np.array([]), "mids": np.array([])}
+        return {
+            "ok": True,
+            "offs": np.asarray(cache["offs"], dtype=float),
+            "rets": np.asarray(cache["rets"], dtype=float),
+            "mids": np.asarray(cache["mids"], dtype=float),
+            "times": np.asarray(cache["times"], dtype=float),
+            "sess_end": float(cache["sess_end"]),
+            "entry_t": float(cache["fill_time"]),
+            "entry_price": float(cache["fill_price"]),
+            "imb": np.asarray(cache["imb"], dtype=float),
+            "spread": np.asarray(cache["spread"], dtype=float),
+            "bid_qty": np.asarray(cache["bid_qty"], dtype=float),
+            "ask_qty": np.asarray(cache["ask_qty"], dtype=float),
+            "event_rate": np.asarray(cache["event_rate"], dtype=float),
+            "imb0": cache["imb0"],
+            "spread0": cache["spread0"],
+            "bid_qty0": cache["bid_qty0"],
+            "er0": cache["er0"],
+        }
+
+    def _sync_exact_cache(self, pos: LanePosition) -> dict[str, Any]:
+        cache = pos.exact_cache
+        reused = (
+            isinstance(cache, dict)
+            and self._cache_identity_ok(pos, cache)
+            and int(cache.get("board_n") or 0) <= len(pos.t)
+        )
+        if not reused:
+            cache = self._new_exact_cache(pos)
+            pos.exact_cache = cache
+            self.stats.cache_miss += 1
+        try:
+            bn = int(cache["board_n"])
+            if bn > 0 and pos.t and float(pos.t[bn - 1]) > float(pos.t[-1]) + 1e-12:
+                raise ValueError("board_truncated")
+            for i in range(bn, len(pos.t)):
+                self._exact_append_row(pos, cache, i)
+            cache["board_n"] = len(pos.t)
+            if reused:
+                self.stats.cache_hit += 1
+        except ValueError:
+            cache = self._new_exact_cache(pos)
+            pos.exact_cache = cache
+            for i in range(len(pos.t)):
+                self._exact_append_row(pos, cache, i, skip_guard=True)
+            cache["board_n"] = len(pos.t)
+            if pos.lane == "primary":
+                self._exact_recompute_guard(cache)
+            self.stats.exact_cache_fallback += 1
+            self.stats.cache_miss += 1
+            self._trace(
+                "EXACT_CACHE_FALLBACK",
+                pos.symbol,
+                {"lane": pos.lane, "reason": "non_monotonic_or_reset", "slot_released": False},
+            )
+        return cache
+
+    def _decision_context_full(self, pos: LanePosition) -> dict[str, Any]:
+        from research.e1_x35_passive_exit.paths import build_path
+        from research.v1r_exit_v2_asymmetric.states import build_trade_bundle
+
+        off_now = float(pos.t[-1] - pos.fill_time) if pos.t else 0.0
+        if len(pos.t) < 2:
+            return {"ok": False, "off_now": off_now, "path": None, "bundle": None, "pol": {"ok": False}}
+        board = self._board_dict(pos)
+        path = build_path(
+            board,
+            entry_price=float(pos.fill_price),
+            entry_t=float(pos.fill_time),
+            sess_end=session_end_for_position(
+                date=pos.date, session=pos.session, fill_time=pos.fill_time
+            ),
+        )
+        if not path.get("ok"):
+            return {"ok": False, "off_now": off_now, "path": path, "bundle": None, "pol": {"ok": False}}
+        fill = self._fill_rec(pos)
+        bundle = build_trade_bundle(fill, path, board)
+        if pos.lane == "primary":
+            pol = apply_arch_e_to_bundle(bundle)
+        else:
+            pol = apply_fixed600_to_bundle(bundle)
+        return {"ok": True, "off_now": off_now, "path": path, "bundle": bundle, "pol": pol, "fast": False}
+
+    def debug_rebuild_decision_context(self, pos: LanePosition) -> dict[str, Any]:
+        """Test helper: Candidate-7 full rebuild (SoT)."""
+        return self._decision_context_full(pos)
+
+    def _apply_policy(self, pos: LanePosition, path: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        from research.v1r_exit_v2_asymmetric.states import build_trade_bundle
+
+        board = self._board_dict(pos)
+        fill = self._fill_rec(pos)
+        path_copy = dict(path)
+        for k in ("offs", "rets", "mids", "times", "imb", "spread", "bid_qty", "ask_qty", "event_rate"):
+            if k in path_copy and path_copy[k] is not None:
+                path_copy[k] = np.asarray(path_copy[k], dtype=float).copy()
+        bundle = build_trade_bundle(fill, path_copy, board)
+        if pos.lane == "primary":
+            pol = apply_arch_e_to_bundle(bundle)
+        else:
+            pol = apply_fixed600_to_bundle(bundle)
+        return pol, bundle
+
+    def _decision_context(self, pos: LanePosition) -> dict[str, Any]:
+        """One path/policy context per matching tick. Trace must not recompute Strategy."""
+        off_now = float(pos.t[-1] - pos.fill_time) if pos.t else 0.0
+        if len(pos.t) < 2:
+            return {"ok": False, "off_now": off_now, "path": None, "bundle": None, "pol": {"ok": False}}
+        force_full = str(os.environ.get("V26G8_FORCE_FULL_REBUILD", "") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        if force_full or str(FROZEN_GUARD.get("kind") or "") != "imbalance":
+            return self._decision_context_full(pos)
+        cache = self._sync_exact_cache(pos)
+        if not cache["offs"]:
+            return {"ok": False, "off_now": off_now, "path": None, "bundle": None, "pol": {"ok": False}, "fast": True}
+        if cache.get("pol_frozen") and isinstance(cache.get("pol"), dict) and cache["pol"].get("ok"):
+            return {
+                "ok": True,
+                "off_now": off_now,
+                "path": None,
+                "bundle": None,
+                "pol": cache["pol"],
+                "fast": True,
+            }
+        path_off = float(cache["offs"][-1]) if cache["offs"] else -1.0
+        if pos.lane == "primary":
+            need_full = bool(cache.get("guard_hit") or path_off + 1e-12 >= 600.0)
+        else:
+            need_full = path_off + 1e-12 >= 600.0
+        if not need_full:
+            return {
+                "ok": True,
+                "off_now": off_now,
+                "path": None,
+                "bundle": None,
+                "pol": {"ok": False},
+                "fast": True,
+            }
+        self.stats.path_materialization += 1
+        path = self._path_from_cache(cache)
+        if not path.get("ok"):
+            return {"ok": False, "off_now": off_now, "path": path, "bundle": None, "pol": {"ok": False}, "fast": True}
+        from research.e1_x35_passive_exit.paths import build_path
+
+        board = self._board_dict(pos)
+        ref = build_path(
+            board,
+            entry_price=float(pos.fill_price),
+            entry_t=float(pos.fill_time),
+            sess_end=session_end_for_position(
+                date=pos.date, session=pos.session, fill_time=pos.fill_time
+            ),
+        )
+        use_path = path
+        if ref.get("ok") and (
+            int(ref["offs"].size) != int(path["offs"].size)
+            or not np.allclose(ref["offs"], path["offs"], rtol=0.0, atol=1e-9)
+            or not np.allclose(ref["rets"], path["rets"], rtol=0.0, atol=1e-9)
+        ):
+            self.stats.exact_cache_fallback += 1
+            self._trace(
+                "EXACT_CACHE_FALLBACK",
+                pos.symbol,
+                {
+                    "lane": pos.lane,
+                    "reason": "path_mismatch_full_rebuild",
+                    "cache_n": int(path["offs"].size),
+                    "ref_n": int(ref["offs"].size),
+                    "slot_released": False,
+                },
+            )
+            use_path = ref
+            cache = self._new_exact_cache(pos)
+            pos.exact_cache = cache
+        pol, bundle = self._apply_policy(pos, use_path)
+        if pol.get("ok"):
+            cache["pol_frozen"] = True
+            cache["pol"] = pol
+        return {
+            "ok": True,
+            "off_now": off_now,
+            "path": use_path,
+            "bundle": bundle,
+            "pol": pol,
+            "fast": False,
+        }
 
     def _board_dict(self, pos: LanePosition) -> dict[str, np.ndarray]:
         return {
@@ -646,40 +1268,23 @@ class V1RLiveDualLane:
             "mid": np.asarray(pos.mid, dtype=float),
         }
 
-    def _trace_decisions(self, pos: LanePosition) -> None:
-        """Emit decision-horizon traces without releasing slots."""
+    def _trace_decisions(self, pos: LanePosition, ctx: Optional[dict[str, Any]] = None) -> None:
+        """Emit decision-horizon traces from the actual evaluation context.
+
+        Must not recompute Strategy. ctx is the same object _evaluate consumes.
+        """
         if len(pos.t) < 2:
             return
-        from research.e1_x35_passive_exit.paths import build_path
-        from research.v1r_exit_v2_asymmetric.states import build_trade_bundle
-
-        board = self._board_dict(pos)
-        path = build_path(
-            board,
-            entry_price=float(pos.fill_price),
-            entry_t=float(pos.fill_time),
-            sess_end=session_end_for_position(
-                date=pos.date, session=pos.session, fill_time=pos.fill_time
-            ),
-        )
-        if not path.get("ok"):
+        if ctx is None:
+            ctx = self._decision_context(pos)
+        if not ctx.get("ok"):
             return
-        fill = {
-            "date": pos.date or _now().strftime("%Y%m%d"),
-            "symbol": pos.symbol,
-            "session": pos.session,
-            "fill_time": pos.fill_time,
-            "fill_price": pos.fill_price,
-            "anchor_id": "live",
-        }
-        bundle = build_trade_bundle(fill, path, board)
-        if pos.lane == "primary":
-            pol = apply_arch_e_to_bundle(bundle)
-        else:
-            pol = apply_fixed600_to_bundle(bundle)
+        pol = ctx.get("pol") or {}
         if not pol.get("ok"):
             return
-        off_now = float(pos.t[-1] - pos.fill_time)
+        off_now = float(
+            ctx.get("off_now") if ctx.get("off_now") is not None else (pos.t[-1] - pos.fill_time)
+        )
         if pos.lane == "primary":
             if pol.get("triggered_guard") and not pos.traced_guard_trigger:
                 pos.traced_guard_trigger = True
@@ -737,40 +1342,20 @@ class V1RLiveDualLane:
                     },
                 )
 
-    def _evaluate(self, pos: LanePosition) -> Optional[dict[str, Any]]:
+    def _evaluate(self, pos: LanePosition, ctx: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
         if len(pos.t) < 2:
             return None
-        from research.e1_x35_passive_exit.paths import build_path
-        from research.v1r_exit_v2_asymmetric.states import build_trade_bundle
-
-        board = self._board_dict(pos)
-        path = build_path(
-            board,
-            entry_price=float(pos.fill_price),
-            entry_t=float(pos.fill_time),
-            sess_end=session_end_for_position(
-                date=pos.date, session=pos.session, fill_time=pos.fill_time
-            ),
-        )
-        if not path.get("ok"):
+        if ctx is None:
+            ctx = self._decision_context(pos)
+        if not ctx.get("ok"):
             return None
-        fill = {
-            "date": pos.date or _now().strftime("%Y%m%d"),
-            "symbol": pos.symbol,
-            "session": pos.session,
-            "fill_time": pos.fill_time,
-            "fill_price": pos.fill_price,
-            "anchor_id": "live",
-        }
-        bundle = build_trade_bundle(fill, path, board)
-        if pos.lane == "primary":
-            pol = apply_arch_e_to_bundle(bundle)
-        else:
-            pol = apply_fixed600_to_bundle(bundle)
+        pol = ctx.get("pol") or {}
         if not pol.get("ok"):
             return None
         # Exit only when decision horizon has been reached (causal).
-        off_now = float(pos.t[-1] - pos.fill_time)
+        off_now = float(
+            ctx.get("off_now") if ctx.get("off_now") is not None else (pos.t[-1] - pos.fill_time)
+        )
         exit_off = float(pol.get("exit_off") or 0)
         if pol.get("triggered_guard"):
             trig = float(pol.get("guard_trigger_off") or exit_off)
@@ -815,7 +1400,14 @@ class V1RLiveDualLane:
         pos.closed = True
         pos.exit_reason = str(decision.get("reason") or "")
         # Slot release at actual executable exit time (not trigger-only).
-        pos.exit_time = float(decision.get("exit_time") or pos.t[-1] if pos.t else time.time())
+        # Never fall back to wall clock: `a or b if c else d` would ignore
+        # decision["exit_time"] whenever pos.t is empty (15:00 leftover SESSION_CLOSE).
+        if decision.get("exit_time") is not None:
+            pos.exit_time = float(decision["exit_time"])
+        elif pos.t:
+            pos.exit_time = float(pos.t[-1])
+        else:
+            pos.exit_time = float(pos.fill_time)
         pos.exit_price = float(decision.get("exit_price") or 0)
         pos.triggered_guard = bool(decision.get("triggered_guard"))
         pos.extended = bool(decision.get("extended"))
@@ -1070,11 +1662,36 @@ class V1RLiveDualLane:
         self._trace("FAIL_CLOSED", "", {"reason": reason, "slot_released": False})
 
     def heartbeat_fields(self) -> dict[str, Any]:
+        if int(self.stats.publisher_last_seq or 0) <= 0:
+            self._refresh_seq_lag_from_ingress_status()
+        lag = self._paper_consumer_seq_lag()
+        processed_event_time = ""
+        if self.stats.last_event_t:
+            try:
+                processed_event_time = datetime.fromtimestamp(
+                    float(self.stats.last_event_t), JST
+                ).isoformat(timespec="milliseconds")
+            except (OSError, ValueError, OverflowError):
+                processed_event_time = ""
         return {
             **self.identity(),
             "runtime_state": self.stats.state,
             "last_push_at": self.stats.last_push_at,
             "last_processed_sequence": self.stats.last_seq,
+            "event_lag_sec": (
+                (time.time() - float(self.stats.last_event_t))
+                if self.stats.last_event_t
+                else 0.0
+            ),
+            "seq_lag": lag,
+            "paper_consumer_seq_lag": lag,
+            "processed_event_time": processed_event_time,
+            "backlog_direction": self.stats.backlog_direction,
+            "max_event_lag_sec": float(self.stats.max_event_lag_sec),
+            "max_seq_lag": int(self.stats.max_seq_lag),
+            "publisher_last_sequence": int(self.stats.publisher_last_seq),
+            "consumer_ack_sequence": int(self.stats.consumer_ack_seq),
+            "last_event_t": float(self.stats.last_event_t),
             "primary_open": self.open_n("primary"),
             "control_open": self.open_n("control"),
             "primary_pending": 0,
@@ -1094,6 +1711,11 @@ class V1RLiveDualLane:
                 "tick_matches": self.stats.tick_matches,
                 "lookup_miss_with_open": self.stats.lookup_miss_with_open,
                 "exceptions": self.stats.exceptions,
+                "exact_cache_fallback": self.stats.exact_cache_fallback,
+                "cache_hit": self.stats.cache_hit,
+                "cache_miss": self.stats.cache_miss,
+                "guard_incremental_update": self.stats.guard_incremental_update,
+                "path_materialization": self.stats.path_materialization,
             },
             "qty": LOT_QTY,
             "cap": self.cap,

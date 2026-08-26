@@ -1381,6 +1381,16 @@ class SmallPaperDiscordNotifier:
                     "=== TODAY'S RESEARCH ===",
                     "research highlight unavailable",
                 ]
+            try:
+                from small_paper.v1r_pbv2_shadow_discord_digest import (
+                    format_pbv2_shadow_summary_lines,
+                )
+
+                extra = format_pbv2_shadow_summary_lines()
+                if extra:
+                    research_highlights = list(research_highlights or []) + extra
+            except Exception:
+                pass
         return build_summary_embed_payload(
             canonical,
             am_pm=am_pm,
@@ -1668,6 +1678,19 @@ def notify_discord_session_end(
         )
     except Exception as exc:
         log.warning("shadow summary runtime hook failed (fail-open): %s", exc)
+    try:
+        from small_paper.v1r_pbv2_shadow_discord_digest import (
+            publish_pbv2_shadow_session_summary_for_finalize,
+        )
+
+        out_dir = Path(output_dir) if output_dir else None
+        if out_dir is None:
+            raw = summary.get("output_dir") or summary.get("session_dir")
+            if raw:
+                out_dir = Path(str(raw))
+        publish_pbv2_shadow_session_summary_for_finalize(summary, output_dir=out_dir)
+    except Exception as exc:
+        log.warning("pbv2 shadow session summary failed (fail-open): %s", exc)
 
 
 def build_session_summary_extras(

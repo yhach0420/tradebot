@@ -111,6 +111,68 @@ def board_event_epoch_from_payload(
     return float(time.time())
 
 
+SKIP_REASON_REALTIME_RESYNC = "SKIPPED_BY_REALTIME_RESYNC"
+REALTIME_RESYNC_KIND = "REALTIME_RESYNC"
+
+
+def clock_grid_anchors_at_or_before(*, trading_date: str, head_epoch: float) -> list[str]:
+    """CLOCK_GRID labels whose t0 is at or before the REALTIME resync watermark."""
+    day = str(trading_date or "").strip()
+    if len(day) < 8 or head_epoch <= 0:
+        return []
+    try:
+        y, mo, d = int(day[:4]), int(day[4:6]), int(day[6:8])
+    except Exception:
+        return []
+    out: list[str] = []
+    for h, m in CLOCK_GRID:
+        dt = datetime(y, mo, d, int(h), int(m), tzinfo=JST)
+        if dt.timestamp() <= float(head_epoch) + 1e-12:
+            out.append(f"{int(h):02d}:{int(m):02d}")
+    return out
+
+
+def next_clock_grid_anchor_after(*, trading_date: str, head_epoch: float) -> Optional[str]:
+    day = str(trading_date or "").strip()
+    if len(day) < 8:
+        return None
+    try:
+        y, mo, d = int(day[:4]), int(day[4:6]), int(day[6:8])
+    except Exception:
+        return None
+    for h, m in CLOCK_GRID:
+        dt = datetime(y, mo, d, int(h), int(m), tzinfo=JST)
+        if dt.timestamp() > float(head_epoch) + 1e-12:
+            return f"{int(h):02d}:{int(m):02d}"
+    return None
+
+
+def apply_pending_realtime_resync_watermark(
+    *,
+    head_seq: int,
+    head_event_time: str,
+    trading_date: str = "",
+    skipped_from_seq: int = 0,
+    generation: int = 0,
+) -> dict[str, Any]:
+    """Apply REALTIME resync watermark to the live native engine if present."""
+    eng = get_native_entry()
+    if eng is None:
+        return {
+            "native_applied": False,
+            "reason": "native_engine_absent",
+            "resync_head_seq": int(head_seq),
+            "resync_head_event_time": str(head_event_time or ""),
+        }
+    return eng.apply_realtime_resync_watermark(
+        head_seq=int(head_seq),
+        head_event_time=str(head_event_time or ""),
+        trading_date=str(trading_date or ""),
+        skipped_from_seq=int(skipped_from_seq),
+        generation=int(generation),
+    )
+
+
 def extract_board_row(payload: dict[str, Any], event_t: float) -> dict[str, Any]:
     """Board row matching e1_x28 load_board_events quote contract (not a new fill rule)."""
     b1 = payload.get("Buy1") if isinstance(payload.get("Buy1"), dict) else {}
@@ -374,7 +436,10 @@ class V1RNativeEntryLive:
     native_ingest_count: int = 0
     native_ingest_skip_duplicate: int = 0
     native_ingest_skip_universe: int = 0
+    native_ingest_sequence_holes: int = 0
     last_ingested_sequence: Optional[int] = None
+    last_seen_push_sequence: Optional[int] = None
+    native_ingest_raw_sequence_holes: int = 0
     event_time_watermark: float = 0.0
     _ingested_sequences: set[int] = field(default_factory=set)
     ingest_audit: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=256))
@@ -384,6 +449,15 @@ class V1RNativeEntryLive:
     last_native_ingest_us: float = 0.0
     last_fill_check_us: float = 0.0
     _board_buf: dict[str, _BoardBuf] = field(default_factory=dict)
+    resync_mode: str = ""
+    resync_generation: int = 0
+    resync_head_seq: int = 0
+    resync_head_event_time: str = ""
+    resync_head_event_epoch: float = 0.0
+    skipped_stale_events: int = 0
+    skipped_anchors_by_resync: list[str] = field(default_factory=list)
+    next_eligible_anchor: Optional[str] = None
+    realtime_resync_note: str = ""
 
     @property
     def open_n(self) -> int:
@@ -415,6 +489,101 @@ class V1RNativeEntryLive:
             "pbv2_role": "SHADOW_ONLY",
             "submit_cancel_live": "0/0/0",
         }
+
+    def apply_realtime_resync_watermark(
+        self,
+        *,
+        head_seq: int,
+        head_event_time: str,
+        trading_date: str = "",
+        skipped_from_seq: int = 0,
+        generation: int = 0,
+    ) -> dict[str, Any]:
+        """Bootstrap causal watermarks. Does not fake ingest of skipped events.
+
+        Past CLOCK_GRID anchors are pre-marked SKIPPED_BY_REALTIME_RESYNC so
+        they are not Strategy-evaluated. Capture is not deleted.
+        """
+        head = int(head_seq)
+        epoch = _parse_iso_epoch(head_event_time)
+        if epoch is None:
+            epoch = 0.0
+        day = str(trading_date or self.trading_date or "")
+        if not day and head_event_time:
+            try:
+                dt0 = datetime.fromisoformat(str(head_event_time).replace("Z", "+00:00"))
+                if dt0.tzinfo is None:
+                    dt0 = dt0.replace(tzinfo=JST)
+                day = dt0.astimezone(JST).strftime("%Y%m%d")
+            except Exception:
+                day = str(day or "")
+        skipped = clock_grid_anchors_at_or_before(trading_date=day, head_epoch=float(epoch or 0.0))
+        nxt = next_clock_grid_anchor_after(trading_date=day, head_epoch=float(epoch or 0.0))
+        if day:
+            self.trading_date = day
+            for label in skipped:
+                self.fired_anchors.add(f"{day}|{label}")
+        self.resync_mode = "REALTIME"
+        self.resync_generation = int(generation or self.resync_generation or 1)
+        self.resync_head_seq = head
+        self.resync_head_event_time = str(head_event_time or "")
+        self.resync_head_event_epoch = float(epoch or 0.0)
+        self.skipped_stale_events = max(0, head - int(skipped_from_seq or 0))
+        self.skipped_anchors_by_resync = list(skipped)
+        self.next_eligible_anchor = nxt
+        self.realtime_resync_note = "REALTIME_RESYNC: events before watermark intentionally skipped"
+        # Causal bootstrap only — not an ingest of skipped sequences.
+        if head > 0:
+            if self.last_seen_push_sequence is None or int(self.last_seen_push_sequence) < head:
+                self.last_seen_push_sequence = head
+        if epoch and epoch == epoch:
+            self.event_time_watermark = max(float(self.event_time_watermark or 0.0), float(epoch))
+        rec = {
+            "kind": REALTIME_RESYNC_KIND,
+            "detail": self.realtime_resync_note,
+            "resync_generation": int(self.resync_generation),
+            "resync_head_seq": head,
+            "resync_head_event_time": str(head_event_time or ""),
+            "skipped_stale_events": int(self.skipped_stale_events),
+            "skipped_anchors": list(skipped),
+            "next_eligible_anchor": nxt,
+            "open_n": self.open_n,
+            "pending_n": self.pending_n,
+        }
+        self.events.append(rec)
+        if self.trace_dir is not None:
+            try:
+                self.trace_dir.mkdir(parents=True, exist_ok=True)
+                (self.trace_dir / "realtime_resync_watermark.json").write_text(
+                    json.dumps(rec, ensure_ascii=False, indent=2, default=str) + "\n",
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+        return {
+            "native_applied": True,
+            "resync_head_seq": head,
+            "resync_head_event_time": str(head_event_time or ""),
+            "resync_generation": int(self.resync_generation),
+            "skipped_anchors": list(skipped),
+            "next_eligible_anchor": nxt,
+            "open_n": self.open_n,
+            "pending_n": self.pending_n,
+        }
+
+    def _before_realtime_resync_watermark(
+        self,
+        *,
+        sequence: Optional[int],
+        event_t: float,
+    ) -> bool:
+        if int(self.resync_head_seq or 0) <= 0 and float(self.resync_head_event_epoch or 0.0) <= 0:
+            return False
+        if sequence is not None and int(self.resync_head_seq or 0) > 0 and int(sequence) <= int(self.resync_head_seq):
+            return True
+        if float(self.resync_head_event_epoch or 0.0) > 0 and float(event_t) <= float(self.resync_head_event_epoch) + 1e-12:
+            return True
+        return False
 
     def _board_arrays(self, symbol: str) -> dict[str, np.ndarray]:
         buf = self._board_buf.get(symbol)
@@ -452,6 +621,15 @@ class V1RNativeEntryLive:
         """Append one board row. Exactly-once per raw sequence when sequence is present."""
         sym = str(symbol).replace(".T", "")
         seq_i = self._payload_sequence(payload)
+        if seq_i is not None:
+            # Transport/raw continuity: every ingest_push call, including universe skip.
+            if (
+                self.last_seen_push_sequence is not None
+                and seq_i > int(self.last_seen_push_sequence) + 1
+            ):
+                self.native_ingest_raw_sequence_holes += 1
+            if self.last_seen_push_sequence is None or seq_i > int(self.last_seen_push_sequence):
+                self.last_seen_push_sequence = seq_i
         t = float(
             event_t
             if event_t is not None
@@ -507,6 +685,14 @@ class V1RNativeEntryLive:
             self.boards[sym] = self.boards[sym][-20000:]
             buf.compact_tail(20000)
         if seq_i is not None:
+            # Accepted-universe continuity only. A jump here can be a real
+            # intermediate drop OR a false positive when skipped seqs were
+            # not_in_universe (see native_ingest_raw_sequence_holes).
+            if (
+                self.last_ingested_sequence is not None
+                and seq_i > int(self.last_ingested_sequence) + 1
+            ):
+                self.native_ingest_sequence_holes += 1
             self._ingested_sequences.add(seq_i)
             self.last_ingested_sequence = seq_i
         self.native_ingest_count += 1
@@ -535,6 +721,21 @@ class V1RNativeEntryLive:
             if event_t is not None
             else board_event_epoch_from_payload(payload)
         )
+        seq_i = self._payload_sequence(payload)
+        if self._before_realtime_resync_watermark(sequence=seq_i, event_t=t):
+            rec = {
+                "ingested": False,
+                "reason": SKIP_REASON_REALTIME_RESYNC,
+                "sequence": seq_i,
+                "native_ingest_sequence": seq_i,
+                "raw_sequence": seq_i,
+                "symbol": str(symbol).replace(".T", ""),
+                "event_t": t,
+                "fill_checked": False,
+                "anchor_fired": False,
+            }
+            self.ingest_audit.append(rec)
+            return rec
         t_ing = time.perf_counter()
         ing = self.ingest_push(symbol=symbol, payload=payload, event_t=t)
         self.last_native_ingest_us = (time.perf_counter() - t_ing) * 1_000_000.0
@@ -629,6 +830,12 @@ class V1RNativeEntryLive:
         if key is None or key in self.fired_anchors:
             return []
         t0 = dt.replace(second=0, microsecond=0).timestamp()
+        if float(self.resync_head_event_epoch or 0.0) > 0 and float(t0) <= float(self.resync_head_event_epoch) + 1e-12:
+            self.fired_anchors.add(key)
+            label = f"{dt.hour:02d}:{dt.minute:02d}"
+            if label not in self.skipped_anchors_by_resync:
+                self.skipped_anchors_by_resync.append(label)
+            return []
         # Sequence-ordered ingest: wait until event-time has strictly passed t0
         # so every last-event<=t0 row is already in the ring. Snapshot still cuts at t0.
         if now_t is not None and float(now_t) <= float(t0) + 1e-12:
@@ -645,6 +852,7 @@ class V1RNativeEntryLive:
         self.anchor_fires += 1
         day = dt.strftime("%Y%m%d")
         self.trading_date = day
+        self.next_eligible_anchor = next_clock_grid_anchor_after(trading_date=day, head_epoch=float(t0))
         return self._run_anchor(anchor=anchor, t0=t0, day=day, session="AM" if dt.hour < 12 else "PM")
 
     def fire_anchor_at(
@@ -653,6 +861,11 @@ class V1RNativeEntryLive:
         """Deterministic anchor fire for demos/tests (bypasses wall-clock gate)."""
         key = f"{day}|{anchor}"
         if key in self.fired_anchors:
+            return []
+        if float(self.resync_head_event_epoch or 0.0) > 0 and float(t0) <= float(self.resync_head_event_epoch) + 1e-12:
+            self.fired_anchors.add(key)
+            if anchor not in self.skipped_anchors_by_resync:
+                self.skipped_anchors_by_resync.append(anchor)
             return []
         self.fired_anchors.add(key)
         self.last_anchor = anchor
@@ -1233,6 +1446,13 @@ class V1RNativeEntryLive:
             "primary_fills": self.primary_fills,
             "primary_expired": self.primary_expired,
             "primary_admitted": self.primary_admitted,
+            "native_ingest_count": self.native_ingest_count,
+            "native_ingest_skip_universe": self.native_ingest_skip_universe,
+            "native_ingest_sequence_holes": self.native_ingest_sequence_holes,
+            "native_ingest_sequence_holes_scope": "accepted_universe_ingest",
+            "native_ingest_raw_sequence_holes": self.native_ingest_raw_sequence_holes,
+            "last_ingested_sequence": self.last_ingested_sequence,
+            "last_seen_push_sequence": self.last_seen_push_sequence,
             "trace_dir": str(self.trace_dir) if self.trace_dir else None,
             "shadow_pbv2": self.shadow_pbv2.snapshot(),
             "submit_cancel_live": "0/0/0",
@@ -1253,7 +1473,11 @@ class V1RNativeEntryLive:
             "primary_admitted": self.primary_admitted,
             "native_ingest_count": self.native_ingest_count,
             "native_ingest_skip_duplicate": self.native_ingest_skip_duplicate,
+            "native_ingest_sequence_holes": self.native_ingest_sequence_holes,
+            "native_ingest_sequence_holes_scope": "accepted_universe_ingest",
+            "native_ingest_raw_sequence_holes": self.native_ingest_raw_sequence_holes,
             "last_ingested_sequence": self.last_ingested_sequence,
+            "last_seen_push_sequence": self.last_seen_push_sequence,
             "event_time_watermark": self.event_time_watermark,
             "fill_check_push_count": self.fill_check_push_count,
             "fill_check_pending_present_count": self.fill_check_pending_present_count,
@@ -1262,6 +1486,21 @@ class V1RNativeEntryLive:
             "last_fill_check_us": round(self.last_fill_check_us, 3),
             "trace_dir": str(self.trace_dir) if self.trace_dir else None,
             "submit_cancel_live": "0/0/0",
+            "resync_mode": self.resync_mode,
+            "resync_head_seq": int(self.resync_head_seq),
+            "resync_head_event_time": str(self.resync_head_event_time or ""),
+            "resync_generation": int(self.resync_generation),
+            "skipped_stale_events": int(self.skipped_stale_events),
+            "processed_event_time": (
+                datetime.fromtimestamp(float(self.event_time_watermark), JST).isoformat(
+                    timespec="milliseconds"
+                )
+                if float(self.event_time_watermark or 0.0) > 0
+                else str(self.resync_head_event_time or "")
+            ),
+            "last_anchor": self.last_anchor,
+            "next_anchor": self.next_eligible_anchor,
+            "skipped_anchors_by_resync": list(self.skipped_anchors_by_resync),
         }
 
 

@@ -575,17 +575,15 @@ def verify_kabu_connection(
     from api.kabu_register import resolve_native_root_for_register_state
     from api.rest_client import KabuNativeApiError, KabuNativeRestClient, default_base_url, load_kabu_env
     from small_paper.day_fixed_am_registration import SAME_DAY_AM_FROZEN_AUTHORITY
-    from small_paper.kabu_registration_authority import (
-        NO_REGISTERED_KABU_PROBE_SYMBOL,
-        resolve_registered_probe_symbol,
-    )
+    from small_paper.kabu_registration_authority import NO_REGISTERED_KABU_PROBE_SYMBOL
+    from small_paper.operational_validation import select_runtime_board_probe_symbol
 
     probe: dict[str, Any] = {}
     key = str(symbol_key or "").strip()
     if not key:
         native = Path(native_root) if native_root else resolve_native_root_for_register_state(Path(repo_root))
         day = str(trading_date or session_now().strftime("%Y%m%d"))
-        probe = resolve_registered_probe_symbol(native, day)
+        probe = select_runtime_board_probe_symbol(native, day)
         if not probe.get("ok"):
             raise KabuNativeApiError(str(probe.get("reason") or NO_REGISTERED_KABU_PROBE_SYMBOL))
         key = str(probe.get("symbol_key") or probe.get("kabu_probe_symbol") or "").strip()
@@ -3293,13 +3291,41 @@ def _execute_accepted_entry(
                     f"err={type(exc).__name__}:{exc}",
                     flush=True,
                 )
+                try:
+                    from small_paper.v1r_pbv2_shadow_discord_digest import (
+                        get_pbv2_shadow_discord_digest,
+                    )
+
+                    get_pbv2_shadow_discord_digest(
+                        trace_dir=_v1r_native_writer_output_dir(ctx)
+                    ).publish_processing_error(
+                        where="pbv2_shadow_discord_digest",
+                        error=f"{type(exc).__name__}:{exc}",
+                        symbol=str(sym),
+                    )
+                except Exception:
+                    pass
             return
-    except Exception:
+    except Exception as exc:
         # Fail-closed: if diversion fails under live primary, do NOT fall through to classic Primary
         try:
             from small_paper.v1r_live_dual_lane import live_primary_enabled
 
             if live_primary_enabled():
+                try:
+                    from small_paper.v1r_pbv2_shadow_discord_digest import (
+                        get_pbv2_shadow_discord_digest,
+                    )
+
+                    get_pbv2_shadow_discord_digest(
+                        trace_dir=_v1r_native_writer_output_dir(ctx)
+                    ).publish_processing_error(
+                        where="pbv2_shadow_divert",
+                        error=f"{type(exc).__name__}:{exc}",
+                        symbol=str(sym),
+                    )
+                except Exception:
+                    pass
                 return
         except Exception:
             pass
@@ -4490,15 +4516,84 @@ def _freshness_reference_now(
     return _replay_reference_now(ctx, payload) or datetime.now(JST)
 
 
+def _canonical_candidate_event_count(state: _LiveRunState) -> int:
+    """O(1) reachability counter when present; one-shot scan only if unrestored."""
+    tracker = getattr(state, "_evaluation_reachability_tracker", None)
+    if tracker is not None and bool(getattr(tracker, "_candidate_count_seeded", False)):
+        return int(getattr(tracker, "candidate_event_count", 0) or 0)
+    return int(sum(1 for e in state.events if e.get("event_type") == "candidate"))
+
+
+def _overlay_reachability_summary_counts(
+    ctx: _PushPipelineContext, *, tracker: Optional[Any] = None
+) -> None:
+    summary = ctx.state.evaluation_reachability_summary
+    if not isinstance(summary, dict):
+        ctx.state.evaluation_reachability_summary = {}
+        summary = ctx.state.evaluation_reachability_summary
+    tr = tracker if tracker is not None else getattr(ctx, "evaluation_reachability", None)
+    if tr is not None:
+        if not bool(getattr(tr, "_candidate_count_seeded", False)):
+            tr.seed_candidate_event_count_from_events(getattr(ctx.state, "events", None))
+        summary["candidate_count"] = int(getattr(tr, "candidate_event_count", 0) or 0)
+    else:
+        summary["candidate_count"] = _canonical_candidate_event_count(ctx.state)
+    summary["gate_accepted_count"] = int(len(ctx.state.accepted_rows))
+    summary["official_entry_count"] = int(
+        sum(1 for r in ctx.state.accepted_rows if r.get("position_registered") or r.get("official_entry"))
+    )
+
+
+def _overlay_reachability_summary_counts_state(state: _LiveRunState, tracker: Any) -> None:
+    summary = getattr(state, "evaluation_reachability_summary", None)
+    if not isinstance(summary, dict):
+        state.evaluation_reachability_summary = {}
+        summary = state.evaluation_reachability_summary
+    summary["candidate_count"] = int(getattr(tracker, "candidate_event_count", 0) or 0)
+    summary["gate_accepted_count"] = int(len(state.accepted_rows))
+    summary["official_entry_count"] = int(
+        sum(1 for r in state.accepted_rows if r.get("position_registered") or r.get("official_entry"))
+    )
+
+
+def _note_candidate_event_recorded(ctx: _PushPipelineContext) -> None:
+    """Increment canonical counter after state.events actually stored a candidate.
+
+    If the tracker is missing or unrestored, seed once from events (includes this
+    row) and do not increment again.
+    """
+    tracker = getattr(ctx, "evaluation_reachability", None)
+    if tracker is None or not bool(getattr(tracker, "_candidate_count_seeded", False)):
+        _ensure_evaluation_reachability(ctx)
+        return
+    tracker.note_candidate_event_appended()
+
+
 def _ensure_evaluation_reachability(ctx: _PushPipelineContext) -> Any:
     from small_paper.evaluation_reachability import EvaluationReachabilityTracker
 
     if ctx.evaluation_reachability is None:
         ctx.evaluation_reachability = EvaluationReachabilityTracker()
+        wm = getattr(ctx.state, "realtime_resync_watermark", None)
+        if isinstance(wm, dict) and int(wm.get("resync_head_seq") or wm.get("skipped_to_sequence") or 0) > 0:
+            try:
+                ctx.evaluation_reachability.apply_realtime_resync_watermark(
+                    head_seq=int(wm.get("resync_head_seq") or wm.get("skipped_to_sequence") or 0),
+                    head_event_time=str(wm.get("resync_head_event_time") or ""),
+                    generation=int(wm.get("resync_generation") or 0),
+                )
+            except Exception:
+                pass
     try:
         ctx.state._evaluation_reachability_tracker = ctx.evaluation_reachability  # type: ignore[attr-defined]
     except Exception:
         pass
+    tr = ctx.evaluation_reachability
+    if tr is not None and not bool(getattr(tr, "_candidate_count_seeded", False)):
+        try:
+            tr.seed_candidate_event_count_from_events(getattr(ctx.state, "events", None))
+        except Exception:
+            tr.seed_candidate_event_count_from_events(None)
     return ctx.evaluation_reachability
 
 
@@ -4589,14 +4684,8 @@ def _sync_reachability_summary(
     elig = ctx.entry_eligible_symbols
     if elig is not None:
         ctx.state.evaluation_reachability_summary["universe_active_symbol_count"] = int(len(elig))
-    # Candidate / accept counts for Discord summary (from existing state)
-    ctx.state.evaluation_reachability_summary["candidate_count"] = int(
-        sum(1 for e in ctx.state.events if e.get("event_type") == "candidate")
-    )
-    ctx.state.evaluation_reachability_summary["gate_accepted_count"] = int(len(ctx.state.accepted_rows))
-    ctx.state.evaluation_reachability_summary["official_entry_count"] = int(
-        sum(1 for r in ctx.state.accepted_rows if r.get("position_registered") or r.get("official_entry"))
-    )
+    # Candidate count: O(1) canonical counter (seeded once / incremented on append).
+    _overlay_reachability_summary_counts(ctx, tracker=tracker)
 
 
 def _stage0_normalize_payload(
@@ -4816,8 +4905,17 @@ def _v1r_dual_lane_on_push(
             pay["recorded_at"] = t0_push_received_at
         if not pay.get("received_at"):
             pay["received_at"] = t0_push_received_at
-    seq = int(pay.get("sequence") or pay.get("Sequence") or message_index or 0)
-    dual.on_push_meta(sequence=seq, push_at=str(pay.get("CurrentPriceTime") or _now_iso()))
+    seq = int(pay.get("__ingress_sequence__") or pay.get("sequence") or pay.get("Sequence") or message_index or 0)
+    pub_raw = pay.get("__publisher_last_sequence__")
+    try:
+        pub = int(pub_raw) if pub_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        pub = None
+    dual.on_push_meta(
+        sequence=seq,
+        push_at=str(pay.get("CurrentPriceTime") or _now_iso()),
+        publisher_last_sequence=pub,
+    )
     from small_paper.v1r_native_entry_live import board_event_epoch_from_payload
 
     et = board_event_epoch_from_payload(pay)
@@ -5300,6 +5398,7 @@ def _stage6_record_candidate(
         current_price=payload.get("CurrentPrice"),
     )
     ctx.state.events.append(cand)
+    _note_candidate_event_recorded(ctx)
     ctx.writer.append_event(cand)
     _record_bucket(ctx.state, "candidate")
     if prof is not None:
@@ -6543,7 +6642,7 @@ def _build_push_replay_summary(
         "order_enabled": False,
         "paper_only": True,
         "profile": config.profile,
-        "candidate_count": len([e for e in state.events if e.get("event_type") == "candidate"]),
+        "candidate_count": _canonical_candidate_event_count(state),
         "accepted_count": len(state.accepted_rows),
         "rejected_count": len(reject_events),
         "reject_reason_counts": _count_reasons(state.reject_rows),
@@ -7805,7 +7904,7 @@ def _build_live_summary(
         "reconnect_count": state.reconnect_count,
         "push_messages": state.push_messages,
         "gate_evaluations": state.gate_evaluations,
-        "candidate_count": len([e for e in state.events if e.get("event_type") == "candidate"]),
+        "candidate_count": _canonical_candidate_event_count(state),
         "accepted_count": len(state.accepted_rows),
         "rejected_count": len(reject_events),
         "reject_reason_counts": _count_reasons(state.reject_rows),
@@ -7855,6 +7954,12 @@ def _build_live_summary(
             session_kind=str((session_cfg.get("am_pm_session") or {}).get("kind") or ""),
             trading_date=str(summary.get("trading_date") or ""),
         )
+    except Exception:
+        pass
+    try:
+        from small_paper.run_classification import stamp_run_classification
+
+        stamp_run_classification(summary)
     except Exception:
         pass
     summary.update(_policy_summary_extras(config))
@@ -8224,9 +8329,11 @@ def run_live_dry_run(
         NO_REGISTERED_KABU_PROBE_SYMBOL,
         resolve_registered_probe_symbol,
     )
+    from small_paper.operational_validation import select_runtime_board_probe_symbol
 
     probe_day = now.strftime("%Y%m%d")
-    probe = resolve_registered_probe_symbol(Path(native_root), probe_day)
+    probe = select_runtime_board_probe_symbol(Path(native_root), probe_day)
+    # Formal exact50 still uses resolve_registered_probe_symbol when OPVAL degraded is off.
     if not probe.get("ok"):
         raise KabuNativeApiError(str(probe.get("reason") or NO_REGISTERED_KABU_PROBE_SYMBOL))
     probe_key = str(probe.get("symbol_key") or probe.get("kabu_probe_symbol") or "")
@@ -8925,6 +9032,28 @@ def run_live_dry_run(
                 except Exception:
                     pass
                 if dual is not None:
+                    try:
+                        pub = 0
+                        ack = 0
+                        if bus_bridge is not None:
+                            ack = int(getattr(bus_bridge, "last_ack_sequence", 0) or 0)
+                            cons = getattr(bus_bridge, "consumer", None)
+                            pub = int(getattr(cons, "publisher_last_sequence_hint", 0) or 0)
+                            nr = getattr(bus_bridge, "native_root", None)
+                            td = str(getattr(bus_bridge, "trading_date", "") or day_compact or "")
+                            if nr is not None and td:
+                                from small_paper.consumer_lag_policy import read_ingress_status
+
+                                st = read_ingress_status(nr, td)
+                                pub = int(st.get("publisher_last_sequence") or pub or 0)
+                                if ack <= 0:
+                                    ack = int(st.get("paper_consumer_last_ack") or 0)
+                        dual.note_ingress_cursors(
+                            publisher_last_sequence=int(pub or 0),
+                            consumer_ack_sequence=int(ack or 0),
+                        )
+                    except Exception:
+                        pass
                     hb["v1r_exit_v2"] = dual.heartbeat_fields()
                     try:
                         dual.emit_heartbeat_summary()
@@ -8932,6 +9061,67 @@ def run_live_dry_run(
                         pass
                 if eng is not None:
                     hb["v1r_native_entry"] = eng.heartbeat_fields()
+                try:
+                    pub_seq = 0
+                    ack_seq = 0
+                    if bus_bridge is not None:
+                        ack_seq = int(getattr(bus_bridge, "last_ack_sequence", 0) or 0)
+                        cons = getattr(bus_bridge, "consumer", None)
+                        pub_seq = int(getattr(cons, "publisher_last_sequence_hint", 0) or 0)
+                    lag = max(0, int(pub_seq) - int(ack_seq)) if pub_seq else 0
+                    wm = getattr(state, "realtime_resync_watermark", None) or {}
+                    if not isinstance(wm, dict):
+                        wm = {}
+                    native_hb = hb.get("v1r_native_entry") if isinstance(hb.get("v1r_native_entry"), dict) else {}
+                    dual_hb = hb.get("v1r_exit_v2") if isinstance(hb.get("v1r_exit_v2"), dict) else {}
+                    hb["realtime_resync"] = {
+                        "resync_mode": (
+                            str(native_hb.get("resync_mode") or "")
+                            or (
+                                "REALTIME"
+                                if int(
+                                    native_hb.get("resync_head_seq")
+                                    or wm.get("resync_head_seq")
+                                    or getattr(bus_bridge, "resync_head_seq", 0)
+                                    or 0
+                                )
+                                > 0
+                                else ""
+                            )
+                        ),
+                        "resync_head_seq": int(
+                            native_hb.get("resync_head_seq")
+                            or wm.get("resync_head_seq")
+                            or getattr(bus_bridge, "resync_head_seq", 0)
+                            or 0
+                        ),
+                        "resync_head_event_time": str(
+                            native_hb.get("resync_head_event_time")
+                            or wm.get("resync_head_event_time")
+                            or getattr(bus_bridge, "resync_head_event_time", "")
+                            or ""
+                        ),
+                        "skipped_stale_events": int(
+                            native_hb.get("skipped_stale_events")
+                            or wm.get("skipped_count")
+                            or getattr(bus_bridge, "skipped_stale_events", 0)
+                            or 0
+                        ),
+                        "paper_consumer_seq_lag": int(
+                            dual_hb.get("paper_consumer_seq_lag")
+                            if dual_hb.get("paper_consumer_seq_lag") is not None
+                            else lag
+                        ),
+                        "processed_event_time": str(
+                            native_hb.get("processed_event_time")
+                            or dual_hb.get("processed_event_time")
+                            or ""
+                        ),
+                        "last_anchor": native_hb.get("last_anchor"),
+                        "next_anchor": native_hb.get("next_anchor"),
+                    }
+                except Exception:
+                    pass
                 hb["v1r_native_exception_count"] = int(
                     getattr(state, "v1r_native_exception_count", 0) or 0
                 )
@@ -9044,9 +9234,21 @@ def run_live_dry_run(
                         print(f"[INGRESS_V2] lag_policy={policy_out}", flush=True)
                         if policy_out.get("resync"):
                             (output_dir / "consumer_lag_realtime_resync.json").write_text(
-                                json.dumps(policy_out, ensure_ascii=False, indent=2) + "\n",
+                                json.dumps(policy_out, ensure_ascii=False, indent=2, default=str) + "\n",
                                 encoding="utf-8",
                             )
+                            state.realtime_resync_watermark = policy_out.get("resync")
+                            try:
+                                tracker = getattr(pipeline_ctx, "evaluation_reachability", None)
+                                res = policy_out.get("resync") or {}
+                                if tracker is not None:
+                                    tracker.apply_realtime_resync_watermark(
+                                        head_seq=int(res.get("resync_head_seq") or res.get("skipped_to_sequence") or 0),
+                                        head_event_time=str(res.get("resync_head_event_time") or ""),
+                                        generation=int(res.get("resync_generation") or 0),
+                                    )
+                            except Exception:
+                                pass
                     except Exception as pol_exc:
                         _log_api_error("lag_policy_resync", pol_exc)
                     # Architecture boot banner
@@ -9908,6 +10110,7 @@ def run_live_dry_run(
         ers_tracker = getattr(state, "_evaluation_reachability_tracker", None)
         if isinstance(ers_tracker, EvaluationReachabilityTracker):
             state.evaluation_reachability_summary = ers_tracker.summary_fields(finalize=True)
+            _overlay_reachability_summary_counts_state(state, ers_tracker)
     except Exception:
         pass
     summary = _build_live_summary(

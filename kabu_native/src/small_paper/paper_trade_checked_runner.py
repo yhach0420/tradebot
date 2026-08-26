@@ -403,14 +403,14 @@ def qualify_session_artifacts(
         summary_path = session_root / "small_paper_summary.json"
         if summary_path.is_file():
             from small_paper.session_runtime_identity import expected_current_run_scope
-            from small_paper.session_validity import classify_session_validity
+            from small_paper.session_validity import VALID_SESSION, classify_session_validity
 
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
             scope = expected_scope if expected_scope is not None else expected_current_run_scope(
                 trading_date=str(summary.get("trading_date") or "") or None
             )
             validity = classify_session_validity(summary, expected_scope=scope)
-            if not validity.get("include_in_strategy_metrics", True):
+            if str(validity.get("session_validity") or "") != VALID_SESSION:
                 failures = list(failures) + [f"INVALID_SESSION:{validity.get('session_validity')}"]
                 seal_ok = False
     except Exception:
@@ -1925,31 +1925,96 @@ class PaperTradeCheckedRunner:
                 "universe_sha256": "",
             }
         if ok:
-            frozen = freeze_same_day_am_universe(
-                self.native_root,
-                self.trading_date,
-                symbols=list(resolved.get("symbols") or []),
-                source_path=str(resolved.get("universe_path") or ""),
-                source_sha256=str(resolved.get("universe_sha256") or ""),
-            )
-            if not frozen.get("ok"):
-                ok = False
-                resolved = {**resolved, **frozen, "ok": False}
+            from small_paper.operational_validation import operational_validation_mode
+            from small_paper.pre_freeze_kabu_validation import freeze_valid50_after_kabu_validation
+
+            skip_val = bool(self.capture_synthetic or self.demo_push_e2e or self.comm_fault_e2e)
+            if not skip_val:
+                validated = freeze_valid50_after_kabu_validation(
+                    self.native_root,
+                    self.trading_date,
+                    skip_if_frozen=True,
+                )
+                # Live Formal: validate when a readonly token exists; AUTH_NOT_READY
+                # does not rewrite freeze. OPVAL fail-closes (token expected after Ingress).
+                if not validated.get("ok") and str(validated.get("reason") or "") == "AUTH_NOT_READY":
+                    if operational_validation_mode():
+                        ok = False
+                        resolved = {**resolved, **validated, "ok": False}
+                    else:
+                        frozen = freeze_same_day_am_universe(
+                            self.native_root,
+                            self.trading_date,
+                            symbols=list(resolved.get("symbols") or []),
+                            source_path=str(resolved.get("universe_path") or ""),
+                            source_sha256=str(resolved.get("universe_sha256") or ""),
+                        )
+                        if not frozen.get("ok"):
+                            ok = False
+                            resolved = {**resolved, **frozen, "ok": False}
+                        else:
+                            resolved = load_am_canonical_50(self.native_root, self.trading_date)
+                            resolved["freeze"] = {
+                                k: frozen.get(k)
+                                for k in (
+                                    "authority",
+                                    "canonical_membership_sha",
+                                    "source_csv_path",
+                                    "source_csv_sha",
+                                    "built_at",
+                                    "generation",
+                                    "id",
+                                )
+                            }
+                            resolved["authority"] = SAME_DAY_AM_FROZEN_AUTHORITY
+                            resolved["pre_freeze_validation"] = "SKIPPED_AUTH_NOT_READY"
+                elif not validated.get("ok"):
+                    ok = False
+                    resolved = {**resolved, **validated, "ok": False}
+                else:
+                    resolved = load_am_canonical_50(self.native_root, self.trading_date)
+                    frozen = validated.get("frozen") or {}
+                    resolved["freeze"] = {
+                        k: frozen.get(k)
+                        for k in (
+                            "authority",
+                            "canonical_membership_sha",
+                            "source_csv_path",
+                            "source_csv_sha",
+                            "built_at",
+                            "generation",
+                            "id",
+                        )
+                    }
+                    resolved["authority"] = SAME_DAY_AM_FROZEN_AUTHORITY
+                    resolved["pre_freeze_validation"] = validated.get("pre_freeze_validation") or validated.get("reason")
+                    resolved["excluded_terminal_invalid"] = validated.get("excluded_terminal_invalid") or []
             else:
-                resolved = load_am_canonical_50(self.native_root, self.trading_date)
-                resolved["freeze"] = {
-                    k: frozen.get(k)
-                    for k in (
-                        "authority",
-                        "canonical_membership_sha",
-                        "source_csv_path",
-                        "source_csv_sha",
-                        "built_at",
-                        "generation",
-                        "id",
-                    )
-                }
-                resolved["authority"] = SAME_DAY_AM_FROZEN_AUTHORITY
+                frozen = freeze_same_day_am_universe(
+                    self.native_root,
+                    self.trading_date,
+                    symbols=list(resolved.get("symbols") or []),
+                    source_path=str(resolved.get("universe_path") or ""),
+                    source_sha256=str(resolved.get("universe_sha256") or ""),
+                )
+                if not frozen.get("ok"):
+                    ok = False
+                    resolved = {**resolved, **frozen, "ok": False}
+                else:
+                    resolved = load_am_canonical_50(self.native_root, self.trading_date)
+                    resolved["freeze"] = {
+                        k: frozen.get(k)
+                        for k in (
+                            "authority",
+                            "canonical_membership_sha",
+                            "source_csv_path",
+                            "source_csv_sha",
+                            "built_at",
+                            "generation",
+                            "id",
+                        )
+                    }
+                    resolved["authority"] = SAME_DAY_AM_FROZEN_AUTHORITY
         step = self._record(
             "universe_resolve",
             5,

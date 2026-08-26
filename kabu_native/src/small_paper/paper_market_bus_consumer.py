@@ -53,10 +53,17 @@ class PaperMarketBusBridge:
         resume_from_ack: int = 0,
         native_root: Optional[Path] = None,
         trading_date: str = "",
+        queue_maxsize: int = 200000,
     ) -> None:
         self.consumer_id = consumer_id
-        # Deep buffer: continuous PUSH can exceed 50k before Paper finishes warmup.
-        self.q: queue.Queue[Any] = queue.Queue(maxsize=200000)
+        # Bounded queue backpressures the bus receive thread when full.
+        # MUST NOT drop-oldest: 20260820 silent holes (285A seq 318791 skipped
+        # while 318793 ingested) sat ~maxsize behind the publisher head.
+        self.queue_maxsize = max(0, int(queue_maxsize))
+        self.q: queue.Queue[Any] = queue.Queue(maxsize=self.queue_maxsize)
+        self.silent_queue_drop_count = 0
+        self.enqueue_backpressure_count = 0
+        self.ack_sequence_gaps: list[dict[str, Any]] = []
         self.on_control = on_control
         self.native_root = Path(native_root) if native_root else None
         self.trading_date = str(trading_date or "")
@@ -80,6 +87,11 @@ class PaperMarketBusBridge:
         self.started = False
         self.warmup_only = False
         self.resync_audit: dict[str, Any] = {}
+        self.resync_generation = 0
+        self.resync_head_seq = 0
+        self.resync_head_event_time = ""
+        self.skipped_stale_events = 0
+        self.paper_watermark: dict[str, Any] = {}
         self._ack_persist_every = 250
         self._acks_since_persist = 0
         self.lag_policy_state = ""
@@ -107,6 +119,11 @@ class PaperMarketBusBridge:
             return
         if env.kind != KIND_MARKET_PUSH:
             return
+        seq_i = int(env.sequence or 0)
+        if self.resync_head_seq > 0 and seq_i > 0 and seq_i <= int(self.resync_head_seq):
+            # Already committed as REALTIME skip — do not enqueue stale disk catch-up.
+            self.skipped_stale_events += 1
+            return
         extra = consumer_extra_delay_sec()
         if extra > 0:
             time.sleep(extra)
@@ -128,18 +145,19 @@ class PaperMarketBusBridge:
         if env.event_time:
             payload["__ingress_event_time__"] = env.event_time
             payload.setdefault("event_time", env.event_time)
-        try:
-            self.q.put_nowait(payload)
-        except queue.Full:
-            try:
-                self.q.get_nowait()
-            except Exception:
-                pass
-            try:
-                self.q.put_nowait(payload)
-            except Exception:
-                pass
-            self.gaps += 1
+        self._enqueue_strategy_payload(payload)
+
+    def _enqueue_strategy_payload(self, payload: dict[str, Any]) -> None:
+        """Enqueue a Capture-persisted market event for strategy evaluation.
+
+        Never silent-drop. A full bounded queue blocks this receive thread,
+        which backpressures Ingress ``publish``/``sendall``. Raw persist runs
+        before publish, so events are not lost. The only legal skip is an
+        explicit OPEN=0 REALTIME_RESYNC (audited drain + ACK jump).
+        """
+        if self.queue_maxsize > 0 and self.q.full():
+            self.enqueue_backpressure_count += 1
+        self.q.put(payload)
 
     def start(self) -> bool:
         ok = self.consumer.connect()
@@ -184,13 +202,23 @@ class PaperMarketBusBridge:
         if seq_i < expected:
             return False
         if seq_i > expected:
-            # Queue-drop / reconnect gap: keep ENTRY blocked, but resync ACK cursor so
-            # lag can recover instead of permanently halting at the gap (ack_halted).
+            # Contiguity break: (expected .. seq_i-1) never reached this queue.
+            # Do not treat this as lag recovery. Overflow drop is forbidden, so
+            # this should only appear on reconnect beyond the publisher ring.
+            # ACK the processed seq so the live cursor can move; the missing
+            # range is recorded and ENTRY stays blocked.
             self.gaps += 1
             self.process_errors += 1
             self.entry_blocked = True
-            self.entry_block_reason = "ack_gap_resync"
-            self.last_ack_sequence = seq_i - 1
+            self.entry_block_reason = "ack_sequence_gap"
+            self.ack_sequence_gaps.append(
+                {
+                    "expected": expected,
+                    "got": seq_i,
+                    "missing_from": expected,
+                    "missing_to": seq_i - 1,
+                }
+            )
         sess = str(payload.get("__ingress_session_id__") or self.consumer.ingress_session_id)
         ok = self.consumer.send_ack(seq_i, ingress_session_id=sess, processed_at=now_iso())
         if ok:
@@ -199,8 +227,7 @@ class PaperMarketBusBridge:
             if self._acks_since_persist >= self._ack_persist_every:
                 self._acks_since_persist = 0
                 self._persist_ack(reason="periodic")
-            # Gap resync keeps ENTRY blocked until Ingress promotes on lag==0 + first-push rules.
-            if self.entry_block_reason == "ack_gap_resync":
+            if self.entry_block_reason == "ack_sequence_gap":
                 pass
         else:
             self.process_errors += 1
@@ -224,6 +251,7 @@ class PaperMarketBusBridge:
             self.entry_block_reason = ""
 
     def drain_queue(self, *, max_items: int = 500000) -> int:
+        """Drop queued payloads. Only legal from explicit REALTIME_RESYNC."""
         n = 0
         while n < max_items:
             try:
@@ -240,10 +268,16 @@ class PaperMarketBusBridge:
         open_positions: int = 0,
         skipped_from: Optional[int] = None,
         warmup_lookback: int = DEFAULT_WARMUP_LOOKBACK_EVENTS,
+        head_event_time: str = "",
     ) -> dict[str, Any]:
-        """OPEN=0 path: ACK jump to publisher head; drain backlog; enter warmup gate.
+        """OPEN=0 path: atomic ACK + fanout + Paper watermark jump to publisher head.
 
-        Works against Ingress that accepts any ACK <= publisher head (no code reload required).
+        OPEN>0 blocks this jump so EXIT still sees every queued tick. The
+        strategy queue must not silent-drop while waiting — catch-up is
+        process-all, not drop-oldest. After the last position closes, lag
+        policy may call this again (audited skip).
+
+        Capture is not deleted. Stale sequences are not Strategy-evaluated.
         """
         if int(open_positions) > 0:
             return {
@@ -257,29 +291,78 @@ class PaperMarketBusBridge:
         from_seq = int(skipped_from if skipped_from is not None else self.last_ack_sequence)
         if from_seq < 0:
             from_seq = 0
+        if not str(head_event_time or "").strip() and self.native_root is not None and self.trading_date:
+            try:
+                status = read_ingress_status(self.native_root, self.trading_date)
+                head_event_time = str(status.get("last_push_at") or status.get("event_time") or "")
+            except Exception:
+                head_event_time = str(head_event_time or "")
+        generation = int(self.resync_generation) + 1
+        self.resync_generation = generation
+        self.resync_head_seq = head
+        self.resync_head_event_time = str(head_event_time or "")
         self.warmup_only = True
         self.entry_blocked = True
         self.entry_block_reason = REASON_REALTIME_RESYNC
         self.clear_ack_halt()
         self._ack_halted = False
         sess = str(self.consumer.ingress_session_id or "")
-        ok = self.consumer.send_ack(head, ingress_session_id=sess, processed_at=now_iso())
+        # Drain before the commit ACK so queued stale payloads never reach Strategy.
+        drained = self.drain_queue()
+        ok = self.consumer.send_ack(
+            head,
+            ingress_session_id=sess,
+            processed_at=now_iso(),
+            resync_commit=True,
+            resync_head_event_time=str(head_event_time or ""),
+            resync_generation=generation,
+        )
         if ok:
             self.last_ack_sequence = head
             self.consumer.last_ack_sequence = head
-        drained = self.drain_queue()
-        warmup_from = max(0, head - int(warmup_lookback))
+        skipped_count = max(0, head - from_seq)
+        paper_watermark = {
+            "resync_mode": "REALTIME",
+            "resync_generation": generation,
+            "resync_head_seq": head,
+            "resync_head_event_time": str(head_event_time or ""),
+            "ack_seq": int(self.last_ack_sequence),
+            "fanout_last_ack": head if ok else 0,
+            "fanout_last_market": head if ok else 0,
+            "skipped_stale_events": skipped_count,
+            "note": "REALTIME_RESYNC: events before watermark intentionally skipped",
+        }
+        self.paper_watermark = dict(paper_watermark)
+        try:
+            from small_paper.v1r_native_entry_live import apply_pending_realtime_resync_watermark
+
+            native_wm = apply_pending_realtime_resync_watermark(
+                head_seq=head,
+                head_event_time=str(head_event_time or ""),
+                trading_date=str(self.trading_date or ""),
+                skipped_from_seq=from_seq,
+                generation=generation,
+            )
+            paper_watermark.update(native_wm)
+            self.paper_watermark = dict(paper_watermark)
+        except Exception:
+            native_wm = {}
         audit = {
             "ok": bool(ok),
             "reason": REASON_REALTIME_RESYNC,
             "skipped_from_sequence": from_seq,
             "skipped_to_sequence": head,
-            "skipped_count": max(0, head - from_seq),
-            "warmup_from": warmup_from,
+            "skipped_count": skipped_count,
+            "warmup_from": max(0, head - int(warmup_lookback)),
             "warmup_to": head,
             "resync_at": now_iso(),
+            "resync_generation": generation,
+            "resync_head_seq": head,
+            "resync_head_event_time": str(head_event_time or ""),
             "drained_queue_items": drained,
             "ingress_session_id": sess,
+            "paper_watermark": paper_watermark,
+            "native_watermark": native_wm if isinstance(native_wm, dict) else {},
         }
         self.resync_audit = audit
         self._persist_ack(publisher_hint=head, reason=REASON_REALTIME_RESYNC)
@@ -327,6 +410,7 @@ class PaperMarketBusBridge:
                 publisher_last_sequence=pub,
                 open_positions=open_positions,
                 skipped_from=ack,
+                head_event_time=str(status.get("last_push_at") or status.get("event_time") or ""),
             )
         elif decision.entry_block:
             self.entry_blocked = True
@@ -341,6 +425,9 @@ class PaperMarketBusBridge:
                 "entry_block_reason": self.entry_block_reason,
                 "gaps": self.gaps,
                 "queue_depth": self.q.qsize(),
+                "silent_queue_drop_count": int(self.silent_queue_drop_count),
+                "enqueue_backpressure_count": int(self.enqueue_backpressure_count),
+                "ack_sequence_gap_count": len(self.ack_sequence_gaps),
                 "ingress_connected": self.consumer.connected,
                 "paper_consumer_ready": bool(self.consumer.ready and self.consumer.connected),
                 "paper_consumer_transport": self.consumer.transport,
@@ -350,6 +437,12 @@ class PaperMarketBusBridge:
                 "warmup_only": self.warmup_only,
                 "lag_policy_state": self.lag_policy_state,
                 "resync_audit": self.resync_audit,
+                "resync_mode": "REALTIME" if self.resync_head_seq > 0 else "",
+                "resync_head_seq": int(self.resync_head_seq),
+                "resync_head_event_time": str(self.resync_head_event_time or ""),
+                "resync_generation": int(self.resync_generation),
+                "skipped_stale_events": int(self.skipped_stale_events),
+                "paper_watermark": dict(self.paper_watermark or {}),
             }
         )
         return h
@@ -398,4 +491,5 @@ def force_paper_realtime_resync_from_status(
         publisher_last_sequence=pub,
         open_positions=open_positions,
         skipped_from=ack,
+        head_event_time=str(st.get("last_push_at") or st.get("event_time") or ""),
     )

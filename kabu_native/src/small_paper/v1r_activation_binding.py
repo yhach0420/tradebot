@@ -53,6 +53,8 @@ RUNTIME_DEPENDENCY_RELS: tuple[str, ...] = (
     "src/small_paper/paper_full_day_certification.py",
     "src/small_paper/pilot_runner.py",
     "src/small_paper/paper_market_bus_consumer.py",
+    "src/small_paper/local_market_bus.py",
+    "src/small_paper/capture_sequence_reader.py",
     "src/small_paper/paper_trade_checked_runner.py",
     "src/small_paper/market_ingress_spawn.py",
     "src/small_paper/ingress_run_identity.py",

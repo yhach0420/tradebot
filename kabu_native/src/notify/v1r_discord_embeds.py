@@ -386,8 +386,91 @@ def build_primary_summary_embed(p: dict[str, Any], *, test_only: bool = False) -
 
 
 def build_pbv2_shadow_embed(p: dict[str, Any], *, test_only: bool = False) -> dict[str, Any]:
-    # Aggregated window digest (preferred) — one message per 5m / fixed anchor
-    if p.get("digest") or str(p.get("status") or "") == "DIGEST":
+    status = str(p.get("status") or "")
+    if status == "ERROR":
+        title = "[PBV2 SHADOW] processing error"
+        fields = [
+            _field(
+                "Error",
+                "\n".join(
+                    [
+                        f"where: {_disp(p.get('where'))}",
+                        f"symbol: {_disp(p.get('symbol'))}",
+                        f"error: {_disp(p.get('error'))}",
+                        f"role: {_disp(p.get('role') or 'SHADOW_ONLY')}",
+                    ]
+                ),
+            ),
+        ]
+        return {
+            "title": title[:256],
+            "description": _disp(p.get("note"), default="PBv2 Shadow processing error"),
+            "color": COLOR_SHADOW,
+            "fields": fields,
+            "footer": TEST_FOOTER if test_only else PAPER_FOOTER,
+        }
+    if p.get("session_summary") or status in ("AM", "PM", "DAILY", "SESSION"):
+        kind = status if status in ("AM", "PM", "DAILY", "SESSION") else "SESSION"
+        title = f"[PBV2 SHADOW] {kind} Summary | {_disp(p.get('date'))}"
+        fields = [
+            _field(
+                "Session",
+                "\n".join(
+                    [
+                        f"date: {_disp(p.get('date'))}",
+                        f"session: {_disp(kind)}",
+                        f"role: {_disp(p.get('role') or 'SHADOW_ONLY')}",
+                    ]
+                ),
+            ),
+            _field(
+                "Counts",
+                "\n".join(
+                    [
+                        f"evaluated: {_disp(p.get('evaluated'))}",
+                        f"accepted: {_disp(p.get('accepted'))}",
+                        f"newly_admitted: {_disp(p.get('newly_admitted') if p.get('newly_admitted') is not None else p.get('accepted'))}",
+                        f"already_open: {_disp(p.get('already_open'))}",
+                        f"shadow_cap: {_disp(p.get('shadow_cap') if p.get('shadow_cap') is not None else p.get('cap'))}",
+                        f"shadow trade count: {_disp(p.get('shadow_trade_count') if p.get('shadow_trade_count') is not None else p.get('trades') or p.get('accepted'))}",
+                        f"win/loss: {_disp(p.get('wins'))}/{_disp(p.get('losses'))}",
+                        f"PnL: {_disp(p.get('pnl'))}",
+                        f"PF: {_disp(p.get('pf'))}",
+                        f"open/cap: {_disp(p.get('open_n'))}/{_disp(p.get('cap'))}",
+                    ]
+                ),
+            ),
+            _field(
+                "Day totals",
+                "\n".join(
+                    [
+                        f"evaluated: {_disp(p.get('day_evaluated'))}",
+                        f"accepted: {_disp(p.get('day_accepted'))}",
+                        f"newly_admitted: {_disp(p.get('day_newly_admitted'))}",
+                        f"shadow trade count: {_disp(p.get('day_shadow_trade_count'))}",
+                        f"win/loss: {_disp(p.get('day_wins'))}/{_disp(p.get('day_losses'))}",
+                        f"PnL: {_disp(p.get('day_pnl'))}",
+                        f"PF: {_disp(p.get('day_pf'))}",
+                    ]
+                ),
+            ),
+            _field(
+                "Note",
+                _disp(
+                    p.get("note"),
+                    default="SHADOW_ONLY — Primary occupancy unchanged",
+                ),
+            ),
+        ]
+        return {
+            "title": title[:256],
+            "description": "SHADOW_ONLY session summary",
+            "color": COLOR_SHADOW,
+            "fields": fields,
+            "footer": TEST_FOOTER if test_only else PAPER_FOOTER,
+        }
+    # Aggregated window digest (legacy / explicit force flush)
+    if p.get("digest") or status == "DIGEST":
         syms = p.get("symbols") or []
         if isinstance(syms, (list, tuple)):
             sym_txt = ", ".join(str(s) for s in list(syms)[:20]) or "—"

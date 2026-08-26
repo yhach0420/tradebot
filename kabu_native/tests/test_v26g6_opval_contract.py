@@ -449,6 +449,10 @@ def test_opval_reject_candidate6_and_v25_substitution(tmp_path: Path, monkeypatc
     selector, manifest = _sel_man(tmp_path, body, monkeypatch)
     selector["activation_id"] = C6_ID
     assert opval_startup_blocked_reason(selector, manifest) == "OPVAL_CANDIDATE6_FORBIDDEN"
+    from small_paper.operational_validation import C7_ID
+
+    selector["activation_id"] = C7_ID
+    assert opval_startup_blocked_reason(selector, manifest) == "OPVAL_CANDIDATE7_DIRECT_SELECTOR_FORBIDDEN"
     v25_sel = json.loads(SELECTOR_PATH.read_text(encoding="utf-8"))
     assert opval_startup_blocked_reason(v25_sel, manifest) == "OPVAL_FORMAL_SELECTOR_SUBSTITUTION"
 

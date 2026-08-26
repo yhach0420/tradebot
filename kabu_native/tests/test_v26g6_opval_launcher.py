@@ -223,6 +223,38 @@ def test_paper_failure_does_not_stop_capture(opval) -> None:
     assert called["n"] == 0
 
 
+def test_capture_preopen_ready_when_registered50_seq0(opval) -> None:
+    after = {
+        "pid": 16596,
+        "pid_alive": True,
+        "sequence": 0,
+        "file_size_bytes": 0,
+        "last_push_at": "",
+        "registered": 50,
+        "desired": 50,
+        "replay": False,
+        "session_clock": False,
+        "certification_mode": False,
+        "state": "WAITING_FIRST_PUSH",
+    }
+    before = dict(after)
+    got = opval.capture_push_increasing(before, after)
+    assert got["ok"] is True
+    assert got["reason"] == "CAPTURE_READY_PREOPEN"
+    assert got["preopen_ready"] is True
+
+
+def test_paper_health_accepts_preopen_heartbeat_without_push(opval) -> None:
+    health = {"ok": False, "heartbeat": 3, "gate_evaluations": 0, "paper_push": 0}
+    accepted = opval.paper_health_accepts(health, paper_alive=True, preopen=True)
+    assert accepted["ok"] is True
+    assert accepted["mode"] == "WAITING_MARKET"
+    closed = opval.paper_health_accepts(health, paper_alive=True, preopen=False)
+    assert closed["ok"] is False
+    dead = opval.paper_health_accepts(health, paper_alive=False, preopen=True)
+    assert dead["ok"] is False
+
+
 def test_capture_push_increasing_requires_real_growth(opval) -> None:
     before = {
         "pid": 1,

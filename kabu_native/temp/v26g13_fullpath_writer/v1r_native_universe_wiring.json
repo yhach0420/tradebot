@@ -1,0 +1,25 @@
+{
+  "ts": "2026-08-26T12:59:41+09:00",
+  "resolved": null,
+  "engine": {
+    "ready": true,
+    "fail_reason": "",
+    "native_universe_count": 50,
+    "universe_source": "caller",
+    "trace_dir": "C:\\Users\\yhach\\Documents\\tradebotfile\\kabu_native\\temp\\v26g13_fullpath_writer"
+  },
+  "certification_run_id": null,
+  "stage_run_id": null,
+  "activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V25",
+  "activation_sha": "46ce502c2373868f3b231bf8a3762cd47d706132698731b35e770c5f8a575d83",
+  "runtime_commit": "9463ef7bd3b1d54ba8c58b297219e5c63ea50034",
+  "runtime_run_id": "rtrun_2c93b52dba9e2e6008236d56",
+  "daily_run_id": null,
+  "session_id": null,
+  "session_kind": null,
+  "trading_date": "20260826",
+  "market_input_mode": "LIVE",
+  "ingress_run_id": null,
+  "launch_nonce": null,
+  "bus_identity": null
+}

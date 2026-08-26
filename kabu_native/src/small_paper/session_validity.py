@@ -451,13 +451,62 @@ def classify_session_validity(
         else:
             klass = INVALID_EARLY_ABORT if rt < 30.0 else INVALID_ABNORMAL_STOP
 
-    include_in_strategy = klass == VALID_SESSION
+    from small_paper.run_classification import resolve_run_classification
+
+    classif = resolve_run_classification(work, environ=environ)
+    integrity = work.get("lifecycle_integrity") if isinstance(work.get("lifecycle_integrity"), Mapping) else {}
+    eligible = bool(classif.get("strategy_evaluation_eligible"))
+    integrity_reasons: list[str] = []
+    if integrity:
+        if integrity.get("pass") is False or integrity.get("ok") is False:
+            eligible = False
+            integrity_reasons = [str(x) for x in (integrity.get("integrity_reasons") or []) if str(x)]
+            if not integrity_reasons:
+                integrity_reasons = ["lifecycle_integrity_failed"]
+        if int(integrity.get("orphan_exit_count") or 0) > 0:
+            eligible = False
+            integrity_reasons.append("orphan_exit_count")
+        if int(integrity.get("unpaired_canonical_trades") or 0) > 0:
+            eligible = False
+            integrity_reasons.append("unpaired_canonical_trades")
+        if int(integrity.get("unknown_ownership_trades") or 0) > 0:
+            eligible = False
+            integrity_reasons.append("unknown_ownership_trades")
+        if integrity.get("strategy_metric_exclusion_required") is True:
+            eligible = False
+            if "lifecycle_strategy_metric_exclusion" not in integrity_reasons:
+                integrity_reasons.append("lifecycle_strategy_metric_exclusion")
+    include_in_strategy = klass == VALID_SESSION and eligible
+    banner = None
+    if not include_in_strategy:
+        if klass != VALID_SESSION:
+            banner = {
+                "title": "【INVALID PAPER SESSION】",
+                "cause": reason or klass,
+                "push": push_n,
+                "gate_evaluations": gate_n,
+                "note": "損益は戦略成績に含めない",
+            }
+        else:
+            banner = {
+                "title": "【NOT STRATEGY-ELIGIBLE】",
+                "cause": str(classif.get("run_classification") or "")
+                + (("; " + ",".join(dict.fromkeys(integrity_reasons))) if integrity_reasons else ""),
+                "push": push_n,
+                "gate_evaluations": gate_n,
+                "note": "運用上は VALID_SESSION でも戦略成績に含めない",
+            }
     return {
         "session_validity": klass,
+        "operational_validity": klass,
+        "run_classification": classif.get("run_classification"),
+        "run_classification_source": classif.get("run_classification_source"),
+        "strategy_evaluation_eligible": bool(eligible),
         "include_in_strategy_metrics": include_in_strategy,
         "include_in_cumulative_pnl": include_in_strategy,
         "include_in_forward_day_count": include_in_strategy,
         "include_in_live_readiness_streak": include_in_strategy,
+        "lifecycle_integrity_reasons": list(dict.fromkeys(integrity_reasons)),
         "stop_reason": reason,
         "push_messages": push_n,
         "gate_evaluations": gate_n,
@@ -465,17 +514,7 @@ def classify_session_validity(
         "session_seal_status": seal or None,
         "session_clock_stop_valid": bool(clock.get("ok")) if reason == SESSION_CLOCK_STOP else False,
         "session_clock_stop_reason": str(clock.get("reason") or ""),
-        "discord_banner": (
-            None
-            if include_in_strategy
-            else {
-                "title": "【INVALID PAPER SESSION】",
-                "cause": reason or klass,
-                "push": push_n,
-                "gate_evaluations": gate_n,
-                "note": "損益は戦略成績に含めない",
-            }
-        ),
+        "discord_banner": banner,
     }
 
 

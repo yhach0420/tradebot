@@ -125,6 +125,79 @@ class EvaluationReachabilityTracker:
     _cycle_seq: int = 0
     _seen_cycle_ids: set[str] = field(default_factory=set)
     _flushed: bool = False
+    resync_head_seq: int = 0
+    resync_head_event_time: str = ""
+    resync_head_event_epoch: float = 0.0
+    resync_generation: int = 0
+    _resync_applied: bool = False
+    # Canonical O(1) count of event_type==candidate rows actually appended to
+    # state.events. Seed once on restore; never recount on summary / PBv2 eval.
+    candidate_event_count: int = 0
+    _candidate_count_seeded: bool = False
+
+    def seed_candidate_event_count_from_events(self, events: Any) -> int:
+        """One-time exact restore from existing state.events. Idempotent."""
+        if self._candidate_count_seeded:
+            return int(self.candidate_event_count)
+        n = 0
+        if events:
+            n = sum(1 for e in events if isinstance(e, Mapping) and e.get("event_type") == "candidate")
+        self.candidate_event_count = int(n)
+        self._candidate_count_seeded = True
+        return int(n)
+
+    def note_candidate_event_appended(self) -> None:
+        """Increment only after state.events actually recorded a candidate row."""
+        if not self._candidate_count_seeded:
+            self.candidate_event_count = 1
+            self._candidate_count_seeded = True
+            return
+        self.candidate_event_count += 1
+
+    def reset_candidate_event_count(self) -> None:
+        """Session reset / clear / rotation when state.events is emptied."""
+        self.candidate_event_count = 0
+        self._candidate_count_seeded = True
+
+    def invalidate_candidate_event_count(self) -> None:
+        """Allow one restore recount after events are replaced from disk."""
+        self.candidate_event_count = 0
+        self._candidate_count_seeded = False
+
+    def apply_realtime_resync_watermark(
+        self,
+        *,
+        head_seq: int,
+        head_event_time: str = "",
+        generation: int = 0,
+    ) -> dict[str, Any]:
+        """Bootstrap reachability at publisher head. Do not replay stale events.
+
+        candidate_event_count is session-level (state.events). Resync must not
+        reset it — events already recorded remain in state.
+        """
+        ts = _parse_ts(head_event_time)
+        self.resync_head_seq = int(head_seq)
+        self.resync_head_event_time = str(head_event_time or "")
+        self.resync_head_event_epoch = float(ts.timestamp()) if ts is not None else 0.0
+        self.resync_generation = int(generation or self.resync_generation or 1)
+        self._resync_applied = True
+        for st in self.symbols.values():
+            st.readiness = READY_WARMUP
+            st.history_ready = False
+            st.feature_ready = False
+            st.last_fresh_ok = False
+            st.pending_ready_eval = False
+            st.pending_recovery_eval = False
+            st.recovery_state = RECOVERY_NORMAL
+            st.last_eval_market_ts = None
+            st.last_eval_mono = None
+        return {
+            "reachability_applied": True,
+            "resync_head_seq": int(self.resync_head_seq),
+            "resync_head_event_time": str(self.resync_head_event_time or ""),
+            "symbols_reset_to_warmup": len(self.symbols),
+        }
 
     def get(self, symbol: str) -> SymbolReachabilityState:
         st = self.symbols.get(symbol)
@@ -171,6 +244,15 @@ class EvaluationReachabilityTracker:
     ) -> SymbolReachabilityState:
         """Always-safe state update (may run even when evaluation is throttled)."""
         st = self.get(symbol)
+        seq_raw = payload.get("__ingress_sequence__")
+        if seq_raw is None:
+            seq_raw = payload.get("sequence")
+        try:
+            seq_i = int(seq_raw) if seq_raw is not None and seq_raw != "" else None
+        except Exception:
+            seq_i = None
+        if int(self.resync_head_seq or 0) > 0 and seq_i is not None and seq_i <= int(self.resync_head_seq):
+            return st
         now = reference_now or datetime.now(JST)
         price_ts = _parse_ts(payload.get("CurrentPriceTime"), fallback=now)
         bid_ts = _parse_ts(payload.get("BidTime"), fallback=now)

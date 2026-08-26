@@ -1,0 +1,60 @@
+"""P4-0: mid-hold (120–600s) causal state separability. No new EXIT / no threshold.
+
+Research only. Continuation Gate at 600s frozen. No Runtime change.
+Label: REUSED_HISTORY_MECHANISM_DIAGNOSTIC.
+"""
+
+from research.canonical_fixed_pnl_source_p3_3 import (
+    FULL14,
+    P1_PF,
+    P1_PNL,
+    P1_TRADES,
+    PREDECLARED_TOP3,
+    REST11,
+)
+from research.fixed_winner_cluster_extension_p3_4 import (
+    EXIT600_REASON,
+    EXTEND_REASON,
+)
+from small_paper.v1r_exit_v2_contract import FROZEN_GUARD
+
+ANALYSIS_ID = "P4_0_MID_HOLD_STATE_SEPARABILITY"
+DOCUMENT_ID = "P4_0_MID_HOLD_GATE_NECESSITY"
+TASK_LABEL = "REUSED_HISTORY_MECHANISM_DIAGNOSTIC"
+
+CHECKPOINTS_SEC = (120, 180, 240, 300, 360, 420, 480, 540)
+STATE_VARS = (
+    "bid_return_from_fill",
+    "mid_return_from_fill",
+    "executable_mfe_to_t",
+    "executable_mae_to_t",
+    "bid_giveback_from_peak",
+    "bid_return_last_60s",
+    "imbalance",
+)
+
+IMBALANCE_REASON = "IMBALANCE"
+SESSION_CLOSE_REASON = "SESSION_CLOSE"
+
+VERDICT_OK = "P4_0_MID_HOLD_STATE_AUDIT_COMPLETE"
+VERDICT_ISSUE = "P4_0_MATERIAL_INTEGRITY_ISSUE"
+VERDICT_BLOCKED = "P4_0_BLOCKED"
+
+GATE_SEP = "MID_HOLD_STATE_SEPARABLE"
+GATE_WEAK = "MID_HOLD_STATE_WEAKLY_SEPARABLE"
+GATE_NOT = "MID_HOLD_STATE_NOT_SEPARABLE"
+GATE_CONF = "MID_HOLD_STATE_CONFOUNDED_BY_RECOVERING_WINNERS"
+GATE_DATA = "MATERIAL_DATA_ISSUE"
+
+MAX_WORKERS = 2
+IDENTITY_REL_TOL = 1e-9
+
+FULL14 = FULL14
+PREDECLARED_TOP3 = PREDECLARED_TOP3
+REST11 = REST11
+P1_TRADES = P1_TRADES
+P1_PNL = P1_PNL
+P1_PF = P1_PF
+EXIT600_REASON = EXIT600_REASON
+EXTEND_REASON = EXTEND_REASON
+FROZEN_GUARD = FROZEN_GUARD

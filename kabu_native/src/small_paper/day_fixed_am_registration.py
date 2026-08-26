@@ -484,6 +484,7 @@ def freeze_same_day_am_universe(
     source_path: str = "",
     source_sha256: str = "",
     generation: int = 1,
+    write_from_symbols: bool = False,
 ) -> dict[str, Any]:
     """Freeze same-day AM canonical50 once. Later rebuilds must not rewrite membership."""
     day = str(trading_date)
@@ -551,11 +552,18 @@ def freeze_same_day_am_universe(
         source_sha256 = file_sha256(src)
         source_path = str(src)
     frozen_csv = frozen_csv_path(native_root, day)
+    source_membership: list[str] = []
     if src.is_file():
+        try:
+            source_membership = canonical_symbols(load_symbols_from_universe_csv(src) or [])
+        except Exception:
+            source_membership = []
+    membership_differs = bool(source_membership) and source_membership != list(symbols)
+    if write_from_symbols or membership_differs or not src.is_file():
+        _write_frozen_csv_from_symbols(frozen_csv, symbols)
+    else:
         frozen_csv.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, frozen_csv)
-    else:
-        _write_frozen_csv_from_symbols(frozen_csv, symbols)
     built_at = datetime.now(JST).isoformat(timespec="seconds")
     ident = f"am_frozen_{day}_{int(generation)}"
     frozen_csv_sha = file_sha256(frozen_csv) if frozen_csv.is_file() else ""
@@ -919,6 +927,32 @@ def publish_runtime_desired_universe(
                 "reason": str(frozen.get("reason") or FROZEN_AM_UNIVERSE_MISMATCH),
                 "trading_date": day,
                 "allow_put": False,
+            }
+        from small_paper.operational_validation import (
+            opval_degraded_universe_mode,
+            reuse_matching_frozen_desired_universe,
+        )
+
+        if opval_degraded_universe_mode() and generation is None:
+            reused = reuse_matching_frozen_desired_universe(native_root, day)
+            if reused.get("ok"):
+                return reused
+            from small_paper.ingress_control_channel import read_desired_universe
+
+            req = read_desired_universe(native_root, requested_trading_date=day) or {}
+            return {
+                "ok": True,
+                "reused": True,
+                "rejected": False,
+                "reason": "OPVAL_DEGRADED_PRESERVE_DESIRED_NO_REWRITE",
+                "trading_date": day,
+                "symbols": list(req.get("symbols") or frozen.get("canonical_symbols") or []),
+                "symbol_count": len(list(req.get("symbols") or frozen.get("canonical_symbols") or [])),
+                "generation": int(req.get("generation") or 0),
+                "allow_put": False,
+                "paper_register": "DISABLED",
+                "owner": "MARKET_INGRESS_SERVICE",
+                "mode": "OPVAL_DEGRADED_UNIVERSE_ONLY",
             }
         return bind_same_day_am_desired_universe(
             native_root, day, generation=generation

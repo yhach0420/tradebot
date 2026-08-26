@@ -599,10 +599,10 @@ def check_kabu_station_connection(repo_root: Path, *, stale_tick_sec: float = 12
     symbol_key = ""
     try:
         from api.kabu_register import resolve_native_root_for_register_state
-        from small_paper.kabu_registration_authority import resolve_registered_probe_symbol
+        from small_paper.operational_validation import select_runtime_board_probe_symbol
 
         native = resolve_native_root_for_register_state(Path(repo_root))
-        probe = resolve_registered_probe_symbol(native, day)
+        probe = select_runtime_board_probe_symbol(native, day)
         if not probe.get("ok"):
             return SafetyCheck(
                 "kabu_station_connection",

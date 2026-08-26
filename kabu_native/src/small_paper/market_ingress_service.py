@@ -253,6 +253,12 @@ class MarketIngressService:
         self._last_readonly_verify_mono: float = 0.0
         self._last_actual_symbols: tuple[str, ...] = ()
         self._register_retry_count: int = 0
+        self._same_batch_retry_suppressed: bool = False
+        self._same_batch_retry_key: tuple[Any, ...] = ()
+        self._reg_attempt_date: str = ""
+        self._reg_attempt_sha: str = ""
+        self._reg_attempt_state: str = "NONE"
+        self._reg_attempt_generation: int = 0
         self._auth_failure_count: int = 0
         self._rate_limit_count: int = 0
         self._backoff_count: int = 0
@@ -292,6 +298,7 @@ class MarketIngressService:
             enable_tcp=enable_tcp_bus,
             ingress_session_id=self.session_id,
         )
+        self.bus.attach_capture_dir(self.session_path)
         self.bus.on_ack = self._on_consumer_ack
         self._first_recovered_sequence: Optional[int] = None
         self._pending_recovery_success = False
@@ -389,6 +396,9 @@ class MarketIngressService:
             except Exception:
                 pass
         # Never join the calling thread (synthetic loop may invoke stop()).
+        # Shutdown order (P0-2C): stop receive → join ingest → Capture close/fsync
+        # → bus fanout stop / consumer disconnect → seal metadata.
+        # Do not wait for slow Paper catch-up (bounded joins only). Capture SoT is already on disk.
         if self._thread and self._thread.is_alive() and self._thread is not threading.current_thread():
             self._thread.join(timeout=5.0)
         self.writer.close()
@@ -808,7 +818,7 @@ class MarketIngressService:
         if self._last_status_mono is None or (now_m - self._last_status_mono) >= 2.0:
             self._last_status_mono = now_m
             try:
-                self._poll_desired_universe()
+                self._poll_desired_universe_apply_only()
             except Exception:
                 pass
             self._write_status()
@@ -1251,11 +1261,18 @@ class MarketIngressService:
         except Exception:
             pass
 
-    def _poll_desired_universe(self) -> None:
+    def _poll_desired_universe(self) -> Optional[dict[str, Any]]:
+        """Apply desired membership; PUT only on a new registration attempt generation."""
         try:
-            self._apply_desired_from_control_or_am(register=True)
+            applied = self._apply_desired_from_control_or_am(register=False)
         except Exception:
-            pass
+            return None
+        if not isinstance(applied, dict) or not applied.get("ok"):
+            return applied if isinstance(applied, dict) else None
+        try:
+            return self._maybe_register_desired_live(reason="desired_poll")
+        except Exception:
+            return applied
 
     def _poll_desired_universe_apply_only(self) -> None:
         """Apply control-channel / AM SoT desired symbols without registering (pre-connect)."""
@@ -1280,6 +1297,19 @@ class MarketIngressService:
         req = read_desired_universe(self.native_root, requested_trading_date=self.trading_date)
         accepted: Optional[dict[str, Any]] = None
         frozen = load_frozen_am_universe(self.native_root, self.trading_date)
+        try:
+            from small_paper.registration_attempt import ingress_wait_for_freeze
+
+            if ingress_wait_for_freeze() and not frozen.get("present"):
+                self._desired_reject_reason = "WAITING_FOR_FREEZE"
+                return {
+                    "ok": False,
+                    "reason": "WAITING_FOR_FREEZE",
+                    "allow_put": False,
+                    "allow_put_new50": False,
+                }
+        except Exception:
+            pass
         if frozen.get("present"):
             if not frozen.get("ok"):
                 self._desired_reject_reason = str(frozen.get("reason") or FROZEN_AM_UNIVERSE_MISMATCH)
@@ -1612,6 +1642,14 @@ class MarketIngressService:
         )
         return None
 
+    def _record_registration_attempt(self, *, state: str) -> None:
+        from small_paper.registration_attempt import desired_universe_sha
+
+        self._reg_attempt_date = str(self.trading_date)
+        self._reg_attempt_sha = desired_universe_sha(self.desired_symbols)
+        self._reg_attempt_state = str(state)
+        self._reg_attempt_generation = int(self.sm.registration_generation)
+
     def _maybe_register_desired_live(self, *, reason: str) -> dict[str, Any]:
         """Run canonical Kabu register when live desired/generation needs Station PUT."""
         if self._should_skip_live_register():
@@ -1628,6 +1666,56 @@ class MarketIngressService:
                 "reason": f"circuit_open:{self._circuit_reason}",
                 "put_executed": False,
             }
+        from small_paper.registration_attempt import desired_universe_sha, should_attempt_register
+
+        sha = desired_universe_sha(self.desired_symbols)
+        gate = should_attempt_register(
+            trading_date=str(self.trading_date),
+            desired_sha=sha,
+            registration_generation=int(self.sm.registration_generation),
+            last_attempt_date=self._reg_attempt_date,
+            last_attempt_sha=self._reg_attempt_sha,
+            last_attempt_state=self._reg_attempt_state,
+            last_attempt_generation=self._reg_attempt_generation,
+        )
+        if gate.get("reason") in {"new_desired_universe", "operator_reset_generation", "first_attempt"}:
+            self._same_batch_retry_suppressed = False
+        if not gate.get("allow"):
+            if str(gate.get("reason") or "") == "already_registered_same_universe":
+                skipped_match = self._skip_put_if_actual_kabu_matches()
+                if skipped_match:
+                    return skipped_match
+            else:
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "reason": str(gate.get("reason") or "attempt_suppressed"),
+                    "put_executed": False,
+                    "same_batch_retry": "SUPPRESSED",
+                    "registration": str(self._reg_attempt_state or "PARTIAL_UNCONFIRMED"),
+                    "attempt_identity": list(gate.get("attempt_identity") or []),
+                }
+        if self._same_batch_retry_suppressed:
+            key = (int(self.sm.registration_generation), tuple(self.desired_symbols))
+            if key == tuple(self._same_batch_retry_key):
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "reason": "same_batch_retry_suppressed",
+                    "put_executed": False,
+                    "same_batch_retry": "SUPPRESSED",
+                    "registration": "PARTIAL_UNCONFIRMED",
+                }
+            key = (int(self.sm.registration_generation), tuple(self.desired_symbols))
+            if key == tuple(self._same_batch_retry_key):
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "reason": "same_batch_retry_suppressed",
+                    "put_executed": False,
+                    "same_batch_retry": "SUPPRESSED",
+                    "registration": "PARTIAL_UNCONFIRMED",
+                }
         skipped = self._skip_put_if_actual_kabu_matches()
         if skipped:
             return skipped
@@ -1764,6 +1852,7 @@ class MarketIngressService:
                 self.registered_symbols = list(self.desired_symbols)
                 self._last_register_generation = gen
                 self._last_register_symbols = tuple(self.desired_symbols)
+                self._record_registration_attempt(state="REGISTERED")
                 self._last_readonly_verify_mono = time.monotonic()
                 actual_for_snap = list(symbol_set) if symbol_set else list(self.registered_symbols)
                 write_actual_regist_snapshot(
@@ -1846,9 +1935,10 @@ class MarketIngressService:
                 "owner": "MARKET_INGRESS_SERVICE",
                 "verification_basis": "register_exception",
             }
-            self._register_retry_count += 1
             keep_exact = bool(self._had_verified_exact50 or self._register_put_ok)
             if err_cls == AUTH_INVALID:
+                self._register_retry_count += 1
+                self._record_registration_attempt(state="TEMPORARY_FAILED")
                 evidence["reason"] = "AUTHORITY_TOKEN_INVALIDATED"
                 if not keep_exact:
                     self.registered_symbols = []
@@ -1860,6 +1950,8 @@ class MarketIngressService:
                 self.sm.last_error = type(exc).__name__
                 return evidence
             if err_cls == RATE_LIMIT:
+                self._register_retry_count += 1
+                self._record_registration_attempt(state="TEMPORARY_FAILED")
                 evidence["reason"] = "RATE_LIMIT"
                 if not keep_exact:
                     self.registered_symbols = []
@@ -1870,6 +1962,32 @@ class MarketIngressService:
                 self._write_status()
                 self.sm.last_error = type(exc).__name__
                 return evidence
+            kabu_code = str(getattr(exc, "kabu_code", "") or "")
+            if kabu_code == "4001019" or "4001019" in str(exc):
+                # Terminal batch reject. Do not increment retry-storm counter.
+                # GET /register is 405 — do not treat this as authoritative registered=0.
+                self._record_registration_attempt(state="PARTIAL_UNCONFIRMED")
+                self._same_batch_retry_suppressed = True
+                self._same_batch_retry_key = (
+                    int(self.sm.registration_generation),
+                    tuple(self.desired_symbols),
+                )
+                evidence["actual_count"] = None
+                evidence["actual_symbols"] = None
+                evidence["authoritative_registration"] = "UNAVAILABLE"
+                evidence["reason"] = "SAME_BATCH_RETRY_SUPPRESSED"
+                evidence["same_batch_retry"] = "SUPPRESSED"
+                evidence["registration"] = "PARTIAL_UNCONFIRMED"
+                evidence["kabu_code"] = "4001019"
+                if not keep_exact:
+                    self._register_put_ok = False
+                self._register_evidence = evidence
+                self._write_register_evidence(evidence)
+                self._write_status()
+                self.sm.last_error = type(exc).__name__
+                return evidence
+            self._register_retry_count += 1
+            self._record_registration_attempt(state="TEMPORARY_FAILED")
             self.registered_symbols = []
             self._register_put_ok = False
             self._register_evidence = evidence
