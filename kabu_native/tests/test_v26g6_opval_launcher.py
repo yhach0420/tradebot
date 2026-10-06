@@ -81,7 +81,9 @@ def test_candidate6_manifest_unchanged_new_working_source() -> None:
     assert file_sha256(NATIVE / "scripts" / "run_paper_trade_checked.ps1") == launch["run_paper_trade_checked.ps1"]
     assert file_sha256(REPO / "run_paper_trade.bat") == launch["run_paper_trade.bat"]
     assert file_sha256(NATIVE / "scripts" / "run_paper_full_day_certification.py") == launch["run_paper_full_day_certification.py"]
-    v25_sel = json.loads(SELECTOR_PATH.read_text(encoding="utf-8"))
+    from small_paper.paper_primary_activation import PREVIOUS_SELECTOR_PATH
+
+    v25_sel = json.loads(PREVIOUS_SELECTOR_PATH.read_text(encoding="utf-8"))
     assert v25_sel.get("activation_id") == V25_ACTIVATION_ID
     wt = collect_runtime_inventory(native_root=NATIVE)
     # New OPVAL working source changes operational_validation.py only; C6 JSON stays frozen.

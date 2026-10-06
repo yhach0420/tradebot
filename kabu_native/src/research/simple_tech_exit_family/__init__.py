@@ -1,0 +1,11 @@
+"""SIMPLE TECH EXIT family. Offline AM EXIT RCA. Runtime/Capture untouched. No EXIT rule adoption in V14."""
+from __future__ import annotations
+
+ANALYSIS_ID = "SIMPLE_TECH_V14_EXIT_STATE_PATH_RCA"
+FAMILY_ID = "SIMPLE_TECH_EXIT_FAMILY"
+RESEARCH_PARALLELISM = 1
+TRUE_OOS = False
+EXIT_SPEC_FROZEN = False
+EXIT_CERTIFIED = False
+ENTRY_CERTIFIED = False
+RUNTIME_CANDIDATE = False

@@ -1,0 +1,52 @@
+"""TARGET PRICE CONTRACT V4 — persistent market-state mark. Offline only."""
+from __future__ import annotations
+
+ANALYSIS_ID = "TARGET_PRICE_CONTRACT_V4"
+C14_ID = "V1R_EXIT_V2_PAPER_PRIMARY_CANDIDATE_V26G14_14"
+MAX_WORKERS = 2
+WAIT_SEC = 1.0
+HORIZON_SEC = 600.0
+
+COHORT_MEDIAN_MIN = 25
+COHORT_P10_MIN = 10
+COHORT_MEDIAN_UNIVERSE_FRAC_MIN = 0.50
+SMD_BIAS_THRESHOLD = 0.25
+SCORE_DECILE_COVERAGE_RANGE_GOAL = 0.20
+SCORE_DECILE_COVERAGE_RANGE_HARD = 0.40
+SYMBOL_COVERAGE_RANGE_GOAL = 0.50
+EVENT_RATE_SMD_HARD = 1.0
+PER_FEATURE_THRESHOLD = "DO_NOT_START"
+PM_CONTINUOUS_END = "15:25"
+# Material reduction vs V3 M1@5s (prior audit, not this run's selector).
+V3_M1_5S_EVENT_RATE_SMD = 1.010360264203096
+V3_M1_5S_DECILE_RANGE = 0.8146148308135349
+V3_M1_5S_SYMBOL_RANGE = 0.967741935483871
+MATERIAL_SMD_DROP = 0.25
+MATERIAL_DECILE_DROP = 0.15
+
+COMPARE_AGES = (5.0, 10.0, 30.0, 60.0)
+
+INTERVAL_BUCKETS: tuple[tuple[float, float, str], ...] = (
+    (0.0, 1.0, "0-1s"),
+    (1.0, 5.0, "1-5s"),
+    (5.0, 10.0, "5-10s"),
+    (10.0, 30.0, "10-30s"),
+    (30.0, 60.0, "30-60s"),
+    (60.0, 120.0, "60-120s"),
+    (120.0, 300.0, "120-300s"),
+    (300.0, float("inf"), ">300s"),
+)
+
+MARK_AGE_BUCKETS: tuple[tuple[float, float, str], ...] = (
+    (0.0, 5.0, "<=5s"),
+    (5.0, 10.0, "5-10s"),
+    (10.0, 30.0, "10-30s"),
+    (30.0, 60.0, "30-60s"),
+    (60.0, 120.0, "60-120s"),
+    (120.0, 300.0, "120-300s"),
+    (300.0, float("inf"), ">300s"),
+)
+
+B0_STATUS = "HISTORICAL_REFERENCE_ONLY"
+B1_STATUS = "B1_SCORE_THRESHOLD_NO_ROBUST_IMPROVEMENT"
+C_REBUILD_THIS_RUN = False

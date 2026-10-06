@@ -1,0 +1,69 @@
+"""Re-entry clock interaction causal audit. Offline Exact Dual-Lane caches only."""
+from __future__ import annotations
+
+ANALYSIS_ID = "REENTRY_CLOCK_INTERACTION_V2"
+C14_ID = "V1R_EXIT_V2_PAPER_PRIMARY_CANDIDATE_V26G14_14"
+
+EXPECTED_A0_TRADES = 192
+EXPECTED_A0_PNL = 245660.0
+EXPECTED_A0_PF = 1.143435
+EXPECTED_A0_MAXDD = -733300.0
+
+EXPECTED_B0_TRADES = 278
+EXPECTED_B0_PNL = 441350.0
+EXPECTED_B0_PF = 1.315622
+EXPECTED_B0_MAXDD = -357050.0
+
+EXPECTED_A_RE2_N = 19
+EXPECTED_A_RE2_PNL = -482700.0
+
+# Frozen. This study must not rewrite them.
+C2_STATUS_MAINTAINED = "C2_OOF_RANKING_EDGE_NOT_STABLE"
+B2_FORMAL = {
+    "B2_ROBUST_IMPROVEMENT": False,
+    "RECOMMENDED_B_VARIANT": "B0",
+    "VERDICT": "B_NO_ROBUST_IMPROVEMENT",
+}
+V1_FORMAL = "REENTRY_POLICY_CLOCK_DEPENDENT"
+A2R2_STATUS = "HISTORICAL_POST_HOC_DIAGNOSTIC_ONLY"
+
+ELIGIBLE_DAYS = (
+    "20260722",
+    "20260728",
+    "20260729",
+    "20260730",
+    "20260731",
+    "20260803",
+    "20260804",
+    "20260805",
+    "20260806",
+    "20260807",
+    "20260810",
+    "20260817",
+    "20260819",
+    "20260820",
+    "20260824",
+    "20260825",
+    "20260826",
+    "20260827",
+)
+
+# Precommitted elapsed bins. Not searched.
+ELAPSED_BINS = (
+    ("LE_10MIN", None, 600.0),
+    ("GT10_LE20", 600.0, 1200.0),
+    ("GT20_LE40", 1200.0, 2400.0),
+    ("GT40", 2400.0, None),
+)
+
+# Precommitted interpretation floors. Not tuned after seeing cells.
+MAJORITY_FRAC = 0.50
+SMALL_CELL_N = 5
+COMMON_RE2_INDEPENDENCE_MIN = 8
+
+C3_STARTED = False
+RUNTIME_CHANGED = False
+R2_RUNTIME_CANDIDATE = False
+NEW_POLICY = False
+TRUE_OOS = False
+NEW_FORWARD_N = 0

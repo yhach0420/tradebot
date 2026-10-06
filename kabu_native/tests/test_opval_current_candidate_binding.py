@@ -32,7 +32,6 @@ from small_paper.runtime_clock import ENV_CERT_MODE, ENV_REPLAY_PATH
 from small_paper.v1r_activation_binding import (
     CANDIDATE_STATUS_OPVAL,
     ENV_ACTIVATION_SELECTOR,
-    SELECTOR_PATH,
     V25_ACTIVATION_ID,
     candidate_source_digest,
     collect_runtime_inventory,
@@ -329,7 +328,9 @@ def test_h_formal_v25_unchanged() -> None:
     v25 = _v25()
     ok, got, calc = verify_manifest_self_sha(v25)
     assert ok and got == calc == V25_SHA
-    sel = json.loads(SELECTOR_PATH.read_text(encoding="utf-8"))
+    from small_paper.paper_primary_activation import PREVIOUS_SELECTOR_PATH
+
+    sel = json.loads(PREVIOUS_SELECTOR_PATH.read_text(encoding="utf-8"))
     assert sel.get("activation_id") == V25_ACTIVATION_ID
     assert sel.get("activation_sha") == V25_SHA
     c6 = _load(OUT / f"{C6_ID}.json")

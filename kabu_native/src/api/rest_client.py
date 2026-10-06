@@ -177,6 +177,18 @@ class KabuNativeRestClient:
         except json.JSONDecodeError as e:
             raise KabuNativeApiError(f"board response is not JSON: {e}") from e
 
+    def get_symbolname_future(self, *, token: str, future_code: str, deriv_month: int = 0) -> dict[str, Any]:
+        """GET /kabusapi/symbolname/future (OpenAPI). No hardcoded contract symbol."""
+        from urllib.parse import urlencode
+
+        q = urlencode({"FutureCode": str(future_code), "DerivMonth": int(deriv_month)})
+        url = f"{self.base_url}/symbolname/future?{q}"
+        response = self._request("GET", url, token=token, op="symbolname/future")
+        try:
+            return dict(response.json())
+        except json.JSONDecodeError as e:
+            raise KabuNativeApiError(f"symbolname/future response is not JSON: {e}") from e
+
     def _request(
         self,
         method: str,

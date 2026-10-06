@@ -76,6 +76,10 @@ def test_285a_research_and_live_both_fill():
         "bid_qty": np.asarray([r["bid_qty"] for r in board_rows], dtype=float),
         "special": np.asarray([r["special"] for r in board_rows], dtype=bool),
         "fresh_sec": np.asarray([r["fresh_sec"] for r in board_rows], dtype=float),
+        "executable": np.asarray([bool(r.get("executable", True)) for r in board_rows], dtype=bool),
+        "board_execution_state": np.asarray(
+            [str(r.get("board_execution_state") or "") for r in board_rows], dtype=object
+        ),
     }
     research = find_ask_cross_fill(
         board, t0=t0, wait_sec=WAIT_SEC, limit_price=50550.0, sess_end=t0 + 3600

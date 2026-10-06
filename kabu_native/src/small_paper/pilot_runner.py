@@ -985,6 +985,90 @@ def _apply_v1r_native_every_push(
         return {"ingested": False, "reason": type(exc).__name__, "fill_checked": False}
 
 
+def _resolve_ctx_executor(ctx: "_PushPipelineContext") -> Any:
+    """One executor per pipeline, chosen from activation metadata."""
+    bound = getattr(getattr(ctx, "state", None), "paper_session_executor", None)
+    if bound is not None:
+        ctx._paper_session_executor = bound  # type: ignore[attr-defined]
+        ctx._paper_session_executor_resolved = True  # type: ignore[attr-defined]
+        return bound
+    if getattr(ctx, "_paper_session_executor_resolved", False):
+        return getattr(ctx, "_paper_session_executor", None)
+    ctx._paper_session_executor_resolved = True  # type: ignore[attr-defined]
+    ctx._paper_session_executor = None  # type: ignore[attr-defined]
+    try:
+        from small_paper.paper_session_executor import resolve_paper_session_executor
+        from small_paper.v1r_activation_binding import load_activation_manifest, load_active_selector
+
+        selector = load_active_selector()
+        manifest = load_activation_manifest(selector=selector)
+        exe = resolve_paper_session_executor(manifest)
+        ctx._paper_session_executor = exe  # type: ignore[attr-defined]
+        if getattr(exe, "execution_family", "") == "X1_IMMEDIATE_ASK":
+            from small_paper.paper_session_executor import bind_outer_registration
+
+            try:
+                bind_outer_registration(
+                    exe,
+                    native_root=getattr(ctx, "native_root", None),
+                    trading_date=str(getattr(getattr(ctx, "state", None), "trading_date", "") or ""),
+                    universe=list(getattr(ctx.state, "v1r_day_fixed_universe", None) or []),
+                )
+            except Exception:
+                exe.admission = lambda _symbol, _t: (False, "EXACT50_FAIL_CLOSED")
+    except Exception:
+        ctx._paper_session_executor = None  # type: ignore[attr-defined]
+    return getattr(ctx, "_paper_session_executor", None)
+
+
+def _dispatch_primary_push(
+    ctx: "_PushPipelineContext",
+    payload: Mapping[str, Any],
+    *,
+    symbol: str,
+    t0_push_received_at: Optional[str] = None,
+    message_index: Any = None,
+) -> dict[str, Any]:
+    """Primary PUSH hook. X1 never falls through into the V1R book."""
+    exe = _resolve_ctx_executor(ctx)
+    family = str(getattr(exe, "execution_family", "") or "")
+    if family == "X1_IMMEDIATE_ASK":
+        event: dict[str, Any] = {
+            "symbol": symbol,
+            "payload": payload,
+            "t0_push_received_at": t0_push_received_at,
+            "received_at": t0_push_received_at,
+        }
+        if "px" in payload and "t" in payload and "bid" in payload:
+            event.update(dict(payload))
+            event["symbol"] = symbol
+            event["payload"] = payload
+        exe.on_market_event(event)
+        return {
+            "ingested": True,
+            "execution_family": family,
+            "legacy_primary_admission_mutations": 0,
+            "session_executor": getattr(exe, "session_executor", ""),
+        }
+    if family == "PASSIVE_FILL_ENTRY_V1":
+        return exe.on_market_event(
+            {
+                "pipeline_ctx": ctx,
+                "symbol": symbol,
+                "payload": payload,
+                "t0_push_received_at": t0_push_received_at,
+                "message_index": message_index,
+            }
+        )
+    return _apply_v1r_native_every_push(
+        ctx,
+        payload,
+        symbol=symbol,
+        t0_push_received_at=t0_push_received_at,
+        message_index=message_index,
+    )
+
+
 def _log_v1r_native_entry_exception(
     ctx: "_PushPipelineContext",
     exc: BaseException,
@@ -1024,8 +1108,85 @@ def _init_v1r_native_entry_for_live(
     native_root: Path,
     trading_date: str,
     session_symbols: Sequence[str],
+    notifier: Any = None,
 ) -> dict[str, Any]:
-    """Wire day-fixed AM universe + session trace_dir. Fail-closed if unresolved."""
+    """Wire day-fixed AM universe + session trace_dir. Fail-closed if unresolved.
+
+    Fixed-support X1 owns the book. This path must not boot PASSIVE_FILL_ENTRY_V1.
+    """
+    from small_paper.paper_session_executor import (
+        bind_selected_live_executor,
+        x1_live_owner_armed,
+    )
+
+    if x1_live_owner_armed():
+        binding = bind_selected_live_executor()
+        exe = binding["executor"]
+        from small_paper.paper_session_executor import bind_outer_registration
+
+        try:
+            bind_outer_registration(
+                exe,
+                native_root=native_root,
+                trading_date=str(trading_date or ""),
+                universe=list(session_symbols),
+            )
+        except Exception:
+            exe.admission = lambda _symbol, _t: (False, "EXACT50_FAIL_CLOSED")
+        freeze_syms: list[str] = list(getattr(exe, "admission_membership", None) or [])
+        screening = [str(s).replace(".T", "").split("@", 1)[0] for s in session_symbols if str(s)]
+        screening_diff = bool(getattr(exe, "screening_session_diff", False))
+        if not freeze_syms:
+            try:
+                from small_paper.v1r_native_entry_live import resolve_day_fixed_am_runtime_universe
+
+                resolved_x1 = resolve_day_fixed_am_runtime_universe(
+                    native_root=native_root, trading_date=str(trading_date or "")
+                )
+                freeze_syms = [str(s) for s in (resolved_x1.get("symbols") or []) if str(s)]
+            except Exception:
+                freeze_syms = []
+        state.v1r_day_fixed_universe = list(freeze_syms)
+        exe.ledger_path = Path(writer.output_dir) / "fixed_support_x1_paper_ledger.jsonl"
+        if notifier is not None:
+            exe.notifier = notifier
+        try:
+            from small_paper.v1r_activation_binding import (
+                load_activation_manifest,
+                load_active_selector,
+            )
+
+            manifest = load_activation_manifest(selector=load_active_selector())
+            exe.activation_id = str(manifest.get("activation_id") or "")
+            exe.activation_sha = str(manifest.get("sha256") or "")
+        except Exception:
+            pass
+        state.paper_session_executor = exe
+        state.session_owner_class = binding["session_owner_class"]
+        state.v1r_native_entry_blocked = True
+        state.v1r_native_block_reason = "X1_OWNER_V1R_BOOT_FORBIDDEN"
+        wiring = {
+            "enabled": True,
+            "x1_owner": True,
+            "boot_v1r_native_entry": 0,
+            "passive_fill_boot": 0,
+            "session_owner_class": binding["session_owner_class"],
+            "admission_owner_class": binding["admission_owner_class"],
+            "portfolio_owner_class": binding["portfolio_owner_class"],
+            "execution_family": binding["execution_family"],
+            "screening_session_diff": screening_diff,
+            "admission_membership_n": len(freeze_syms),
+            "admission_membership_source": str(getattr(exe, "admission_membership_source", "") or ""),
+            "session_symbol_n": len(screening),
+        }
+        try:
+            (Path(writer.output_dir) / "live_session_owner.json").write_text(
+                json.dumps(wiring, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        return wiring
     from small_paper.day_fixed_am_registration import SAME_DAY_AM_FROZEN_AUTHORITY
     from small_paper.v1r_live_dual_lane import live_primary_enabled
     from small_paper.v1r_native_entry_live import (
@@ -3205,9 +3366,12 @@ def _execute_accepted_entry(
     # When V1R is PAPER_PRIMARY, PBv2 gate_accept is SHADOW_ONLY.
     # Must not mutate Primary observer / pending / open / cap / dual primary.
     try:
+        from small_paper.paper_session_executor import x1_live_owner_armed
         from small_paper.v1r_live_dual_lane import live_primary_enabled
         from small_paper.v1r_native_entry_live import get_native_entry, ensure_native_entry
 
+        if x1_live_owner_armed():
+            return
         if live_primary_enabled():
             eng = get_native_entry() or ensure_native_entry(
                 universe=list(getattr(ctx.state, "v1r_day_fixed_universe", None) or []),
@@ -7450,7 +7614,7 @@ def run_push_replay_dry_run(
                 poll_interval_sec=float(poll_interval_sec or 0),
                 ring_only_warmup=False,
             )
-            _apply_v1r_native_every_push(
+            _dispatch_primary_push(
                 ctx,
                 push_payload,
                 symbol=sym,
@@ -7544,6 +7708,12 @@ def run_push_replay_dry_run(
     _apply_post_entry_forward_shadow_finalize(state, summary, output_dir=output_dir)
     _apply_classic_momentum_forward_shadow_finalize(state, summary, output_dir=output_dir)
     _apply_e1_x5_forward_shadow_finalize(state, summary, output_dir=output_dir)
+    try:
+        from notify.x1_discord_gate import stamp_x1_summary_identity
+
+        stamp_x1_summary_identity(summary, getattr(state, "paper_session_executor", None))
+    except Exception:
+        pass
     try:
         notify_discord_session_end(
             discord,
@@ -7851,6 +8021,16 @@ def _run_post_entry_forward_shadow_auto(
         }
 
 
+def live_summary_stop_reason(*, stop_reason: str, summary_kind: str = "final") -> str:
+    """Heartbeat partials must not look like a completed session."""
+    named = str(stop_reason or "").strip()
+    if named:
+        return named
+    if str(summary_kind or "") == "heartbeat_partial":
+        return "running"
+    return "completed"
+
+
 def _build_live_summary(
     *,
     config: SmallPaperPilotConfig,
@@ -7859,6 +8039,7 @@ def _build_live_summary(
     gate: ExposureGate,
     full_session: bool,
     runtime_sec: float,
+    summary_kind: str = "final",
 ) -> dict[str, Any]:
     reject_events = [e for e in state.events if e.get("event_type") == "rejected"]
     is_retrial = config.policy_trial and config.policy_label == "q070_cap3_trial"
@@ -7920,7 +8101,12 @@ def _build_live_summary(
         "stale_tick_count": state.stale_tick_count,
         "open_slots_end": len(gate.state.open_slots),
         "config_sha256": session_cfg.get("config_sha256"),
-        "stop_reason": state.stop_reason or "completed",
+        "stop_reason": live_summary_stop_reason(
+            stop_reason=str(state.stop_reason or ""),
+            summary_kind=summary_kind,
+        ),
+        "summary_kind": summary_kind,
+        "summary_final": str(summary_kind or "") != "heartbeat_partial",
         "note": (
             "Position-CAP mode: observer open count until structural EXIT; no orders placed."
             if config.position_cap_mode
@@ -8570,14 +8756,27 @@ def run_live_dry_run(
         from small_paper.v1r_live_dual_lane import ensure_dual_lane, live_primary_enabled
 
         if live_primary_enabled():
-            _init_v1r_native_entry_for_live(
+            _x1_wiring = _init_v1r_native_entry_for_live(
                 state=state,
                 writer=writer,
                 native_root=native_root,
                 trading_date=day_compact,
                 session_symbols=[t[0] for t in symbols],
+                notifier=discord,
             )
-            dual = ensure_dual_lane(trace_dir=output_dir)
+            _x1_exe = getattr(state, "paper_session_executor", None)
+            if (
+                _x1_exe is not None
+                and am_pm_policy is not None
+                and hasattr(_x1_exe, "bind_production_schedule")
+            ):
+                _x1_exe.bind_production_schedule(
+                    day=str(day_compact),
+                    kind=str(am_pm_policy.kind),
+                )
+                if universe_meta and hasattr(_x1_exe, "remember_universe_names"):
+                    _x1_exe.remember_universe_names(universe_meta)
+            dual = None if (_x1_wiring or {}).get("x1_owner") else ensure_dual_lane(trace_dir=output_dir)
 
             def _dual_err(rec: Mapping[str, Any]) -> None:
                 try:
@@ -8915,6 +9114,13 @@ def run_live_dry_run(
             return
         # Phase723: atomic ENTRY lock BEFORE close_all / CAP release / Discord / await.
         state.entry_admission_closed = True
+        exe = getattr(state, "paper_session_executor", None)
+        if exe is not None and hasattr(exe, "close_at_runtime_boundary"):
+            try:
+                exe.close_at_runtime_boundary(day=str(day_compact), kind=str(am_pm_policy.kind))
+            except RuntimeError as exc:
+                exe.boundary_error = str(exc)
+                state.x1_boundary_error = str(exc)
         state.session_force_close_done = True
         _request_stop(am_pm_policy.force_close_reason)
         if observer and observer.open_count() > 0:
@@ -9008,6 +9214,26 @@ def run_live_dry_run(
             "note": note,
             **hb_extra,
         }
+        x1_exe = getattr(state, "paper_session_executor", None)
+        if x1_exe is not None and hasattr(x1_exe, "x1_counters"):
+            hb["x1_executor"] = x1_exe.x1_counters()
+            try:
+                from small_paper.x1_day_operational_gates import x1_admission_pipeline_gate
+
+                gate_x1 = x1_admission_pipeline_gate(hb["x1_executor"])
+                hb["x1_admission_pipeline"] = gate_x1
+                if not gate_x1.get("ok") and not getattr(state, "_x1_admission_stall_alerted", False):
+                    state._x1_admission_stall_alerted = True  # type: ignore[attr-defined]
+                    writer.append_error(
+                        {
+                            "event_time": _now_iso(),
+                            "error_type": "x1_admission_pipeline",
+                            "message": str(gate_x1.get("reason") or "X1_ADMISSION_STALL"),
+                            "gate": gate_x1,
+                        }
+                    )
+            except Exception:
+                pass
         try:
             from small_paper.v1r_live_dual_lane import (
                 get_dual_lane,
@@ -9152,6 +9378,18 @@ def run_live_dry_run(
                     pass
         except Exception:
             pass
+        kind = str(getattr(am_pm_policy, "kind", "") or "").upper()
+        hb["session"] = "AM" if kind in {"AM", "MORNING"} else ("PM" if kind == "PM" or kind == "AFTERNOON" else kind)
+        hb["x1_executor_alive"] = x1_exe is not None
+        hb["ledger_status"] = "bound" if getattr(x1_exe, "ledger_path", None) else "unbound"
+        hb["submit_cancel_live"] = "0/0/0"
+        hb["marketbus_alive"] = bus_bridge is not None
+        try:
+            from small_paper.kabu_token_authority import ingress_owner_active
+
+            hb["ingress_alive"] = bool(ingress_owner_active())
+        except Exception:
+            hb["ingress_alive"] = False
         writer.append_heartbeat(hb)
         summary_partial = _build_live_summary(
             config=config,
@@ -9160,6 +9398,7 @@ def run_live_dry_run(
             gate=gate,
             full_session=full_session,
             runtime_sec=runtime,
+            summary_kind="heartbeat_partial",
         )
         writer.write_summary(summary_partial)
         if discord and discord.active:
@@ -9171,7 +9410,7 @@ def run_live_dry_run(
                 bucket_summary=state.bucket_summary,
                 observer_stats=obs_stats,
             )
-            discord.notify_heartbeat(summary={**summary_partial, **extras})
+            discord.notify_heartbeat(summary={**summary_partial, **extras, **hb})
 
     def _process_payload(payload: Mapping[str, Any], msg_i: int) -> None:
         assert pipeline_ctx is not None
@@ -9837,7 +10076,7 @@ def run_live_dry_run(
                         tel = getattr(pipeline_ctx, "consumer_telemetry", None)
                         if tel is not None:
                             tel.begin_push()
-                        _apply_v1r_native_every_push(
+                        _dispatch_primary_push(
                             pipeline_ctx,
                             payload,
                             symbol=sym,
@@ -10345,6 +10584,12 @@ def run_live_dry_run(
         _apply_entry_expectancy_score_shadow_finalize(state, summary)
         _apply_ihc_shadow_counterfactual_finalize(state, summary, output_dir=output_dir, config=config)
     _apply_e1_x5_forward_shadow_finalize(state, summary, output_dir=output_dir)
+    try:
+        from notify.x1_discord_gate import stamp_x1_summary_identity
+
+        stamp_x1_summary_identity(summary, getattr(state, "paper_session_executor", None))
+    except Exception:
+        pass
     if discord:
         summary.update(discord_notify_summary_fields(discord))
     try:

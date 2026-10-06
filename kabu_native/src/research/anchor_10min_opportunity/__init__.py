@@ -1,0 +1,55 @@
+"""Fixed 10-minute gap / uniform-grid historical diagnostic.
+
+Offline only. Does not change Runtime / CLOCK_GRID / ENTRY / EXIT / Paper / OPVAL.
+Does not search start-minute, interval, TopK, or thresholds.
+Does not adopt a 10-minute grid from this result.
+"""
+from __future__ import annotations
+
+ANALYSIS_ID = "ANCHOR_10MIN_OPPORTUNITY"
+DOCUMENT_ID = "GAP_THEN_UNIFORM_10_FIXED"
+TASK_LABEL = "OFFLINE_HISTORICAL_DIAGNOSTIC"
+CONTAMINATION_LABEL = "NOT_A_GRID_SEARCH"
+DATA_STATUS = "HISTORICAL_DIAGNOSTIC"
+NEW_GRID_TRUE_HOLDOUT = False
+FUTURE_FORWARD_REQUIRED = True
+
+# Same 17 eligible days as prior studies. Post-20260810 is observed historical, not a new-grid holdout.
+DEVELOPMENT_DAYS = (
+    "20260722", "20260728", "20260729", "20260730", "20260731",
+    "20260803", "20260804", "20260805", "20260806", "20260807",
+)
+POST_FREEZE_DAYS = (
+    "20260810", "20260817", "20260819", "20260820",
+    "20260824", "20260825", "20260826",
+)
+HISTORICAL_DAYS = DEVELOPMENT_DAYS + POST_FREEZE_DAYS
+
+# Uniform-10 last slots are part of the precommitted hypothesis (not searched).
+UNIFORM_AM_LAST = (11, 15)
+UNIFORM_PM_LAST = (15, 20)
+UNIFORM_STEP_MIN = 10
+
+# Session-tail diagnostic only. Not mixed into Phase A midpoint verdict.
+AM_TAIL = ((11, 10), (11, 20))
+PM_TAIL = ((15, 10), (15, 20))
+
+# Precommitted interpretation — written before this run's numbers.
+PHASE_A_PNL_EPS = 1.0
+OFFSET_SHARE = 0.50
+DAY_POS_TOL = 0.15
+PNL_PER_FILL_RATIO_OK = 0.70
+MISSED_FILL_MIN = 5
+SUPPORT_DAY_POS_DROP = 0.15
+
+VERDICT_A_VALUE = "TEN_MINUTE_GAPS_HAVE_INCREMENTAL_VALUE"
+VERDICT_A_NONE = "TEN_MINUTE_GAPS_NO_INCREMENTAL_VALUE"
+VERDICT_A_OFFSET = "TEN_MINUTE_GAPS_VALUE_OFFSET_BY_STATE_INTERACTION"
+VERDICT_A_MIXED = "MIXED_GAP_OPPORTUNITY_VALUE"
+
+VERDICT_SUPPORTED = "TEN_MINUTE_FIXED_GRID_HISTORICAL_CANDIDATE_SUPPORTED"
+VERDICT_NOT = "TEN_MINUTE_FIXED_GRID_NOT_SUPPORTED"
+VERDICT_GAP_ONLY = "TEN_MINUTE_GAP_VALUE_BUT_FULL_GRID_NOT_SUPPORTED"
+
+MAX_WORKERS = 2
+LOT_QTY = 100

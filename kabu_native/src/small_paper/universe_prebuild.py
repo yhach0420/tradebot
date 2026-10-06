@@ -306,6 +306,9 @@ def run_universe_prebuild(
     enable_intraday_refresh: bool = True,
 ) -> dict[str, Any]:
     """Idempotent prebuild: reuse valid same-day SoT or generate via build_am_universe."""
+    from small_paper.demo_push_firewall import install_inprocess_isolation
+
+    install_inprocess_isolation()
     started_at = datetime.now(JST).isoformat(timespec="seconds")
     t0 = time.time()
     artifact: dict[str, Any] = {
@@ -513,7 +516,10 @@ def run_universe_prebuild(
 
 
 def write_prebuild_artifact(native_root: Path, trading_date: str, payload: Mapping[str, Any]) -> Path:
-    out_dir = Path(native_root) / "results" / "reports" / "phase687w15b_auto_universe_prebuild"
+    from small_paper.demo_push_firewall import demo_fully_armed, isolated_native_root
+
+    root = isolated_native_root() if demo_fully_armed() else Path(native_root)
+    out_dir = root / "results" / "reports" / "phase687w15b_auto_universe_prebuild"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"universe_prebuild_{trading_date}.json"
     path.write_text(json.dumps(dict(payload), indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")

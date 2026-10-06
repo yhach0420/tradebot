@@ -1,0 +1,9 @@
+{
+  "pid": 28972,
+  "trading_date": "20260915",
+  "started_at": "2026-09-15T09:05:00+09:00",
+  "command": "python kabu_native\\scripts\\run_market_breadth_leadership_capture.py --live",
+  "register_mutation_n": 0,
+  "unregister_n": 0,
+  "sendorder_n": 0
+}

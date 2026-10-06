@@ -120,4 +120,11 @@ class DedupeStore:
 
 
 def default_dedupe_store(native_root: Path) -> DedupeStore:
+    try:
+        from small_paper.demo_push_firewall import demo_fully_armed, isolated_native_root
+
+        if demo_fully_armed():
+            return DedupeStore(isolated_native_root() / "runtime" / "discord_notification_dedupe.jsonl")
+    except Exception:
+        pass
     return DedupeStore(Path(native_root) / DEFAULT_DEDUPE_PATH)

@@ -32,6 +32,9 @@ def _bps(num: float, den: float) -> float:
 
 
 def _row_ask_ok(board: dict[str, np.ndarray], i: int) -> bool:
+    exec_arr = board.get("executable")
+    if exec_arr is not None and int(getattr(exec_arr, "size", 0) or 0) > i and not bool(exec_arr[i]):
+        return False
     if board["special"][i]:
         return False
     fresh = float(board["fresh_sec"][i]) if np.isfinite(board["fresh_sec"][i]) else 0.0
@@ -96,12 +99,15 @@ def find_ask_cross_fill(
     wait_sec: float,
     limit_price: float,
     sess_end: float,
+    require_executable_continuous: bool = True,
 ) -> dict[str, Any]:
     """
     Conservative fill: first future snapshot with
+      CONTINUOUS_TRADING_EXECUTABLE AND
       Sell1.Price <= limit AND qty>=100 AND freshness OK AND not special.
     fill_price = limit_price (no price improvement).
     Does NOT use last/trade touch or queue position.
+    Pre-open / itayose / special-quote boards are not fill evidence.
     """
     t = board["t"]
     if t.size == 0:
@@ -109,6 +115,8 @@ def find_ask_cross_fill(
     lim_t = min(float(t0) + float(wait_sec), float(sess_end))
     i0 = int(np.searchsorted(t, t0, side="left"))
     saw_book = False
+    exec_arr = board.get("executable")
+    state_arr = board.get("board_execution_state")
     for i in range(i0, t.size):
         ti = float(t[i])
         if ti + 1e-12 < t0:
@@ -116,6 +124,9 @@ def find_ask_cross_fill(
         if ti > lim_t + 1e-12:
             break
         saw_book = True
+        if require_executable_continuous and exec_arr is not None and int(getattr(exec_arr, "size", 0) or 0) > i:
+            if not bool(exec_arr[i]):
+                continue
         if board["special"][i]:
             continue  # not evidence of fill
         fresh = float(board["fresh_sec"][i]) if np.isfinite(board["fresh_sec"][i]) else 0.0
@@ -128,11 +139,18 @@ def find_ask_cross_fill(
         if not np.isfinite(ask) or ask <= 0:
             continue
         if ask <= limit_price + 1e-12:
+            state = None
+            if state_arr is not None and int(getattr(state_arr, "size", 0) or 0) > i:
+                state = str(state_arr[i] or "")
             return {
                 "filled": True,
                 "fill_price": float(limit_price),
+                "limit_price": float(limit_price),
                 "fill_t": ti,
+                "fill_event_time": ti,
                 "cross_ask": ask,
+                "cross_ask_qty": float(qty),
+                "board_execution_state": state,
                 "evidence": FILL_EVIDENCE,
                 "waited_sec": float(ti - t0),
             }
@@ -292,6 +310,9 @@ def evaluate_passive_or_inside(
         "fill_price": entry,
         "fill_t": entry_t,
         "cross_ask": fill.get("cross_ask"),
+        "cross_ask_qty": fill.get("cross_ask_qty"),
+        "fill_event_time": fill.get("fill_event_time"),
+        "board_execution_state": fill.get("board_execution_state"),
         "waited_sec": fill.get("waited_sec"),
         "evidence": fill.get("evidence"),
         "entry_spread_saved_bps": float(saved),

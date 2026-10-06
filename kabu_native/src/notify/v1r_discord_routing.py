@@ -340,6 +340,17 @@ def publish_v1r(
     """
     k = V1RNotifyKind(kind) if not isinstance(kind, V1RNotifyKind) else kind
     meta = ROUTING_TABLE[k]
+    from notify.x1_discord_gate import suppress_legacy_strategy_discord
+
+    if suppress_legacy_strategy_discord(k.value, source="notify.v1r_discord_routing"):
+        return V1RNotifyResult(
+            kind=k.value,
+            status="OLD_STRATEGY_DISCORD_SUPPRESSED",
+            channel=str(meta["channel"]),
+            env_key=str(meta["env_keys"][0]),
+            queued=False,
+            error="OLD_STRATEGY_DISCORD_SUPPRESSED",
+        )
     t0 = time.perf_counter()
     url, env_key, missing = resolve_destination(k)
     enqueue_ms = (time.perf_counter() - t0) * 1000.0

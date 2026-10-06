@@ -1,0 +1,61 @@
+"""CAUSAL_PATH_TO_COMPLETE_STRATEGY_V1. Event universe → path RCA → complete candidates. M1–M11 stay rejected."""
+from __future__ import annotations
+
+from research.current_day1_information_close_v1 import FEATURE_MINING_CLOSED
+from research.run_20260914_day2_futures_plus_first_live_breadth_v1 import TRADING_DATE as LIVE_TRADING_DATE
+
+PROGRAM_ID = "COMPLETE_CAUSAL_STRATEGY_RESEARCH_V1"
+ANALYSIS_ID = "CAUSAL_PATH_TO_COMPLETE_STRATEGY_V1"
+PARENT_ANALYSIS_ID = "CAUSE_FIRST_MECHANISM_DISCOVERY_V1"
+PARENT_VERDICT = "CAUSE_FIRST_NO_STABLE_MECHANISM_V1"
+KIND = "EVENT_PATH_RCA_COMPLETE_STRATEGY"
+SEMANTICS = "BAR_START"
+EXPECTED_SPLIT_SHA256 = "2c9bd8f4ce7c86116833b54e1d41e4cbc4b59c3e504b769140fea435d375b3b4"
+X1_TAX_BPS = 8.0
+MAX_CANDIDATES = 3
+DISCOVERY_BLOCK_N = 4
+GRID_STEP_MIN = 5
+REJECTED_M1_M11 = (
+    "M1_market_5m_breadth_continuation",
+    "M2_sector_adds_given_strong_market",
+    "M3_stock_rs_continuation_in_strong_market",
+    "M4_pullback_vs_chase_in_strong_market",
+    "M5_vwap_reclaim_not_weak_market",
+    "M6_breakout_in_neutral_tape",
+    "M7_volume_expansion_breakout_vs_quiet_breakout",
+    "M8_1m_loser_bounce_strong_vs_weak_market",
+    "M9_ema_breadth_adds_given_strong_5m_tape",
+    "M10_high_leadership_concentration_not_ew_alpha",
+    "M11_ema_structure_loss_negative_continuation",
+)
+
+CASE_FOUND = "COMPLETE_CAUSAL_STRATEGY_CANDIDATE_FOUND_V1"
+CASE_STRUCTURE = "CAUSAL_STRUCTURE_FOUND_EDGE_INSUFFICIENT_V1"
+CASE_INSUFFICIENT = "STOCK_PANEL_CAUSAL_INFORMATION_INSUFFICIENT_V1"
+CASE_BIND = "CAUSAL_PATH_BIND_FAILED_V1"
+
+NEXT_FREEZE = "FREEZE_AND_OPEN_FROZEN_VALIDATION_V1"
+NEXT_MAGNITUDE = "HIGHER_MAGNITUDE_STATE_DISCOVERY_V1"
+NEXT_MISSING = "IDENTIFY_MINIMUM_MISSING_EXTERNAL_CAUSAL_INFORMATION_V1"
+NEXT_BIND = "REPAIR_PRIOR_SPLIT_BIND_THEN_RETRY_V1"
+
+KABU_50_APPLIED = False
+FROZEN_VALIDATION_OPENED = False
+OLD_CONFIRMATION_USED_TO_DESIGN = False
+SAME_BAR_CLOSE_ENTRY = False
+HISTORICAL_BID_ASK_INFERRED = False
+FUTURE_AS_DECISION_FEATURE = False
+M1_M11_RESCUED = False
+
+assert ANALYSIS_ID == "CAUSAL_PATH_TO_COMPLETE_STRATEGY_V1"
+assert PARENT_VERDICT == "CAUSE_FIRST_NO_STABLE_MECHANISM_V1"
+assert EXPECTED_SPLIT_SHA256.startswith("2c9bd8f4")
+assert LIVE_TRADING_DATE == "20260914"
+assert FEATURE_MINING_CLOSED is True
+assert M1_M11_RESCUED is False
+assert FROZEN_VALIDATION_OPENED is False
+assert OLD_CONFIRMATION_USED_TO_DESIGN is False
+assert KABU_50_APPLIED is False
+assert SAME_BAR_CLOSE_ENTRY is False
+assert len(REJECTED_M1_M11) == 11
+assert MAX_CANDIDATES == 3

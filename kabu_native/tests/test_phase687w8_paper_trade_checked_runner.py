@@ -40,6 +40,7 @@ def _isolate_w8_from_leaked_cert_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TRADEBOT_TRADING_DATE",
         "TRADEBOT_SESSION_CLOCK",
         "TRADEBOT_SESSION_CLOCK_V0",
+        "MARKET_INGRESS_V2",
     ):
         monkeypatch.delenv(key, raising=False)
 

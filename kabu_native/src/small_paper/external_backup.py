@@ -414,6 +414,12 @@ def check_external_sync_status(
     sync_if_connected: bool = True,
 ) -> ExternalSyncStatus:
     """Startup check: compare C archive vs D archive. D missing → warn only."""
+    from small_paper.demo_push_firewall import demo_fully_armed
+
+    if demo_fully_armed():
+        status = ExternalSyncStatus(d_connected=False, code="SKIPPED_DEMO_PUSH_E2E", blocks_start=False)
+        print("[EXTERNAL_BACKUP] SKIPPED_DEMO_PUSH_E2E", flush=True)
+        return status
     native = native or native_root()
     probe = drive_probe(external_root)
     status = ExternalSyncStatus(d_connected=probe["connected"])

@@ -616,4 +616,46 @@ def freeze_valid50_after_kabu_validation(
         "first_failure_reason": selected.get("first_failure_reason") or "",
         "first_failure_symbol": selected.get("first_failure_symbol") or "",
         "first_failure_code": selected.get("first_failure_code") or "",
+        "kabu_board_validated": True,
     }
+
+
+def wait_and_freeze_valid50(
+    native_root: Path,
+    trading_date: str,
+    *,
+    ranked: Optional[Sequence[str]] = None,
+    probe_fn: Optional[ProbeFn] = None,
+    skip_if_frozen: bool = True,
+    timeout_sec: float = 90.0,
+    poll_sec: float = 2.0,
+    sleep_fn: Optional[Callable[[float], None]] = None,
+    monotonic_fn: Optional[Callable[[], float]] = None,
+) -> dict[str, Any]:
+    """Retry freeze until a readonly token exists. Never freeze unvalidated symbols."""
+    sleeper = sleep_fn or time.sleep
+    clock = monotonic_fn or time.monotonic
+    deadline = float(clock()) + max(0.0, float(timeout_sec))
+    last: dict[str, Any] = {}
+    while True:
+        last = freeze_valid50_after_kabu_validation(
+            native_root,
+            trading_date,
+            ranked=ranked,
+            probe_fn=probe_fn,
+            skip_if_frozen=skip_if_frozen,
+        )
+        if last.get("ok"):
+            return last
+        if str(last.get("reason") or "") != AUTH_NOT_READY:
+            return last
+        if float(clock()) >= deadline:
+            return {
+                **last,
+                "ok": False,
+                "reason": AUTH_NOT_READY,
+                "fail_closed": True,
+                "freeze_created": False,
+                "wait_exhausted": True,
+            }
+        sleeper(max(0.05, float(poll_sec)))

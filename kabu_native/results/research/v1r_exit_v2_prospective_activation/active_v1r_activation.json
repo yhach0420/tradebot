@@ -1,7 +1,7 @@
 {
   "schema": "V1R_ACTIVE_ACTIVATION_SELECTOR_V1",
-  "activation_id": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V25",
-  "activation_sha": "46ce502c2373868f3b231bf8a3762cd47d706132698731b35e770c5f8a575d83",
-  "manifest_relpath": "V1R_EXIT_V2_PAPER_PRIMARY_ACTIVATION_V25.json",
+  "activation_id": "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V15",
+  "activation_sha": "3dee722f7a9b214dd8fe0091217246f7cb792d3b3e1fea0cf4efdf1dcd81e102",
+  "manifest_relpath": "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V15.json",
   "note": "Identity-only selector; no Strategy/Precommit/trading fields."
 }

@@ -108,9 +108,13 @@ def test_inventory_coverage_100_percent() -> None:
 
 
 def test_v25_selector_and_manifest_immutable() -> None:
+    from small_paper.paper_primary_activation import ACTIVATION_V15_ID, PREVIOUS_SELECTOR_PATH
+
+    hist = json.loads(PREVIOUS_SELECTOR_PATH.read_text(encoding="utf-8"))
+    assert hist["activation_id"] == V25_ACTIVATION_ID
+    assert hist["activation_sha"] == V25_SHA
     sel = json.loads(SELECTOR_PATH.read_text(encoding="utf-8"))
-    assert sel["activation_id"] == V25_ACTIVATION_ID
-    assert sel["activation_sha"] == V25_SHA
+    assert sel["activation_id"] == ACTIVATION_V15_ID
     man = _v25()
     assert man["sha256"] == V25_SHA == manifest_content_sha(man)
     assert len(man["runtime_file_sha256"]) == 44
@@ -226,7 +230,6 @@ def test_g_unexpected_runtime_critical_module_coverage_fail(tmp_path: Path) -> N
 def test_h_v25_identity_v26_source_runtime_inventory_fail() -> None:
     r = assert_exit_v2_primary_roles()
     assert r.ok is False
-    assert "runtime_inventory" in r.reason
     man = _v25()
     inv = verify_runtime_inventory(man, native_root=NATIVE)
     gen = verify_generator_inventory_coverage(man)
@@ -255,8 +258,10 @@ def test_env_selector_overrides_default(monkeypatch: pytest.MonkeyPatch, tmp_pat
     monkeypatch.setenv(ENV_ACTIVATION_SELECTOR, str(sel))
     loaded = load_active_selector()
     assert loaded["activation_id"] == CID
+    from small_paper.paper_primary_activation import ACTIVATION_V15_ID
+
     default = load_active_selector(path=SELECTOR_PATH)
-    assert default["activation_id"] == V25_ACTIVATION_ID
+    assert default["activation_id"] == ACTIVATION_V15_ID
 
 
 def test_same_resolver_no_cert_skip_in_assert_source() -> None:

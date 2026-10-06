@@ -1,0 +1,58 @@
+"""PB1 ENTRY architecture reassessment. V1 FAIL and no-repair stay locked.
+
+Does not mutate Frozen V4. Does not create V5. Does not open FV/prospective economics.
+"""
+from __future__ import annotations
+
+from research.cause_first_mechanism_discovery_v1 import X1_TAX_BPS
+from research.current_day1_information_close_v1 import FEATURE_MINING_CLOSED
+from research.pb1_complete_strategy_causal_repair_mechanism_discovery import CASE_NONE as REPAIR_NONE
+from research.pb1_v4_complete_strategy_build_and_economic_validation import CAP, DEV_FIRST, DEV_LAST, SHARES
+from research.pb1_v4_complete_strategy_build_and_economic_validation.freeze import COMPLETE_STRATEGY_IDENTITY
+from research.pb1_v4_complete_strategy_economic_confirmation1 import (
+    CASE_FAIL as V1_FAIL,
+    EVAL_FIRST,
+    EVAL_LAST,
+    EXPECTED_COMPLETE_STRATEGY_SHA256,
+    FV_FIRST,
+    FV_LAST,
+    PROSPECTIVE_FROM,
+)
+
+PROGRAM_ID = "PB1_ENTRY_ARCHITECTURE_REASSESSMENT"
+ANALYSIS_ID = "PB1_ENTRY_ARCHITECTURE_REASSESSMENT_V1"
+PRECOMMIT_ID = "PB1_ENTRY_ARCHITECTURE_REASSESSMENT_PRECOMMIT_V1"
+
+assert COMPLETE_STRATEGY_IDENTITY == "PB1_V4_COMPLETE_STRATEGY_FROZEN_V1"
+assert EXPECTED_COMPLETE_STRATEGY_SHA256 == "556542319d22dff40cc1758b24d44d2ecb1985b8595927ca8f80618126961bf8"
+assert V1_FAIL == "PB1_V4_COMPLETE_STRATEGY_ECONOMIC_CONFIRMATION1_FAIL_V1"
+assert REPAIR_NONE == "PB1_COMPLETE_STRATEGY_NO_ROBUST_CAUSAL_REPAIR_FOUND_V1"
+assert CAP == 5
+assert SHARES == 100
+assert float(X1_TAX_BPS) == 8.0
+assert DEV_FIRST == "20240917"
+assert DEV_LAST == "20251126"
+assert EVAL_FIRST == "20251127"
+assert EVAL_LAST == "20260421"
+assert FV_FIRST == "20260422"
+assert FV_LAST == "20260911"
+assert PROSPECTIVE_FROM == "20260924"
+
+X1_BPS = float(X1_TAX_BPS)
+FOLDS = ("DEV_EARLY", "DEV_LATE", "C1_EARLY", "C1_MIDDLE", "C1_LATE")
+QUANTILE_CUTS = (0.20, 0.40, 0.60, 0.80)
+MIN_FOLD_N = 12
+MIN_BUCKET_N = 5
+MIN_SPEARMAN_N = 12
+MIN_FOLDS_SAME_SIGN = 3
+PRICE_PROXY_ABS_RHO = 0.85
+MIN_OOF_TRADES = 20
+WINNER_CONC_MAX = 0.50
+
+CASE_FOUND = "PB1_ENTRY_ARCHITECTURE_CAUSAL_EDGE_FOUND_V1"
+CASE_NONE = "PB1_ENTRY_ARCHITECTURE_INFORMATION_INSUFFICIENT_V1"
+NEXT_FOUND = "PB1_V5_COMPLETE_STRATEGY_PRECOMMIT_AND_BUILD_V1"
+NEXT_NONE = "NEW_ALPHA_FAMILY_DISCOVERY_V1"
+
+FEATURE_MINING = FEATURE_MINING_CLOSED
+_ = FEATURE_MINING

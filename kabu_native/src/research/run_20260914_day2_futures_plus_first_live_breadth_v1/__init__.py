@@ -1,0 +1,81 @@
+"""RUN_20260914_DAY2_FUTURES_PLUS_FIRST_LIVE_BREADTH_V1.
+
+Monday live: futures Day2 confirmation + first live breadth recon.
+20260911 mining stays closed. No ENTRY/EXIT. No large grid.
+"""
+from __future__ import annotations
+
+from research.current_day1_information_close_v1 import FEATURE_MINING_CLOSED, VERDICT as DAY1_CLOSE_VERDICT
+from research.day2_futures_plus_market_breadth_acquisition_v1 import (
+    BREADTH_LIVE_COMMAND,
+    CASE_LIVE_READY,
+    FUTURES_LIVE_COMMAND,
+)
+from research.futures_reversal_precursor_day1_v1 import DAY2_PRIMARY
+from research.market_breadth_leadership_acquisition_v1 import (
+    DEFAULT_CADENCE_SEC,
+    FALLBACK_CADENCE_SEC,
+    PRIMARY_WINDOW_END_HM,
+    PRIMARY_WINDOW_START_HM,
+    RANKING_TYPES,
+)
+from research.market_breadth_leadership_acquisition_v1.derive import PRIMARY_CONTEXT_CANDIDATES
+
+ANALYSIS_ID = "RUN_20260914_DAY2_FUTURES_PLUS_FIRST_LIVE_BREADTH_V1"
+PARENT_ID = "CURRENT_DAY1_INFORMATION_CLOSE_AND_NEW_TAPE_TRANSITION_V1"
+KIND = "NEW_INFO_DEV_CONSTRUCTION_ONLY"
+TRADING_DATE = "20260914"
+DAY1_TRADING_DATE = "20260911"
+
+FUTURES_PREPARE_COMMAND = (
+    "python kabu_native\\scripts\\run_futures_market_context_capture.py --prepare-only --trading-date 20260914"
+)
+FUTURES_LIVE_COMMAND_EXPLICIT = (
+    "python kabu_native\\scripts\\run_futures_market_context_capture.py --live --trading-date 20260914"
+)
+BREADTH_LIVE_COMMAND_EXPLICIT = (
+    "python kabu_native\\scripts\\run_market_breadth_leadership_capture.py --live --trading-date 20260914"
+)
+EOD_COMMAND = "python kabu_native\\scripts\\run_20260914_day2_futures_plus_first_live_breadth.py"
+
+BREADTH_METRICS = PRIMARY_CONTEXT_CANDIDATES + ("SECTOR.RANK_PERSISTENCE",)
+Q1_STATE_METRIC = "LEADERSHIP_DIRECTION"
+Q2_SELECTOR = "OBSERVED_TRADE_N_180S"
+MIN_SPLIT_N = 2
+MATERIAL_BPS = 5.0
+
+VERDICT_AWAITING = "AWAITING_20260914_LIVE_WINDOWS_V1"
+VERDICT_TRANSPORT_FAIL = "MARKET_BREADTH_LIVE_CAPTURE_NOT_PROVEN_V1"
+VERDICT_A = "BREADTH_ADDS_INCREMENTAL_MARKET_STATE_V1"
+VERDICT_B = "BREADTH_CHANGES_ACTIVITY_SELECTION_EFFECT_V1"
+VERDICT_C = "BREADTH_NO_INCREMENTAL_INFORMATION_DAY1_V1"
+
+NEXT_AWAITING = "START_FUTURES_PREPARE_THEN_LIVE_0755_AND_BREADTH_0905_ON_20260914_V1"
+NEXT_TRANSPORT = "PROVE_BREADTH_TRANSPORT_FULL_BEFORE_RECON_V1"
+NEXT_MECHANISM = "DESIGN_CAUSAL_MECHANISM_FROM_NEW_BREADTH_TAPE_NO_ENTRY_YET_V1"
+NEXT_NO_INFO = "DO_NOT_RESCUE_WITH_ANOTHER_TRANSFORM_V1"
+
+ENTRY = False
+EXIT = False
+RUNTIME_CHANGED = False
+PAPER_CHANGED = False
+SUBSTITUTIONS_ALLOWED = False
+
+assert TRADING_DATE == "20260914"
+assert DAY1_TRADING_DATE == "20260911"
+assert FEATURE_MINING_CLOSED is True
+assert DAY1_CLOSE_VERDICT == "CURRENT_DAY1_INFORMATION_INSUFFICIENT_FOR_ENTRY"
+assert RANKING_TYPES == (1, 2, 5, 6, 7, 14, 15)
+assert DEFAULT_CADENCE_SEC == 60
+assert FALLBACK_CADENCE_SEC == 120
+assert PRIMARY_WINDOW_START_HM == (9, 5)
+assert PRIMARY_WINDOW_END_HM == (11, 25)
+assert DAY2_PRIMARY["substitutions_allowed"] is False
+assert Q1_STATE_METRIC == "LEADERSHIP_DIRECTION"
+assert Q2_SELECTOR == "OBSERVED_TRADE_N_180S"
+assert "SECTOR.RANK_PERSISTENCE" in BREADTH_METRICS
+assert CASE_LIVE_READY == "MARKET_BREADTH_LEADERSHIP_LIVE_READY_V2"
+assert FUTURES_LIVE_COMMAND.startswith("python kabu_native")
+assert BREADTH_LIVE_COMMAND.startswith("python kabu_native")
+assert ENTRY is False and EXIT is False
+assert SUBSTITUTIONS_ALLOWED is False

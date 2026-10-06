@@ -293,7 +293,7 @@ def test_runtime_parity_constants_unchanged() -> None:
         encoding="utf-8"
     )
     assert 'entry_stop="15:18"' in text
-    assert 'force_close="15:23"' in text
+    assert 'force_close="15:30"' in text
     assert "afternoon_session_close" in text
     assert WS_RECONNECT_EXHAUSTED == "WS_RECONNECT_EXHAUSTED"
     assert PUSH_RECONNECT_SILENCE_TIMEOUT

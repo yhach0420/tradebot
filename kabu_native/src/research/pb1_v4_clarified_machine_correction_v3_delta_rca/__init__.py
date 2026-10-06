@@ -1,0 +1,54 @@
+"""PB1_V4_CLARIFIED_MACHINE_CORRECTION_V3_DELTA_RCA_V1.
+
+Diagnosis only. Does not mutate V3 / V2 / Clarified spec.
+"""
+from __future__ import annotations
+
+from research.current_day1_information_close_v1 import FEATURE_MINING_CLOSED
+from research.pb1_v3_2_face_failure_rca import PARENT_V32_SHA, SEMANTIC_RCA_N
+from research.pb1_v4_clarified_machine_correction_v2.definitions import machine_sha256 as correction_v2_sha256
+from research.pb1_v4_clarified_machine_correction_v3.definitions import machine_sha256 as correction_v3_sha256
+from research.pb1_v4_clarified_machine_implementation.definitions import machine_sha256 as parent_machine_sha256
+from research.pb1_v4_implementation_correction import V4_LEGACY_LEAKED_IMPLEMENTATION
+from research.pb1_v4_implementation_correction.definitions import machine_sha256 as corrected_machine_sha256
+from research.pb1_v4_implementation_correction_rca import V4_CORRECTED_MACHINE_SHA256
+from research.pb1_v4_machine_implementation.definitions import machine_sha256 as leaked_machine_sha256
+from research.pb1_v4_opening_drive_location_reaccel_spec import CASE_READY as PARENT_READY_VERDICT
+from research.pb1_v4_semantic_spec_clarification import CASE_READY as PARENT_CLARIFIED_VERDICT
+from research.pb1_v4_semantic_spec_clarification.spec import spec_sha256
+from research.run_20260914_day2_futures_plus_first_live_breadth_v1 import TRADING_DATE as LIVE_TRADING_DATE
+
+PROGRAM_ID = "PB1_V4_CLARIFIED_MACHINE_CORRECTION_V3_DELTA_RCA"
+ANALYSIS_ID = "PB1_V4_CLARIFIED_MACHINE_CORRECTION_V3_DELTA_RCA_V1"
+EXPECTED_SPEC_SHA256 = "d8df35df3d3e8338db98f2b4a73dc0942bc793bbce1499acf57c40796a01e4a6"
+EXPECTED_CORRECTION_V2_SHA256 = "916ec521c6830d0b3aed6079ff40e1d043cc52c00bbd4c880108d39ced95536c"
+EXPECTED_CORRECTION_V3_SHA256 = "299fb0caeccdf725914da65aaaf59e980315881b523331ae64936a1b37f4dcb0"
+EXPECTED_PARENT_MACHINE_SHA256 = "33b1bf5732f1485222ca2857a3a78853fc88d2150ee6d18fc022aa556e388cf9"
+PARENT_V3_PARITY_VERDICT = "PB1_V4_CLARIFIED_MACHINE_CORRECTION_V3_PARITY_FAIL_V1"
+assert spec_sha256() == EXPECTED_SPEC_SHA256
+assert correction_v2_sha256() == EXPECTED_CORRECTION_V2_SHA256
+assert correction_v3_sha256() == EXPECTED_CORRECTION_V3_SHA256
+assert parent_machine_sha256() == EXPECTED_PARENT_MACHINE_SHA256
+assert corrected_machine_sha256() == V4_CORRECTED_MACHINE_SHA256 == "21fc72eb420afe5d21ff27bee3b0aa8c28cc6cb35d2a4a441544e4d7e5f5053e"
+assert leaked_machine_sha256() == V4_LEGACY_LEAKED_IMPLEMENTATION
+assert PARENT_READY_VERDICT == "PB1_V4_SEMANTIC_SPEC_READY_V1"
+assert PARENT_CLARIFIED_VERDICT == "PB1_V4_SEMANTIC_SPEC_CLARIFIED_V2"
+assert PARENT_V32_SHA == "56edb2c2576805e46193528824fb61faebb5ae7c85be0201f0331e90f9a67f43"
+assert SEMANTIC_RCA_N == 88
+
+CASE_COMPLETE = "PB1_V4_CLARIFIED_MACHINE_CORRECTION_V3_DELTA_RCA_COMPLETE_V1"
+CASE_PROVENANCE = "PB1_V4_CLARIFIED_MACHINE_CORRECTION_V3_ENCODING_PROVENANCE_FAIL_V1"
+CASE_INCOMPLETE = "PB1_V4_CLARIFIED_MACHINE_CORRECTION_V3_DELTA_RCA_INCOMPLETE_V1"
+CASE_BIND = "PB1_V4_CLARIFIED_MACHINE_CORRECTION_V3_DELTA_RCA_BIND_FAILED_V1"
+NEXT_V4 = "PB1_V4_CLARIFIED_MACHINE_CORRECTION_V4"
+NEXT_REDESIGN = "PB1_V4_CLARIFIED_MACHINE_CORRECTION_V3_ENCODING_REDESIGN_V1"
+NEXT_DEEPEN = "PB1_V4_CLARIFIED_MACHINE_CORRECTION_V3_DELTA_RCA_DEEPEN_V1"
+NEXT_BIND = "REPAIR_PRIOR_BIND_THEN_RETRY_V1"
+
+OLD_CONFIRMATION_OPENED = False
+FROZEN_VALIDATION_OPENED = False
+ANY_CODE_CHANGED = False
+ANY_THRESHOLD_OPTIMIZED = False
+FEATURE_MINING = FEATURE_MINING_CLOSED
+LIVE_DATE = LIVE_TRADING_DATE
+_ = correction_v2_sha256, correction_v3_sha256, parent_machine_sha256, corrected_machine_sha256, leaked_machine_sha256

@@ -48,6 +48,42 @@ def build_run_session_key(*, date: str, session: str) -> str:
     return f"{day}/live_session_{stamp}"
 
 
+def _seed_isolated_cache_from_production(cfg: Any, *, repo_root: Path, run_session_key: str) -> None:
+    """Read a production cache entry and write the clone only under the demo root."""
+    from small_paper.demo_push_firewall import demo_fully_armed
+    from small_paper.vol_liq_startup_cache import (
+        config_fingerprint,
+        load_cache_payload,
+        production_cache_dir,
+        resolve_cache_dir,
+        save_cache_payload,
+    )
+
+    if not demo_fully_armed():
+        return
+    demo_dir = resolve_cache_dir(cfg, repo_root=repo_root)
+    prod_dir = production_cache_dir(cfg, repo_root=repo_root)
+    fp = config_fingerprint(cfg)
+    existing, _err = load_cache_payload(demo_dir, run_session_key=run_session_key, config_fp=fp)
+    if existing is not None:
+        return
+    if not prod_dir.is_dir():
+        return
+    for path in sorted(prod_dir.glob("*.json")):
+        payload, err = load_cache_payload(prod_dir, run_session_key=_key_from_cache_name(path), config_fp=fp)
+        if payload is None or err:
+            continue
+        cloned = dict(payload)
+        cloned["run_session_key"] = run_session_key
+        cloned["demo_push_e2e_cache_clone_from"] = path.name
+        save_cache_payload(demo_dir, cloned)
+        return
+
+
+def _key_from_cache_name(path: Path) -> str:
+    return path.stem.replace("__", "/")
+
+
 def prebuild_vol_liq_startup_cache(
     *,
     run_session_key: str,
@@ -65,6 +101,7 @@ def prebuild_vol_liq_startup_cache(
     cfg_path = config_path or _default_config_path(repo)
     cfg = load_pilot_config(cfg_path)
     key = normalize_vol_liq_run_session_key(run_session_key)
+    _seed_isolated_cache_from_production(cfg, repo_root=repo, run_session_key=key)
     state = build_vol_liq_threshold_with_startup_cache(
         cfg, repo_root=repo, run_session_key=key
     )

@@ -62,7 +62,7 @@ def cache_enabled(pilot_config: Any) -> bool:
     return bool(getattr(pilot_config, "vol_liq_startup_cache_enabled", False))
 
 
-def resolve_cache_dir(pilot_config: Any, *, repo_root: Path) -> Path:
+def production_cache_dir(pilot_config: Any, *, repo_root: Path) -> Path:
     rel = str(
         getattr(
             pilot_config,
@@ -73,6 +73,17 @@ def resolve_cache_dir(pilot_config: Any, *, repo_root: Path) -> Path:
     )
     p = Path(rel)
     return p if p.is_absolute() else (repo_root / p)
+
+
+def resolve_cache_dir(pilot_config: Any, *, repo_root: Path) -> Path:
+    try:
+        from small_paper.demo_push_firewall import demo_fully_armed, isolated_native_root
+
+        if demo_fully_armed():
+            return isolated_native_root() / "results" / "cache" / "vol_liq_startup"
+    except Exception:
+        pass
+    return production_cache_dir(pilot_config, repo_root=repo_root)
 
 
 def config_fingerprint(pilot_config: Any) -> dict[str, Any]:

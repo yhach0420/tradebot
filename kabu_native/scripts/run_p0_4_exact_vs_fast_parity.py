@@ -120,8 +120,18 @@ class CollectorEngine(V1RNativeEntryLive):
                         "anchor": an,
                         "score": ev.get("score"),
                         "limit": ev.get("limit"),
+                        "limit_price": ev.get("limit_price") or ev.get("limit"),
                         "fill_price": ev.get("fill_price"),
                         "fill_time": ev.get("fill_time"),
+                        "fill_event_time": ev.get("fill_event_time") or ev.get("fill_time"),
+                        "cross_ask": ev.get("cross_ask"),
+                        "cross_ask_qty": ev.get("cross_ask_qty"),
+                        "board_execution_state": ev.get("board_execution_state"),
+                        "AskSign": ev.get("AskSign"),
+                        "BidSign": ev.get("BidSign"),
+                        "OpeningPrice": ev.get("OpeningPrice"),
+                        "OpeningPriceTime": ev.get("OpeningPriceTime"),
+                        "opening_status": ev.get("opening_status"),
                     }
                 )
             elif kind == "V1R_EXPIRED":
@@ -232,6 +242,23 @@ def run_replay(day: str, capture: Path, *, mode: str) -> dict[str, Any]:
             }
         )
     pnls = [float(t.get("pnl_yen_100") or 0.0) for t in trades]
+    traces = list(getattr(dual, "traces", None) or [])
+    slot_releases = [
+        (str(tr.get("symbol") or ""), str(tr.get("lane") or ""), str(tr.get("exit_time") or ""))
+        for tr in traces
+        if str(tr.get("event") or tr.get("kind") or "") == "SLOT_RELEASE"
+    ]
+    primary_exits = [
+        (
+            str(tr.get("symbol") or ""),
+            str(tr.get("reason") or tr.get("exit_reason") or ""),
+            str(tr.get("exit_time") or ""),
+            str(tr.get("exit_price") or ""),
+        )
+        for tr in traces
+        if str(tr.get("event") or tr.get("kind") or "") in {"EXIT_EXECUTED", "CONTROL_EXIT"}
+        and str(tr.get("lane") or "") == "primary"
+    ]
     return {
         "ok": True,
         "mode": mode,
@@ -271,6 +298,24 @@ def run_replay(day: str, capture: Path, *, mode: str) -> dict[str, Any]:
         "elapsed_sec": round(time.perf_counter() - t_wall, 3),
         "ledger_sha": _ledger_sha(trades),
         "last_et": last_et,
+        "slot_releases": sorted(slot_releases),
+        "primary_exits": sorted(primary_exits),
+        "pending_keys": sorted(
+            (str(a.get("symbol") or ""), str(a.get("anchor") or ""), str(a.get("limit") or ""))
+            for a in (eng.a_admits or [])
+        ),
+        "fill_keys": sorted(
+            (
+                str(f.get("symbol") or ""),
+                str(f.get("anchor") or ""),
+                str(f.get("fill_price") or ""),
+                str(f.get("fill_time") or ""),
+            )
+            for f in (eng.a_fills or [])
+        ),
+        "expired_keys": sorted(
+            (str(e.get("symbol") or ""), str(e.get("anchor") or "")) for e in (eng.a_expired or [])
+        ),
     }
 
 

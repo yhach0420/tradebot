@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from research.e1_x34a_execution_policy.arms import find_ask_cross_fill
+from research.e1_x34a_execution_policy.executable_board import is_executable_continuous_board
 from research.e1_x34b_entry_execution.features import preentry_from_board
 from research.e1_x36_joint_allocator.replay import simulate_joint
 from research.e1_x36r_freeze_integrity.serialize import score_fn_from_serialized
@@ -201,6 +202,7 @@ def extract_board_row(payload: dict[str, Any], event_t: float) -> dict[str, Any]
             or _parse_iso_epoch(payload.get("BidTime"))
         )
         fresh = float(event_t - qt) if qt is not None else 0.0
+    gate = is_executable_continuous_board(payload, event_t=event_t)
     return {
         "t": float(event_t),
         "bid": bid if bid is not None else float("nan"),
@@ -209,13 +211,38 @@ def extract_board_row(payload: dict[str, Any], event_t: float) -> dict[str, Any]
         "ask_qty": aq if aq is not None else float("nan"),
         "special": bool(special),
         "fresh_sec": float(fresh),
+        "executable": bool(gate.get("ok")),
+        "board_execution_state": str(gate.get("state") or ""),
+        "AskSign": str(gate.get("AskSign") or ""),
+        "BidSign": str(gate.get("BidSign") or ""),
+        "Buy1.Sign": str(gate.get("Buy1.Sign") or ""),
+        "Sell1.Sign": str(gate.get("Sell1.Sign") or ""),
+        "OpeningPrice": gate.get("OpeningPrice"),
+        "OpeningPriceTime": gate.get("OpeningPriceTime"),
+        "kabu_CurrentPrice": gate.get("CurrentPrice"),
+        "kabu_CurrentPriceTime": gate.get("CurrentPriceTime"),
+        "CurrentPriceStatus": gate.get("CurrentPriceStatus"),
+        "TradingVolume": gate.get("TradingVolume"),
+        "TradingVolumeTime": gate.get("TradingVolumeTime"),
+        "locked_or_crossed": bool(gate.get("locked_or_crossed")),
     }
 
 
 class _BoardBuf:
     """Amortized-O(1) append board arrays. Slice views for fill/anchor."""
 
-    __slots__ = ("n", "t", "bid", "ask", "bid_qty", "ask_qty", "special", "fresh_sec")
+    __slots__ = (
+        "n",
+        "t",
+        "bid",
+        "ask",
+        "bid_qty",
+        "ask_qty",
+        "special",
+        "fresh_sec",
+        "executable",
+        "board_execution_state",
+    )
 
     def __init__(self) -> None:
         self.n = 0
@@ -226,6 +253,8 @@ class _BoardBuf:
         self.ask_qty = np.empty(64, dtype=float)
         self.special = np.empty(64, dtype=bool)
         self.fresh_sec = np.empty(64, dtype=float)
+        self.executable = np.empty(64, dtype=bool)
+        self.board_execution_state = np.empty(64, dtype=object)
 
     def append(self, row: Mapping[str, Any]) -> None:
         if self.n >= self.t.size:
@@ -243,6 +272,8 @@ class _BoardBuf:
             self.ask_qty = _grow(self.ask_qty, float)
             self.special = _grow(self.special, bool)
             self.fresh_sec = _grow(self.fresh_sec, float)
+            self.executable = _grow(self.executable, bool)
+            self.board_execution_state = _grow(self.board_execution_state, object)
         i = self.n
         self.t[i] = float(row["t"])
         self.bid[i] = float(row["bid"]) if row.get("bid") is not None else float("nan")
@@ -251,6 +282,11 @@ class _BoardBuf:
         self.ask_qty[i] = float(row["ask_qty"]) if row.get("ask_qty") is not None else float("nan")
         self.special[i] = bool(row.get("special"))
         self.fresh_sec[i] = float(row.get("fresh_sec") or 0.0)
+        if "executable" in row:
+            self.executable[i] = bool(row.get("executable"))
+        else:
+            self.executable[i] = True
+        self.board_execution_state[i] = str(row.get("board_execution_state") or "")
         self.n = i + 1
 
     def compact_tail(self, keep: int) -> None:
@@ -264,6 +300,8 @@ class _BoardBuf:
         self.ask_qty = np.array(self.ask_qty[start : self.n], dtype=float)
         self.special = np.array(self.special[start : self.n], dtype=bool)
         self.fresh_sec = np.array(self.fresh_sec[start : self.n], dtype=float)
+        self.executable = np.array(self.executable[start : self.n], dtype=bool)
+        self.board_execution_state = np.array(self.board_execution_state[start : self.n], dtype=object)
         self.n = keep
 
     def view(self) -> dict[str, np.ndarray]:
@@ -277,6 +315,8 @@ class _BoardBuf:
                 "ask_qty": np.asarray([], dtype=float),
                 "special": np.asarray([], dtype=bool),
                 "fresh_sec": np.asarray([], dtype=float),
+                "executable": np.asarray([], dtype=bool),
+                "board_execution_state": np.asarray([], dtype=object),
             }
         return {
             "t": self.t[:n],
@@ -286,6 +326,8 @@ class _BoardBuf:
             "ask_qty": self.ask_qty[:n],
             "special": self.special[:n],
             "fresh_sec": self.fresh_sec[:n],
+            "executable": self.executable[:n],
+            "board_execution_state": self.board_execution_state[:n],
         }
 
 
@@ -458,6 +500,7 @@ class V1RNativeEntryLive:
     skipped_anchors_by_resync: list[str] = field(default_factory=list)
     next_eligible_anchor: Optional[str] = None
     realtime_resync_note: str = ""
+    require_executable_continuous_fill: bool = True
 
     @property
     def open_n(self) -> int:
@@ -599,6 +642,8 @@ class V1RNativeEntryLive:
                 "ask_qty": np.asarray([], dtype=float),
                 "special": np.asarray([], dtype=bool),
                 "fresh_sec": np.asarray([], dtype=float),
+                "executable": np.asarray([], dtype=bool),
+                "board_execution_state": np.asarray([], dtype=object),
             }
         buf = _BoardBuf()
         for r in rows:
@@ -1069,6 +1114,7 @@ class V1RNativeEntryLive:
                 wait_sec=WAIT_SEC,
                 limit_price=po.limit_price,
                 sess_end=sess_end,
+                require_executable_continuous=bool(self.require_executable_continuous_fill),
             )
             if fill.get("filled"):
                 ev = self._promote_fill(po, fill)
@@ -1131,10 +1177,24 @@ class V1RNativeEntryLive:
             "Buy1": {"Price": bid, "Qty": bq},
             "Sell1": {"Price": ask, "Qty": aq},
             "CurrentPrice": mid if mid is not None else bid,
+            "kabu_CurrentPrice": row.get("kabu_CurrentPrice"),
+            "kabu_CurrentPriceTime": row.get("kabu_CurrentPriceTime"),
             "board_age_sec": float(row.get("fresh_sec") or 0.0),
             "fresh_sec": float(row.get("fresh_sec") or 0.0),
             "SpecialQuote": bool(row.get("special")),
             "imbalance": imb,
+            "board_execution_state": row.get("board_execution_state"),
+            "AskSign": row.get("AskSign"),
+            "BidSign": row.get("BidSign"),
+            "Buy1.Sign": row.get("Buy1.Sign"),
+            "Sell1.Sign": row.get("Sell1.Sign"),
+            "OpeningPrice": row.get("OpeningPrice"),
+            "OpeningPriceTime": row.get("OpeningPriceTime"),
+            "CurrentPriceStatus": row.get("CurrentPriceStatus"),
+            "TradingVolume": row.get("TradingVolume"),
+            "TradingVolumeTime": row.get("TradingVolumeTime"),
+            "locked_or_crossed": bool(row.get("locked_or_crossed")),
+            "opening_status": "OPENED" if row.get("OpeningPrice") else "NOT_OPENED",
         }
 
     def _promote_fill(self, po: PendingOrder, fill: dict[str, Any]) -> dict[str, Any]:
@@ -1167,8 +1227,12 @@ class V1RNativeEntryLive:
             "anchor": po.anchor,
             "score": po.score,
             "limit": po.limit_price,
+            "limit_price": po.limit_price,
             "fill_price": fill_price,
             "fill_time": fill_t,
+            "fill_event_time": float(fill.get("fill_event_time") or fill_t),
+            "cross_ask": fill.get("cross_ask"),
+            "cross_ask_qty": fill.get("cross_ask_qty"),
             "signal_time": po.signal_time,
             "strategy": "PASSIVE_ASYMMETRIC_EXIT_V2_FULL_STRATEGY",
             "entry_mode": "V1R / PASSIVE BID",
@@ -1178,6 +1242,17 @@ class V1RNativeEntryLive:
             "source": "v1r_native",
             "fill_snapshot_bound": bool(snap),
             "fill_snapshot": snap,
+            "board_execution_state": fill.get("board_execution_state") or snap.get("board_execution_state"),
+            "AskSign": snap.get("AskSign"),
+            "BidSign": snap.get("BidSign"),
+            "Buy1.Sign": snap.get("Buy1.Sign"),
+            "Sell1.Sign": snap.get("Sell1.Sign"),
+            "OpeningPrice": snap.get("OpeningPrice"),
+            "OpeningPriceTime": snap.get("OpeningPriceTime"),
+            "opening_status": snap.get("opening_status"),
+            "CurrentPriceStatus": snap.get("CurrentPriceStatus"),
+            "TradingVolume": snap.get("TradingVolume"),
+            "locked_or_crossed": snap.get("locked_or_crossed"),
         }
         self._emit(ev)
         self._notify("FILL", ev)
@@ -1704,6 +1779,9 @@ def boot_v1r_native_entry(
     universe_source: str = "",
 ) -> V1RNativeEntryLive:
     """Fail-closed boot: model/SHA + non-empty day-fixed universe or NO PAPER PRIMARY."""
+    from small_paper.paper_session_executor import guard_v1r_native_boot
+
+    guard_v1r_native_boot()
     uni = [_norm_sym(s) for s in universe if _norm_sym(s)]
     uni = list(dict.fromkeys(uni))
     try:
@@ -1761,6 +1839,9 @@ def ensure_native_entry(
     force_rebuild: bool = False,
 ) -> V1RNativeEntryLive:
     """Boot or repair native ENTRY wiring. Never invents binding-manifest symbols."""
+    from small_paper.paper_session_executor import guard_v1r_native_boot
+
+    guard_v1r_native_boot()
     global _ENGINE
     resolved: Optional[dict[str, Any]] = None
     uni = [_norm_sym(s) for s in (universe or []) if _norm_sym(s)]

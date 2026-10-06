@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import re
 import shutil
@@ -17,7 +18,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -1857,11 +1858,266 @@ def evaluate_design_consistency_artifact(
     )
 
 
+# kabusapi GET /orders State: 5 = 終了 (filled, cancelled, or expired).
+# State 3 (処理済) with no remaining quantity is also finished.
+# The 20260910 startup path stored every returned ID and did not apply this filter.
+_KABU_ORDER_TERMINAL_STATES = frozenset({"5", "5.0", "終了"})
+_KABU_ORDER_DONE_IF_FLAT = frozenset({"3", "3.0", "処理済"})
+
+
+def kabu_order_is_active(order: Mapping[str, Any]) -> bool:
+    """True when a kabusapi order row is still a working order."""
+    state = str(order.get("State") or order.get("OrderState") or "").strip()
+    leaves = order.get("LeavesQty")
+    try:
+        if leaves is not None and str(leaves) != "":
+            remaining = int(float(leaves))
+        else:
+            order_qty = int(float(order.get("OrderQty") or order.get("Qty") or 0))
+            filled = int(float(order.get("CumQty") or order.get("FilledQty") or 0))
+            remaining = max(0, order_qty - filled)
+    except (TypeError, ValueError):
+        remaining = 1
+    if state in _KABU_ORDER_TERMINAL_STATES:
+        return False
+    if state in _KABU_ORDER_DONE_IF_FLAT and remaining <= 0:
+        return False
+    if not state:
+        return True
+    return remaining > 0 or state not in _KABU_ORDER_TERMINAL_STATES
+
+
+def historical_broker_only_items(safety_dir: Path) -> dict[str, Any]:
+    """Read persisted BROKER_ONLY rows. Does not rewrite the journal."""
+    positions: list[dict[str, Any]] = []
+    order_ids: list[str] = []
+    other_blocking: list[str] = []
+    path = Path(safety_dir) / "broker_reconciliation.jsonl"
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                other_blocking.append("UNPARSEABLE")
+                continue
+            kind = str(row.get("type") or "")
+            if kind == "BROKER_ONLY_POSITION":
+                positions.append(
+                    {
+                        "symbol": str(row.get("symbol") or ""),
+                        "qty": row.get("broker"),
+                    }
+                )
+            elif kind == "BROKER_ONLY_ORDER":
+                oid = str(row.get("broker_order_id") or "")
+                if oid:
+                    order_ids.append(oid)
+            elif kind in _PAPER_BLOCKING_RECON_DIFF_TYPES:
+                other_blocking.append(kind)
+    return {
+        "positions": positions,
+        "order_ids": order_ids,
+        "other_blocking": other_blocking,
+    }
+
+
+def compare_historical_broker_only_to_current(
+    items: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Current readonly book vs historical broker-only residue.
+
+    CURRENT_CLEAN only when the read succeeded and none of the historical
+    position symbols or order ids are still active. Unreadable stays blocked.
+    """
+    if not bool(snapshot.get("readable")):
+        return {
+            "result": "CURRENT_UNREADABLE",
+            "recovery_ready": False,
+            "position_still_open": None,
+            "active_historical_order_n": None,
+            "error": str(snapshot.get("error") or "unreadable"),
+            "submit_calls": int(snapshot.get("submit_calls") or 0),
+            "cancel_calls": int(snapshot.get("cancel_calls") or 0),
+            "live_order_calls": int(snapshot.get("live_order_calls") or 0),
+        }
+    pos_map = snapshot.get("positions") or {}
+    still_pos: list[dict[str, Any]] = []
+    for row in items.get("positions") or []:
+        sym = str(row.get("symbol") or "")
+        try:
+            qty = int(pos_map.get(sym) or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if sym and qty > 0:
+            still_pos.append(
+                {"symbol": sym, "current_qty": qty, "historical_qty": row.get("qty")}
+            )
+    active_ids = {str(x) for x in (snapshot.get("active_order_ids") or [])}
+    still_orders = [oid for oid in (items.get("order_ids") or []) if oid in active_ids]
+    owned = [str(x) for x in (snapshot.get("tradebot_owned_active") or [])]
+    clean = not still_pos and not still_orders and not owned
+    return {
+        "result": "CURRENT_CLEAN" if clean else "CURRENT_UNRESOLVED",
+        "recovery_ready": clean,
+        "position_still_open": still_pos,
+        "active_historical_order_n": len(still_orders),
+        "active_historical_order_ids": still_orders,
+        "tradebot_owned_active": owned,
+        "current_position_symbols": sorted(str(k) for k, v in pos_map.items() if int(v or 0) > 0),
+        "current_active_order_n": len(active_ids),
+        "error": "",
+        "submit_calls": int(snapshot.get("submit_calls") or 0),
+        "cancel_calls": int(snapshot.get("cancel_calls") or 0),
+        "live_order_calls": int(snapshot.get("live_order_calls") or 0),
+    }
+
+
+def recovery_should_wait_for_ingress_token(native_root: Path, trading_date: str) -> bool:
+    """True only after the official launcher has entered the ingress phase or a live ingress pid exists.
+
+    A standalone recovery call with no issuer does not wait.
+    """
+    from small_paper.auth_lifecycle import ENV_AUTH_PHASE, PHASES
+    from small_paper.kabu_token_authority import _pid_alive
+
+    explicit = str(os.environ.get(ENV_AUTH_PHASE) or "").strip().upper()
+    if explicit in PHASES and explicit != "PRE_INGRESS":
+        return True
+    pid_path = Path(native_root) / "data" / "market_capture" / str(trading_date) / "ingress.pid"
+    if not pid_path.is_file():
+        return False
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip() or "0")
+    except (OSError, ValueError):
+        return False
+    return pid > 0 and _pid_alive(pid)
+
+
+def acquire_published_readonly_token(
+    *,
+    native_root: Path,
+    trading_date: str,
+    wait: Optional[bool] = None,
+    wait_sec: float = 20.0,
+    poll_sec: float = 0.5,
+    acquire: Optional[Callable[..., Mapping[str, Any]]] = None,
+    sleeper: Optional[Callable[[float], None]] = None,
+) -> tuple[str, str, bool]:
+    """Reuse the token Market Ingress already published. Never POST /token."""
+    import time
+
+    from small_paper.kabu_token_authority import acquire_token_for_readonly
+
+    do_wait = (
+        recovery_should_wait_for_ingress_token(native_root, trading_date)
+        if wait is None
+        else bool(wait)
+    )
+    acquirer = acquire or acquire_token_for_readonly
+    pause = sleeper or time.sleep
+    deadline = time.monotonic() + (float(wait_sec) if do_wait else 0.0)
+    waited = False
+    err = "token_missing"
+    while True:
+        try:
+            got = acquirer(
+                native_root=Path(native_root),
+                trading_date=str(trading_date),
+                caller="paper_recovery_current_readonly",
+            )
+            token = str(got.get("token") or "")
+            if bool(got.get("issued")):
+                return "", "token_issue_forbidden", waited
+            if token:
+                return token, "", waited
+            err = "token_missing"
+        except Exception as exc:
+            err = type(exc).__name__
+        if not do_wait or time.monotonic() >= deadline:
+            return "", err, waited
+        waited = True
+        pause(poll_sec)
+
+
+def read_current_readonly_broker_book(*, native_root: Path) -> dict[str, Any]:
+    """GET positions and orders only. Never POST /token, submit, or cancel.
+
+    After the checked runner has started Ingress, wait briefly for that
+    publisher. A missing token stays CURRENT_UNREADABLE.
+    """
+    out: dict[str, Any] = {
+        "readable": False,
+        "positions": {},
+        "active_order_ids": [],
+        "error": "",
+        "submit_calls": 0,
+        "cancel_calls": 0,
+        "live_order_calls": 0,
+        "token_issued": False,
+    }
+    try:
+        from api.order_read_client import KabuOrderReadClient
+        from api.rest_client import default_base_url, load_kabu_env
+        from small_paper.runtime_clock import now_jst as session_now
+    except Exception as exc:
+        out["error"] = type(exc).__name__
+        return out
+    try:
+        load_kabu_env(repo_root=Path(native_root).parent)
+    except Exception:
+        pass
+    day = session_now().strftime("%Y%m%d")
+    token, err, waited = acquire_published_readonly_token(
+        native_root=Path(native_root),
+        trading_date=day,
+    )
+    out["token_waited_for_ingress"] = waited
+    out["token_issued"] = False
+    if not token:
+        out["error"] = err or "token_missing"
+        return out
+    client = KabuOrderReadClient(default_base_url())
+    positions: dict[str, int] = {}
+    active: list[str] = []
+    try:
+        for product in (1, 2):
+            rows, _ms = client.get_positions(token=token, product=product)
+            for p in rows:
+                code = str(p.get("Symbol") or "")
+                if not code:
+                    continue
+                qty = int(float(p.get("LeavesQty") or p.get("Qty") or 0))
+                if qty <= 0:
+                    continue
+                sym = code if code.endswith(".T") else f"{code}.T"
+                positions[sym] = positions.get(sym, 0) + qty
+            orders, _ord_ms = client.get_orders(token=token, product=product)
+            for order in orders:
+                oid = str(order.get("ID") or order.get("OrderId") or order.get("OrderID") or "")
+                if oid and kabu_order_is_active(order):
+                    active.append(oid)
+    except Exception as exc:
+        out["error"] = type(exc).__name__
+        out["positions"] = {}
+        out["active_order_ids"] = []
+        return out
+    out["readable"] = True
+    out["positions"] = positions
+    out["active_order_ids"] = sorted(set(active))
+    out["error"] = ""
+    return out
+
+
 def probe_workspace_recovery(
     native_root: Path,
     *,
     trading_date: Optional[str] = None,
     config_path: Optional[Path] = None,
+    current_book_reader: Optional[Callable[[], Mapping[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Pre-start Recovery Gate: evaluate real artifacts (no hardcoded False/UNKNOWN).
 
@@ -1929,6 +2185,38 @@ def probe_workspace_recovery(
         artifact_trace["reference_session"] = ref
         artifact_trace["prior_eval"] = prior_eval
         recon = str(prior_eval.get("reconciliation_state") or "UNKNOWN")
+        if recon not in ("OK", "PASS", "CLEAN"):
+            safety_dir = Path(str(ref.get("safety_dir") or ""))
+            items = historical_broker_only_items(safety_dir)
+            classified = (
+                (prior_eval.get("detail") or {}).get("reconciliation_classification") or {}
+            )
+            broker_only = bool(items["positions"] or items["order_ids"])
+            if (
+                classified.get("classification") == "position_or_order_mismatch"
+                and broker_only
+                and not items["other_blocking"]
+            ):
+                reader = current_book_reader or (
+                    lambda: read_current_readonly_broker_book(native_root=root)
+                )
+                try:
+                    snapshot = reader()
+                except Exception as exc:
+                    snapshot = {
+                        "readable": False,
+                        "error": type(exc).__name__,
+                        "submit_calls": 0,
+                        "cancel_calls": 0,
+                        "live_order_calls": 0,
+                    }
+                decision = compare_historical_broker_only_to_current(items, snapshot)
+                artifact_trace["current_readonly_reconciliation"] = decision
+                artifact_trace["historical_evidence_rewritten"] = False
+                if decision.get("result") == "CURRENT_CLEAN":
+                    recon = "OK"
+                else:
+                    recon = "UNKNOWN"
         ev = RecoveryReadinessEvidence(
             session_manifest_valid=bool(prior_eval.get("session_manifest_valid")),
             session_seal_valid=bool(prior_eval.get("session_seal_valid")),

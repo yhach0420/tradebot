@@ -200,6 +200,14 @@ def main() -> int:
         cli_pre625=bool(args.pre625_runtime_structure_mode),
     )
     day_key = args.output_date or datetime.now(JST).strftime("%Y%m%d")
+    if args.output_date:
+        import os
+
+        from small_paper.session_runtime_identity import ENV_TRADING_DATE, resolve_runtime_trading_date
+
+        # Daily runner already passed this day as --output-date. Safety must see it
+        # even when certification mode has no TRADEBOT_TRADING_DATE yet.
+        os.environ.setdefault(ENV_TRADING_DATE, resolve_runtime_trading_date(str(args.output_date)))
     session_stamp = datetime.now(JST).strftime("%H%M%S")
     source = args.source or config.default_source
 

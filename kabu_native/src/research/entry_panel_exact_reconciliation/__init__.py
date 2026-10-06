@@ -1,0 +1,138 @@
+"""Canonical ENTRY Panel / Exact rebase. Infrastructure repair only. No new model."""
+from __future__ import annotations
+
+ANALYSIS_ID = "CANONICAL_ENTRY_PANEL_EXACT_REBASE_V2"
+C14_ID = "V1R_EXIT_V2_PAPER_PRIMARY_CANDIDATE_V26G14_14"
+MAX_WORKERS = 2
+WAIT_SEC = 1.0
+POSITION_CAP = 5
+NEW_FORWARD_N = 0
+TRUE_OOS = False
+SCORE_EPS = 1e-10
+EXPECTED_A2_CLOSED = 233
+EXPECTED_A2_155 = 155
+EXPECTED_RAW_EXACT_MISMATCH = 3
+EXPECTED_PANEL_EXACT_MISMATCH = 2456
+EXPECTED_C3_1349 = 1349
+EXPECTED_EXECUTABLE_T0 = 11390
+
+C3_VERDICT_MAINTAINED = "C3_TOP_EDGE_SUPPORTED_PORTFOLIO_FAIL"
+C3_AUDIT_VERDICT_MAINTAINED = "C3_MULTIFACTOR_EXACT_FAILURE"
+C3_RECON_VERDICT_MAINTAINED = "C3_EXECUTION_COUPLING_NOT_YET_RESOLVED"
+CONTRACT_VERDICT_MAINTAINED = "ENTRY_DECISION_CONTRACT_MISMATCH"
+C2_STATUS_MAINTAINED = "C2_OOF_RANKING_EDGE_NOT_STABLE"
+B2_FORMAL = {
+    "B2_ROBUST_IMPROVEMENT": False,
+    "RECOMMENDED_B_VARIANT": "B0",
+    "VERDICT": "B_NO_ROBUST_IMPROVEMENT",
+}
+REENTRY_V2_FORMAL = "REENTRY_ORDINAL_IS_CLOCK_PROXY"
+
+FINAL_SPEC = {
+    "feature_set": "F1_C2_6",
+    "features": [
+        "drawdown_180s",
+        "mid_range_180s_bps",
+        "vwap_dist_bps",
+        "mid_abs_ret_60s",
+        "mid_ret_180s",
+        "xs_imbalance_z",
+    ],
+    "n_features": 6,
+    "normalization": "cross_sectional_z",
+    "alpha": 10.0,
+}
+
+F0_CURRENT6 = (
+    "spread_bps",
+    "imbalance",
+    "mid_ret_60s",
+    "mid_ret_180s",
+    "event_rate_60s",
+    "log_bid_qty",
+)
+F1_C2_6 = (
+    "drawdown_180s",
+    "mid_range_180s_bps",
+    "vwap_dist_bps",
+    "mid_abs_ret_60s",
+    "mid_ret_180s",
+    "xs_imbalance_z",
+)
+F1_RAW = (
+    "drawdown_180s",
+    "mid_range_180s_bps",
+    "vwap_dist_bps",
+    "mid_abs_ret_60s",
+    "mid_ret_180s",
+)
+
+RAW_EXACT_CAUSES = (
+    "EVENT_ORDERING",
+    "TIMESTAMP_NORMALIZATION",
+    "DUPLICATE_EVENT",
+    "SESSION_BOUNDARY",
+    "STATE_CARRY",
+    "RECONSTRUCTION_BUG",
+    "OTHER",
+)
+PANEL_EXACT_CAUSES = (
+    "EVENT_CUTOFF_DIFFERENCE",
+    "LAST_EVENT_SELECTION_DIFFERENCE",
+    "STATE_PERSISTENCE_DIFFERENCE",
+    "SIGN_STATUS_DIFFERENCE",
+    "SESSION_RESET_DIFFERENCE",
+    "CLOCK_ORDERING_DIFFERENCE",
+    "CACHE_DIFFERENCE",
+    "MISSING_EVENT_DIFFERENCE",
+    "TIMESTAMP_NORMALIZATION_DIFFERENCE",
+    "OTHER",
+)
+C3_1349_CAUSES = (
+    "PANEL_HISTORY_TRUNCATION",
+    "PANEL_STATE_LOSS",
+    "VWAP_RECONSTRUCTION_DIFFERENCE",
+    "LOOKBACK_RECONSTRUCTION_DIFFERENCE",
+    "SESSION_HISTORY_DIFFERENCE",
+    "SOURCE_EVENT_DIFFERENCE",
+    "CAUSALITY_DEFECT",
+    "OTHER",
+)
+
+ELIGIBLE_DAYS = (
+    "20260722",
+    "20260728",
+    "20260729",
+    "20260730",
+    "20260731",
+    "20260803",
+    "20260804",
+    "20260805",
+    "20260806",
+    "20260807",
+    "20260810",
+    "20260817",
+    "20260819",
+    "20260820",
+    "20260824",
+    "20260825",
+    "20260826",
+    "20260827",
+)
+
+RUNTIME_CHANGED = False
+C14_CHANGED = False
+PAPER_OPERATED = False
+OPVAL_OPERATED = False
+C4_STARTED = False
+C3_IMPLEMENTED = False
+NEW_MODEL_CREATED = False
+EXECUTION_AWARE_MODEL_CREATED = False
+NEW_TARGET_CREATED = False
+NEW_FEATURE_CREATED = False
+NEW_THRESHOLD_CREATED = False
+PERFORMANCE_REBASE_STARTED = False
+CLOCK_CHANGED = False
+EXIT_CHANGED = False
+CAP_CHANGED = False
+FILL_CHANGED = False

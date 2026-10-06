@@ -62,6 +62,7 @@ RUNTIME_DEPENDENCY_RELS: tuple[str, ...] = (
     "src/small_paper/certification_input_coverage.py",
     "src/small_paper/derived_artifact_contract.py",
     "src/small_paper/discord_notifier.py",
+    "src/notify/x1_discord_gate.py",
     "src/small_paper/canonical_summary.py",
     "src/small_paper/v1r_primary_runtime.py",
     "src/small_paper/v1r_exit_v2_contract.py",
@@ -69,6 +70,7 @@ RUNTIME_DEPENDENCY_RELS: tuple[str, ...] = (
     "src/notify/v1r_discord_routing.py",
     "src/notify/v1r_discord_embeds.py",
     "src/research/e1_x34a_execution_policy/arms.py",
+    "src/research/e1_x34a_execution_policy/executable_board.py",
     "src/small_paper/day_fixed_am_registration.py",
     "src/small_paper/kabu_registration_authority.py",
     "src/small_paper/kabu_token_authority.py",
@@ -97,6 +99,18 @@ RUNTIME_DEPENDENCY_RELS: tuple[str, ...] = (
     "src/small_paper/capture_child_cleanup.py",
     "src/small_paper/market_ingress_state.py",
     "src/small_paper/operational_validation.py",
+    # Fixed-entry-support Paper Primary binding. Identity, selection, and factory
+    # routing only. Candidate implementation files are sealed, not reimplemented.
+    "src/small_paper/paper_primary_activation.py",
+    "src/small_paper/pre_paper_ready_seal.py",
+    "src/small_paper/paper_session_executor.py",
+    "src/small_paper/v1r_passive_session_executor.py",
+    "src/small_paper/fixed_support_x1_session.py",
+    "src/small_paper/pre_freeze_kabu_validation.py",
+    "src/small_paper/x1_pm_session_identity.py",
+    "src/research/event_time_impulse_fixed_entry_support_candidate_v1/__init__.py",
+    "src/research/event_time_impulse_fixed_entry_support_candidate_v1/identity.py",
+    "src/research/event_time_impulse_fixed_entry_support_candidate_v1/simulate.py",
 )
 
 # Must be ⊆ RUNTIME_DEPENDENCY_RELS. Uncovered ⇒ inventory coverage FAIL.

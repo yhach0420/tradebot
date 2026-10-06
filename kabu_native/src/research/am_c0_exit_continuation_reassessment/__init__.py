@@ -1,0 +1,106 @@
+"""AM C0 EXIT continuation reassessment. C0 ENTRY frozen. C14 750 state reuse only. Offline only."""
+from __future__ import annotations
+
+from research.am_entry_architecture_final_reassessment import C0
+from research.am_entry_profit_improvement import (
+    C14_ID,
+    COMMON_AM_PM_MODEL_ALLOWED,
+    COMMON_AM_PM_TARGET_ALLOWED,
+    DEV_WAIT_SEC,
+    NEW_FORWARD_N,
+    PAPER_OPERATED,
+    RUNTIME_CHANGED,
+    SESSION,
+    TRUE_OOS,
+    W5_RUNTIME_ADOPTED,
+)
+from research.am_entry_profit_improvement import CANCEL_N, LIVE_ORDER_N, SUBMIT_N
+from research.am_entry_research_final_decision import PROSPECTIVE_CHALLENGER_NAME, PROSPECTIVE_STATUS
+from research.am_exit_contribution_rca import FROZEN_C0_SPEC_SHA256
+from small_paper.v1r_primary_runtime import POSITION_CAP, WAIT_SEC
+
+ANALYSIS_ID = "AM_C0_EXIT_CONTINUATION_REASSESSMENT_V1"
+EXIT_SCOPE = "C0_AUGMENT_ONLY"
+ENTRY_PARENT_ID = C0
+ENTRY_PARENT_SHA256 = FROZEN_C0_SPEC_SHA256
+E0 = "E0_C14_BASE"
+E1 = "E1_PROFIT_HISTORY_FORCE_EXTEND"
+E2 = "E2_ALL_CONT_EXIT_FORCE_EXTEND"
+ARM_IDS = (E0, E1, E2)
+CONTINUATION_ARM_N = 3
+CONT_EXIT_600 = "CONT_EXIT_600"
+CONT_EXTEND_750 = "CONT_EXTEND_750"
+DECISION_SEC = 600.0
+EXTEND_SEC = 750.0
+RUNTIME_ADOPTION_ALLOWED = False
+PAPER_STRATEGY_ADOPTION_ALLOWED = False
+FORMAL_CANDIDATE = False
+RUNTIME_CHANGE_N = 0
+PAPER_OPERATION_N = 0
+ENTRY_POLICY_CHANGE_N = 0
+WAIT_CHANGE_N = 0
+CONTINUATION_THRESHOLD_SEARCH_N = 0
+EXIT_HORIZON_SEARCH_N = 0
+PTL_REUSE_N = 0
+ORACLE_MFE_EXIT_USE_N = 0
+FUTURE_EXIT_SIGNAL_USE_N = 0
+CURRENT_EXIT_CHANGE_N = 0
+
+CURRENT_LOCKED = {
+    "TRADE_N": 141,
+    "NET": 30710.0,
+    "PF": 1.0396263177589389,
+    "DD": -317790.0,
+}
+C0_OVERLAY_LOCKED = {
+    "NET": 141710.0,
+    "PF": 1.1766979638150101,
+    "DD": -309740.0,
+    "PAIRED_POS_DAYS": 7,
+    "PAIRED_NEG_DAYS": 8,
+    "PAIRED_ZERO_DAYS": 3,
+    "PAIRED_MEDIAN": 0.0,
+    "EX_BEST": 176.47058823529412,
+    "EX_TOP3": -603.3333333333334,
+}
+C0_AUGMENT_LOCKED = {
+    "TRADE_N": 26,
+    "WIN_N": 12,
+    "LOSS_N": 13,
+    "FLAT_N": 1,
+    "NET": 111000.0,
+    "PF": 5.111111111111111,
+    "L2_N": 10,
+    "L3_N": 2,
+}
+
+assert abs(float(WAIT_SEC) - 1.0) < 1e-12
+assert float(DEV_WAIT_SEC) == 5.0
+assert SESSION == "AM"
+assert int(POSITION_CAP) == 5
+assert ENTRY_PARENT_ID == "C0_B0_PRIMARY_B1_CONFIRM"
+assert PROSPECTIVE_CHALLENGER_NAME == "AM_ENTRY_PROSPECTIVE_CHALLENGER_C0"
+assert PROSPECTIVE_STATUS == "FROZEN_FOR_FUTURE_OOS_ONLY"
+assert ENTRY_PARENT_SHA256 == "c8ac25b5fb45de774b4bb776e7ed32d6823e23500719ab0772a08a0fca102f91"
+assert C14_ID == "V1R_EXIT_V2_PAPER_PRIMARY_CANDIDATE_V26G14_14"
+assert ARM_IDS == (E0, E1, E2)
+assert int(CONTINUATION_ARM_N) == 3
+assert abs(float(DECISION_SEC) - 600.0) < 1e-12
+assert abs(float(EXTEND_SEC) - 750.0) < 1e-12
+assert RUNTIME_ADOPTION_ALLOWED is False
+assert PAPER_STRATEGY_ADOPTION_ALLOWED is False
+assert FORMAL_CANDIDATE is False
+assert TRUE_OOS is False
+assert int(NEW_FORWARD_N) == 0
+assert int(PTL_REUSE_N) == 0
+assert int(CONTINUATION_THRESHOLD_SEARCH_N) == 0
+assert int(EXIT_HORIZON_SEARCH_N) == 0
+assert COMMON_AM_PM_MODEL_ALLOWED is False
+assert COMMON_AM_PM_TARGET_ALLOWED is False
+assert W5_RUNTIME_ADOPTED is False
+assert RUNTIME_CHANGED is False
+assert PAPER_OPERATED is False
+assert int(SUBMIT_N) == 0
+assert int(CANCEL_N) == 0
+assert int(LIVE_ORDER_N) == 0
+assert C0_AUGMENT_LOCKED["TRADE_N"] == 26

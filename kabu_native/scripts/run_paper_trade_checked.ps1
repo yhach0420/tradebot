@@ -11,7 +11,9 @@ param(
     [switch]$CommFaultE2E,
     [switch]$ReuseCapture,
     [int]$ReuseCapturePid = 0,
-    [switch]$FullDayCert
+    [switch]$FullDayCert,
+    [switch]$PremarketCertOnly,
+    [string]$TradingDate = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,6 +41,8 @@ if ($CommFaultE2E) {
     $env:TRADEBOT_COMM_FAULT_E2E = "1"
 }
 if ($FullDayCert) {
+    Write-Host "[CERT] --full-day-cert is off-market certification, not the live Paper launcher."
+    Write-Host "[CERT] Live Paper command: .\\run_paper_trade_checked.bat --no-pause"
     $env:TRADEBOT_CERTIFICATION_MODE = "1"
 }
 
@@ -56,6 +60,8 @@ if ($SkipPaper) { $pyArgs += "--skip-paper" }
 if ($SkipW4s) { $pyArgs += "--skip-w4s" }
 if ($DemoPushE2E) { $pyArgs += "--demo-push-e2e" }
 if ($CommFaultE2E) { $pyArgs += "--comm-fault-e2e" }
+if ($PremarketCertOnly) { $pyArgs += "--premarket-cert-only" }
+if ($TradingDate) { $pyArgs += @("--trading-date", $TradingDate) }
 if ($ReuseCapture) {
     $pyArgs += "--reuse-capture"
     if ($ReuseCapturePid -gt 0) {

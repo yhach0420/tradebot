@@ -1,0 +1,81 @@
+"""Raw-event incremental prediction probe. Research only. No runtime adopt. No Exact."""
+from __future__ import annotations
+
+from research.direct_joint_objective import ELIGIBLE_DAYS, RANDOM_STATE
+from research.entry_sequence_representation import S1_FEATURES
+from research.raw_event_information_audit import FAMILY_KEYS
+
+ANALYSIS_ID = "RAW_EVENT_INCREMENTAL_PREDICTION_PROBE_V1"
+C14_ID = "V1R_EXIT_V2_PAPER_PRIMARY_CANDIDATE_V26G14_14"
+MAX_WORKERS = 2
+TRUE_OOS = False
+NEW_FORWARD_N = 0
+TOPK = 3
+JOINT_RATE_MIN = 0.50
+NORMALIZATION = "none"
+RAW_DESCRIPTOR_N = 23
+
+RF_PARAMS = {
+    "n_estimators": 500,
+    "max_depth": 6,
+    "min_samples_leaf": 20,
+    "max_features": 1.0,
+    "bootstrap": True,
+    "random_state": RANDOM_STATE,
+    "n_jobs": -1,
+    "class_weight": None,
+}
+
+PRIOR_VERDICT_REQUIRED = "RAW_EVENT_SIGNAL_NOT_ROBUST"
+
+S1_EXPECTED = {
+    "TOP3_MFE_DELTA": 0.0006135166638949457,
+    "TOP3_DOWNSIDE_DELTA": 0.00032286028616205456,
+    "JOINT_COHORT_SUCCESS_RATE": 0.34265734265734266,
+    "MFE_POSITIVE_DAYS": 13,
+    "MFE_NEGATIVE_DAYS": 5,
+    "DOWNSIDE_POSITIVE_DAYS": 10,
+    "DOWNSIDE_NEGATIVE_DAYS": 8,
+    "DOWNSIDE_EX_TOP3_DAYS": -0.00004548741836091112,
+}
+S1_PARITY_ABS_TOL = 1e-10
+
+RAW_DESCRIPTORS = (
+    FAMILY_KEYS["EVENT_TIMING"]
+    + FAMILY_KEYS["IMBALANCE_TRANSITION"]
+    + FAMILY_KEYS["SPREAD_TRANSITION"]
+    + FAMILY_KEYS["DEPTH_TRANSITION"]
+)
+E0_FEATURES = tuple(S1_FEATURES)
+E1_FEATURES = tuple(S1_FEATURES) + RAW_DESCRIPTORS
+
+assert len(RAW_DESCRIPTORS) == RAW_DESCRIPTOR_N
+assert len(FAMILY_KEYS["EVENT_TIMING"]) == 6
+assert len(FAMILY_KEYS["IMBALANCE_TRANSITION"]) == 6
+assert len(FAMILY_KEYS["SPREAD_TRANSITION"]) == 6
+assert len(FAMILY_KEYS["DEPTH_TRANSITION"]) == 5
+assert len(set(RAW_DESCRIPTORS)) == RAW_DESCRIPTOR_N
+assert not set(RAW_DESCRIPTORS) & set(S1_FEATURES)
+assert len(E0_FEATURES) == 270
+assert len(E1_FEATURES) == 270 + RAW_DESCRIPTOR_N
+assert "positive_imbalance_time_share" not in RAW_DESCRIPTORS
+
+RUNTIME_CHANGED = False
+C14_CHANGED = False
+PAPER_OPERATED = False
+OPVAL_OPERATED = False
+C4_STARTED = False
+EXACT_RAN = False
+HYPERPARAMETER_TUNING = False
+MODEL_CHANGED = False
+LABEL_CHANGED = False
+FEATURE_SEARCH = False
+SUBSET_SEARCH = False
+THRESHOLD_SEARCH = False
+WINDOW_CHANGED = False
+DESCRIPTOR_ADDED = False
+PNL_USED = False
+RUNTIME_CANDIDATE_CREATED = False
+STRATEGY_CREATED = False
+EVENT_MODEL_STARTED = False
+ECONOMIC_STORY_FILTER = False

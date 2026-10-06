@@ -557,6 +557,24 @@ Blockers (non-exhaustive):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Phase687W4S Forward Soak
 
 - Verdict (latest): `READONLY_SOAK_IN_PROGRESS`

@@ -22,9 +22,12 @@ from small_paper.operational_validation import (
     operational_validation_mode,
     opval_degraded_universe_mode,
 )
+from small_paper.paper_primary_activation import (
+    SESSION_NOT_STARTED,
+    assert_selected_paper_primary,
+)
 from small_paper.v1r_exit_v2_activation_gate import (
     ASSERTION_FAIL,
-    assert_exit_v2_primary_roles,
     format_startup_contract,
 )
 from small_paper.v1r_live_dual_lane import ENV_FLAG, live_primary_enabled
@@ -86,13 +89,13 @@ def _release_lock() -> None:
 
 def assert_only() -> int:
     """Preflight: role assertion only - must NOT start long-running runtime."""
-    assertion = assert_exit_v2_primary_roles()
+    assertion = assert_selected_paper_primary()
     print(assertion.startup_block, flush=True)
     if not assertion.ok:
-        print(f"[V1R EXIT V2 PRIMARY] {ASSERTION_FAIL}: {assertion.reason}", flush=True)
-        print("[V1R EXIT V2 PRIMARY] NO PAPER PRIMARY - FIXED600/PBv2 Primary fallback FORBIDDEN", flush=True)
+        print(f"[PAPER PRIMARY] {ASSERTION_FAIL}: {assertion.reason}", flush=True)
+        print("[PAPER PRIMARY] NO PAPER PRIMARY - FIXED600/PBv2 Primary fallback FORBIDDEN", flush=True)
         return 2
-    print("[V1R EXIT V2] preflight assert-only PASS (no live runtime started)", flush=True)
+    print("[PAPER PRIMARY] preflight assert-only PASS (no live runtime started)", flush=True)
     return 0
 
 
@@ -269,7 +272,7 @@ def _run_residency_live_loop(
     return 0
 
 
-def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
+def _run_daily_live(out: Path, hb_path: Path, assertion, selected_executor: Any = None) -> int:
     """Production live: AM→lunch→PM daily runner on LOCAL_MARKET_BUS."""
     os.environ[ENV_FLAG] = "1"
     os.environ.setdefault("MARKET_INGRESS_V2", "1")
@@ -357,31 +360,65 @@ def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
                 )
                 print("[V1R EXIT V2] Ingress self-record 50 is not READY if actual Kabu is empty", flush=True)
                 return 2
-        native = boot_v1r_native_entry(
-            universe=list(resolved.get("symbols") or []),
-            trace_dir=out / "native_entry",
-            universe_source=str(resolved.get("source") or ""),
-        )
-        set_native_entry(native)
-        (out / "native_entry_boot.json").write_text(
-            json.dumps(native.snapshot(), indent=2, ensure_ascii=False, default=str),
+        from small_paper.paper_session_executor import bind_selected_live_executor
+
+        if selected_executor is None:
+            binding = bind_selected_live_executor()
+            selected_executor = binding["executor"]
+        else:
+            binding = {
+                "x1": getattr(selected_executor, "execution_family", "") == "X1_IMMEDIATE_ASK",
+                "session_owner_class": type(selected_executor).__name__,
+                "admission_owner_class": type(selected_executor).__name__,
+                "portfolio_owner_class": getattr(selected_executor, "session_executor", type(selected_executor).__name__),
+                "execution_family": getattr(selected_executor, "execution_family", ""),
+                "session_executor": getattr(selected_executor, "session_executor", ""),
+                "boot_v1r_native_entry": 0,
+            }
+        owner_record = {k: v for k, v in binding.items() if k != "executor"}
+        owner_record["instantiated"] = True
+        (out / "live_session_owner.json").write_text(
+            json.dumps(owner_record, indent=2, ensure_ascii=False, default=str),
             encoding="utf-8",
         )
-        if not native.ready:
+        if binding.get("x1"):
+            from small_paper.paper_session_executor import arm_x1_live_owner
+
+            arm_x1_live_owner()
+            if owner_record["session_owner_class"] != "FixedSupportX1SessionExecutor":
+                print("[V1R EXIT V2] PAPER_EXECUTOR_BINDING_CONTRADICTION", flush=True)
+                return 2
             print(
-                f"[V1R EXIT V2] NO PAPER PRIMARY - native ENTRY boot failed: {native.fail_reason}",
+                "[PAPER PRIMARY] live owner=FixedSupportX1SessionExecutor "
+                "family=X1_IMMEDIATE_ASK boot_v1r_native_entry=0",
                 flush=True,
             )
-            print("[V1R EXIT V2] PBv2/classic Primary fallback FORBIDDEN", flush=True)
-            return 2
-        print(
-            "[V1R EXIT V2] Native ENTRY SoT READY - "
-            f"universe={len(native.universe)} "
-            f"entry={native.identity()['entry_sha'][:12]}… "
-            f"anchor={native.identity()['anchor_sha'][:12]}… "
-            f"model={native.identity()['model_sha'][:12]}…",
-            flush=True,
-        )
+        else:
+            native = boot_v1r_native_entry(
+                universe=list(resolved.get("symbols") or []),
+                trace_dir=out / "native_entry",
+                universe_source=str(resolved.get("source") or ""),
+            )
+            set_native_entry(native)
+            (out / "native_entry_boot.json").write_text(
+                json.dumps(native.snapshot(), indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+            if not native.ready:
+                print(
+                    f"[V1R EXIT V2] NO PAPER PRIMARY - native ENTRY boot failed: {native.fail_reason}",
+                    flush=True,
+                )
+                print("[V1R EXIT V2] PBv2/classic Primary fallback FORBIDDEN", flush=True)
+                return 2
+            print(
+                "[V1R EXIT V2] Native ENTRY SoT READY - "
+                f"universe={len(native.universe)} "
+                f"entry={native.identity()['entry_sha'][:12]}… "
+                f"anchor={native.identity()['anchor_sha'][:12]}… "
+                f"model={native.identity()['model_sha'][:12]}…",
+                flush=True,
+            )
     except Exception as exc:
         print(f"[V1R EXIT V2] NO PAPER PRIMARY - native ENTRY exception: {exc}", flush=True)
         print("[V1R EXIT V2] PBv2/classic Primary fallback FORBIDDEN", flush=True)
@@ -434,6 +471,7 @@ def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
     hb_seq = 0
     proc: Any = None
     code = 0
+    interrupted = False
     try:
         proc = subprocess.Popen(cmd, cwd=str(REPO), env=env)
         while True:
@@ -467,36 +505,41 @@ def _run_daily_live(out: Path, hb_path: Path, assertion) -> int:
                 break
             time.sleep(5.0)
     except KeyboardInterrupt:
+        interrupted = True
         print("[V1R EXIT V2] KeyboardInterrupt - graceful stop", flush=True)
         try:
-            proc.terminate()
+            if proc is not None:
+                proc.terminate()
         except Exception:
             pass
         code = 0
-    elapsed = time.time() - t0
-    ready_final = evaluate_native_runtime_ready(
-        native_boot_ready=True,
-        primary_resident=False,
-        heartbeat_fresh=True,
-    )
-    _write_hb(hb_path, heartbeat_identity_fields(
-        current_anchor="15:00",
-        next_anchor=None,
-        open_n=0,
-        pending_n=0,
-        extra={
-            "mode": "live",
-            "elapsed_sec": elapsed,
-            "daily_exit_code": code,
-            "state": "STOPPED",
-            "native_ready": bool(ready_final.get("ready")),
-            "native_ready_blockers": ready_final.get("blockers"),
-            "primary_pid": os.getpid(),
-        },
-    ))
-    (out / "daily_runner_result.json").write_text(
-        json.dumps({"exit_code": code, "elapsed_sec": elapsed}, indent=2), encoding="utf-8"
-    )
+    finally:
+        elapsed = time.time() - t0
+        if not interrupted and proc is not None and proc.poll() is not None:
+            code = int(proc.poll())
+        ready_final = evaluate_native_runtime_ready(
+            native_boot_ready=True,
+            primary_resident=False,
+            heartbeat_fresh=True,
+        )
+        _write_hb(hb_path, heartbeat_identity_fields(
+            current_anchor="15:00",
+            next_anchor=None,
+            open_n=0,
+            pending_n=0,
+            extra={
+                "mode": "live",
+                "elapsed_sec": elapsed,
+                "daily_exit_code": code,
+                "state": "STOPPED",
+                "native_ready": bool(ready_final.get("ready")),
+                "native_ready_blockers": ready_final.get("blockers"),
+                "primary_pid": os.getpid(),
+            },
+        ))
+        (out / "daily_runner_result.json").write_text(
+            json.dumps({"exit_code": code, "elapsed_sec": elapsed}, indent=2), encoding="utf-8"
+        )
     classified = classify_pre_warmup_process_exit(code)
     if classified.get("fail"):
         reason = str(classified.get("reason") or "PRE_WARMUP_STARTUP_FAIL")
@@ -523,12 +566,28 @@ def launch_primary(
         print(format_startup_contract(ready=False, reason=reason), flush=True)
         print(f"[V1R EXIT V2 PRIMARY] {reason}", flush=True)
         return 2
-    assertion = assert_exit_v2_primary_roles()
+    assertion = assert_selected_paper_primary()
     print(assertion.startup_block, flush=True)
     if not assertion.ok:
-        print(f"[V1R EXIT V2 PRIMARY] {ASSERTION_FAIL}: {assertion.reason}", flush=True)
-        print("[V1R EXIT V2 PRIMARY] NO PAPER PRIMARY - FIXED600/PBv2 Primary fallback FORBIDDEN", flush=True)
+        print(f"[PAPER PRIMARY] {ASSERTION_FAIL}: {assertion.reason}", flush=True)
+        print("[PAPER PRIMARY] NO PAPER PRIMARY - FIXED600/PBv2 Primary fallback FORBIDDEN", flush=True)
         return 2
+    owner = assertion.identity.get("session_loop_owner")
+    if owner == "candidate_factory":
+        print(f"[PAPER PRIMARY] {SESSION_NOT_STARTED}", flush=True)
+        return 2
+    selected = None
+    if owner == "paper_session_executor":
+        from small_paper.paper_session_executor import bind_selected_live_executor
+
+        binding = bind_selected_live_executor()
+        selected = binding["executor"]
+        if not binding["x1"] or binding["execution_family"] != "X1_IMMEDIATE_ASK":
+            print(f"[PAPER PRIMARY] {ASSERTION_FAIL}:executor_mismatch", flush=True)
+            return 2
+        if binding["session_owner_class"] != "FixedSupportX1SessionExecutor":
+            print("[PAPER PRIMARY] PAPER_EXECUTOR_BINDING_CONTRADICTION", flush=True)
+            return 2
 
     out = session_dir or _start_session_dir()
     out.mkdir(parents=True, exist_ok=True)
@@ -594,7 +653,7 @@ def launch_primary(
             return _run_residency_live_loop(
                 out=out, residency_sec=float(residency_sec), hb_path=hb_path, assertion=assertion
             )
-        return _run_daily_live(out, hb_path, assertion)
+        return _run_daily_live(out, hb_path, assertion, selected_executor=selected)
     finally:
         _release_lock()
 

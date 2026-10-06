@@ -49,7 +49,11 @@ from small_paper.discord_message_builder import (
     format_position_slot_pair,
     format_time_hms_jst,
 )
-from small_paper.discord_symbol_names import format_symbol_display, get_cached_symbol_name_map
+from small_paper.discord_symbol_names import (
+    get_cached_symbol_name_map,
+    x1_entry_discord_fields,
+    x1_exit_discord_fields,
+)
 from small_paper.discord_entry_delivery import (
     CLASS_HTTP_FAILED,
     CLASS_NOTIFY_NOT_CALLED,
@@ -351,6 +355,9 @@ class SmallPaperDiscordNotifier:
         description: str = "",
         footer_text: Optional[str] = None,
         content: str = "",
+        route_source: str = "",
+        route_activation_id: str = "",
+        route_family: str = "",
     ) -> bool:
         return self._post_with_result(
             event_tag=event_tag,
@@ -365,6 +372,9 @@ class SmallPaperDiscordNotifier:
             description=description,
             footer_text=footer_text,
             content=content,
+            route_source=route_source,
+            route_activation_id=route_activation_id,
+            route_family=route_family,
         ).final_result == FINAL_DELIVERED
 
     def _post_with_result(
@@ -383,6 +393,9 @@ class SmallPaperDiscordNotifier:
         description: str = "",
         footer_text: Optional[str] = None,
         content: str = "",
+        route_source: str = "",
+        route_activation_id: str = "",
+        route_family: str = "",
     ) -> DiscordPostResult:
         res = DiscordPostResult(payload_built=payload_prebuilt)
         if not self.cfg.enabled or not self.cfg.observer_only:
@@ -395,6 +408,34 @@ class SmallPaperDiscordNotifier:
             res.suppressed_reason = f"cooldown:{dedupe_key}"
             res.failure_classification = CLASS_OTHER
             return res
+        from notify.x1_discord_gate import (
+            FAMILY as _X1_FAMILY,
+            SOURCE as _X1_SOURCE,
+            authorize_discord,
+            identity_fields,
+            note_discord_send,
+        )
+
+        allow, deny_reason = authorize_discord(
+            event_tag=event_tag,
+            title=title_line,
+            source=route_source,
+            activation_id=route_activation_id,
+            execution_family=route_family,
+        )
+        if not allow:
+            res.final_result = FINAL_SUPPRESSED
+            res.suppressed_reason = deny_reason or "OLD_STRATEGY_DISCORD_SUPPRESSED"
+            res.failure_classification = CLASS_OTHER
+            return res
+        if route_source == _X1_SOURCE and route_family == _X1_FAMILY and route_activation_id:
+            names = {str(item.get("name") or "") for item in fields}
+            if "activation_id" not in names:
+                fields = list(fields) + identity_fields(
+                    activation_id=route_activation_id,
+                    execution_family=route_family,
+                    source=route_source,
+                )
         # V1R_PBV2_NOTIFICATION_ROUTING_ONLY: PBv2 ENTRY/EXIT → research shadow
         # (never trade-notify). Occupancy / Arch E state untouched.
         pbv2_shadow_route = False
@@ -502,6 +543,7 @@ class SmallPaperDiscordNotifier:
                 ownership = "PAPER_RUNTIME"
 
             native = Path(__file__).resolve().parents[2]
+            note_discord_send()
             env = build_envelope(
                 category=category,
                 severity=Severity.INFO if category != NotificationCategory.CAP_BLOCKED else Severity.NOTICE,
@@ -626,7 +668,29 @@ class SmallPaperDiscordNotifier:
         sequence_id: Optional[int] = None,
         is_retry: bool = False,
         retry_attempt: int = 0,
+        x1_activation_id: str = "",
+        x1_execution_family: str = "",
+        x1_source: str = "",
     ) -> DiscordPostResult:
+        if x1_source == "FixedSupportX1SessionExecutor":
+            sym = str(event.get("symbol") or "")
+            display = {
+                **dict(event),
+                "execution_family": x1_execution_family,
+                "activation_id": x1_activation_id,
+                "source": x1_source,
+            }
+            return self._post_with_result(
+                event_tag="X1_PAPER_ENTRY",
+                title_line="[X1 PAPER ENTRY]",
+                fields=x1_entry_discord_fields(display),
+                color=0x2F855A,
+                dedupe_key=f"x1-entry|{sym}|{event.get('signal_uid')}",
+                trade_notify=True,
+                route_source=x1_source,
+                route_activation_id=x1_activation_id,
+                route_family=x1_execution_family,
+            )
         sym = str(event.get("symbol") or "")
         # Official ENTRY price only: validated entry_price first; never invent 0円
         entry_px = (
@@ -995,6 +1059,19 @@ class SmallPaperDiscordNotifier:
         )
 
     def notify_exit(self, *, context: Mapping[str, Any]) -> bool:
+        if str(context.get("source") or "") == "FixedSupportX1SessionExecutor":
+            sym = str(context.get("symbol") or "")
+            return self._post(
+                event_tag="X1_PAPER_EXIT",
+                title_line="[X1 PAPER EXIT]",
+                fields=x1_exit_discord_fields(context),
+                color=0xC53030,
+                dedupe_key=f"x1-exit|{sym}|{context.get('exit_reason')}|{context.get('current_price')}",
+                trade_notify=True,
+                route_source=str(context.get("source") or ""),
+                route_activation_id=str(context.get("activation_id") or ""),
+                route_family=str(context.get("execution_family") or ""),
+            )
         if not context.get("is_structural_exit"):
             return False
         sym = str(context.get("symbol", ""))
@@ -1265,6 +1342,12 @@ class SmallPaperDiscordNotifier:
         if not fields:
             fields = [{"name": "詳細", "value": overview[:1020] or "—", "inline": False}]
         dedupe_day = (day_stamp or datetime.now(JST).strftime("%Y%m%d")).strip()
+        try:
+            from notify.x1_discord_gate import universe_readiness_fields
+
+            fields.extend(universe_readiness_fields(trading_date=dedupe_day))
+        except Exception:
+            pass
         return self._post(
             event_tag="Universe Screening",
             title_line=f"【Universe Screening】 {session_label}",
@@ -1540,6 +1623,12 @@ class SmallPaperDiscordNotifier:
                 "inline": False,
             },
         ]
+        try:
+            from notify.x1_discord_gate import operational_heartbeat_fields
+
+            fields.extend(operational_heartbeat_fields(summary))
+        except Exception:
+            pass
         ok = self._post(
             event_tag="HEARTBEAT",
             title_line="HEARTBEAT",
@@ -1642,6 +1731,55 @@ def notify_discord_session_end(
 
     Shadow enqueue is fail-open and never blocks Paper finalize.
     """
+    from notify.x1_discord_gate import (
+        FAMILY as _X1_FAMILY,
+        SOURCE as _X1_SOURCE,
+        x1_discord_routing_enforced,
+        x1_summary_event,
+        x1_summary_fields,
+        x1_summary_is_final,
+        x1_summary_title,
+    )
+
+    if x1_discord_routing_enforced():
+        if discord and discord.active:
+            event = x1_summary_event(summary)
+            final = x1_summary_is_final(summary)
+            aid = str(summary.get("activation_id") or "")
+            discord._post(
+                event_tag=event,
+                title_line=x1_summary_title(event, summary_class="FINAL" if final else "PRE_CLOSE_SNAPSHOT"),
+                fields=x1_summary_fields(summary),
+                color=0x2F855A if final else 0xC53030,
+                dedupe_key=f"x1-summary|{summary.get('trading_date')}|{event}|{summary.get('session_id')}",
+                trade_notify=True,
+                route_source=str(summary.get("discord_source") or _X1_SOURCE),
+                route_activation_id=aid,
+                route_family=str(summary.get("execution_family") or _X1_FAMILY),
+            )
+            if not final:
+                discord._post(
+                    event_tag="X1_CRITICAL",
+                    title_line="X1_FINAL_SUMMARY_INCOMPLETE_BOOK",
+                    fields=[
+                        {"name": "alert", "value": "X1_FINAL_SUMMARY_INCOMPLETE_BOOK", "inline": False},
+                        {"name": "ENTRY", "value": str((summary.get("x1_executor") or {}).get("x1_entry_n", "")), "inline": True},
+                        {"name": "EXIT", "value": str((summary.get("x1_executor") or {}).get("x1_exit_n", "")), "inline": True},
+                        {"name": "OPEN", "value": str((summary.get("x1_executor") or {}).get("x1_open_n", "")), "inline": True},
+                        {
+                            "name": "EXIT_PENDING",
+                            "value": str((summary.get("x1_executor") or {}).get("x1_exit_pending_n", "")),
+                            "inline": True,
+                        },
+                    ],
+                    color=0xC53030,
+                    dedupe_key=f"x1-incomplete|{summary.get('trading_date')}|{event}|{summary.get('session_id')}",
+                    trade_notify=True,
+                    route_source=str(summary.get("discord_source") or _X1_SOURCE),
+                    route_activation_id=aid,
+                    route_family=str(summary.get("execution_family") or _X1_FAMILY),
+                )
+        return
     if discord and discord.active:
         if discord.cfg.send_daily_summary:
             discord.notify_daily_summary(

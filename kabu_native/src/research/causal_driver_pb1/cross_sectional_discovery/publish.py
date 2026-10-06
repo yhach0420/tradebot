@@ -1,0 +1,246 @@
+"""Write the three discovery artifacts. No mass CSV."""
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from typing import Any
+
+import pandas as pd
+
+from research.causal_driver_pb1.contracts.time import JST
+from research.causal_driver_pb1.cross_sectional_discovery import ANALYSIS_ID, PROGRAM_ID
+from research.causal_driver_pb1.cross_sectional_discovery.isolation import OUT
+
+SHEETS = (
+    "Manifest",
+    "Identity",
+    "Leader_Set",
+    "Target_Set",
+    "Eligible_Days",
+    "Folds",
+    "Data_Coverage",
+    "Freshness",
+    "DEV_All_144",
+    "DEV_Gates",
+    "DEV_Strict60",
+    "DEV_Candidates",
+    "Candidate_Freeze",
+    "C1_Access_Ledger",
+    "C1_Confirmation",
+    "C1_Strict60",
+    "Offset_Map",
+    "Day_Shuffle",
+    "Leader_Identity",
+    "Concentration",
+    "Common_Factor",
+    "Failure_Stages",
+    "Contamination",
+    "Firewall",
+    "Safety",
+)
+
+
+def _now() -> str:
+    return datetime.now(JST).strftime("%Y-%m-%dT%H:%M:%S+0900")
+
+
+def _clean(x: Any) -> Any:
+    if isinstance(x, dict):
+        return {str(k): _clean(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_clean(v) for v in x]
+    if hasattr(x, "item") and type(x).__module__.startswith("numpy"):
+        return _clean(x.item())
+    if isinstance(x, float) and x != x:
+        return None
+    return x
+
+
+def _df(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame([{"empty": True}])
+    flat = []
+    for r in rows:
+        row = {}
+        for k, v in r.items():
+            if isinstance(v, (dict, list, tuple)):
+                row[k] = json.dumps(_clean(v), ensure_ascii=False)
+            else:
+                row[k] = v
+        flat.append(row)
+    return pd.DataFrame(flat)
+
+
+def _not_run(reason: str) -> list[dict[str, Any]]:
+    return [{"status": "NOT_RUN", "reason": reason}]
+
+
+def _markdown(report: dict[str, Any]) -> str:
+    a = report["answers"]
+    lines = [
+        f"# {PROGRAM_ID} / {ANALYSIS_ID}",
+        "",
+        f"**VERDICT:** `{a.get('VERDICT')}`",
+        "",
+        f"**NEXT:** `{a.get('NEXT')}`",
+        "",
+        f"- precommit_sha_verified `{a.get('precommit_sha_verified')}`",
+        f"- precommit_sha256 `{a.get('precommit_sha256')}`",
+        f"- DEV 144 / candidate_n `{a.get('DEV_all_n')}` / `{a.get('DEV_candidate_n')}`",
+        f"- DEV first-fail `{a.get('DEV_first_fail_counts')}`",
+        f"- candidate_list_sha256 `{a.get('candidate_list_sha256')}`",
+        f"- C1 opened `{a.get('C1_opened')}` rows_before_freeze `{a.get('C1_rows_read_before_candidate_freeze')}` confirmed `{a.get('C1_confirmed_n')}`",
+        f"- offset/shuffle/identity `{a.get('offset_pass_n')}` / `{a.get('shuffle_pass_n')}` / `{a.get('identity_pass_n')}`",
+        f"- concentration/common-factor `{a.get('concentration_pass_n')}` / `{a.get('common_factor_pass_n')}`",
+        f"- final_pass_n `{a.get('final_pass_n')}`",
+        f"- FV/prospective `{a.get('FV_opened')}` / `{a.get('prospective_opened')}`",
+        f"- ALPHA_CREATED `{a.get('ALPHA_CREATED')}`",
+        "",
+        "Phase3 / symbol transmission was not started.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def publish(*, evaluation: dict[str, Any], safety: dict[str, Any], isolation_pre: dict[str, Any], isolation_post: dict[str, Any]) -> dict[str, Any]:
+    bound = evaluation.get("bound") or {}
+    access = evaluation.get("access") or {}
+    family = list(evaluation.get("family") or [])
+    c1_rows = list(evaluation.get("c1_rows") or [])
+    c1_opened = bool(evaluation.get("C1_opened"))
+    answers = {
+        "VERDICT": evaluation.get("VERDICT"),
+        "NEXT": evaluation.get("NEXT"),
+        "reason": evaluation.get("reason"),
+        "blockers": evaluation.get("blockers"),
+        "precommit_id": evaluation.get("precommit_id"),
+        "precommit_sha256": evaluation.get("precommit_sha256"),
+        "precommit_sha_verified": evaluation.get("precommit_sha_verified"),
+        "leader_set_sha256": evaluation.get("leader_set_sha256"),
+        "target_set_sha256": evaluation.get("target_set_sha256"),
+        "eligible_day_sha256": evaluation.get("eligible_day_sha256"),
+        "fold_boundary_sha256": evaluation.get("fold_boundary_sha256"),
+        "permutation_sha256": evaluation.get("permutation_sha256"),
+        "DEV_all_n": evaluation.get("DEV_all_n"),
+        "DEV_candidate_n": evaluation.get("DEV_candidate_n"),
+        "DEV_first_fail_counts": evaluation.get("DEV_first_fail_counts"),
+        "candidate_list_sha256": evaluation.get("candidate_list_sha256"),
+        "C1_rows_read_before_candidate_freeze": evaluation.get("C1_rows_read_before_candidate_freeze"),
+        "C1_opened": c1_opened,
+        "C1_confirmed_n": evaluation.get("C1_confirmed_n"),
+        "offset_pass_n": evaluation.get("offset_pass_n"),
+        "shuffle_pass_n": evaluation.get("shuffle_pass_n"),
+        "identity_pass_n": evaluation.get("identity_pass_n"),
+        "concentration_pass_n": evaluation.get("concentration_pass_n"),
+        "common_factor_pass_n": evaluation.get("common_factor_pass_n"),
+        "final_pass_n": evaluation.get("final_pass_n"),
+        "final_candidates": evaluation.get("final_candidates"),
+        "top_failed_candidates": evaluation.get("top_failed_candidates"),
+        "failure_stage_counts": evaluation.get("failure_stage_counts"),
+        "eligible_dev_n": evaluation.get("eligible_dev_n"),
+        "eligible_c1_n": evaluation.get("eligible_c1_n"),
+        "FV_opened": False,
+        "prospective_opened": False,
+        "ALPHA_CREATED": False,
+        "MECHANISM_FROZEN": False,
+        "PB1_BOUND": False,
+        "COMPLETE_STRATEGY_RUN": False,
+        "V4_CHANGED": False,
+        "V5_CREATED": False,
+        "submit": 0,
+        "cancel": 0,
+        "live": 0,
+        "USDJPY_REOPENED": False,
+        "old_peer_overlap": evaluation.get("old_peer_overlap"),
+    }
+    slim = dict(evaluation)
+    slim.pop("identity", None)
+    report = {
+        "program_id": PROGRAM_ID,
+        "analysis_id": ANALYSIS_ID,
+        "created_at": _now(),
+        "answers": answers,
+        "evaluation": _clean(slim),
+        "safety": safety,
+        "isolation_pre": isolation_pre,
+        "isolation_post": isolation_post,
+    }
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / "report.json").write_text(json.dumps(_clean(report), ensure_ascii=False, indent=2), encoding="utf-8")
+    (OUT / "report.md").write_text(_markdown(report), encoding="utf-8")
+    c1_reason = "DEV_candidate_n_zero" if not c1_opened else "opened"
+    nr = _not_run(c1_reason)
+    folds = bound.get("folds") or {}
+    with pd.ExcelWriter(OUT / "audit.xlsx", engine="openpyxl") as xw:
+        _df(
+            [
+                {
+                    "verdict": evaluation.get("VERDICT"),
+                    "next": evaluation.get("NEXT"),
+                    "precommit_sha256": evaluation.get("precommit_sha256"),
+                    "candidate_list_sha256": evaluation.get("candidate_list_sha256"),
+                    "DEV_candidate_n": evaluation.get("DEV_candidate_n"),
+                    "C1_opened": c1_opened,
+                    "final_pass_n": evaluation.get("final_pass_n"),
+                }
+            ]
+        ).to_excel(xw, sheet_name="Manifest", index=False)
+        _df(
+            [
+                {
+                    "leader_set_sha256": evaluation.get("leader_set_sha256"),
+                    "target_set_sha256": evaluation.get("target_set_sha256"),
+                    "eligible_day_sha256": evaluation.get("eligible_day_sha256"),
+                    "fold_boundary_sha256": evaluation.get("fold_boundary_sha256"),
+                    "permutation_sha256": evaluation.get("permutation_sha256"),
+                    "precommit_sha256": evaluation.get("precommit_sha256"),
+                }
+            ]
+        ).to_excel(xw, sheet_name="Identity", index=False)
+        _df(list(bound.get("frozen_leaders") or [{"empty": True}])).to_excel(xw, sheet_name="Leader_Set", index=False)
+        _df([{"symbol": s} for s in (bound.get("target_symbols") or [])] or [{"empty": True}]).to_excel(xw, sheet_name="Target_Set", index=False)
+        _df([{"date": d} for d in (bound.get("eligible_dates") or [])] or [{"empty": True}]).to_excel(xw, sheet_name="Eligible_Days", index=False)
+        fold_dates = []
+        for name in ("DEV_EARLY", "DEV_LATE", "C1_EARLY", "C1_MIDDLE", "C1_LATE"):
+            for day in folds.get(name) or []:
+                fold_dates.append({"fold": name, "date": day})
+        _df(fold_dates or [{"empty": True}]).to_excel(xw, sheet_name="Folds", index=False)
+        _df(
+            [
+                {
+                    "stage_a_hard_stop": "20251126",
+                    "eligible_dev_n": evaluation.get("eligible_dev_n"),
+                    "eligible_c1_n": evaluation.get("eligible_c1_n"),
+                    "C1_opened": c1_opened,
+                }
+            ]
+        ).to_excel(xw, sheet_name="Data_Coverage", index=False)
+        _df([{"leader_age_sec": 60, "target_age_sec": 120, "strict_target_age_sec": 60}]).to_excel(xw, sheet_name="Freshness", index=False)
+        _df(family or [{"empty": True}]).to_excel(xw, sheet_name="DEV_All_144", index=False)
+        _df(family or [{"empty": True}]).to_excel(xw, sheet_name="DEV_Gates", index=False)
+        _df([r for r in family if r.get("D1") and r.get("D2") and r.get("D3") and r.get("D4") and r.get("D5") and r.get("D6")] or [{"none_reached_d7": True}]).to_excel(
+            xw, sheet_name="DEV_Strict60", index=False
+        )
+        _df(list(evaluation.get("frozen_candidates") or [{"empty": True}])).to_excel(xw, sheet_name="DEV_Candidates", index=False)
+        _df(
+            [
+                {
+                    "candidate_list_sha256": evaluation.get("candidate_list_sha256"),
+                    "n": evaluation.get("DEV_candidate_n"),
+                    "freeze_timestamp": access.get("candidate_freeze_timestamp"),
+                }
+            ]
+        ).to_excel(xw, sheet_name="Candidate_Freeze", index=False)
+        _df([access or {"empty": True}]).to_excel(xw, sheet_name="C1_Access_Ledger", index=False)
+        _df(c1_rows if c1_opened else nr).to_excel(xw, sheet_name="C1_Confirmation", index=False)
+        _df(c1_rows if c1_opened else nr).to_excel(xw, sheet_name="C1_Strict60", index=False)
+        _df([{"offset": r.get("offset"), "scope_id": r.get("scope_id")} for r in c1_rows] if c1_opened else nr).to_excel(xw, sheet_name="Offset_Map", index=False)
+        _df([{"shuffle": r.get("shuffle"), "scope_id": r.get("scope_id")} for r in c1_rows] if c1_opened else nr).to_excel(xw, sheet_name="Day_Shuffle", index=False)
+        _df([{"identity": r.get("identity"), "scope_id": r.get("scope_id")} for r in c1_rows] if c1_opened else nr).to_excel(xw, sheet_name="Leader_Identity", index=False)
+        _df([{"concentration": r.get("concentration"), "scope_id": r.get("scope_id")} for r in c1_rows] if c1_opened else nr).to_excel(xw, sheet_name="Concentration", index=False)
+        _df([{"common_factor": r.get("common_factor"), "scope_id": r.get("scope_id")} for r in c1_rows] if c1_opened else nr).to_excel(xw, sheet_name="Common_Factor", index=False)
+        _df([{"stage": k, "n": v} for k, v in (evaluation.get("failure_stage_counts") or {"empty": 0}).items()]).to_excel(xw, sheet_name="Failure_Stages", index=False)
+        _df([evaluation.get("contamination") or {"empty": True}]).to_excel(xw, sheet_name="Contamination", index=False)
+        _df([evaluation.get("firewall") or {}]).to_excel(xw, sheet_name="Firewall", index=False)
+        _df([safety]).to_excel(xw, sheet_name="Safety", index=False)
+    return {"ok": True, "out": str(OUT), "sheets": list(SHEETS)}

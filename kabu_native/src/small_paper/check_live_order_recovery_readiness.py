@@ -38,9 +38,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    from small_paper.demo_push_firewall import demo_fully_armed, isolated_recovery_result
+
     if args.demo_ready:
         result = evaluate_recovery_readiness(dryrun_ready_evidence())
         result["probe_mode"] = "demo_ready"
+    elif demo_fully_armed():
+        # Both --demo-push-e2e and TRADEBOT_DEMO_PUSH_E2E. Production history is not read.
+        result = isolated_recovery_result()
     else:
         root = Path(args.native_root) if args.native_root else Path(__file__).resolve().parents[2]
         result = probe_workspace_recovery(root)
@@ -89,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         if ref
         else None,
         "prior_sessions_found": art.get("prior_sessions_found"),
+        "current_readonly_reconciliation": art.get("current_readonly_reconciliation"),
+        "historical_evidence_rewritten": art.get("historical_evidence_rewritten"),
         "config_sha": {
             "match": sha.get("match"),
             "disk_sha256": sha.get("disk_sha256"),

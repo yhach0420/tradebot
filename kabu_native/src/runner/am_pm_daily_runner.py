@@ -1346,19 +1346,33 @@ def run_pilot_session(state: DailyRunnerState, *, session: AM_PM_KIND) -> dict[s
     proc_exc_type: Optional[str] = None
     captured_stdout: Optional[str] = None
     captured_stderr: Optional[str] = None
+    log_dir = (
+        Path(state.native_root)
+        / "results"
+        / "operations"
+        / "pilot_subprocess_logs"
+        / f"{state.options.day_stamp}_{session}"
+    )
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stdout_log = log_dir / "pilot_stdout.log"
+    stderr_log = log_dir / "pilot_stderr.log"
 
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(state.repo_root),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        exit_code = proc.returncode
-        captured_stdout = proc.stdout
-        captured_stderr = proc.stderr
+        with stdout_log.open("w", encoding="utf-8", errors="replace") as so, stderr_log.open(
+            "w", encoding="utf-8", errors="replace"
+        ) as se:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(state.repo_root),
+                stdout=so,
+                stderr=se,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            exit_code = proc.wait()
+        captured_stdout = stdout_log.read_text(encoding="utf-8", errors="replace")
+        captured_stderr = stderr_log.read_text(encoding="utf-8", errors="replace")
     except Exception as exc:
         proc_exc_type = type(exc).__name__
         proc_error = str(exc)
@@ -2175,6 +2189,35 @@ def _run_daily_runner_body(state: DailyRunnerState) -> int:
         return 2
 
     pm_csv_path = state.repo_root / str(state.pm_prep.get("pm_csv") or "")
+    try:
+        from small_paper.market_capture_registration import load_symbols_from_universe_csv
+        from small_paper.v1r_native_entry_live import resolve_day_fixed_am_runtime_universe
+
+        resolved_pm = resolve_day_fixed_am_runtime_universe(
+            native_root=state.native_root,
+            trading_date=str(state.options.day_stamp),
+        )
+        freeze_syms = {
+            str(s).replace(".T", "").split("@", 1)[0]
+            for s in (resolved_pm.get("symbols") or [])
+            if str(s)
+        }
+        pm_syms = {
+            str(s).replace(".T", "").split("@", 1)[0]
+            for s in (
+                load_symbols_from_universe_csv(pm_csv_path) if pm_csv_path.is_file() else []
+            )
+            if str(s)
+        }
+        screening_diff = bool(freeze_syms) and bool(pm_syms) and freeze_syms != pm_syms
+        state.pm_prep["x1_binds_frozen_am"] = True
+        state.pm_prep["screening_session_diff"] = screening_diff
+        if screening_diff:
+            state.verdict_notes.append(
+                "PM screening membership differs from frozen AM50; X1 admission binds freeze"
+            )
+    except Exception:
+        pass
     state.pm_prep["screening_notify"] = notify_screening_universe_discord(
         state,
         session_label="PM Screening",

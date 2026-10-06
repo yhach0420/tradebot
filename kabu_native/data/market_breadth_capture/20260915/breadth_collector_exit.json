@@ -1,0 +1,13 @@
+{
+  "pid": 28972,
+  "trading_date": "20260915",
+  "exit_at": "2026-09-15T11:25:32+09:00",
+  "cycles": 140,
+  "http_429_n": 0,
+  "cadence_sec": 60,
+  "clean_exit": true,
+  "error": null,
+  "register_mutation_n": 0,
+  "unregister_n": 0,
+  "sendorder_n": 0
+}

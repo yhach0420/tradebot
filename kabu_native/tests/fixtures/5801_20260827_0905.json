@@ -1,0 +1,29 @@
+{
+  "received_at": "2026-08-27T09:04:59.003+09:00",
+  "sequence": 76010,
+  "payload": {
+    "Symbol": "5801",
+    "CurrentPrice": null,
+    "CurrentPriceTime": null,
+    "CurrentPriceStatus": -1,
+    "OpeningPrice": null,
+    "OpeningPriceTime": null,
+    "TradingVolume": null,
+    "TradingVolumeTime": null,
+    "AskSign": "0102",
+    "BidSign": "0101",
+    "Buy1": {
+      "Price": 4045.0,
+      "Qty": 1172100.0,
+      "Sign": "0102",
+      "Time": "2026-08-27T09:04:58+09:00"
+    },
+    "Sell1": {
+      "Price": 4045.0,
+      "Qty": 646100.0,
+      "Sign": "0101",
+      "Time": "2026-08-27T09:04:58+09:00"
+    },
+    "SpecialQuote": null
+  }
+}

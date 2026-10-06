@@ -1,0 +1,191 @@
+"""Write report.json / report.md / audit.xlsx only."""
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+
+from research.am_entry_profit_improvement.publish import json_sanitize as _json_sanitize
+from research.post_open_causal_downside_mechanism_discovery_v1 import ANALYSIS_ID
+from research.post_open_causal_downside_mechanism_discovery_v1.isolation import OUT
+
+HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
+HEADER_FONT = Font(color="FFFFFF", bold=True)
+SHEET_ORDER = (
+    "Summary",
+    "Parent_Parity",
+    "Neutral_Population",
+    "Mid_Decomposition",
+    "Short_X1",
+    "Short_W5_Pin",
+    "Short_W5_Fills",
+    "Execution_Decomposition",
+    "Feature_Integrity",
+    "Univariate",
+    "Quintiles",
+    "Blocks",
+    "Ranking",
+    "Tree",
+    "Tree_Leaves",
+    "LOBO",
+    "Mechanism",
+    "Safety",
+)
+
+
+def json_sanitize(obj: Any) -> Any:
+    got = _json_sanitize(obj)
+    if isinstance(got, float) and abs(got) == float("inf"):
+        return "inf" if got > 0 else "-inf"
+    if isinstance(got, dict):
+        return {str(k): json_sanitize(v) for k, v in got.items()}
+    if isinstance(got, list):
+        return [json_sanitize(v) for v in got]
+    return got
+
+
+def _sheet(ws: Any, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        ws.append(["empty"])
+        return
+    keys: list[str] = []
+    for r in rows:
+        for k in r.keys():
+            if k not in keys:
+                keys.append(k)
+    ws.append(keys)
+    for cell in ws[1]:
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+    for r in rows:
+        vals = []
+        for k in keys:
+            v = r.get(k)
+            if isinstance(v, (dict, list, tuple)):
+                v = json.dumps(v, ensure_ascii=False, default=str)
+            if isinstance(v, float) and v != v:
+                v = None
+            vals.append(v)
+        ws.append(vals)
+    for i, _k in enumerate(keys, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = min(42, max(12, len(str(_k)) + 2))
+
+
+def _kv(obj: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{"key": str(k), "value": v} for k, v in obj.items()]
+
+
+def build_sheets(report: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    pop = dict(report.get("population") or {})
+    exec_pops = dict(report.get("execution_populations") or {})
+    uni = list(report.get("univariate") or [])
+    tree = dict(report.get("tree") or {})
+    rank = dict(report.get("ranking") or {})
+    quint = []
+    for u in uni:
+        for q in list(u.get("quintiles") or []):
+            quint.append({"feature": u.get("feature"), **q})
+    return {
+        "Summary": _kv(dict(report.get("answers") or {})),
+        "Parent_Parity": _kv(dict(report.get("parent_parity") or {})),
+        "Neutral_Population": _kv(pop),
+        "Mid_Decomposition": _kv(
+            {
+                "MID_RETURN_10M_mean": pop.get("MID_RETURN_10M_mean"),
+                "MID_RETURN_10M_median": pop.get("MID_RETURN_10M_median"),
+                "LONG_X1_mean": (report.get("parent_parity") or {}).get("observed", {}).get("EXEC_MARKOUT_10M_mean")
+                if isinstance((report.get("parent_parity") or {}).get("observed"), dict)
+                else None,
+                "SHORT_X1_mean": pop.get("SHORT_EXEC_MARKOUT_10M_mean"),
+            }
+        ),
+        "Short_X1": _kv(dict(exec_pops.get("S0") or {})),
+        "Short_W5_Pin": _kv(dict(report.get("short_w5_pin") or {})),
+        "Short_W5_Fills": _kv(
+            {
+                "fill_n": exec_pops.get("SHORT_W5_fill_n"),
+                "fill_rate": exec_pops.get("SHORT_W5_fill_rate"),
+                "day_n": exec_pops.get("SHORT_W5_fill_day_n"),
+                "symbol_n": exec_pops.get("SHORT_W5_fill_symbol_n"),
+            }
+        ),
+        "Execution_Decomposition": [
+            {"arm": "S0", **dict(exec_pops.get("S0") or {})},
+            {"arm": "S1", **dict(exec_pops.get("S1") or {})},
+            {"arm": "S2", **dict(exec_pops.get("S2") or {})},
+            {
+                "arm": "S2_minus_S1",
+                "mean": exec_pops.get("S2_minus_S1_mean"),
+                "median": exec_pops.get("S2_minus_S1_median"),
+            },
+        ],
+        "Feature_Integrity": list(report.get("feature_integrity") or []) or [{"empty": True}],
+        "Univariate": [
+            {
+                "feature": u.get("feature"),
+                "spearman_markout": u.get("spearman_markout"),
+                "spearman_path_edge": u.get("spearman_path_edge"),
+                "candidate": u.get("mechanism_candidate"),
+                "agree_m": u.get("block_agree_markout"),
+                "top_symbol": u.get("top_symbol_excluded_holds"),
+                "leave_one_day": u.get("leave_one_day_holds"),
+            }
+            for u in uni
+        ]
+        or [{"empty": True}],
+        "Quintiles": quint or [{"empty": True}],
+        "Blocks": [{"block": k, **v} for k, v in dict((report.get("blocks") or {}).get("blocks") or {}).items()]
+        or [{"empty": True}],
+        "Ranking": _kv(rank),
+        "Tree": _kv({k: v for k, v in tree.items() if k != "leaves"}),
+        "Tree_Leaves": list(tree.get("leaves") or []) or [{"empty": True}],
+        "LOBO": list((report.get("lobo") or {}).get("folds") or []) or _kv(dict(report.get("lobo") or {})),
+        "Mechanism": _kv(dict(report.get("interpretation") or {})),
+        "Safety": _kv(dict(report.get("safety") or {})),
+    }
+
+
+def build_markdown(report: dict[str, Any]) -> str:
+    a = dict(report.get("answers") or {})
+    d = dict(report.get("decision") or {})
+    lines = [
+        f"# {ANALYSIS_ID}",
+        "",
+        f"VERDICT: **{d.get('VERDICT')}**",
+        f"NEXT: {d.get('NEXT')}",
+        f"CASE: {d.get('CASE')}",
+        "TRUE_OOS: false",
+        "CERTIFIED: false",
+        "KIND: DIRECTION_OBJECTIVE_REDESIGN",
+        "CANDIDATE_STRATEGY_N: 0",
+        "",
+        str((report.get("interpretation") or {}).get("MARKET_MECHANISM") or ""),
+        "",
+    ]
+    for i in range(1, 42):
+        matches = [k for k in a if k.split("_", 1)[0] == str(i)]
+        if matches:
+            lines.append(f"{i}. {matches[0]}: {a.get(matches[0])}")
+    lines.extend(["", "No Runtime short. No CAP. Nonfill is not PnL. No V5 rescue.", "", "STOP.", ""])
+    return "\n".join(lines)
+
+
+def write_artifacts(report: dict[str, Any], sheets: dict[str, list[dict[str, Any]]]) -> None:
+    OUT.mkdir(parents=True, exist_ok=True)
+    payload = json_sanitize({k: v for k, v in report.items() if not str(k).startswith("_")})
+    (OUT / "report.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    (OUT / "report.md").write_text(str(report.get("_markdown") or build_markdown(report)), encoding="utf-8")
+    wb = Workbook()
+    first = True
+    for name in SHEET_ORDER:
+        ws = wb.active if first else wb.create_sheet()
+        first = False
+        ws.title = name[:31]
+        _sheet(ws, list(sheets.get(name) or []))
+    xlsx = OUT / "audit.xlsx"
+    wb.save(xlsx)
+    assert xlsx.is_file()

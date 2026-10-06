@@ -9,6 +9,9 @@ results/
 kabu_native/results/
 kabu_native/data/push_jsonl/
 kabu_native/data/intraday_1m/
+kabu_native/data/reference/jquants/
+kabu_native/data/reference/historical_panel/
+kabu_native/data/reference/daytrade_historical_v2/
 kabu_native/data/market_capture/
 logs/runtime/
 
@@ -25,3 +28,5 @@ kabu_native/runtime/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+kabu_native/data/market_context_capture/

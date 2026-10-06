@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from research.e1_x6_provisional.util import sha256_obj
+from research.e1_x34a_execution_policy.executable_board import is_executable_continuous_board
 
 from . import (
     BOARD_FRESHNESS_SEC,
@@ -113,10 +114,14 @@ def load_board_events(day: str, symbol: str) -> dict[str, np.ndarray]:
         "ask_qty": np.empty(0), "bid_qty": np.empty(0),
         "special": np.empty(0, dtype=bool), "fresh_sec": np.empty(0),
         "spread": np.empty(0),
+        "executable": np.empty(0, dtype=bool),
+        "board_execution_state": np.empty(0, dtype=object),
     }
     if not fp.exists():
         return empty
     ts, asks, bids, aq, bq, specials, fresh, spreads = [], [], [], [], [], [], [], []
+    executables: list[bool] = []
+    states: list[str] = []
     for line in fp.open("rb"):
         if not line.strip():
             continue
@@ -149,6 +154,7 @@ def load_board_events(day: str, symbol: str) -> dict[str, np.ndarray]:
         # freshness vs quote clock if present
         qt = _ts(pay.get("CurrentPriceTime")) or _ts(pay.get("AskTime")) or _ts(pay.get("BidTime"))
         fresh_sec = float(recv - qt) if qt is not None else 0.0
+        gate = is_executable_continuous_board(pay, event_t=recv)
         ts.append(recv)
         asks.append(ask)
         bids.append(bid)
@@ -157,6 +163,8 @@ def load_board_events(day: str, symbol: str) -> dict[str, np.ndarray]:
         specials.append(sq_flag)
         fresh.append(fresh_sec)
         spreads.append((ask - bid) / ((ask + bid) / 2.0) * 10000.0)
+        executables.append(bool(gate.get("ok")))
+        states.append(str(gate.get("state") or ""))
     if not ts:
         return empty
     order = np.argsort(np.asarray(ts), kind="mergesort")
@@ -169,6 +177,8 @@ def load_board_events(day: str, symbol: str) -> dict[str, np.ndarray]:
         "special": np.asarray(specials, dtype=bool)[order],
         "fresh_sec": np.asarray(fresh, dtype=float)[order],
         "spread": np.asarray(spreads, dtype=float)[order],
+        "executable": np.asarray(executables, dtype=bool)[order],
+        "board_execution_state": np.asarray(states, dtype=object)[order],
     }
 
 

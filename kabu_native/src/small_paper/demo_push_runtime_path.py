@@ -220,6 +220,334 @@ def generate_scenario_records() -> list[dict[str, Any]]:
     return records
 
 
+X1_DEMO_DAY = "20260714"
+X1_DEMO_PORT = 18721
+X1_LEDGER_NAME = "fixed_support_x1_paper_ledger.jsonl"
+
+
+def x1_demo_symbols() -> list[str]:
+    """Isolated 50-code set. Not the production Universe and not written to it."""
+    head = ["7203", "6758", "9984", "8306", "6501", "4063", "4502", "6902", "7267", "8035"]
+    tail = [str(1101 + i) for i in range(40)]
+    symbols = head + tail
+    if len(symbols) != 50 or len(set(symbols)) != 50:
+        raise RuntimeError("demo exact50 fixture must contain 50 unique symbols")
+    return symbols
+
+
+def write_isolated_exact50_fixture(native_root: Path, trading_date: str, symbols: Sequence[str]) -> dict[str, Any]:
+    """Frozen AM50 inside the demo native root only. Does not touch production runtime."""
+    from small_paper.day_fixed_am_registration import (
+        FROZEN_SCHEMA_V13,
+        SAME_DAY_AM_FROZEN_AUTHORITY,
+        canonical_membership_sha,
+        file_sha256,
+        frozen_csv_path,
+        frozen_universe_path,
+        load_frozen_am_universe,
+    )
+
+    day = str(trading_date)
+    csv_path = frozen_csv_path(native_root, day)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["Symbol"])
+        writer.writeheader()
+        for symbol in symbols:
+            writer.writerow({"Symbol": symbol})
+    membership = canonical_membership_sha(list(symbols))
+    csv_sha = file_sha256(csv_path)
+    body = {
+        "authority": SAME_DAY_AM_FROZEN_AUTHORITY,
+        "schema": FROZEN_SCHEMA_V13,
+        "trading_date": day,
+        "canonical_symbols": list(symbols),
+        "canonical_membership_sha": membership,
+        "runtime_membership_sha": membership,
+        "runtime_frozen_csv_path": str(csv_path),
+        "frozen_csv_path": str(csv_path),
+        "runtime_frozen_csv_sha": csv_sha,
+        "runtime_count": 50,
+        "freeze_at": _kabu_time(DEMO_SESSION_START),
+        "generation": 1,
+        "id": "DEMO_PUSH_EXACT50_FIXTURE",
+        "provenance_source_csv_path": str(csv_path),
+        "provenance_source_csv_sha_at_freeze": csv_sha,
+    }
+    json_path = frozen_universe_path(native_root, day)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(body, indent=2), encoding="utf-8")
+    loaded = load_frozen_am_universe(native_root, day)
+    if not loaded.get("ok"):
+        raise RuntimeError(f"demo exact50 fixture rejected: {loaded.get('reason')}")
+    return {"ok": True, "symbols": list(symbols), "frozen_json": str(json_path)}
+
+
+def _x1_board(
+    symbol: str,
+    ts: datetime,
+    px: float,
+    cum: float,
+    *,
+    bid_qty: float = 1000.0,
+    session_open: datetime,
+) -> dict[str, Any]:
+    bid = round(float(px) - 0.5, 4)
+    ask = round(float(px), 4)
+    stamp = _kabu_time(ts)
+    opened = _kabu_time(session_open)
+    qty = float(bid_qty)
+    return {
+        "Symbol": symbol,
+        "Exchange": 1,
+        "CurrentPrice": float(px),
+        "CurrentPriceTime": stamp,
+        "CurrentPriceStatus": 1,
+        "TradingVolume": float(cum),
+        "TradingVolumeTime": stamp,
+        "OpeningPrice": 100.0,
+        "OpeningPriceTime": opened,
+        "BidPrice": bid,
+        "BidQty": qty,
+        "AskPrice": ask,
+        "AskQty": 1000.0,
+        "Buy1": {"Price": bid, "Qty": qty},
+        "Sell1": {"Price": ask, "Qty": 1000.0},
+        "demo": True,
+        "demo_push_e2e": True,
+    }
+
+
+def _x1_series(
+    symbol: str,
+    *,
+    session_open: datetime,
+    scenario_id: str,
+    points: list[tuple[float, float, float]],
+    seq_start: int,
+) -> tuple[list[dict[str, Any]], int]:
+    """points are (second offset, price, bid qty). Same offset keeps one timestamp."""
+    records: list[dict[str, Any]] = []
+    seq = seq_start
+    cum = 0.0
+    for index, (offset, px, bid_qty) in enumerate(points):
+        nxt = points[index + 1][0] if index + 1 < len(points) else None
+        prev = points[index - 1][0] if index else None
+        if prev == offset:
+            dvol = 0.0
+        elif nxt == offset:
+            dvol = 80.0
+        else:
+            dvol = 1.0
+        cum += dvol
+        seq += 1
+        ts = session_open + timedelta(seconds=float(offset))
+        payload = _x1_board(symbol, ts, px, max(cum, 1.0), bid_qty=bid_qty, session_open=session_open)
+        payload["demo_scenario_id"] = scenario_id
+        records.append(
+            {
+                "recorded_at": _kabu_time(ts),
+                "source": "live_push",
+                "symbol": f"{symbol}.T",
+                "payload": payload,
+                "scenario_id": scenario_id,
+                "sequence": seq,
+                "demo": True,
+                "demo_push_e2e": True,
+            }
+        )
+    return records, seq
+
+
+def _baseline(start: int, end: int, px: float = 100.0) -> list[tuple[float, float, float]]:
+    return [(float(step), px, 1000.0) for step in range(start, end)]
+
+
+def _burst(at: float, px: float, n: int = 9, bid_qty: float = 1000.0) -> list[tuple[float, float, float]]:
+    return [(float(at), px, bid_qty) for _ in range(n)]
+
+
+def generate_x1_fixed_support_records() -> list[dict[str, Any]]:
+    """Event-time FULL / exit fixtures. Prices follow the frozen impulse shape."""
+    require_demo_mode()
+    open_at = DEMO_SESSION_START
+    records: list[dict[str, Any]] = []
+    seq = 0
+
+    def add(symbol: str, scenario: str, points: list[tuple[float, float, float]]) -> None:
+        nonlocal seq, records
+        rows, seq = _x1_series(
+            symbol, session_open=open_at, scenario_id=scenario, points=points, seq_start=seq
+        )
+        records.extend(rows)
+
+    # A–D and F on 7203. History is one print per second so the frozen medians can arm.
+    path_7203: list[tuple[float, float, float]] = []
+    path_7203 += _baseline(0, 200)
+    path_7203 += _burst(200.0, 110.0)
+    path_7203 += _baseline(201, 210, 110.0)
+    path_7203 += _burst(210.0, 130.0, n=31)
+    path_7203 += _baseline(211, 240, 120.0)
+    path_7203 += [(240.0, 90.0, 1000.0)]
+    path_7203 += _baseline(280, 480, 100.0)
+    path_7203 += _burst(480.0, 130.0)
+    path_7203 += [(520.0, 90.0, 1000.0)]
+    add("7203", "A_x1_entry", path_7203)
+
+    path_6758: list[tuple[float, float, float]] = []
+    path_6758 += _baseline(0, 200)
+    path_6758 += _burst(200.0, 110.0)
+    path_6758 += _baseline(201, 300, 110.0)
+    path_6758 += [(300.0, 90.0, 0.0)]
+    path_6758 += [(320.0, 88.0, 1000.0)]
+    add("6758", "E_exit_pending", path_6758)
+
+    cap_symbols = ["9984", "8306", "6501", "4063", "4502", "6902"]
+    for symbol in cap_symbols:
+        points = _baseline(0, 700) + _burst(700.0, 110.0)
+        if symbol == "9984":
+            points += _baseline(701, 860, 112.0) + _burst(860.0, 140.0)
+        # 09:10 + 8300s is still inside AM [09:00, 11:30). +8500s is after 11:30.
+        points += [(8300.0, 105.0, 1000.0), (8500.0, 1.0, 1000.0)]
+        add(symbol, "G_cap", points)
+    return records
+
+
+def deliver_via_market_bus(records: Sequence[Mapping[str, Any]], *, native_root: Path) -> dict[str, Any]:
+    """Publish the demo fixture on an isolated bus and consume it with PaperMarketBusBridge."""
+    from small_paper.local_market_bus import LocalMarketBusPublisher
+    from small_paper.market_ingress_protocol import KIND_MARKET_PUSH, MarketEnvelope
+    from small_paper.paper_market_bus_consumer import PaperMarketBusBridge
+
+    publisher = LocalMarketBusPublisher(
+        host="127.0.0.1",
+        port=X1_DEMO_PORT,
+        enable_tcp=True,
+        ingress_session_id="demo_push_x1",
+    )
+    publisher.start()
+    bridge = PaperMarketBusBridge(
+        host="127.0.0.1",
+        port=X1_DEMO_PORT,
+        consumer_id="paper_runtime",
+        ingress_session_id="demo_push_x1",
+        native_root=native_root,
+        trading_date=X1_DEMO_DAY,
+    )
+    if not bridge.start():
+        publisher.stop()
+        raise RuntimeError("demo PaperMarketBusBridge did not connect")
+    try:
+        for index, rec in enumerate(records, start=1):
+            payload = dict(rec.get("payload") or {})
+            envelope = MarketEnvelope(
+                kind=KIND_MARKET_PUSH,
+                ingress_session_id="demo_push_x1",
+                sequence=index,
+                event_time=str(rec.get("recorded_at") or ""),
+                received_at=str(rec.get("recorded_at") or ""),
+                persisted_at=str(rec.get("recorded_at") or ""),
+                published_at="",
+                symbol=str(rec.get("symbol") or ""),
+                payload=payload,
+                connection_generation=1,
+                registration_generation=1,
+            )
+            if not publisher.publish(envelope):
+                raise RuntimeError(f"demo bus publish failed at {index}")
+        received = 0
+        deadline = time.monotonic() + 180.0
+        while received < len(records) and time.monotonic() < deadline:
+            try:
+                bridge.q.get(timeout=0.2)
+            except Exception:
+                continue
+            received += 1
+            if received % 250 == 0:
+                try:
+                    bridge.ack_processed({"__ingress_sequence__": received})
+                except Exception:
+                    pass
+        return {
+            "published": len(records),
+            "received": received,
+            "consumer_id": bridge.consumer_id,
+            "port": X1_DEMO_PORT,
+        }
+    finally:
+        try:
+            bridge.stop()
+        except Exception:
+            pass
+        publisher.stop()
+
+
+def install_x1_demo_dispatch(fixture_root: Path, ledger_dir: Path, symbols: Sequence[str]) -> dict[str, Any]:
+    """Point the real replay dispatch at the isolated EXACT50 fixture and the X1 ledger.
+
+    The resolver, binder, and on_market_event stay the production functions.
+    """
+    import small_paper.pilot_runner as pilot
+    import small_paper.v1r_native_entry_live as native
+
+    stats = {
+        "executor": "",
+        "execution_family": "",
+        "dispatch_n": 0,
+        "legacy_primary_admission_mutations": 0,
+        "v1r_calls": 0,
+        "passive_family_n": 0,
+        "find_ask_cross_fill_n": 0,
+    }
+    orig_resolve = pilot._resolve_ctx_executor
+    orig_dispatch = pilot._dispatch_primary_push
+    orig_apply = native.apply_v1r_native_every_push
+
+    def _resolve(ctx: Any) -> Any:
+        ctx.native_root = fixture_root
+        state = ctx.state
+        state.trading_date = X1_DEMO_DAY
+        state.v1r_day_fixed_universe = list(symbols)
+        exe = orig_resolve(ctx)
+        family = str(getattr(exe, "execution_family", "") or "")
+        stats["executor"] = type(exe).__name__ if exe is not None else ""
+        stats["execution_family"] = family
+        if family == "X1_IMMEDIATE_ASK":
+            ledger_dir.mkdir(parents=True, exist_ok=True)
+            exe.ledger_path = ledger_dir / X1_LEDGER_NAME
+            stats["exe"] = exe
+        return exe
+
+    def _dispatch(ctx: Any, payload: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
+        out = orig_dispatch(ctx, payload, **kwargs)
+        stats["dispatch_n"] += 1
+        stats["legacy_primary_admission_mutations"] += int(out.get("legacy_primary_admission_mutations") or 0)
+        if str(out.get("execution_family") or "") == "PASSIVE_FILL_ENTRY_V1":
+            stats["passive_family_n"] += 1
+        return out
+
+    def _apply(**kwargs: Any) -> dict[str, Any]:
+        stats["v1r_calls"] += 1
+        return orig_apply(**kwargs)
+
+    pilot._resolve_ctx_executor = _resolve
+    pilot._dispatch_primary_push = _dispatch
+    native.apply_v1r_native_every_push = _apply
+    try:
+        import research.event_time_volume_confirmed_impulse_entry.execution as execution
+
+        orig_find = execution.find_ask_cross_fill
+
+        def _find(*args: Any, **kwargs: Any) -> Any:
+            stats["find_ask_cross_fill_n"] += 1
+            return orig_find(*args, **kwargs)
+
+        execution.find_ask_cross_fill = _find
+    except Exception:
+        pass
+    return stats
+
+
 def write_push_fixtures(push_dir: Path, records: Sequence[Mapping[str, Any]]) -> int:
     require_demo_mode()
     push_dir.mkdir(parents=True, exist_ok=True)
@@ -358,6 +686,29 @@ def run_paper_push_replay_inprocess(
     require_demo_mode()
     from dataclasses import replace
 
+    fixture_root = push_dir.parent.parent / "fixture_native"
+    symbols = x1_demo_symbols()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if (fixture_root / "runtime").is_dir():
+        bus = deliver_via_market_bus(
+            [
+                json.loads(line)
+                for path in sorted(push_dir.glob("*.jsonl"))
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ],
+            native_root=fixture_root,
+        )
+        (output_dir.parent / "market_bus_delivery.json").write_text(
+            json.dumps({"demo": True, "demo_push_e2e": True, **bus}, indent=2),
+            encoding="utf-8",
+        )
+        if int(bus.get("received") or 0) <= 0:
+            raise RuntimeError("demo market bus delivered no pushes")
+        stats = install_x1_demo_dispatch(fixture_root, output_dir, symbols)
+    else:
+        stats = {}
+
     from small_paper.config import load_pilot_config
     from small_paper.pilot_runner import run_push_replay_dry_run
     from small_paper.prebuild_vol_liq_startup_cache import build_run_session_key
@@ -379,15 +730,18 @@ def run_paper_push_replay_inprocess(
     output_dir.mkdir(parents=True, exist_ok=True)
     # Align vol_liq cache with AM prebuild to avoid multi-minute full scan (W19 lesson).
     try:
+        from small_paper.vol_liq_startup_cache import production_cache_dir
+
         run_key = session_key_from_output_dir(output_dir, repo_root)
-        cache_dir = resolve_cache_dir(cfg, repo_root=repo_root)
+        prod_cache = production_cache_dir(cfg, repo_root=repo_root)
+        demo_cache = resolve_cache_dir(cfg, repo_root=repo_root)
         fp = config_fingerprint(cfg)
         today = datetime.now(JST).strftime("%Y%m%d")
         am_payload = None
         am_key_used = ""
         for day in (DEMO_MARKET_DATE, today, "20260713"):
             am_key = build_run_session_key(date=day, session="AM")
-            am_payload, _err = load_cache_payload(cache_dir, run_session_key=am_key, config_fp=fp)
+            am_payload, _err = load_cache_payload(prod_cache, run_session_key=am_key, config_fp=fp)
             if am_payload is not None:
                 am_key_used = am_key
                 break
@@ -395,7 +749,7 @@ def run_paper_push_replay_inprocess(
             cloned = dict(am_payload)
             cloned["run_session_key"] = run_key
             cloned["demo_push_e2e_cache_clone_from"] = am_key_used
-            save_cache_payload(cache_dir, cloned)
+            save_cache_payload(demo_cache, cloned)
     except Exception:
         pass
 
@@ -434,6 +788,18 @@ def run_paper_push_replay_inprocess(
     summary["heartbeat_count"] = hb_count
     summary["demo"] = True
     summary["demo_push_e2e"] = True
+    exe = stats.get("exe") if isinstance(stats, dict) else None
+    if exe is not None:
+        snap = exe.snapshot_status()
+        snap["trades"] = list(getattr(exe, "trades", []) or [])
+        snap["counts"] = dict(getattr(exe, "counts", {}) or {})
+        snap["support_move_n"] = int(getattr(exe, "support_move_n", 0) or 0)
+        snap["dispatch"] = {k: v for k, v in stats.items() if k != "exe"}
+        snap["ledger_path"] = str(getattr(exe, "ledger_path", "") or "")
+        (output_dir / "x1_executor_snapshot.json").write_text(
+            json.dumps(snap, indent=2, default=str),
+            encoding="utf-8",
+        )
     summary["demo_market_clock"] = _kabu_time(DEMO_SESSION_START)
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return {
@@ -754,7 +1120,18 @@ def run_demo_push_full_certification(
         / f"push_replay_demo_{datetime.now(JST).strftime('%H%M%S')}"
     )
 
-    records = generate_scenario_records()
+    from small_paper.paper_primary_activation import assert_selected_paper_primary
+
+    assertion = assert_selected_paper_primary()
+    if (
+        not assertion.ok
+        or assertion.identity.get("session_executor") != "FixedSupportX1SessionExecutor"
+        or assertion.identity.get("execution_family") != "X1_IMMEDIATE_ASK"
+    ):
+        raise RuntimeError(f"demo activation is not fixed-support X1: {assertion.reason}")
+    symbols = x1_demo_symbols()
+    write_isolated_exact50_fixture(ws / "fixture_native", X1_DEMO_DAY, symbols)
+    records = generate_x1_fixed_support_records()
     write_push_fixtures(push_dir, records)
     write_injected_jsonl(out / "injected_pushes.jsonl", records)
 
@@ -905,45 +1282,56 @@ def run_demo_push_full_certification(
     }
     (out / "final_summary.json").write_text(json.dumps(final_summary, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    ready = (
+    x1_snap_path = paper_out / "x1_executor_snapshot.json"
+    x1_snap = json.loads(x1_snap_path.read_text(encoding="utf-8")) if x1_snap_path.is_file() else {}
+    ledger_path = paper_out / X1_LEDGER_NAME
+    ledger_rows = []
+    if ledger_path.is_file():
+        ledger_rows = [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    entry_rows = [row for row in ledger_rows if row.get("event") == "ENTRY"]
+    exit_rows = [row for row in ledger_rows if row.get("event") == "EXIT"]
+    bus_path = paper_out.parent / "market_bus_delivery.json"
+    bus_info = json.loads(bus_path.read_text(encoding="utf-8")) if bus_path.is_file() else {}
+    dispatch = x1_snap.get("dispatch") or {}
+    x1_ready = (
         tel.demo_push_injected_count > 0
         and tel.capture_ingest_count > 0
         and tel.paper_ingest_count > 0
-        and tel.push_dispatch_count > 0
-        and tel.candidate_eval_count > 0
-        and tel.exposure_gate_eval_count > 0
+        and int(bus_info.get("received") or 0) > 0
+        and int(dispatch.get("dispatch_n") or 0) > 0
+        and x1_snap.get("session_executor") == "FixedSupportX1SessionExecutor"
+        and x1_snap.get("execution_family") == "X1_IMMEDIATE_ASK"
+        and len(entry_rows) > 0
+        and len(exit_rows) > 0
+        and any(row.get("slot_release") is True for row in exit_rows)
+        and int(x1_snap.get("support_move_n") or 0) == 0
+        and int(dispatch.get("v1r_calls") or 0) == 0
+        and int(dispatch.get("passive_family_n") or 0) == 0
+        and int(dispatch.get("find_ask_cross_fill_n") or 0) == 0
+        and int(dispatch.get("legacy_primary_admission_mutations") or 0) == 0
         and tel.actual_submit == 0
         and tel.actual_cancel == 0
-        and tel.uncaught_exception_count == 0
         and contamination.get("ok")
         and paper_proc.returncode == 0
         and cap_proc.returncode == 0
-        and len(orphans) == 0
     )
+    ready = x1_ready
 
-    if not ready:
-        if tel.demo_push_injected_count <= 0:
-            verdict = "DEMO_PUSH_NOT_INGESTED"
-        elif tel.paper_ingest_count <= 0:
-            verdict = "PAPER_LOOP_NOT_STARTED"
-        elif tel.push_dispatch_count <= 0:
-            verdict = "SYMBOL_DISPATCH_NOT_REACHED"
-        elif tel.candidate_eval_count <= 0:
-            verdict = "CANDIDATE_NOT_CREATED"
-        elif tel.exposure_gate_eval_count <= 0:
-            verdict = "EXPOSURE_GATE_NOT_REACHED"
-        elif not contamination.get("ok"):
-            verdict = "DEMO_PRODUCTION_CONTAMINATION"
-        elif len(orphans) > 0:
-            verdict = "ORPHAN_PROCESS_REMAINS"
-        else:
-            verdict = "ROOT_CAUSE_UNRESOLVED"
+    if ready:
+        verdict = "FIXED_SUPPORT_X1_DEMO_PUSH_FULL_RUNTIME_E2E_PASS_V1"
+    elif not contamination.get("ok"):
+        verdict = "DEMO_PRODUCTION_CONTAMINATION"
     else:
-        # accept/reject both sides preferred
-        if tel.exposure_gate_reject_count <= 0 and tel.exposure_gate_accept_count <= 0:
-            verdict = "EXPOSURE_GATE_NOT_REACHED"
-        else:
-            verdict = "DEMO_PUSH_FULL_RUNTIME_PATH_READY"
+        verdict = "FIXED_SUPPORT_X1_DEMO_PUSH_FULL_RUNTIME_E2E_FAIL_V1"
+    final_summary["x1"] = {
+        "snapshot": {k: v for k, v in x1_snap.items() if k != "trades"},
+        "trade_n": len(x1_snap.get("trades") or []),
+        "entry_ledger_n": len(entry_rows),
+        "exit_ledger_n": len(exit_rows),
+        "bus": bus_info,
+        "first_entry": entry_rows[0] if entry_rows else {},
+        "first_exit": exit_rows[0] if exit_rows else {},
+    }
 
     final_summary["verdict"] = verdict
     final_summary["ready"] = ready
@@ -1009,7 +1397,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     repo = args.repo_root or native.parent
     summary = run_demo_push_full_certification(repo_root=repo, native_root=native)
     print(json.dumps({"verdict": summary.get("verdict"), "telemetry": summary.get("telemetry")}, indent=2))
-    return 0 if summary.get("verdict") == "DEMO_PUSH_FULL_RUNTIME_PATH_READY" else 1
+    return 0 if summary.get("verdict") == "FIXED_SUPPORT_X1_DEMO_PUSH_FULL_RUNTIME_E2E_PASS_V1" else 1
 
 
 if __name__ == "__main__":

@@ -11,15 +11,25 @@ Exit codes:
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    from small_paper.demo_push_firewall import demo_fully_armed, isolated_native_root
     from small_paper.kabu_readonly_readiness import (
         probe_summary_for_cli,
         readiness_exit_code,
         run_readonly_readiness_probe,
     )
+    from small_paper.kabu_token_authority import ENV_AUTHORITY_DIR, ENV_STATION_AUTHORITY_DIR
+
+    if demo_fully_armed():
+        root = isolated_native_root()
+        (root / "data" / "market_capture" / "demo_authority").mkdir(parents=True, exist_ok=True)
+        (root / "runtime" / "kabu_station_authority").mkdir(parents=True, exist_ok=True)
+        os.environ[ENV_AUTHORITY_DIR] = str(root / "data" / "market_capture" / "demo_authority")
+        os.environ[ENV_STATION_AUTHORITY_DIR] = str(root / "runtime" / "kabu_station_authority")
 
     diag = run_readonly_readiness_probe(load_env=True, allow_live=True)
     summary = probe_summary_for_cli(diag)

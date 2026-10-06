@@ -616,6 +616,28 @@ def paper_bat_command(bat: Path) -> list[str]:
     return ["cmd.exe", "/d", "/c", "call", str(bat)]
 
 
+def certification_owns_capture_runtime(
+    *,
+    capture_synthetic: bool = False,
+    skip_capture_wait: bool = False,
+    premarket_cert_only: bool = False,
+    demo_push_e2e: bool = False,
+    comm_fault_e2e: bool = False,
+) -> bool:
+    """True only for certification-owned short runtimes.
+
+    TRADEBOT_CERTIFICATION_MODE on a live market Paper day is not ownership.
+    Live Ingress/Capture must continue until 15:35.
+    """
+    return bool(
+        capture_synthetic
+        or skip_capture_wait
+        or premarket_cert_only
+        or demo_push_e2e
+        or comm_fault_e2e
+    )
+
+
 def run_paper_bat_preserving_exitcode(
     bat: Path,
     env: Mapping[str, str],
@@ -664,6 +686,7 @@ class PaperTradeCheckedRunner:
         comm_fault_e2e: bool = False,
         reuse_capture: bool = False,
         reuse_capture_pid: Optional[int] = None,
+        premarket_cert_only: bool = False,
     ) -> None:
         self.repo_root = Path(repo_root)
         self.native_root = Path(native_root)
@@ -679,6 +702,11 @@ class PaperTradeCheckedRunner:
         self.reuse_capture_pid = int(reuse_capture_pid) if reuse_capture_pid else None
         self.demo_push_e2e = bool(demo_push_e2e)
         self.comm_fault_e2e = bool(comm_fault_e2e)
+        self.premarket_cert_only = bool(premarket_cert_only)
+        if self.premarket_cert_only and (
+            capture_synthetic or skip_paper or self.demo_push_e2e or self.comm_fault_e2e
+        ):
+            raise RuntimeError("PREMARKET_CERT_ONLY_REJECTS_SYNTHETIC_OR_SKIP_PAPER")
         if self.demo_push_e2e:
             os.environ["TRADEBOT_DEMO_PUSH_E2E"] = "1"
             # Demo: no live Capture wait / no Kabu register write path
@@ -695,8 +723,14 @@ class PaperTradeCheckedRunner:
             capture_synthetic or skip_paper or self.demo_push_e2e or self.comm_fault_e2e
         )
         self.skip_capture_wait = bool(
-            skip_capture_wait or skip_paper or self.demo_push_e2e or self.comm_fault_e2e
+            skip_capture_wait
+            or skip_paper
+            or self.demo_push_e2e
+            or self.comm_fault_e2e
+            or self.premarket_cert_only
         )
+        self.premarket_cert_passed = False
+        self.cold_start: dict[str, Any] = {}
         self.steps: list[StepResult] = []
         self.paper_call_count = 0
         self.w4s_call_count = 0
@@ -1416,6 +1450,183 @@ class PaperTradeCheckedRunner:
         )
         return code
 
+    def _production_cold_start(self) -> bool:
+        return not (self.capture_synthetic or self.demo_push_e2e or self.comm_fault_e2e)
+
+    def _current_launch_identity(self) -> dict[str, Any]:
+        from small_paper.kabu_token_authority import read_shared_generation
+        from small_paper.paper_primary_activation import assert_selected_paper_primary
+
+        assertion = assert_selected_paper_primary()
+        identity = assertion.identity or {}
+        uni = self.capture.get("universe") or {}
+        return {
+            "trading_date": self.trading_date,
+            "startup_run_id": self.runtime_run_id,
+            "activation_id": identity.get("activation_id"),
+            "activation_sha": identity.get("activation_sha") or identity.get("sha256"),
+            "universe_membership_sha": uni.get("canonical_membership_sha"),
+            "ingress_pid": int(self.capture.get("pid") or 0),
+            "token_generation": read_shared_generation(self.native_root, self.trading_date),
+            "real_submit": 0,
+            "real_cancel": 0,
+            "live_order_calls": 0,
+        }
+
+    def _authorize_same_startup_paper(self) -> tuple[bool, str]:
+        from small_paper.pre_paper_ready_seal import FAIL_SEAL_INVALID, authorize_paper_launch, load_seal
+
+        if self.premarket_cert_only:
+            return False, FAIL_SEAL_INVALID
+        seal = load_seal(self.native_root, self.trading_date)
+        return authorize_paper_launch(seal, self._current_launch_identity())
+
+    def step_cold_start_gates(self) -> bool:
+        """Exact50, fresh recovery, and X1 binding. Does not start Paper."""
+        started = time.time()
+        from small_paper.config import load_pilot_config
+        from small_paper.discord_notifier import discord_notifier_from_pilot
+        from small_paper.paper_primary_activation import assert_selected_paper_primary
+        from small_paper.pre_paper_ready_seal import (
+            CLASS_CERT_ONLY,
+            CLASS_PAPER_START,
+            file_sha256,
+            notify_ready_once,
+            prove_exact50,
+            prove_fresh_recovery,
+            prove_x1_binding,
+            write_seal,
+        )
+
+        uni = self.capture.get("universe") or {}
+        symbols = list(uni.get("symbols") or [])
+        exact = prove_exact50(self.native_root, self.trading_date, symbols)
+        recovery = prove_fresh_recovery(self.native_root)
+        bind_dir = self.native_root / "results" / "operations" / f"premarket_x1_bind_{self.trading_date}"
+        bind_dir.mkdir(parents=True, exist_ok=True)
+        notifier = None
+        try:
+            if self.config_path.is_file():
+                cfg = load_pilot_config(self.config_path)
+                if bool(getattr(cfg, "discord_enabled", False)):
+                    notifier = discord_notifier_from_pilot(cfg)
+        except Exception:
+            notifier = None
+        binding = prove_x1_binding(
+            native_root=self.native_root,
+            trading_date=self.trading_date,
+            symbols=symbols,
+            bind_dir=bind_dir,
+            notifier=notifier,
+        )
+        assertion = assert_selected_paper_primary()
+        identity = assertion.identity or {}
+        current = self._current_launch_identity()
+        universe_file = str(uni.get("universe_path") or "")
+        body = {
+            "trading_date": self.trading_date,
+            "startup_run_id": self.runtime_run_id,
+            "activation_id": identity.get("activation_id"),
+            "activation_sha": identity.get("activation_sha") or identity.get("sha256"),
+            "candidate_name": identity.get("candidate_name"),
+            "entry_sha": identity.get("entry_sha"),
+            "exit_sha": identity.get("exit_sha"),
+            "complete_strategy_sha": identity.get("complete_strategy_sha"),
+            "universe_file": universe_file,
+            "universe_file_sha": file_sha256(Path(universe_file)) if universe_file else "",
+            "universe_membership_sha": uni.get("canonical_membership_sha"),
+            "universe_n": int(uni.get("symbol_count") or len(symbols) or 0),
+            "universe_symbols": symbols,
+            "synthetic_universe": False,
+            "synthetic_fallback_used": False,
+            "ingress_pid": int(self.capture.get("pid") or 0),
+            "ingress_owner": "MARKET_INGRESS_SERVICE",
+            "token_generation": current.get("token_generation"),
+            "token_issued": bool(exact.get("ok")) and int(current.get("token_generation") or 0) > 0 and int(current.get("token_generation") or 0) != int(getattr(self, "token_generation_before_ingress", -1) or -1),
+            "token_authority_valid": bool(exact.get("ok")) and int(self.capture.get("pid") or 0) > 0,
+            "desired_n": exact.get("desired_n"),
+            "registered_n": exact.get("registered_n"),
+            "symbol_set_match": bool(exact.get("symbol_set_match")),
+            "exact50": bool(exact.get("exact50")),
+            "recovery_query_timestamp": recovery.get("query_timestamp"),
+            "current_reconciliation": recovery.get("current_reconciliation"),
+            "recovery_ready": recovery.get("recovery_ready"),
+            "recovery_readable": recovery.get("readable"),
+            "broker_position_n": recovery.get("broker_position_n"),
+            "active_order_n": recovery.get("active_order_n"),
+            "broker_only_n": recovery.get("broker_only_n"),
+            "local_only_n": recovery.get("local_only_n"),
+            "quantity_mismatch_n": recovery.get("quantity_mismatch_n"),
+            "session_owner_class": binding.get("session_owner_class"),
+            "admission_owner_class": binding.get("admission_owner_class"),
+            "portfolio_owner_class": binding.get("portfolio_owner_class"),
+            "execution_family": binding.get("execution_family"),
+            "ledger_path_bound": binding.get("ledger_path_bound"),
+            "notifier_bound": binding.get("notifier_bound"),
+            "x1_counters_bound": binding.get("x1_counters_bound"),
+            "same_persistent_executor": binding.get("same_persistent_executor"),
+            "boot_v1r_native_entry_n": binding.get("boot_v1r_native_entry_n"),
+            "passive_fill_n": binding.get("passive_fill_n"),
+            "v1r_pending_n": binding.get("v1r_pending_n"),
+            "real_submit": recovery.get("real_submit"),
+            "real_cancel": recovery.get("real_cancel"),
+            "live_order_calls": recovery.get("live_order_calls"),
+            "paper_call_count": 0,
+            "classification": CLASS_CERT_ONLY if self.premarket_cert_only else CLASS_PAPER_START,
+        }
+        written = write_seal(self.native_root, body)
+        self.cold_start = {**body, "path": written.get("path"), "ready": written.get("ready"), "exact": exact, "recovery": recovery, "binding": binding}
+        ok = bool(exact.get("ok") and recovery.get("recovery_ready") and binding.get("ok") and assertion.ok)
+        if self.premarket_cert_only:
+            ok = ok and written.get("ready") is False and written.get("classification") == CLASS_CERT_ONLY
+            self.premarket_cert_passed = ok
+        elif ok and written.get("ready") is True:
+            try:
+                if notify_ready_once(written, notifier=notifier):
+                    written["ready_notified"] = True
+                    write_seal(self.native_root, written)
+            except Exception:
+                pass
+        else:
+            ok = False
+        self._record(
+            "pre_paper_ready_seal",
+            8,
+            "cold_start_gates",
+            exit_code=0 if ok else 2,
+            started=started,
+            stdout=json.dumps(
+                {
+                    "exact50": exact.get("exact50"),
+                    "registered_n": exact.get("registered_n"),
+                    "symbol_set_match": exact.get("symbol_set_match"),
+                    "current_reconciliation": recovery.get("current_reconciliation"),
+                    "recovery_ready": recovery.get("recovery_ready"),
+                    "binding_ok": binding.get("ok"),
+                    "classification": written.get("classification"),
+                    "ready": written.get("ready"),
+                },
+                ensure_ascii=False,
+            ),
+            result="PASS" if ok else "FAIL",
+            blocked_reason="" if ok else str(exact.get("reason") or recovery.get("error") or binding.get("reason") or "PRE_PAPER_READY_SEAL_INVALID"),
+        )
+        if not ok and not self.premarket_cert_only:
+            self._block(
+                "pre_paper_ready_seal",
+                2,
+                self.steps[-1].blocked_reason,
+                "Paper stays stopped until the same startup proves every cold-start gate.",
+            )
+        if not ok and self.premarket_cert_only:
+            self._block(
+                "pre_paper_ready_seal",
+                2,
+                self.steps[-1].blocked_reason,
+                "Premarket certification failed. Paper was not called.",
+            )
+        return ok
+
     def step_start_paper(self) -> int:
         self._print_step(8, 8, "Starting Paper", "")
         if self.comm_fault_e2e:
@@ -1438,6 +1649,15 @@ class PaperTradeCheckedRunner:
             self._block("paper_trade", 1, f"missing {self.paper_bat}", "Restore run_paper_trade.bat")
             self.paper_exit_code = 1
             return 1
+        if self.paper_call_count >= 1:
+            self._block("paper_trade", 2, "PAPER_ALREADY_LAUNCHED", "Paper bat is invoked at most once.")
+            self.paper_exit_code = 2
+            return 2
+        allowed, reason = self._authorize_same_startup_paper()
+        if not allowed:
+            self._block("paper_trade", 2, reason, "Do not call the Paper bat. Rebuild a same-startup ready seal.")
+            self.paper_exit_code = 2
+            return 2
         started = time.time()
         try:
             from small_paper.auth_lifecycle import PHASE_AM_RUNTIME, set_auth_phase
@@ -1914,18 +2134,34 @@ class PaperTradeCheckedRunner:
         ok = bool(resolved.get("ok")) and int(resolved.get("symbol_count") or 0) == 50
         # Weekend / missing CSV: synthetic tests inject symbols via coordination
         if not ok and self.capture_synthetic:
+            from small_paper.pre_paper_ready_seal import SYNTHETIC_CODES
+
             ok = True
             resolved = {
                 **resolved,
                 "ok": True,
-                "symbols": [str(7200 + i) for i in range(50)],
+                "symbols": sorted(SYNTHETIC_CODES, key=int),
                 "symbol_count": 50,
                 "reason": "synthetic_universe",
+                "synthetic_universe": True,
+                "synthetic_fallback_used": True,
                 "universe_path": resolved.get("universe_path"),
                 "universe_sha256": "",
             }
+        if self._production_cold_start():
+            from small_paper.pre_paper_ready_seal import production_universe_unavailable
+
+            blocked_universe = production_universe_unavailable(
+                list(resolved.get("symbols") or []),
+                reason=str(resolved.get("reason") or ""),
+                synthetic_provenance=bool(
+                    resolved.get("synthetic_universe") or resolved.get("synthetic_fallback_used")
+                ),
+            )
+            if blocked_universe:
+                ok = False
+                resolved = {**resolved, "ok": False, "reason": blocked_universe}
         if ok:
-            from small_paper.operational_validation import operational_validation_mode
             from small_paper.pre_freeze_kabu_validation import freeze_valid50_after_kabu_validation
 
             skip_val = bool(self.capture_synthetic or self.demo_push_e2e or self.comm_fault_e2e)
@@ -1935,39 +2171,18 @@ class PaperTradeCheckedRunner:
                     self.trading_date,
                     skip_if_frozen=True,
                 )
-                # Live Formal: validate when a readonly token exists; AUTH_NOT_READY
-                # does not rewrite freeze. OPVAL fail-closes (token expected after Ingress).
+                # AUTH_NOT_READY cannot prove symbol validity. Never freeze an
+                # unvalidated 50; delay freeze until Ingress token is ready.
                 if not validated.get("ok") and str(validated.get("reason") or "") == "AUTH_NOT_READY":
-                    if operational_validation_mode():
-                        ok = False
-                        resolved = {**resolved, **validated, "ok": False}
-                    else:
-                        frozen = freeze_same_day_am_universe(
-                            self.native_root,
-                            self.trading_date,
-                            symbols=list(resolved.get("symbols") or []),
-                            source_path=str(resolved.get("universe_path") or ""),
-                            source_sha256=str(resolved.get("universe_sha256") or ""),
-                        )
-                        if not frozen.get("ok"):
-                            ok = False
-                            resolved = {**resolved, **frozen, "ok": False}
-                        else:
-                            resolved = load_am_canonical_50(self.native_root, self.trading_date)
-                            resolved["freeze"] = {
-                                k: frozen.get(k)
-                                for k in (
-                                    "authority",
-                                    "canonical_membership_sha",
-                                    "source_csv_path",
-                                    "source_csv_sha",
-                                    "built_at",
-                                    "generation",
-                                    "id",
-                                )
-                            }
-                            resolved["authority"] = SAME_DAY_AM_FROZEN_AUTHORITY
-                            resolved["pre_freeze_validation"] = "SKIPPED_AUTH_NOT_READY"
+                    self.capture["freeze_deferred"] = True
+                    resolved = {
+                        **resolved,
+                        "ok": True,
+                        "freeze_created": False,
+                        "pre_freeze_validation": "DEFERRED_AUTH_NOT_READY",
+                        "reason": "DEFERRED_AUTH_NOT_READY",
+                    }
+                    ok = True
                 elif not validated.get("ok"):
                     ok = False
                     resolved = {**resolved, **validated, "ok": False}
@@ -2046,6 +2261,28 @@ class PaperTradeCheckedRunner:
 
     def step_registration_coordination(self) -> bool:
         started = time.time()
+        if self.capture.get("freeze_deferred"):
+            step = self._record(
+                "registration_coordination",
+                6,
+                "deferred_until_validated_freeze",
+                exit_code=0,
+                started=started,
+                result="PASS",
+                info_only=True,
+            )
+            self._print_step(6, self._step_total, "Registration plan", "DEFERRED")
+            self.capture["registration"] = {
+                "ok": True,
+                "deferred": True,
+                "expected_count": 0,
+                "coordination_only": True,
+                "runtime_register": "PENDING_PRE_FREEZE_VALIDATION",
+                "desired_bound": False,
+                "display_status": "DEFERRED_AUTH_NOT_READY",
+            }
+            self.capture["symbols_label"] = "deferred"
+            return True
         from small_paper.day_fixed_am_registration import (
             bind_same_day_am_desired_universe,
             canonical_membership_sha,
@@ -2134,6 +2371,135 @@ class PaperTradeCheckedRunner:
             self._block("registration_coordination", 1, step.blocked_reason, "Fix registration coordination (≤50, lock, no race).")
         return ok
 
+    def step_validated_freeze_after_auth(self) -> bool:
+        """After Ingress AUTH_READY, prove valid50 then bind desired. Never freeze unvalidated."""
+        started = time.time()
+        if self.capture_synthetic or self.demo_push_e2e or self.comm_fault_e2e:
+            return True
+        if not self.capture.get("freeze_deferred"):
+            return True
+        from small_paper.day_fixed_am_registration import (
+            SAME_DAY_AM_FROZEN_AUTHORITY,
+            bind_same_day_am_desired_universe,
+            canonical_membership_sha,
+            load_am_canonical_50,
+            load_frozen_am_universe,
+        )
+        from small_paper.market_capture_registration import coordinate_registration
+        from small_paper.pre_freeze_kabu_validation import wait_and_freeze_valid50
+
+        ranked = list((self.capture.get("universe") or {}).get("symbols") or [])
+        validated = wait_and_freeze_valid50(
+            self.native_root,
+            self.trading_date,
+            ranked=ranked or None,
+            skip_if_frozen=True,
+        )
+        if not validated.get("ok"):
+            step = self._record(
+                "validated_freeze_after_auth",
+                7,
+                "wait_and_freeze_valid50",
+                exit_code=1,
+                started=started,
+                result="FAIL",
+                blocked_reason=str(validated.get("reason") or "AUTH_NOT_READY"),
+            )
+            self._print_step(7, self._step_total, "Validated freeze", step.result)
+            self._block(
+                "validated_freeze_after_auth",
+                1,
+                step.blocked_reason,
+                "Do not freeze unvalidated symbols. Wait for AUTH_READY or fail closed.",
+            )
+            return False
+        frozen_body = load_frozen_am_universe(self.native_root, self.trading_date)
+        resolved = load_am_canonical_50(self.native_root, self.trading_date)
+        resolved["ok"] = True
+        resolved["authority"] = SAME_DAY_AM_FROZEN_AUTHORITY
+        resolved["pre_freeze_validation"] = "KABU_BOARD_VALIDATED"
+        resolved["excluded_terminal_invalid"] = validated.get("excluded_terminal_invalid") or []
+        resolved["freeze"] = {
+            k: frozen_body.get(k)
+            for k in (
+                "authority",
+                "canonical_membership_sha",
+                "source_csv_path",
+                "source_csv_sha",
+                "built_at",
+                "generation",
+                "id",
+            )
+        }
+        self.capture["universe"] = resolved
+        self.capture["freeze_deferred"] = False
+        bind = bind_same_day_am_desired_universe(
+            self.native_root,
+            self.trading_date,
+            symbols=list(resolved.get("symbols") or []),
+            source_path=str(resolved.get("universe_path") or ""),
+            source_sha256=str(resolved.get("universe_sha256") or ""),
+        )
+        if not bind.get("ok"):
+            self._block(
+                "validated_freeze_after_auth",
+                1,
+                str(bind.get("reason") or "desired_universe_bind_failed"),
+                "Bind validated freeze to Ingress desired universe.",
+            )
+            return False
+        coord = coordinate_registration(
+            self.native_root,
+            self.trading_date,
+            expected_symbols=list(resolved.get("symbols") or []),
+            apply_register=False,
+            universe_path=resolved.get("universe_path"),
+            universe_sha256=str(resolved.get("universe_sha256") or ""),
+            test_mode=self.capture_synthetic,
+            extra={
+                "source_trading_date": self.trading_date,
+                "canonical_membership_sha": canonical_membership_sha(list(resolved.get("symbols") or [])),
+                "desired_count": len(list(resolved.get("symbols") or [])),
+            },
+        )
+        ok = bool(coord.get("ok")) and int(coord.get("expected_count") or 0) == 50
+        self.capture["registration"] = {
+            **coord,
+            "coordination_only": True,
+            "runtime_register": "PENDING",
+            "desired_bound": True,
+            "display_status": "REGISTRATION_COORDINATION_READY" if ok else "FAIL",
+        }
+        self.capture["symbols_label"] = f"{coord.get('expected_count', 0)}/50"
+        invalid_n = int(validated.get("terminal_invalid_count") or 0)
+        step = self._record(
+            "validated_freeze_after_auth",
+            7,
+            "wait_and_freeze_valid50",
+            exit_code=0 if ok else 1,
+            started=started,
+            stdout=json.dumps(
+                {
+                    "ok": ok,
+                    "invalid_excluded": invalid_n,
+                    "registered_plan": coord.get("expected_count"),
+                    "pre_freeze_validation": "KABU_BOARD_VALIDATED",
+                },
+                ensure_ascii=False,
+            ),
+            result="PASS" if ok else "FAIL",
+            blocked_reason="" if ok else str(coord.get("reason") or "registration_coordination_failed"),
+        )
+        self._print_step(7, self._step_total, "Validated freeze", step.result)
+        if not ok:
+            self._block(
+                "validated_freeze_after_auth",
+                1,
+                step.blocked_reason,
+                "Validated freeze must bind exactly 50 symbols.",
+            )
+        return ok
+
     def step_start_capture(self) -> bool:
         started = time.time()
         from small_paper.market_capture_sidecar import (
@@ -2178,7 +2544,13 @@ class PaperTradeCheckedRunner:
             return self._step_reuse_capture(started=started, day_dir=day_dir)
 
         if market_ingress_v2_enabled():
+            from small_paper.kabu_token_authority import read_shared_generation
             from small_paper.market_ingress_spawn import spawn_ingress_process, wait_ingress_online
+
+            try:
+                self.token_generation_before_ingress = read_shared_generation(self.native_root, self.trading_date)
+            except Exception:
+                self.token_generation_before_ingress = None
 
             # Cutover: Independent Ingress owns WS + Raw; legacy fanout sidecar OFF.
             spawn = spawn_ingress_process(
@@ -2472,9 +2844,13 @@ class PaperTradeCheckedRunner:
         seal_ok = bool(self.capture.get("seal_pass"))
         override = bool(self.capture.get("override_used"))
         continuing = False
-        from small_paper.runtime_clock import certification_mode
-
-        cert_owned = bool(certification_mode()) and not bool(self.reuse_capture)
+        cert_owned = certification_owns_capture_runtime(
+            capture_synthetic=bool(self.capture_synthetic),
+            skip_capture_wait=bool(self.skip_capture_wait),
+            premarket_cert_only=bool(self.premarket_cert_only),
+            demo_push_e2e=bool(self.demo_push_e2e),
+            comm_fault_e2e=bool(self.comm_fault_e2e),
+        )
         if cert_owned and self.capture.get("started") and not self.skip_capture_wait:
             from small_paper.capture_child_cleanup import (
                 DEFAULT_GRACEFUL_TIMEOUT_SEC,
@@ -2506,6 +2882,10 @@ class PaperTradeCheckedRunner:
             self.capture["capture_complete"] = False
             self.capture["seal_pass"] = None
             self.capture["continuing_until"] = f"{self.trading_date} 15:35 JST"
+        if self.premarket_cert_only:
+            self.capture["final_status"] = "CERT_ONLY_STOPPED"
+            self.capture["capture_complete"] = False
+            continuing = True
         ok = seal_ok or override or continuing
         step = self._record(
             "capture_finalize_verify",
@@ -2869,7 +3249,11 @@ class PaperTradeCheckedRunner:
 
             # Paper path — failures must NOT stop capture (live continue-to-15:35 policy)
             paper_path_ok = True
-            if not self.step_cache_prebuild():
+            if not (self.demo_push_e2e or self.comm_fault_e2e or self.capture_synthetic):
+                if not self.step_validated_freeze_after_auth():
+                    paper_path_ok = False
+                    self._paper_block_but_capture_continues("validated_freeze_after_auth")
+            if paper_path_ok and not self.step_cache_prebuild():
                 paper_path_ok = False
                 self._paper_block_but_capture_continues("cache_prebuild")
             elif not self.step_preflight():
@@ -2896,43 +3280,63 @@ class PaperTradeCheckedRunner:
                 # V1R Primary fail-closed gate BEFORE classic paper bat.
                 # If assertion fails: NO PAPER PRIMARY (do not fall back to PBv2).
                 try:
-                    from small_paper.v1r_exit_v2_activation_gate import (
+                    from small_paper.paper_primary_activation import (
                         ASSERTION_FAIL,
-                        assert_exit_v2_primary_roles,
+                        assert_selected_paper_primary,
                     )
-                    _v1r_assert = assert_exit_v2_primary_roles()
-                    print(_v1r_assert.startup_block, flush=True)
+                    _paper_assert = assert_selected_paper_primary()
+                    print(_paper_assert.startup_block, flush=True)
                     self._record(
-                        "v1r_exit_v2_primary_role_assertion",
+                        "paper_primary_activation_assertion",
                         8,
-                        "assert_exit_v2_primary_roles",
-                        exit_code=0 if _v1r_assert.ok else 2,
+                        "assert_selected_paper_primary",
+                        exit_code=0 if _paper_assert.ok else 2,
                         started=time.time(),
-                        result="PASS" if _v1r_assert.ok else "FAIL",
-                        blocked_reason="" if _v1r_assert.ok else (_v1r_assert.reason or ASSERTION_FAIL),
+                        result="PASS" if _paper_assert.ok else "FAIL",
+                        blocked_reason="" if _paper_assert.ok else (_paper_assert.reason or ASSERTION_FAIL),
                     )
-                    if not _v1r_assert.ok:
+                    if not _paper_assert.ok:
                         paper_path_ok = False
                         self.blocked = {
-                            "step": "v1r_exit_v2_primary_role_assertion",
-                            "reason": _v1r_assert.reason or ASSERTION_FAIL,
+                            "step": "paper_primary_activation_assertion",
+                            "reason": _paper_assert.reason or ASSERTION_FAIL,
                             "exit_code": 2,
                             "no_pbv2_primary_fallback": True,
                             "no_fixed600_primary_fallback": True,
                         }
-                        self._paper_block_but_capture_continues("v1r_exit_v2_primary_role_assertion")
+                        self._paper_block_but_capture_continues("paper_primary_activation_assertion")
                 except Exception as exc:
                     paper_path_ok = False
                     self.blocked = {
-                        "step": "v1r_exit_v2_primary_role_assertion",
-                        "reason": f"V1R_EXIT_V2_PRIMARY_ROLE_ASSERTION_FAILED:exception:{exc}",
+                        "step": "paper_primary_activation_assertion",
+                        "reason": f"PAPER_PRIMARY_ASSERTION_FAILED:exception:{exc}",
                         "exit_code": 2,
                         "no_pbv2_primary_fallback": True,
                         "no_fixed600_primary_fallback": True,
                     }
-                    self._paper_block_but_capture_continues("v1r_exit_v2_primary_role_assertion")
+                    self._paper_block_but_capture_continues("paper_primary_activation_assertion")
 
-            if paper_path_ok:
+            if paper_path_ok and self._production_cold_start():
+                if not self.step_cold_start_gates():
+                    paper_path_ok = False
+                    self._paper_block_but_capture_continues("pre_paper_ready_seal")
+            if paper_path_ok and self.premarket_cert_only:
+                paper_code = 0
+                paper_ok = bool(self.premarket_cert_passed)
+                self.post_session = {
+                    "result": "PREMARKET_CERT_ONLY" if paper_ok else "PREMARKET_CERT_FAILED",
+                    "w4s_verdict": "NOT_RUN",
+                    "sessions_collected": 0,
+                    "counted_as_forward_session": False,
+                    "actual_submit": 0,
+                    "actual_cancel": 0,
+                    "paper_call_count": self.paper_call_count,
+                    "classification": "CERT_ONLY",
+                    "invalid_for_paper_start": True,
+                }
+                self._print_post()
+                self._print_finish()
+            elif paper_path_ok:
                 paper_code = self.step_start_paper()
                 paper_ok = paper_code == 0
                 if self.comm_fault_e2e:
@@ -3046,7 +3450,13 @@ class PaperTradeCheckedRunner:
             except Exception:
                 pass
 
-            if self.verdict == VERDICT_CAPTURE_REQUIRED:
+            if self.premarket_cert_only and self.premarket_cert_passed and self.paper_call_count == 0:
+                self.verdict = VERDICT_READY
+                self.post_session["counted_as_forward_session"] = False
+                self.post_session["classification"] = "CERT_ONLY"
+                self.post_session["invalid_for_paper_start"] = True
+                exit_code = 0
+            elif self.verdict == VERDICT_CAPTURE_REQUIRED:
                 exit_code = 1
             elif self.verdict == VERDICT_READY and paper_ok:
                 exit_code = 0
@@ -3104,6 +3514,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="One-command Paper Trade checked runner (Phase687W8/W9)")
     parser.add_argument("--no-pause", action="store_true", help="Do not pause at end (default for python entry)")
     parser.add_argument("--skip-paper", action="store_true", help="Skip calling run_paper_trade.bat (tests)")
+    parser.add_argument(
+        "--premarket-cert-only",
+        action="store_true",
+        help="Run the normal cold-start gates, write a CERT_ONLY seal, and do not start Paper",
+    )
+    parser.add_argument("--trading-date", type=str, default="", help="Explicit YYYYMMDD runtime trading date")
     parser.add_argument("--skip-w4s", action="store_true", help="Skip W4S evaluator (tests)")
     parser.add_argument(
         "--allow-paper-without-capture",
@@ -3153,6 +3569,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "on",
     )
     harness = demo or comm_fault
+    if bool(args.premarket_cert_only) and (bool(args.skip_paper) or bool(args.capture_synthetic) or harness):
+        print("[CHECKED RUNNER] --premarket-cert-only rejects skip-paper, synthetic, demo, and comm-fault", flush=True)
+        return 2
+    if str(args.trading_date or "").strip():
+        from small_paper.session_runtime_identity import ENV_TRADING_DATE
+
+        os.environ[ENV_TRADING_DATE] = str(args.trading_date).strip()
     if bool(args.reuse_capture) and harness:
         print("[CHECKED RUNNER] --reuse-capture incompatible with demo/comm-fault harness", flush=True)
         return 2
@@ -3170,6 +3593,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         comm_fault_e2e=comm_fault,
         reuse_capture=bool(args.reuse_capture),
         reuse_capture_pid=int(args.reuse_capture_pid or 0) or None,
+        premarket_cert_only=bool(args.premarket_cert_only),
     )
     code = runner.run()
     if not args.no_pause:

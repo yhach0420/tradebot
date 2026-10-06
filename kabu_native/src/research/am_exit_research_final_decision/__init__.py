@@ -1,0 +1,150 @@
+"""AM EXIT research final decision. Close 18-day EXIT search. Retain C0+C14. Offline only."""
+from __future__ import annotations
+
+from research.am_entry_architecture_final_reassessment import C0
+from research.am_entry_profit_improvement import (
+    C14_ID,
+    COMMON_AM_PM_MODEL_ALLOWED,
+    COMMON_AM_PM_TARGET_ALLOWED,
+    DEV_WAIT_SEC,
+    NEW_FORWARD_N,
+    PAPER_OPERATED,
+    RUNTIME_CHANGED,
+    SESSION,
+    TRUE_OOS,
+    W5_RUNTIME_ADOPTED,
+)
+from research.am_entry_profit_improvement import CANCEL_N, LIVE_ORDER_N, SUBMIT_N
+from research.am_entry_research_final_decision import PROSPECTIVE_CHALLENGER_NAME, PROSPECTIVE_STATUS
+from research.am_exit_contribution_rca import FROZEN_C0_SPEC_SHA256
+from small_paper.v1r_primary_runtime import POSITION_CAP, WAIT_SEC
+
+ANALYSIS_ID = "AM_EXIT_RESEARCH_FINAL_DECISION_V1"
+VERDICT = "AM_EXIT_DEVELOPMENT_CLOSED_C14_RETAINED_WITH_KNOWN_GIVEBACK_WEAKNESS"
+NEXT = "AM_C0_FUTURE_OOS_WHEN_AVAILABLE"
+ENTRY_PARENT_ID = C0
+ENTRY_PARENT_SHA256 = FROZEN_C0_SPEC_SHA256
+BEST_TESTED_EXIT_FOR_C0 = "C14_ORIGINAL"
+PRIMARY_EXIT_WEAKNESS = "L2_PROFIT_TO_LOSS_BEFORE_EXIT"
+RUNTIME_EXIT_CHANGE_ALLOWED = False
+RUNTIME_CHANGE_N = 0
+PAPER_OPERATION_N = 0
+STRATEGY_REPLAY_N = 0
+
+CURRENT_LOCKED = {
+    "TRADE_N": 141,
+    "NET": 30710.0,
+    "PF": 1.0396263177589389,
+    "DD": -317790.0,
+}
+C0_C14_LOCKED = {
+    "OVERLAY_TRADE_N": 167,
+    "NET": 141710.0,
+    "PF": 1.1766979638150101,
+    "DD": -309740.0,
+    "PAIRED_POS_DAYS": 7,
+    "PAIRED_NEG_DAYS": 8,
+    "PAIRED_ZERO_DAYS": 3,
+    "PAIRED_MEDIAN": 0.0,
+    "EX_BEST": 176.47058823529412,
+    "EX_TOP3": -603.3333333333334,
+    "FULL_GATE_PASS": False,
+}
+C0_AUGMENT_LOCKED = {
+    "TRADE_N": 26,
+    "WIN_N": 12,
+    "LOSS_N": 13,
+    "FLAT_N": 1,
+    "NET": 111000.0,
+    "PF": 5.111111111111111,
+    "GROSS_LOSS": 27000.0,
+    "L1_N": 1,
+    "L2_N": 10,
+    "L3_N": 2,
+    "L4_N": 0,
+    "L1_GROSS_LOSS_SHARE": 0.040740740740740744,
+    "L2_GROSS_LOSS_SHARE": 0.937037037037037,
+    "L3_GROSS_LOSS_SHARE": 0.022222222222222223,
+    "L4_GROSS_LOSS_SHARE": 0.0,
+}
+PTL_LOCKED = {
+    "ARCHITECTURE_ID": "C0_EXIT_PTL_GUARD_120_600_V1",
+    "PRECOMMIT_SHA256": "c1c04e02c8b29fcd15849b40f04730dd1223aeafed40f5553118bfabf8584eb2",
+    "PTL_TRIGGER_N": 17,
+    "L2_PTL_TRIGGER_N": 8,
+    "L2_CONVERTED_TO_NONLOSS_N": 1,
+    "WINNER_EARLY_CUT_N": 8,
+    "LOSER_PNL_SAVED": 4600.0,
+    "WINNER_PNL_LOST": 133700.0,
+    "FIXED_DELTA_NET": -129100.0,
+    "OVERLAY_NET": 11210.0,
+    "OVERLAY_PF": 1.0139221798581701,
+    "OVERLAY_DD": -330140.0,
+    "VERDICT": "AM_C0_EXIT_PTL_GUARD_DESTROYS_EDGE",
+}
+CONT_LOCKED = {
+    "ANALYSIS_ID": "AM_C0_EXIT_CONTINUATION_REASSESSMENT_V1",
+    "PRECOMMIT_SHA256": "54468f9489b721bfba0a97847ba000cd9c2ee7c9b273d6439a7a022275a8b008",
+    "FORCED_EXTEND_N": 14,
+    "FIXED_DELTA_NET": -45700.0,
+    "OVERLAY_NET": 96010.0,
+    "OVERLAY_PF": 1.1166883408889268,
+    "OVERLAY_DD": -317140.0,
+    "PAIRED_MEDIAN": 0.0,
+    "POS_DAYS": 7,
+    "NEG_DAYS": 8,
+    "EX_BEST": -511.7647058823529,
+    "EX_TOP3": -1623.3333333333333,
+    "VERDICT": "AM_C0_EXIT_CONTINUATION_NOT_SUPPORTED",
+}
+
+CLOSED_LINES = (
+    "PTL_120_600 zero-crossing: CLOSED",
+    "forced CONT_EXIT_600 → CONT_EXTEND_750: CLOSED",
+    "PTL threshold / profit-arm threshold: CLOSED",
+    "giveback / MFE / MAE threshold: CLOSED",
+    "PnL-at-600 / imbalance-at-600 / spread / event-rate threshold: CLOSED",
+    "CONT_EXIT_600 subset selection: CLOSED",
+    "CONT_EXTEND_750 subset selection: CLOSED",
+    "750→900 / new horizon: CLOSED",
+    "trailing / fixed TP / fixed SL: CLOSED",
+    "exit-reason filter / ML EXIT / tree search: CLOSED",
+    "symbol / price / day-time specific EXIT: CLOSED",
+)
+
+FUTURE_OOS_FORBIDDEN_EXIT = (
+    "PTL guard",
+    "forced 750 continuation",
+    "any new EXIT invented on the OOS days",
+)
+
+assert abs(float(WAIT_SEC) - 1.0) < 1e-12
+assert float(DEV_WAIT_SEC) == 5.0
+assert SESSION == "AM"
+assert int(POSITION_CAP) == 5
+assert ENTRY_PARENT_ID == "C0_B0_PRIMARY_B1_CONFIRM"
+assert ENTRY_PARENT_SHA256 == "c8ac25b5fb45de774b4bb776e7ed32d6823e23500719ab0772a08a0fca102f91"
+assert PROSPECTIVE_CHALLENGER_NAME == "AM_ENTRY_PROSPECTIVE_CHALLENGER_C0"
+assert PROSPECTIVE_STATUS == "FROZEN_FOR_FUTURE_OOS_ONLY"
+assert C14_ID == "V1R_EXIT_V2_PAPER_PRIMARY_CANDIDATE_V26G14_14"
+assert BEST_TESTED_EXIT_FOR_C0 == "C14_ORIGINAL"
+assert PRIMARY_EXIT_WEAKNESS == "L2_PROFIT_TO_LOSS_BEFORE_EXIT"
+assert RUNTIME_EXIT_CHANGE_ALLOWED is False
+assert TRUE_OOS is False
+assert int(NEW_FORWARD_N) == 0
+assert int(RUNTIME_CHANGE_N) == 0
+assert int(PAPER_OPERATION_N) == 0
+assert int(STRATEGY_REPLAY_N) == 0
+assert COMMON_AM_PM_MODEL_ALLOWED is False
+assert COMMON_AM_PM_TARGET_ALLOWED is False
+assert W5_RUNTIME_ADOPTED is False
+assert RUNTIME_CHANGED is False
+assert PAPER_OPERATED is False
+assert int(SUBMIT_N) == 0
+assert int(CANCEL_N) == 0
+assert int(LIVE_ORDER_N) == 0
+assert C0_C14_LOCKED["FULL_GATE_PASS"] is False
+assert C0_C14_LOCKED["NET"] > CURRENT_LOCKED["NET"]
+assert abs(float(C0_AUGMENT_LOCKED["L2_GROSS_LOSS_SHARE"]) - 0.937037037037037) < 1e-15
+assert PTL_LOCKED["FIXED_DELTA_NET"] < 0
+assert CONT_LOCKED["FIXED_DELTA_NET"] < 0

@@ -1,0 +1,138 @@
+"""PB1_OPENING_RANGE_CONTINUATION_FACE_VALID_V2.
+
+Semantic rebuild from blinded V1 chart failures only.
+Thesis unchanged: IN-PLAY → CLEAN OPENING IMPULSE → OR15 → SAME-DIR BREAK
+→ LEAVE → FIRST FRESH RETEST → HOLD → 1M TRIGGER → NEXT 1M OPEN.
+
+No future return. No PnL. No matching. V1 artifacts are read-only.
+"""
+from __future__ import annotations
+
+from research.current_day1_information_close_v1 import FEATURE_MINING_CLOSED
+from research.run_20260914_day2_futures_plus_first_live_breadth_v1 import TRADING_DATE as LIVE_TRADING_DATE
+from research.support_resistance_face_valid_first_interaction_rebuild_v1 import CONFIRM_ATR, ZONE_HALF_ATR
+
+PROGRAM_ID = "PB1_OPENING_RANGE_CONTINUATION_FACE_VALID_V2"
+ANALYSIS_ID = "PB1_OPENING_RANGE_CONTINUATION_FACE_VALID_V2"
+PARENT_ANALYSIS_ID = "PB1_OPENING_RANGE_CONTINUATION_FACE_VALID_V1"
+PARENT_VERDICT = "PB1_OPENING_RANGE_FACE_VALID_READY_V1"
+PARENT_NEXT = "PB1_OPENING_RANGE_CAUSAL_PATH_TEST_V1"
+PARENT_PLAYBOOK_MACHINE_SHA256 = "234ad3a6fc8cd6052d6ff6486a72aa78d52e97e87c49d95845945329aff7b1b7"
+
+EXPECTED_SPLIT_SHA256 = "2c9bd8f4ce7c86116833b54e1d41e4cbc4b59c3e504b769140fea435d375b3b4"
+EXPECTED_BLOCK_SHA256 = "e7a16d860f73acc592c94ac7a717820f0dcea263fd60ab39b0cf7af980912718"
+EXPECTED_DETECTOR_SHA256 = "6e3060b71f8a4787b09d6b3c0f3ba9fa84c87712bf0f11b0165bfbfd1e0bf47e"
+EXPECTED_STATE_MACHINE_SHA256 = "3c065f3757083fa6da792f9450e07504e902ea93d48391467a6bb7dca6e6a5b8"
+
+FROZEN_CONFIRM_ATR = 0.75
+FROZEN_ZONE_HALF_ATR = 0.15
+assert CONFIRM_ATR == FROZEN_CONFIRM_ATR
+assert ZONE_HALF_ATR == FROZEN_ZONE_HALF_ATR
+
+LUNCH_POLICY = "AM_ONLY_NO_LUNCH_ENTRY"
+SESSION_FLAT = "15:20"
+OR_START = "09:00"
+OR_END = "09:14"
+OR_KNOWN_FROM = "09:15"
+LAST_BREAK = "10:00"
+LAST_TRIGGER = "11:20"
+NEAR_DAILY_MA_ATR = 0.15
+TV_CLOCK_LOOKBACK_DAYS = 20
+TV_CLOCK_MIN_OBS = 10
+WINDOW_TV_LOOKBACK_DAYS = 20
+WINDOW_TV_MIN_OBS = 10
+
+# V1 in-play (too broad). Kept only as a diagnostic shadow. Never used to emit V2.
+V1_IN_PLAY_ABS_GAP_ATR = 0.30
+V1_IN_PLAY_TV_WINDOW_PCTL = 0.50
+V1_IN_PLAY_XS_RANK_MAX = 0.50
+V1_IN_PLAY_SHARE = 0.8075768406004289
+
+# V2 genuine-in-play. Semantic calibration from V1 blinded charts, not returns.
+# xs rank is NEVER sufficient alone.
+IN_PLAY_ABS_GAP_ATR = 0.40
+IN_PLAY_TV_PCTL_ELEVATED = 0.80
+IN_PLAY_GAP_AND_TV_GAP = 0.25
+IN_PLAY_GAP_AND_TV_PCTL = 0.70
+IN_PLAY_TV_AND_XS_PCTL = 0.70
+IN_PLAY_TV_AND_XS_RANK = 0.25
+IN_PLAY_GAP_AND_XS_GAP = 0.25
+IN_PLAY_GAP_AND_XS_RANK = 0.20
+
+# Opening-path fractions of OR range. Semantic, not a return grid.
+CLEAN_NET15_FRAC = 0.10
+CLEAN_NET5_OPPOSE_FRAC = 0.05
+FAILED_SPIKE_FRAC = 0.50
+RANGE_NET15_FRAC = 0.25
+RANGE_TWO_SIDED_FRAC = 0.25
+
+# Real break vs tick-creep. Semantic.
+BREAK_BEYOND_OR_FRAC = 0.08
+BREAK_BEYOND_ATR_FRAC = 0.05
+BREAK_CLOSE_LOC = 0.55
+
+# Leave: two fully-away bars, or one bar that actually extends.
+MIN_AWAY_BARS = 2
+LEAVE_EXT_OR_FRAC = 0.15
+
+# Opening-continuation freshness. Trading minutes. Not searched.
+RETEST_FRESHNESS_MIN = 30
+
+# Reward-space labels at entry. Not optimized.
+ROOM_RR_AVAILABLE = 1.0
+ROOM_RR_QUESTIONABLE = 0.50
+
+SAMPLE_SEED = "PB1_OPENING_RANGE_CONTINUATION_FACE_VALID_V2:VERIFY"
+SAMPLE_N = 48
+SAMPLE_PER_BLOCK = 12
+
+# V1 development sample. Independent verify sample must not reuse these keys.
+V1_DEV_SAMPLE_KEYS = (
+    ("8031", "20241024", "bull"),
+    ("6752", "20241028", "bull"),
+    ("4568", "20241030", "bull"),
+    ("5801", "20241031", "bear"),
+    ("9101", "20241121", "bear"),
+    ("4502", "20241025", "bear"),
+    ("6098", "20250401", "bull"),
+    ("9983", "20250326", "bull"),
+    ("5802", "20250212", "bull"),
+    ("9101", "20250107", "bear"),
+    ("6762", "20250117", "bear"),
+    ("9983", "20250317", "bear"),
+    ("5016", "20250711", "bull"),
+    ("285A0", "20250617", "bull"),
+    ("8306", "20250530", "bull"),
+    ("7203", "20250619", "bear"),
+    ("7735", "20250623", "bear"),
+    ("7012", "20250502", "bear"),
+    ("1605", "20250904", "bull"),
+    ("7735", "20250812", "bull"),
+    ("6762", "20251002", "bull"),
+    ("9433", "20251015", "bear"),
+    ("9984", "20250826", "bear"),
+    ("9433", "20251118", "bear"),
+)
+
+GATE_CLEAR_MIN = 2.0 / 3.0
+GATE_NOT_MAX = 0.15
+GATE_RANGE_NOISE_MAX = 0.20
+
+CASE_READY = "PB1_OPENING_RANGE_FACE_VALID_READY_V2"
+CASE_REBUILD = "PB1_OPENING_RANGE_SEMANTICS_NEEDS_REBUILD_V2"
+CASE_NOT_REP = "PB1_OPENING_RANGE_NOT_REPRESENTABLE_V2"
+
+NEXT_PATH_TEST = "PB1_OPENING_RANGE_CAUSAL_PATH_TEST_V1"
+NEXT_FIX = "FIX_PB1_OPENING_RANGE_REPRESENTATION_V2"
+NEXT_STOP = "STOP_PB1_OPENING_RANGE_V2"
+
+FALSE_BREAK_MERGED = False
+OLD_CONFIRMATION_OPENED = False
+FROZEN_VALIDATION_OPENED = False
+KABU50_APPLIED = False
+PNL_OPTIMIZATION = False
+THRESHOLD_PNL_TUNED = False
+MATCHING_RUN = False
+ECONOMIC_TEST_RUN = False
+FEATURE_MINING = FEATURE_MINING_CLOSED
+LIVE_DATE = LIVE_TRADING_DATE

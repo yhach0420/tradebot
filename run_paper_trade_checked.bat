@@ -10,6 +10,7 @@ rem   .\run_paper_trade_checked.bat --no-pause
 rem   .\run_paper_trade_checked.bat --demo-push-e2e --no-pause
 rem   .\run_paper_trade_checked.bat --comm-fault-e2e --no-pause
 rem   .\run_paper_trade_checked.bat --full-day-cert --no-pause
+rem   .\run_paper_trade_checked.bat --premarket-cert-only --trading-date 20260929 --no-pause
 rem   .\run_paper_trade_checked.bat --reuse-capture --reuse-capture-pid 30100 --no-pause
 
 set "REPO=%~dp0"
@@ -32,6 +33,8 @@ set "COMMFAULT="
 set "REUSE="
 set "REUSEPID="
 set "FULLDAYCERT="
+set "PREMARKET="
+set "TRADEDAY="
 
 :parse_args
 if "%~1"=="" goto run_ps
@@ -63,6 +66,16 @@ if /I "%~1"=="/reuse-capture-pid" (
   set "REUSEPID=-ReuseCapturePid %~2"
   shift
 )
+if /I "%~1"=="--premarket-cert-only" set "PREMARKET=-PremarketCertOnly"
+if /I "%~1"=="/premarket-cert-only" set "PREMARKET=-PremarketCertOnly"
+if /I "%~1"=="--trading-date" (
+  set "TRADEDAY=-TradingDate %~2"
+  shift
+)
+if /I "%~1"=="/trading-date" (
+  set "TRADEDAY=-TradingDate %~2"
+  shift
+)
 if /I "%~1"=="--full-day-cert" (
   set "FULLDAYCERT=-FullDayCert"
   set "TRADEBOT_CERTIFICATION_MODE=1"
@@ -76,5 +89,5 @@ goto parse_args
 
 :run_ps
 rem Process-scoped execution policy via -ExecutionPolicy Bypass (does not change machine policy)
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %PSFLAGS% %DEMO% %COMMFAULT% %REUSE% %REUSEPID% %FULLDAYCERT%
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %PSFLAGS% %DEMO% %COMMFAULT% %REUSE% %REUSEPID% %FULLDAYCERT% %PREMARKET% %TRADEDAY%
 exit /b %ERRORLEVEL%

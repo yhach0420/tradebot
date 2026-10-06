@@ -245,6 +245,8 @@ def score_universe_at(
             rec["alloc_score"] = e.get("alloc_score")
             rec["rank"] = rank_by.get(str(rec["symbol"]))
             rec["selected"] = bool(e.get("admitted"))
+            for fname in FEATURE_ORDER:
+                rec[fname] = e.get(fname)
             if rec["selected"]:
                 selected_n += 1
     scores = [float(r["score"]) for r in rows if r.get("score") is not None]

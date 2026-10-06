@@ -61,6 +61,9 @@ def freeze_identity_snapshot(*, native_root: Path) -> dict[str, str]:
     formal_sel = out / "active_v1r_activation.json"
     if formal_sel.is_file():
         snap[str(formal_sel.resolve())] = json.dumps(_load_json(formal_sel), sort_keys=True)
+    hist = out / "history" / "active_v1r_activation_V25_pointer.json"
+    if hist.is_file():
+        snap[str(hist.resolve())] = hist.read_bytes().hex()
     for p in sorted(out.glob("V1R_EXIT_V2_PAPER_PRIMARY_*.json")):
         snap[str(p.resolve())] = p.read_bytes().hex()
     for p in sorted(out.glob("active_v1r_candidate_*.json")):
@@ -91,7 +94,7 @@ def write_opval_current_trading_day_identity(
     sel_dest = dest / "active_v1r_opval_current_trading_day.json"
     freeze_before = freeze_identity_snapshot(native_root=root)
 
-    v25_sel_path = out / "active_v1r_activation.json"
+    v25_sel_path = out / "history" / "active_v1r_activation_V25_pointer.json"
     v25_path = out / f"{V25_ACTIVATION_ID}.json"
     c6_path = out / f"{C6_ID}.json"
     if not v25_sel_path.is_file() or not v25_path.is_file() or not c6_path.is_file():
@@ -99,7 +102,11 @@ def write_opval_current_trading_day_identity(
     v25_sel = _load_json(v25_sel_path)
     v25 = _load_json(v25_path)
     c6 = _load_json(c6_path)
-    if v25_sel.get("activation_id") != V25_ACTIVATION_ID or v25.get("sha256") != V25_SHA:
+    if (
+        v25_sel.get("activation_id") != V25_ACTIVATION_ID
+        or v25_sel.get("activation_sha") != V25_SHA
+        or v25.get("sha256") != V25_SHA
+    ):
         return {"ok": False, "reason": "V25_SELECTOR_OR_MANIFEST_MUTATED"}
     if c6.get("sha256") != C6_SHA:
         return {"ok": False, "reason": "CANDIDATE6_MANIFEST_MUTATED"}
@@ -226,7 +233,11 @@ def write_opval_current_trading_day_identity(
     v25_after = _load_json(v25_path)
     sel_after = _load_json(v25_sel_path)
     c6_after = _load_json(c6_path)
-    if v25_after.get("sha256") != V25_SHA or sel_after.get("activation_id") != V25_ACTIVATION_ID:
+    if (
+        v25_after.get("sha256") != V25_SHA
+        or sel_after.get("activation_id") != V25_ACTIVATION_ID
+        or sel_after.get("activation_sha") != V25_SHA
+    ):
         return {"ok": False, "reason": "V25_MUTATED_DURING_OPVAL_WRITE"}
     if c6_after.get("sha256") != C6_SHA:
         return {"ok": False, "reason": "CANDIDATE6_MUTATED_DURING_OPVAL_WRITE"}

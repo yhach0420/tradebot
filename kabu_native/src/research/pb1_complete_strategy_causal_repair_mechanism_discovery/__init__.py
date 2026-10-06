@@ -1,0 +1,68 @@
+"""PB1 Complete Strategy causal repair mechanism discovery.
+
+V1 FAIL is permanent. Does not implement V5. Does not change Frozen ENTRY.
+Does not open Frozen Validation or prospective economics.
+"""
+from __future__ import annotations
+
+from research.cause_first_mechanism_discovery_v1 import X1_TAX_BPS
+from research.current_day1_information_close_v1 import FEATURE_MINING_CLOSED
+from research.pb1_v4_complete_strategy_build_and_economic_validation import (
+    CAP,
+    DEV_FIRST,
+    DEV_LAST,
+    SHARES,
+)
+from research.pb1_v4_complete_strategy_build_and_economic_validation.freeze import COMPLETE_STRATEGY_IDENTITY
+from research.pb1_v4_complete_strategy_economic_confirmation1 import (
+    CASE_FAIL as V1_FAIL,
+    EVAL_FIRST,
+    EVAL_LAST,
+    EXPECTED_COMPLETE_STRATEGY_SHA256,
+    FV_FIRST,
+    FV_LAST,
+    PROSPECTIVE_FROM,
+)
+from research.pb1_v4_complete_strategy_economic_failure_decomposition import (
+    CASE_READY as RCA_VERDICT,
+    EXPAND_BPS,
+    SMALL_EDGE_BPS,
+)
+
+PROGRAM_ID = "PB1_COMPLETE_STRATEGY_CAUSAL_REPAIR_MECHANISM_DISCOVERY"
+ANALYSIS_ID = "PB1_COMPLETE_STRATEGY_CAUSAL_REPAIR_MECHANISM_DISCOVERY_V1"
+PRECOMMIT_ID = "PB1_COMPLETE_STRATEGY_CAUSAL_REPAIR_PRECOMMIT_V1"
+
+assert COMPLETE_STRATEGY_IDENTITY == "PB1_V4_COMPLETE_STRATEGY_FROZEN_V1"
+assert EXPECTED_COMPLETE_STRATEGY_SHA256 == "556542319d22dff40cc1758b24d44d2ecb1985b8595927ca8f80618126961bf8"
+assert V1_FAIL == "PB1_V4_COMPLETE_STRATEGY_ECONOMIC_CONFIRMATION1_FAIL_V1"
+assert RCA_VERDICT == "PB1_V4_COMPLETE_STRATEGY_ECONOMIC_FAILURE_DECOMPOSITION_COMPLETE_V1"
+assert CAP == 5
+assert SHARES == 100
+assert float(X1_TAX_BPS) == 8.0
+assert DEV_FIRST == "20240917"
+assert DEV_LAST == "20251126"
+assert EVAL_FIRST == "20251127"
+assert EVAL_LAST == "20260421"
+assert FV_FIRST == "20260422"
+assert FV_LAST == "20260911"
+assert PROSPECTIVE_FROM == "20260924"
+
+X1_BPS = float(X1_TAX_BPS)
+EQUAL_NOTIONAL_YEN = 100_000.0
+MAX_NOTIONAL_YEN = 1_000_000.0
+LOT = 100
+MIN_FOLD_TRADES = 8
+MIN_TOTAL_TRADES = 40
+WINNER_DAMAGE_FLOOR_BPS = -8.0
+REQUIRE_DEV_POSITIVE = True
+MIN_CONF_FOLDS_POSITIVE = 2
+TOP_DROP_STILL_POSITIVE = True
+
+CASE_FOUND = "PB1_COMPLETE_STRATEGY_CAUSAL_REPAIR_MECHANISM_FOUND_V1"
+CASE_NONE = "PB1_COMPLETE_STRATEGY_NO_ROBUST_CAUSAL_REPAIR_FOUND_V1"
+NEXT_FOUND = "PB1_V5_COMPLETE_STRATEGY_PRECOMMIT_AND_BUILD_V1"
+NEXT_NONE = "REASSESS_PB1_ENTRY_ARCHITECTURE_OR_NEW_ALPHA_FAMILY_V1"
+
+FEATURE_MINING = FEATURE_MINING_CLOSED
+_ = (EXPAND_BPS, SMALL_EDGE_BPS, FEATURE_MINING)

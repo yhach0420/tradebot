@@ -60,9 +60,9 @@ class AmPmSessionPolicy:
         return cls(
             kind="pm",
             session_start="12:33",
-            session_end="15:23",
+            session_end="15:30",
             entry_stop="15:18",
-            force_close="15:23",
+            force_close="15:30",
             force_close_reason=AFTERNOON_SESSION_CLOSE,
             allowed_entry_start="12:33",
             allowed_entry_end="15:18",

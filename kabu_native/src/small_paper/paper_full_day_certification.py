@@ -142,14 +142,100 @@ def load_latest_pass(*, cert_dir: Optional[Path] = None) -> Optional[dict[str, A
     return body
 
 
+CURRENT_CERT_PASS = "FIXED_ENTRY_SUPPORT_RUNTIME_PRE_PAPER_CERTIFICATION_PASS_V1"
+CURRENT_CERT_FAIL = "FIXED_ENTRY_SUPPORT_RUNTIME_PRE_PAPER_CERTIFICATION_FAIL_V1"
+CERT_MISSING = "CURRENT_ACTIVATION_CERTIFICATION_MISSING"
+CERT_IDENTITY_MISMATCH = "BLOCK_CERTIFICATION_IDENTITY_MISMATCH"
+
+
+def activation_cert_path(activation_id: str, *, cert_dir: Optional[Path] = None) -> Path:
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(activation_id))
+    return Path(cert_dir or CERT_DIR) / "by_activation" / f"{safe}.json"
+
+
+def _load_json_object(path: Path) -> Optional[dict[str, Any]]:
+    if not path.is_file():
+        return None
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def current_activation_cert_identity(
+    *,
+    native_root: Optional[Path] = None,
+    repo_root: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Identity the pre-paper gate binds. Includes candidate, family, and inventory."""
+    from small_paper.v1r_activation_binding import inventory_digest
+
+    ident = capture_identity(native_root=native_root, repo_root=repo_root)
+    manifest = load_activation_manifest()
+    ident["candidate_name"] = str(
+        manifest.get("candidate_name") or manifest.get("primary_strategy") or ""
+    )
+    ident["execution_family"] = str(manifest.get("execution_family") or "")
+    ident["session_executor"] = str(manifest.get("session_executor") or "")
+    inv = ident.get("inventory") or {}
+    ident["inventory_digest"] = inventory_digest(inv) if isinstance(inv, dict) else ""
+    return ident
+
+
+def artifact_activation_identity(artifact: Mapping[str, Any]) -> dict[str, str]:
+    nested = artifact.get("identity") or artifact.get("identity_before") or {}
+    if not isinstance(nested, dict):
+        nested = {}
+    return {
+        "activation_id": str(
+            artifact.get("activation_id")
+            or artifact.get("activation_target")
+            or nested.get("activation_id")
+            or ""
+        ),
+        "activation_sha": str(artifact.get("activation_sha") or nested.get("activation_sha") or ""),
+        "candidate_name": str(
+            artifact.get("candidate_name")
+            or nested.get("candidate_name")
+            or nested.get("primary_strategy")
+            or ""
+        ),
+        "execution_family": str(artifact.get("execution_family") or nested.get("execution_family") or ""),
+        "session_executor": str(artifact.get("session_executor") or nested.get("session_executor") or ""),
+        "inventory_digest": str(artifact.get("inventory_digest") or ""),
+    }
+
+
+def classify_cert_artifact(
+    artifact: Mapping[str, Any],
+    current: Mapping[str, Any],
+) -> str:
+    """Bind an artifact to the selected activation. A foreign FAIL is not a current FAIL."""
+    got = artifact_activation_identity(artifact)
+    current_id = str(current.get("activation_id") or "")
+    if not got["activation_id"] or got["activation_id"] != current_id:
+        return "DIFFERENT_ACTIVATION_CERTIFICATION"
+    if got["activation_sha"] and got["activation_sha"] != str(current.get("activation_sha") or ""):
+        return "CERTIFICATION_IDENTITY_MISMATCH"
+    for key in ("candidate_name", "execution_family", "session_executor", "inventory_digest"):
+        want = str(current.get(key) or "")
+        have = got[key]
+        if want and have and have != want:
+            return "CERTIFICATION_IDENTITY_MISMATCH"
+    return "CURRENT_ACTIVATION_CERTIFICATION"
+
+
 def enforce_pre_paper_certification_gate(
     *,
     native_root: Optional[Path] = None,
     repo_root: Optional[Path] = None,
+    cert_dir: Optional[Path] = None,
 ) -> int:
-    """Return 0 to proceed. Non-zero refuses Paper start.
+    """Return 0 only for a PASS certification of the selected activation.
 
-    Certification mode and explicit skip (unit tests) bypass the gate.
+    A certification for a different activation is historical. It does not
+    become the current result. Missing current evidence stays fail-closed.
     """
     if certification_mode() or skip_cert_gate():
         return 0
@@ -159,43 +245,171 @@ def enforce_pre_paper_certification_gate(
         return 0
     if str(os.environ.get("TRADEBOT_COMM_FAULT_E2E") or "").strip() in {"1", "true", "yes", "on"}:
         return 0
-    ident = capture_identity(native_root=native_root, repo_root=repo_root)
-    artifact = load_latest_pass()
-    if artifact is None:
-        print("[PRE-PAPER CERTIFICATION GATE] FAIL: PASS artifact missing", flush=True)
-        print("reason: V1R_RUNTIME_PRE_PAPER_CERTIFICATION_REQUIRED", flush=True)
-        return 2
-    if str(artifact.get("verdict") or "") != "V1R_RUNTIME_PRE_PAPER_CERTIFICATION_PASS":
-        print("[PRE-PAPER CERTIFICATION GATE] FAIL: last certification is not PASS", flush=True)
-        return 2
-    failed = artifact.get("failed_tests") or []
-    if failed:
-        print("[PRE-PAPER CERTIFICATION GATE] FAIL: failed_tests non-empty", flush=True)
-        return 2
-    before = artifact.get("identity_before") or artifact.get("identity") or {}
-    ok, mismatches = identities_equal(ident, before)
-    if not ok:
+    return evaluate_activation_scoped_certification(
+        native_root=native_root,
+        repo_root=repo_root,
+        cert_dir=cert_dir,
+    )
+
+
+def evaluate_activation_scoped_certification(
+    *,
+    native_root: Optional[Path] = None,
+    repo_root: Optional[Path] = None,
+    cert_dir: Optional[Path] = None,
+    current: Optional[Mapping[str, Any]] = None,
+) -> int:
+    current = dict(current or current_activation_cert_identity(native_root=native_root, repo_root=repo_root))
+    legacy = load_latest_pass(cert_dir=cert_dir)
+    if legacy is not None:
+        legacy_class = classify_cert_artifact(legacy, current)
         print(
-            "[PRE-PAPER CERTIFICATION GATE] FAIL: identity mismatch vs PASS artifact: "
-            + ",".join(mismatches),
+            "[PRE-PAPER CERTIFICATION GATE] legacy_artifact="
+            f"{PASS_NAME} class={legacy_class} "
+            f"target={artifact_activation_identity(legacy)['activation_id']}",
             flush=True,
         )
+    scoped = _load_json_object(
+        activation_cert_path(str(current.get("activation_id") or ""), cert_dir=cert_dir)
+    )
+    if scoped is None:
+        print(f"[PRE-PAPER CERTIFICATION GATE] {CERT_MISSING}", flush=True)
+        print(f"activation_id={current.get('activation_id')}", flush=True)
         return 2
-    after = artifact.get("identity_after") or before
-    ok2, mismatches2 = identities_equal(ident, after)
-    if not ok2:
+    kind = classify_cert_artifact(scoped, current)
+    if kind == "CERTIFICATION_IDENTITY_MISMATCH":
+        print(f"[PRE-PAPER CERTIFICATION GATE] {CERT_IDENTITY_MISMATCH}", flush=True)
+        return 2
+    if kind != "CURRENT_ACTIVATION_CERTIFICATION":
+        print(f"[PRE-PAPER CERTIFICATION GATE] {CERT_MISSING}", flush=True)
+        return 2
+    verdict = str(scoped.get("verdict") or "")
+    failed = list(scoped.get("failed_tests") or [])
+    if verdict != CURRENT_CERT_PASS or failed:
         print(
-            "[PRE-PAPER CERTIFICATION GATE] FAIL: identity mutated after certification: "
-            + ",".join(mismatches2),
+            "[PRE-PAPER CERTIFICATION GATE] BLOCK "
+            f"verdict={verdict or CURRENT_CERT_FAIL} failed={','.join(str(x) for x in failed)}",
             flush=True,
         )
         return 2
     print(
         "[PRE-PAPER CERTIFICATION GATE] PASS "
-        f"{ident.get('activation_id')} {str(ident.get('activation_sha') or '')[:12]}",
+        f"{current.get('activation_id')} {str(current.get('activation_sha') or '')[:12]}",
         flush=True,
     )
     return 0
+
+
+def _latest_demo_x1_evidence(native_root: Path) -> dict[str, Any]:
+    root = native_root / "results" / "small_paper" / "demo_push_e2e"
+    snaps = sorted(root.glob("**/x1_executor_snapshot.json"), key=lambda p: p.stat().st_mtime)
+    if not snaps:
+        return {"ok": False, "reason": "demo_snapshot_missing"}
+    snap = snaps[-1]
+    ledger = snap.parent / "fixed_support_x1_paper_ledger.jsonl"
+    body = json.loads(snap.read_text(encoding="utf-8"))
+    rows = []
+    if ledger.is_file():
+        rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()]
+    entry_n = sum(1 for row in rows if row.get("event") == "ENTRY")
+    exit_n = sum(1 for row in rows if row.get("event") == "EXIT")
+    slot_n = sum(1 for row in rows if row.get("slot_release") is True)
+    return {
+        "ok": entry_n > 0 and exit_n > 0 and slot_n > 0 and int(body.get("submit") or 0) == 0,
+        "snapshot": str(snap),
+        "ledger": str(ledger),
+        "entry_n": entry_n,
+        "exit_n": exit_n,
+        "slot_release_n": slot_n,
+        "executor": body.get("session_executor"),
+        "submit": body.get("submit"),
+        "cancel": body.get("cancel"),
+        "live": body.get("live"),
+    }
+
+
+def _session_boundary_evidence() -> dict[str, Any]:
+    """Execute the clocks the daily runner and session schedule already use."""
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
+
+    from runner.am_pm_daily_runner import AM_END_HHMM
+    from small_paper.session_schedule import SessionSchedule, session_bucket
+
+    jst = ZoneInfo("Asia/Tokyo")
+    day = date(2026, 8, 12)
+    am = SessionSchedule("09:00", AM_END_HHMM, day)
+    points = {
+        "window_a_0850_before_am": am.is_before_session(datetime(2026, 8, 12, 8, 50, tzinfo=jst)),
+        "window_a_0910_in_am": am.is_in_session(datetime(2026, 8, 12, 9, 10, tzinfo=jst)),
+        "window_b_1120_still_am": am.is_in_session(datetime(2026, 8, 12, 11, 20, tzinfo=jst)),
+        "pm_direct_1230_am_ended": am.is_after_session(datetime(2026, 8, 12, 12, 30, tzinfo=jst)),
+        "window_c_1510_afternoon": session_bucket(datetime(2026, 8, 12, 15, 10, tzinfo=jst)) == "afternoon",
+        "window_c_1535_outside": session_bucket(datetime(2026, 8, 12, 15, 35, tzinfo=jst)) == "outside",
+    }
+    return {"ok": all(points.values()), "am_end": AM_END_HHMM, "points": points}
+
+
+def write_current_activation_certification(
+    *,
+    native_root: Optional[Path] = None,
+    cert_dir: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Write the selected activation's certification. Never rewrites the legacy JSON."""
+    native = Path(native_root or NATIVE)
+    current = current_activation_cert_identity(native_root=native)
+    demo = _latest_demo_x1_evidence(native)
+    bounds = _session_boundary_evidence()
+    inv_ok = bool(current.get("inventory_match"))
+    identity_ok = bool(
+        current.get("activation_id")
+        and current.get("activation_sha")
+        and current.get("candidate_name")
+        and current.get("execution_family") == "X1_IMMEDIATE_ASK"
+        and current.get("session_executor") == "FixedSupportX1SessionExecutor"
+    )
+    failed: list[str] = []
+    if not identity_ok:
+        failed.append("ACTIVATION_IDENTITY")
+    if not inv_ok:
+        failed.append("RUNTIME_INVENTORY")
+    if not demo.get("ok"):
+        failed.append("DEMO_X1_LEDGER")
+    if not bounds.get("ok"):
+        failed.append("SESSION_BOUNDARIES")
+    verdict = CURRENT_CERT_PASS if not failed else CURRENT_CERT_FAIL
+    body = {
+        "certification_id": "FIXED_ENTRY_SUPPORT_RUNTIME_PRE_PAPER_CERTIFICATION_V1",
+        "verdict": verdict,
+        "failed_tests": failed,
+        "activation_id": current.get("activation_id"),
+        "activation_target": current.get("activation_id"),
+        "activation_sha": current.get("activation_sha"),
+        "candidate_name": current.get("candidate_name"),
+        "execution_family": current.get("execution_family"),
+        "session_executor": current.get("session_executor"),
+        "inventory_digest": current.get("inventory_digest"),
+        "identity": {
+            "activation_id": current.get("activation_id"),
+            "activation_sha": current.get("activation_sha"),
+            "candidate_name": current.get("candidate_name"),
+            "execution_family": current.get("execution_family"),
+            "session_executor": current.get("session_executor"),
+        },
+        "checks": {
+            "demo_x1": demo,
+            "session_boundaries": bounds,
+            "inventory_match": inv_ok,
+        },
+        "legacy_artifact": PASS_NAME,
+        "legacy_rewritten": False,
+        "submit_cancel_live": "0/0/0",
+    }
+    path = activation_cert_path(str(current.get("activation_id") or ""), cert_dir=cert_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    body["path"] = str(path)
+    return body
 
 
 def _calls_wall_clock(node: ast.AST) -> bool:

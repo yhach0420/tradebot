@@ -1,0 +1,146 @@
+"""PB1_V4_MACHINE_IMPLEMENTATION_V1.
+
+Intraday 5m continuation. Do not mutate V3.2 / V3.1 / V3 / V2.
+No economic labels. No PnL. No Confirmation. No Frozen Validation.
+"""
+from __future__ import annotations
+
+from research.current_day1_information_close_v1 import FEATURE_MINING_CLOSED
+from research.pb1_opening_range_continuation_face_valid_v2 import (
+    BREAK_BEYOND_ATR_FRAC,
+    BREAK_BEYOND_OR_FRAC,
+    BREAK_CLOSE_LOC,
+    LAST_BREAK,
+    LAST_TRIGGER,
+    LEAVE_EXT_OR_FRAC,
+    MIN_AWAY_BARS,
+    OR_KNOWN_FROM,
+)
+from research.pb1_playbook_redesign_v3 import ACCEPTANCE_FAIL_CLOSES as V3_ACCEPTANCE_FAIL_CLOSES
+from research.pb1_playbook_redesign_v3 import STRUCTURAL_ROUTE_R_MULT as V3_ROUTE_R_MULT
+from research.pb1_v3_1_face_validity_fix import ACCEPTANCE_FAIL_CLOSES as V31_ACCEPTANCE
+from research.pb1_v3_1_face_validity_fix import MEANINGFUL_LEAVE_NOISE_MULT as V31_LEAVE
+from research.pb1_v3_1_face_validity_fix import MEANINGFUL_R_NOISE_MULT as V31_R
+from research.pb1_v3_1_face_validity_fix import NOISE_LOOKBACK_SESSIONS, NOISE_MIN_OBS
+from research.pb1_v3_1_face_validity_fix import PARENT_V2_SHA, PARENT_V3_SHA
+from research.pb1_v3_1_face_validity_fix import STRUCTURAL_ROUTE_R_MULT as V31_ROUTE
+from research.pb1_v3_2_face_failure_rca import PARENT_V32_SHA, SEMANTIC_RCA_N
+from research.pb1_v3_2_opening_drive_and_reacceleration_semantics import PARENT_V31_SHA
+from research.pb1_v4_opening_drive_location_reaccel_spec import CASE_READY as PARENT_SPEC_VERDICT
+from research.pb1_v4_opening_drive_location_reaccel_spec import INVALID_OPENING_STATES, VALID_OPENING_STATES
+from research.run_20260914_day2_futures_plus_first_live_breadth_v1 import TRADING_DATE as LIVE_TRADING_DATE
+from research.support_resistance_face_valid_first_interaction_rebuild_v1 import CONFIRM_ATR, ZONE_HALF_ATR
+
+PROGRAM_ID = "PB1_V4_MACHINE_IMPLEMENTATION"
+ANALYSIS_ID = "PB1_V4_MACHINE_IMPLEMENTATION_V1"
+PARENT_SPEC_PROGRAM = "PB1_V4_OPENING_DRIVE_LOCATION_REACCEL_SPEC"
+assert PARENT_SPEC_VERDICT == "PB1_V4_SEMANTIC_SPEC_READY_V1"
+assert PARENT_V32_SHA == "56edb2c2576805e46193528824fb61faebb5ae7c85be0201f0331e90f9a67f43"
+assert PARENT_V31_SHA == "24089d94b2610eb8eaf19160d503b6477347f970a27650b6a04282884f436c65"
+assert PARENT_V3_SHA == "4348b941f9eb0a827db743041752c49f91be8cd9f92a1920c4ffd7c6c0dc8f89"
+assert PARENT_V2_SHA == "3ebe0220fd9cb1e5749e39833fa1bab0146759cce5dc9daaacf0e3b3d3daf3fd"
+assert SEMANTIC_RCA_N == 88
+
+EXPECTED_SPLIT_SHA256 = "2c9bd8f4ce7c86116833b54e1d41e4cbc4b59c3e504b769140fea435d375b3b4"
+EXPECTED_BLOCK_SHA256 = "e7a16d860f73acc592c94ac7a717820f0dcea263fd60ab39b0cf7af980912718"
+EXPECTED_DETECTOR_SHA256 = "6e3060b71f8a4787b09d6b3c0f3ba9fa84c87712bf0f11b0165bfbfd1e0bf47e"
+EXPECTED_STATE_MACHINE_SHA256 = "3c065f3757083fa6da792f9450e07504e902ea93d48391467a6bb7dca6e6a5b8"
+
+assert CONFIRM_ATR == 0.75
+assert ZONE_HALF_ATR == 0.15
+assert BREAK_BEYOND_OR_FRAC == 0.08
+assert BREAK_BEYOND_ATR_FRAC == 0.05
+assert BREAK_CLOSE_LOC == 0.55
+assert MIN_AWAY_BARS == 2
+assert LEAVE_EXT_OR_FRAC == 0.15
+assert LAST_BREAK == "10:00"
+assert LAST_TRIGGER == "11:20"
+assert OR_KNOWN_FROM == "09:15"
+assert NOISE_LOOKBACK_SESSIONS == 20
+assert NOISE_MIN_OBS == 10
+
+STRUCTURAL_ROUTE_R_MULT = 1.0
+assert STRUCTURAL_ROUTE_R_MULT == V3_ROUTE_R_MULT == V31_ROUTE
+ACCEPTANCE_FAIL_CLOSES = 2
+assert ACCEPTANCE_FAIL_CLOSES == V3_ACCEPTANCE_FAIL_CLOSES == V31_ACCEPTANCE
+MEANINGFUL_R_NOISE_MULT = 1.0
+MEANINGFUL_LEAVE_NOISE_MULT = 1.0
+assert MEANINGFUL_R_NOISE_MULT == V31_R
+assert MEANINGFUL_LEAVE_NOISE_MULT == V31_LEAVE
+
+PRIMARY_SETUP_TIMEFRAME = "5m"
+ONE_M_CAN_CREATE_ELIGIBILITY = False
+V4_IS_1M_STRATEGY = False
+OR_TOUCH_ALONE_SUFFICIENT = False
+TRADINGVALUE_IS_1M_TRIGGER_GATE = False
+DAILY_BIAS_IS_GATE = False
+CLOCK_0930_CUTOFF = False
+CLOCK_0945_CUTOFF = False
+RETEST_5MIN_GATE = False
+
+# S0 DISTINCTIVE_OPENING_ACTIVITY_V4. Semantic correspondence only. Not profit.
+S0_RANGE_MIN = 0.75
+S0_GAP_ATR_MIN = 0.35
+S0_GAP_RANGE_MIN = 0.55
+S0_ATR_RANGE_MIN = 0.20
+OPENING_5M_MIN_OBS = 8
+
+# S1 TRUE_OPENING_DRIVE. OR-half is not part of this definition.
+TRUE_DISP_MIN = 0.80
+TRUE_RANGE_MIN = 1.00
+TRUE_N_SAME_MIN = 2
+TRUE_COUNTER_FRAC = 0.55
+TRUE_BODY_FRAC_MIN = 0.35
+
+# S1 FAILED_OPEN_THEN_REAL_DRIVE. Exemplar 3382/20241004 is semantic, not a numeric template.
+FAIL_COUNTER_MIN = 0.80
+FAIL_COUNTER_BODY_FRAC = 0.40
+FAIL_DRIVE_DISP_MIN = 0.80
+FAIL_EXTEND_MAX_BARS = 6
+
+FLAT_DISP_MAX = 0.50
+FLAT_RANGE_MAX = 0.80
+
+# S2 location. No additive score. OR touch alone invalid.
+LEAVE_N1M_MIN = 1.0
+ROOM_N1M_MIN = 1.0
+NEAR_OPP_R_FRAC = 1.00
+CONFLUENCE_N1M = 1.5
+OVERHEAD_ATR_FRAC = 0.50
+
+# Thesis-lost state (not a clock).
+UNWIND_FRAC = 0.75
+FAILED_ATTEMPT_N = 3
+OR_RECROSS_CLOSES = 2
+
+# S4 FIVE_M_CONTINUATION_STATE. Visible on 5m; not a huge completed breakout.
+S4_CLOSE_LOC = 0.55
+S4_BODY_FRAC = 0.35
+S4_RANGE_OVER_OPEN5 = 0.35
+S4_RANGE_OVER_N1M = 1.50
+STALL_5M_BARS = 4
+
+# E1. Not RCA medians (forbidden: 3bar>=2.0 / range>=2.0 / body>=1.5 copied from medians).
+# 1.0 N1M = one normal 1m of directional progress: distinguishable from that stock's own noise.
+E1_NET_N1M = 1.00
+E1_RANGE_N1M = 0.90
+E1_BODY_N1M = 0.55
+
+EXEC_5M_DIRECT = "EXEC_5M_DIRECT"
+EXEC_1M_CONFIRMED = "EXEC_1M_CONFIRMED"
+
+CASE_FROZEN = "PB1_V4_MACHINE_FROZEN_WAIT_FOR_PROSPECTIVE_FACE_V1"
+CASE_BIND = "PB1_V4_MACHINE_BIND_FAILED_V1"
+NEXT_FACE = "PB1_V4_PROSPECTIVE_FACE_VALIDATION"
+NEXT_BIND = "REPAIR_PRIOR_BIND_THEN_RETRY_V1"
+
+OLD_CONFIRMATION_OPENED = False
+FROZEN_VALIDATION_OPENED = False
+KABU50_APPLIED = False
+PNL_OPTIMIZATION = False
+THRESHOLD_OPTIMIZED = False
+V32_RULE_CHANGED = False
+V4_MACHINE_IMPLEMENTED = True
+FEATURE_MINING = FEATURE_MINING_CLOSED
+LIVE_DATE = LIVE_TRADING_DATE
+_ = VALID_OPENING_STATES, INVALID_OPENING_STATES

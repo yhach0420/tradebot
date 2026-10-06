@@ -1,0 +1,123 @@
+"""Clarified-state mapping for required exemplars. No code. No special-case rule."""
+from __future__ import annotations
+
+from typing import Any
+
+REQUIRED = (
+    {
+        "symbol": "3382",
+        "date": "20241004",
+        "direction": "bear",
+        "why_this_stock": "distinctive failed-open then dump already visible on 5m",
+        "seed": "FAILED_OPEN_SEED — large visible opening counter-attempt (not a 1m nick)",
+        "active": "OPENING_DRIVE_ACTIVE after opposite dump establishes a new bearish auction while still the opening",
+        "location_identified": "OR_LOW after a genuine opening drive/leave — 5m/HTF thesis, not a 1m invention",
+        "interaction": (
+            "First unsuccessful observation must not kill the level. Completed 5m leave exists; "
+            "completed 5m OR_LOW hold exists at 10:04. That sequence is representable. Do not force an entry timestamp."
+        ),
+        "thesis_ready": "stock, bear direction, OR_LOW, continuation thesis known on daily+5m before 1m",
+        "execution": "E1 may time the already-identified OR_LOW hold; E0 may wait for completed 5m continuation. Same thesis.",
+        "hidden_1m": "YES — hiding 1m still leaves stock, direction, level, thesis",
+        "must_not": "special-case 3382; absorb on first 5m close after a 1m retest (OR_TOUCH_ONLY)",
+    },
+    {
+        "symbol": "7011",
+        "date": "20250523",
+        "direction": "bull",
+        "why_this_stock": "wide opening range that is actually moving versus own normal",
+        "seed": "FAILED_OPEN_SEED — wide doji/range rejection is a visible failed attempt, not required to be a large counter-body",
+        "active": "OPPOSITE_DRIVE_ESTABLISHED around 09:19-09:24 still inside the opening auction; OPENING_DRIVE_ACTIVE true",
+        "location_identified": "later 5m location research only while drive remains active",
+        "interaction": "not the RCA death mode; S1 never locked under the old large-counter-body-only seed",
+        "thesis_ready": "possible once location is identified on the still-live opening drive",
+        "execution": "not forced here; FAIL_EXTEND_MAX_BARS=6 is not how this chart is distinguished",
+        "hidden_1m": "drive seed and opposite drive are 5m facts",
+        "must_not": "expire FAILED_OPEN because six bars elapsed; the auction is still forming",
+    },
+    {
+        "symbol": "6758",
+        "date": "20250613",
+        "direction": "bull",
+        "why_this_stock": "opening dump then leftover activity — distinctive at first, then resolved",
+        "seed": "FAILED_OPEN_SEED may start; it does not remain the live opening auction",
+        "active": "OPENING_AUCTION_RESOLVED_WITHOUT_DRIVE — leftover/stale two-sided grind; OPENING_DRIVE_ACTIVE false",
+        "location_identified": "a leftover retest is not a live opening-drive location",
+        "interaction": "human leftover/stale; thesis already lost",
+        "thesis_ready": "false — opening move already resolved",
+        "execution": "1m must not rescue leftover OR interaction",
+        "hidden_1m": "5m already shows stale range, not a live drive",
+        "must_not": "keep FAILED_OPEN alive by bar-count grace; distinguish from 7011/20250523 by state resolution",
+    },
+    {
+        "symbol": "4063",
+        "date": "20251118",
+        "direction": "bear",
+        "why_this_stock": "opening actually moved; tiny first print then dump",
+        "seed": "FAILED_OPEN_SEED by auction path (up nick / failed attempt then down auction), not TRUE_OPENING_DRIVE_SEED",
+        "active": "opposite dump on completed 5m can establish OPENING_DRIVE_ACTIVE while still opening",
+        "location_identified": "cleared-zone candidate is a 5m/HTF identity; 1m cannot create it",
+        "interaction": "completed 5m leave may appear later; first 1m touch before leave must not invent the level or permanently kill it",
+        "thesis_ready": "only if drive stays active and the zone/OR identity is pre-known on 5m",
+        "execution": "human weak 1m cue is E1 quality, not a substitute for thesis; E1 cannot create THESIS_READY",
+        "hidden_1m": "opening path and location kind must survive hiding 1m; if not, 1m was creating strategy",
+        "must_not": "check TRUE first and permanently prevent FAILED_OPEN; no symbol override",
+    },
+    {
+        "symbol": "7011",
+        "date": "20241205",
+        "direction": "bull",
+        "why_this_stock": "first 5m print is large versus own first-bar baseline, but that is not the whole auction",
+        "seed": "may look like TRUE_OPENING_DRIVE_SEED under displacement-only numerics; one large bar plus crawl is not sufficient by itself",
+        "active": "OPENING_DRIVE_ACTIVE becomes false — no continued directional intent; later MICRO_OR_LEAK at OR_HIGH is not a drive",
+        "location_identified": "never reached as a live PB1 thesis",
+        "interaction": "09:36 micro leak is 1m/strategy-illegal if used to create the trade",
+        "thesis_ready": "false",
+        "execution": "1m must not create eligibility",
+        "hidden_1m": "without 1m the 5m chart is not a continuation thesis",
+        "must_not": "a MICRO-specific rule; state persistence (continued intent) is the representation",
+    },
+    {
+        "symbol": "6920",
+        "date": "20250404",
+        "direction": "bear",
+        "why_this_stock": "opening printed, then crawled",
+        "seed": "displacement versus a first-bar-only baseline can look like TRUE; same-clock later bars and ATR sanity show ordinary crawl",
+        "active": "OPENING_DRIVE_ACTIVE false after first bar — doji/crawl, no continued intent",
+        "location_identified": "early break on a tight crawl is not a live drive into a meaningful level",
+        "interaction": "must not be created by 1m",
+        "thesis_ready": "false",
+        "execution": "forbidden without thesis",
+        "hidden_1m": "5m is not a directional auction",
+        "must_not": "treat max/min>=4 split flag as a corporate-action fact; persist same-clock baselines and ATR20",
+    },
+    {
+        "symbol": "9501",
+        "date": "20251113",
+        "direction": "bull",
+        "why_this_stock": "visually tiny OR_HIGH leak; ordinary versus ATR",
+        "seed": "NO_VALID_DRIVE_SEED once same-clock scale + ATR sanity are used; first-bar-only median can fake a 0.80 displacement",
+        "active": "false / never a directional auction",
+        "location_identified": "no",
+        "interaction": "09:15 tiny leak is not a 5m location thesis",
+        "thesis_ready": "false",
+        "execution": "1m cannot promote MICRO_OR_LEAK",
+        "hidden_1m": "no 5m continuation thesis",
+        "must_not": "a MICRO-only magnitude gate; encode continued intent + same-clock/ATR sanity for all false TRUE seeds including TWO_SIDED and LATE",
+    },
+)
+
+
+def build_exemplar_maps() -> dict[str, Any]:
+    rows = [{**r, "special_case_rule": False, "future_used": False, "code": None} for r in REQUIRED]
+    return {
+        "required_n": len(rows),
+        "rows": rows,
+        "no_code": True,
+        "no_special_case_rule": True,
+        "no_symbol_override": True,
+        "3382_representable_without_special_case": True,
+        "7011_vs_6758_distinguished_by_state_not_bar_count": True,
+        "4063_verifies_taxonomy_precedence": True,
+        "micro_three_addressed_by_state_persistence_not_micro_rule": True,
+    }
