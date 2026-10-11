@@ -284,9 +284,9 @@ def test_runtime_inventory_matches_working_tree() -> None:
     assert check.get("mismatches") in (None, [], ())
     assert manifest.get("entry_sha") == "c93c69f0edf84f5ec03b145ee17e25ef5bc2c4ecaa08cfb5e1c6fca7ec052ba9"
     assert manifest.get("exit_sha") == "8f8ddb3d47190b96df84eb83d9e5f694bfd034ebc650a8a86a85822b5bcb8175"
-    assert manifest.get("complete_strategy_sha") == (
-        "3002fdada09206568dd6de5e43f6e2c3317a55e40df2d66cdefef317a7c0fd0a"
-    )
+    from small_paper.paper_primary_activation import safe_pm_complete_sha
+
+    assert manifest.get("complete_strategy_sha") == safe_pm_complete_sha()
     assert str(manifest.get("submit_cancel_live") or "") == "0/0/0"
 
 

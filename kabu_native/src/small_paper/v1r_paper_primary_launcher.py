@@ -385,11 +385,14 @@ def _run_daily_live(out: Path, hb_path: Path, assertion, selected_executor: Any 
             from small_paper.paper_session_executor import arm_x1_live_owner
 
             arm_x1_live_owner()
-            if owner_record["session_owner_class"] != "FixedSupportX1SessionExecutor":
+            from small_paper.paper_session_executor import X1_OWNER_CLASSES
+
+            owner_cls = str(owner_record["session_owner_class"])
+            if owner_cls not in X1_OWNER_CLASSES:
                 print("[V1R EXIT V2] PAPER_EXECUTOR_BINDING_CONTRADICTION", flush=True)
                 return 2
             print(
-                "[PAPER PRIMARY] live owner=FixedSupportX1SessionExecutor "
+                f"[PAPER PRIMARY] live owner={owner_cls} "
                 "family=X1_IMMEDIATE_ASK boot_v1r_native_entry=0",
                 flush=True,
             )
@@ -585,7 +588,9 @@ def launch_primary(
         if not binding["x1"] or binding["execution_family"] != "X1_IMMEDIATE_ASK":
             print(f"[PAPER PRIMARY] {ASSERTION_FAIL}:executor_mismatch", flush=True)
             return 2
-        if binding["session_owner_class"] != "FixedSupportX1SessionExecutor":
+        from small_paper.paper_session_executor import X1_OWNER_CLASSES
+
+        if binding["session_owner_class"] not in X1_OWNER_CLASSES:
             print("[PAPER PRIMARY] PAPER_EXECUTOR_BINDING_CONTRADICTION", flush=True)
             return 2
 

@@ -8770,10 +8770,13 @@ def run_live_dry_run(
                 and am_pm_policy is not None
                 and hasattr(_x1_exe, "bind_production_schedule")
             ):
-                _x1_exe.bind_production_schedule(
-                    day=str(day_compact),
-                    kind=str(am_pm_policy.kind),
-                )
+                if getattr(am_pm_policy, "continuous_deadline", ""):
+                    _x1_exe.bind_safe_pm_flatten(day=str(day_compact))
+                else:
+                    _x1_exe.bind_production_schedule(
+                        day=str(day_compact),
+                        kind=str(am_pm_policy.kind),
+                    )
                 if universe_meta and hasattr(_x1_exe, "remember_universe_names"):
                     _x1_exe.remember_universe_names(universe_meta)
             dual = None if (_x1_wiring or {}).get("x1_owner") else ensure_dual_lane(trace_dir=output_dir)

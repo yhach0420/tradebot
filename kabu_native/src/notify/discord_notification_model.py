@@ -13,6 +13,44 @@ from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
 PAYLOAD_SCHEMA_VERSION = "687W10.1"
+DISCORD_EMBED_FIELD_LIMIT = 25
+DISCORD_FIELD_NAME_LIMIT = 256
+DISCORD_FIELD_VALUE_LIMIT = 1024
+
+
+def sanitize_discord_embed(embed: Mapping[str, Any]) -> dict[str, Any]:
+    """Discord webhook hard limits. Excess fields return HTTP 400."""
+    out = dict(embed or {})
+    fields: list[dict[str, Any]] = []
+    for item in list(out.get("fields") or []):
+        if not isinstance(item, Mapping):
+            continue
+        name = str(item.get("name") or "").strip()[:DISCORD_FIELD_NAME_LIMIT]
+        raw = item.get("value")
+        value = "—" if raw is None or str(raw).strip() == "" else str(raw).strip()
+        if not name:
+            continue
+        fields.append(
+            {
+                "name": name,
+                "value": value[:DISCORD_FIELD_VALUE_LIMIT],
+                "inline": bool(item.get("inline")),
+            }
+        )
+        if len(fields) >= DISCORD_EMBED_FIELD_LIMIT:
+            break
+    if fields or "fields" in out:
+        out["fields"] = fields
+    if out.get("title") is not None:
+        out["title"] = str(out.get("title") or "")[:256]
+    if "description" in out:
+        out["description"] = str(out.get("description") or "")[:4096]
+    footer = out.get("footer")
+    if isinstance(footer, Mapping):
+        foot = dict(footer)
+        foot["text"] = str(foot.get("text") or "")[:2048]
+        out["footer"] = foot
+    return out
 
 
 class NotificationCategory(str, Enum):
@@ -108,7 +146,10 @@ class NotificationEnvelope:
         if self.content:
             payload["content"] = self.content[:1900]
         if self.embeds:
-            payload["embeds"] = self.embeds[:3]
+            payload["embeds"] = [
+                sanitize_discord_embed(emb) if isinstance(emb, Mapping) else emb
+                for emb in list(self.embeds)[:3]
+            ]
         if not payload:
             payload["content"] = (self.title or self.event_type)[:1900]
         return payload

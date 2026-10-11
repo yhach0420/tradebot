@@ -1,7 +1,7 @@
 # ADR-687W4S — Runtime Read-Only Forward Soak
 
 - **Status:** READONLY_SOAK_IN_PROGRESS
-- **Date:** 2026-10-05
+- **Date:** 2026-10-09
 
 ## Context
 
@@ -18,8 +18,8 @@ W4 implemented Runtime dry-run wiring + Kabu read-only. Forward soak confirms li
 
 ## Forward measured (latest evaluator run)
 
-- sessions: 1
-- readonly success sessions: 1
+- sessions: 2
+- readonly success sessions: 0
 - probe now: `TOKEN_REQUEST_FAILED`
 - verdict: `READONLY_SOAK_IN_PROGRESS`
 

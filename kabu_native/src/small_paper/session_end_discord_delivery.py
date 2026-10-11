@@ -74,13 +74,23 @@ def expected_session_end_dedupe_keys(
             kind = "am"
         elif stop == "afternoon_session_close":
             kind = "pm"
-    if kind == "am":
+    sid = resolve_session_id(summary, output_dir=output_dir, session_id=session_id)
+    x1_paper = ""
+    try:
+        from notify.x1_discord_gate import x1_discord_routing_enforced, x1_summary_event
+
+        if x1_discord_routing_enforced():
+            x1_paper = f"x1-summary|{day}|{x1_summary_event(summary)}|{sid}"
+    except Exception:
+        x1_paper = ""
+    if x1_paper:
+        paper_key = x1_paper
+    elif kind == "am":
         paper_key = f"am_summary|{day}"
     elif kind == "pm":
         paper_key = f"pm_summary|{day}"
     else:
         paper_key = f"daily_summary|{day}"
-    sid = resolve_session_id(summary, output_dir=output_dir, session_id=session_id)
     out: dict[str, str] = {"paper": paper_key}
     if kind in ("am", "pm"):
         out["shadow"] = f"{day}|{sid}|{kind.upper()}|{SHADOW_NAME_COMPOSITE}"
@@ -100,25 +110,30 @@ def _latest_status_by_dedupe(
     day = str(trading_date or "").replace("-", "")[:8]
     if not day:
         day = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d")
-    path = Path(native_root) / "results" / "notifications" / day / "notification_events.jsonl"
+    base = Path(native_root) / "results" / "notifications" / day
     wanted = {str(k) for k in keys if k}
     latest: dict[str, dict[str, Any]] = {}
-    if not path.is_file():
-        return latest
-    try:
-        with path.open(encoding="utf-8") as fh:
-            for line in fh:
-                if not line.strip():
-                    continue
-                try:
-                    row = json.loads(line)
-                except Exception:
-                    continue
-                dk = str(row.get("dedupe_key") or "")
-                if dk in wanted:
-                    latest[dk] = row
-    except Exception:
-        return latest
+    for name in ("notification_events.jsonl", "notification_dead_letter.jsonl"):
+        path = base / name
+        if not path.is_file():
+            continue
+        try:
+            with path.open(encoding="utf-8") as fh:
+                for line in fh:
+                    if not line.strip():
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except Exception:
+                        continue
+                    dk = str(row.get("dedupe_key") or "")
+                    if dk not in wanted:
+                        continue
+                    prev = latest.get(dk)
+                    if not prev or str(row.get("at") or "") >= str(prev.get("at") or ""):
+                        latest[dk] = row
+        except Exception:
+            continue
     return latest
 
 
@@ -188,7 +203,12 @@ def deliver_session_end_discord(
             "ok": ok,
         }
 
-    if all_sent and expected:
+    paper_ok = bool((per_key.get("paper") or {}).get("ok"))
+    if paper_ok:
+        # Shadow is fail-open. AM/PM Summary delivery does not wait on RESEARCH_SHADOW.
+        discord_status = "sent"
+        ok = True
+    elif all_sent and expected:
         discord_status = "sent"
         ok = True
     elif any_timeout:

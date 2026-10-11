@@ -12,6 +12,8 @@ PASSIVE_FILL_ENTRY_V1 = "PASSIVE_FILL_ENTRY_V1"
 X1_IMMEDIATE_ASK = "X1_IMMEDIATE_ASK"
 V1R_EXECUTOR = "V1rPassiveSessionExecutor"
 X1_EXECUTOR = "FixedSupportX1SessionExecutor"
+C3_EXECUTOR = "C3PaperSessionExecutor"
+X1_OWNER_CLASSES = {X1_EXECUTOR, C3_EXECUTOR}
 X1_OWNER_ENV = "TRADEBOT_X1_SESSION_OWNER"
 BINDING_CONTRADICTION = "PAPER_EXECUTOR_BINDING_CONTRADICTION"
 
@@ -50,16 +52,20 @@ def guard_v1r_native_boot() -> None:
         raise PaperExecutorBindingContradiction(BINDING_CONTRADICTION)
 
 
-def bind_selected_live_executor(activation: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
+def bind_selected_live_executor(
+    activation: Optional[Mapping[str, Any]] = None,
+    *,
+    strategy_mode: Optional[str] = None,
+) -> dict[str, Any]:
     """Resolve the selected session owner. X1 arms the V1R-boot guard and keeps the object."""
     if activation is None:
         from small_paper.v1r_activation_binding import load_activation_manifest, load_active_selector
 
         activation = load_activation_manifest(selector=load_active_selector())
-    exe = resolve_paper_session_executor(activation)
+    exe = resolve_paper_session_executor(activation, strategy_mode=strategy_mode)
     family = str(getattr(exe, "execution_family", "") or "")
     cls = type(exe).__name__
-    x1 = family == X1_IMMEDIATE_ASK and cls == X1_EXECUTOR
+    x1 = family == X1_IMMEDIATE_ASK and cls in X1_OWNER_CLASSES
     if x1:
         arm_x1_live_owner()
     return {
@@ -74,23 +80,45 @@ def bind_selected_live_executor(activation: Optional[Mapping[str, Any]] = None) 
     }
 
 
-def resolve_paper_session_executor(activation: Mapping[str, Any]) -> Any:
+def resolve_paper_session_executor(
+    activation: Mapping[str, Any],
+    *,
+    strategy_mode: Optional[str] = None,
+) -> Any:
     """Map activation metadata to the one session executor.
 
     PASSIVE_FILL_ENTRY_V1 → V1r passiveSessionExecutor
-    X1_IMMEDIATE_ASK → FixedSupportX1SessionExecutor
+    X1_IMMEDIATE_ASK → FixedSupportX1SessionExecutor, or C3 when the mode file is enabled
     """
     family = execution_family_of(activation)
     named = str(activation.get("session_executor") or "")
     if family == X1_IMMEDIATE_ASK or named == X1_EXECUTOR:
         if family not in ("", X1_IMMEDIATE_ASK):
             raise UnresolvedPaperExecutor(family)
-        from small_paper.fixed_support_x1_session import FixedSupportX1SessionExecutor
+        if strategy_mode is None:
+            from small_paper.c3_paper_session import read_paper_strategy_mode
 
-        executor = FixedSupportX1SessionExecutor()
+            strategy_mode = read_paper_strategy_mode()
+        if strategy_mode == "C3":
+            from small_paper.c3_paper_session import C3PaperSessionExecutor
+
+            executor = C3PaperSessionExecutor()
+        elif strategy_mode == "FIXED_SUPPORT_X1":
+            from small_paper.c3_paper_session import residual_restore_block
+
+            blocked = residual_restore_block()
+            if blocked:
+                raise UnresolvedPaperExecutor(blocked)
+            from small_paper.fixed_support_x1_session import FixedSupportX1SessionExecutor
+
+            executor = FixedSupportX1SessionExecutor()
+        else:
+            raise UnresolvedPaperExecutor("PAPER_STRATEGY_MODE_FAIL_CLOSED")
         executor.activation_id = str(activation.get("activation_id") or activation.get("manifest_id") or "")
         executor.activation_sha = str(activation.get("sha256") or "")
         executor.candidate_name = str(activation.get("candidate_name") or activation.get("primary_strategy") or "")
+        if strategy_mode == "C3":
+            executor.candidate_name = "V16_C3_BUY1_TIME_RESIDUAL"
         return executor
     if family == PASSIVE_FILL_ENTRY_V1 or named == V1R_EXECUTOR:
         if family not in ("", PASSIVE_FILL_ENTRY_V1):

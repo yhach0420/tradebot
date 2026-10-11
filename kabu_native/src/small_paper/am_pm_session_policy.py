@@ -40,6 +40,8 @@ class AmPmSessionPolicy:
     allowed_entry_start: str
     allowed_entry_end: str
     screening_window: str
+    flatten_start: str = ""
+    continuous_deadline: str = ""
 
     @classmethod
     def morning(cls) -> "AmPmSessionPolicy":
@@ -70,6 +72,27 @@ class AmPmSessionPolicy:
         )
 
     @classmethod
+    def safe_pm_flatten(cls) -> "AmPmSessionPolicy":
+        """Continuous PM book flat. Not a PnL-chosen clock.
+
+        15:20 starts the flatten, five minutes before the 15:25 continuous
+        deadline, matching the AM 11:25 flat before the 11:30 session end.
+        """
+        return cls(
+            kind="pm",
+            session_start="12:33",
+            session_end="15:25",
+            entry_stop="15:20",
+            force_close="15:25",
+            force_close_reason=AFTERNOON_SESSION_CLOSE,
+            allowed_entry_start="12:33",
+            allowed_entry_end="15:20",
+            screening_window=PM_SCREENING_WINDOW,
+            flatten_start="15:20",
+            continuous_deadline="15:25",
+        )
+
+    @classmethod
     def from_kind(cls, kind: str) -> "AmPmSessionPolicy":
         k = kind.strip().lower()
         if k == "am":
@@ -89,7 +112,11 @@ class AmPmSessionPolicy:
     def entry_allowed_now(self, now: Optional[datetime] = None) -> bool:
         n = self._now(now)
         t = n.time()
-        return parse_hhmm(self.allowed_entry_start) <= t <= parse_hhmm(self.allowed_entry_end)
+        start = parse_hhmm(self.allowed_entry_start)
+        end = parse_hhmm(self.allowed_entry_end)
+        if self.continuous_deadline:
+            return start <= t < end
+        return start <= t <= end
 
     def force_close_due(self, now: Optional[datetime] = None) -> bool:
         return self._now(now).time() >= parse_hhmm(self.force_close)
@@ -139,6 +166,8 @@ class AmPmSessionPolicy:
             "allowed_entry_start": self.allowed_entry_start,
             "allowed_entry_end": self.allowed_entry_end,
             "screening_window": self.screening_window,
+            "flatten_start": self.flatten_start,
+            "continuous_deadline": self.continuous_deadline,
         }
 
 
@@ -146,5 +175,8 @@ def apply_am_pm_policy(
     config: SmallPaperPilotConfig,
     kind: str,
 ) -> tuple[SmallPaperPilotConfig, AmPmSessionPolicy]:
-    policy = AmPmSessionPolicy.from_kind(kind)
+    if str(kind).strip().lower() == "pm":
+        policy = AmPmSessionPolicy.safe_pm_flatten()
+    else:
+        policy = AmPmSessionPolicy.from_kind(kind)
     return policy.apply_to_pilot_config(config), policy

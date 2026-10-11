@@ -6,6 +6,8 @@ candidate session engine.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Optional
 
@@ -36,6 +38,7 @@ ACTIVATION_V12_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V12"
 ACTIVATION_V13_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V13"
 ACTIVATION_V14_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V14"
 ACTIVATION_V15_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V15"
+ACTIVATION_V16_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V16"
 _X1_PARENT = {
     ACTIVATION_V2_ID: ACTIVATION_ID,
     ACTIVATION_V3_ID: ACTIVATION_V2_ID,
@@ -51,6 +54,7 @@ _X1_PARENT = {
     ACTIVATION_V13_ID: ACTIVATION_V12_ID,
     ACTIVATION_V14_ID: ACTIVATION_V13_ID,
     ACTIVATION_V15_ID: ACTIVATION_V14_ID,
+    ACTIVATION_V16_ID: ACTIVATION_V15_ID,
 }
 X1_EXECUTION_FAMILY = "X1_IMMEDIATE_ASK"
 X1_SESSION_EXECUTOR = "FixedSupportX1SessionExecutor"
@@ -60,6 +64,28 @@ ENTRY_SHA = "c93c69f0edf84f5ec03b145ee17e25ef5bc2c4ecaa08cfb5e1c6fca7ec052ba9"
 EXIT_SHA = "8f8ddb3d47190b96df84eb83d9e5f694bfd034ebc650a8a86a85822b5bcb8175"
 COMPLETE_STRATEGY_SHA = "3002fdada09206568dd6de5e43f6e2c3317a55e40df2d66cdefef317a7c0fd0a"
 CANDIDATE_MANIFEST_SHA = "aa5b27b40d2876a809fbbd9a0d9594bbb4d70481b5b24a05d89b395db3fa19a3"
+
+
+def safe_pm_complete_document() -> dict[str, Any]:
+    """New complete identity. ENTRY document is unchanged. 15:30 flat is removed."""
+    return {
+        "parent_complete_strategy_sha": COMPLETE_STRATEGY_SHA,
+        "entry_sha": ENTRY_SHA,
+        "exit_sha": EXIT_SHA,
+        "entry_clock_changed": False,
+        "first_anchor_reference": "09:05",
+        "pm_session_flat_1530": False,
+        "pm_flatten_start": "15:20:00",
+        "pm_continuous_execution_deadline": "15:25:00",
+        "unfilled_reason": "SESSION_EXIT_UNFILLED",
+        "fabricated_pnl": False,
+        "closing_auction_used": False,
+    }
+
+
+def safe_pm_complete_sha() -> str:
+    raw = json.dumps(safe_pm_complete_document(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 PREVIOUS_PAPER_ACTIVATION_ID = V25_ACTIVATION_ID
 PREVIOUS_SELECTOR_PATH = OUT / "history" / "active_v1r_activation_V25_pointer.json"
 SESSION_LOOP_OWNER = "candidate_factory"
@@ -237,6 +263,94 @@ def _assert_fixed_entry_support(
     )
 
 
+def _assert_safe_pm_flatten(
+    selector: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> PaperPrimaryAssertion:
+    """V16 keeps the ENTRY and EXIT documents and replaces the 15:30 complete identity."""
+    checks: dict[str, bool] = {}
+    identity = _identity_from_manifest(selector, manifest)
+    if not identity["activation_id"]:
+        return _fail(f"{ASSERTION_FAIL}:activation_missing", checks, identity)
+    bind = verify_selector_binding(selector, manifest)
+    checks["selector_activation_id"] = bind["activation_id_match"]
+    checks["selector_activation_sha"] = bind["activation_sha_match"]
+    self_ok, _got, _calc = verify_manifest_self_sha(manifest)
+    checks["manifest_self_sha"] = self_ok
+    if not all((checks["selector_activation_id"], checks["selector_activation_sha"], self_ok)):
+        return _fail(f"{ASSERTION_FAIL}:activation_sha_mismatch", checks, identity)
+    checks["candidate_name"] = identity["candidate_name"] == CANDIDATE_ID == identity["primary_strategy"]
+    if not checks["candidate_name"]:
+        return _fail(f"{ASSERTION_FAIL}:candidate_name_mismatch", checks, identity)
+    checks["entry_sha"] = identity["entry_sha"] == ENTRY_SHA
+    checks["exit_sha"] = identity["exit_sha"] == EXIT_SHA
+    checks["complete_strategy_sha"] = identity["complete_strategy_sha"] == safe_pm_complete_sha()
+    checks["manifest_sha"] = identity["manifest_sha"] == CANDIDATE_MANIFEST_SHA
+    checks["pm_session_flat_1530"] = manifest.get("pm_session_flat_1530") is False
+    checks["pm_flatten_start"] = manifest.get("pm_flatten_start") == "15:20:00"
+    checks["pm_continuous_deadline"] = manifest.get("pm_continuous_execution_deadline") == "15:25:00"
+    checks["entry_clock_changed"] = manifest.get("entry_clock_changed") is False
+    for key, label in (
+        ("entry_sha", "entry_sha_mismatch"),
+        ("exit_sha", "exit_sha_mismatch"),
+        ("complete_strategy_sha", "complete_strategy_sha_mismatch"),
+        ("manifest_sha", "manifest_sha_mismatch"),
+        ("pm_session_flat_1530", "pm_1530_still_enabled"),
+        ("pm_flatten_start", "pm_flatten_start"),
+        ("pm_continuous_deadline", "pm_continuous_deadline"),
+        ("entry_clock_changed", "entry_clock_changed"),
+    ):
+        if not checks[key]:
+            return _fail(f"{ASSERTION_FAIL}:{label}", checks, identity)
+    checks["primary_role"] = identity["primary_role"] == "PAPER_PRIMARY"
+    checks["paper_only"] = identity["paper_only"] is True
+    checks["live"] = identity["live"] is False
+    checks["submit"] = identity["submit"] == 0
+    checks["cancel"] = identity["cancel"] == 0
+    checks["submit_cancel_live"] = identity["submit_cancel_live"] == "0/0/0"
+    if not checks["paper_only"] or not checks["live"]:
+        return _fail(f"{ASSERTION_FAIL}:paper_only", checks, identity)
+    if not (checks["submit"] and checks["cancel"] and checks["submit_cancel_live"] and checks["primary_role"]):
+        return _fail(f"{ASSERTION_FAIL}:submit_cancel_live", checks, identity)
+    inv = verify_runtime_inventory(manifest)
+    gen = verify_generator_inventory_coverage(manifest)
+    cov = audit_runtime_inventory_coverage()
+    checks["runtime_inventory"] = bool(inv.get("ok")) and bool(gen.get("ok")) and bool(cov.get("ok"))
+    if not checks["runtime_inventory"]:
+        return _fail(f"{ASSERTION_FAIL}:runtime_inventory", checks, identity)
+    from research.event_time_impulse_fixed_entry_support_candidate_v1.identity import bind as bind_candidate
+
+    bound = bind_candidate()
+    checks["implementation_entry_sha"] = bound["entry_sha256"] == ENTRY_SHA
+    checks["implementation_exit_sha"] = bound["exit_sha256"] == EXIT_SHA
+    checks["parent_complete_unchanged"] = bound["complete_strategy_sha256"] == COMPLETE_STRATEGY_SHA
+    checks["implementation_manifest_sha"] = bound["manifest_sha256"] == CANDIDATE_MANIFEST_SHA
+    checks["implementation_candidate"] = bound["manifest"]["candidate_id"] == CANDIDATE_ID
+    checks["parent_activation"] = identity.get("parent_activation_id") == ACTIVATION_V15_ID
+    checks["execution_family"] = identity.get("execution_family") == X1_EXECUTION_FAMILY
+    checks["session_executor"] = identity.get("session_executor") == X1_SESSION_EXECUTOR
+    checks["session_loop_owner"] = identity.get("session_loop_owner") == X1_SESSION_LOOP_OWNER
+    if not all(
+        (
+            checks["implementation_entry_sha"],
+            checks["implementation_exit_sha"],
+            checks["parent_complete_unchanged"],
+            checks["implementation_manifest_sha"],
+            checks["implementation_candidate"],
+            checks["parent_activation"],
+            checks["execution_family"],
+            checks["session_executor"],
+            checks["session_loop_owner"],
+        )
+    ):
+        return _fail(f"{ASSERTION_FAIL}:implementation_hash_mismatch", checks, identity)
+    identity["session_loop_owner"] = str(manifest.get("session_loop_owner") or SESSION_LOOP_OWNER)
+    block = format_startup_contract(identity, ready=True)
+    return PaperPrimaryAssertion(
+        ok=True, reason="", checks=checks, identity=identity, startup_block=block, ready=True
+    )
+
+
 def assert_selected_paper_primary(
     *,
     path: Optional[Any] = None,
@@ -255,6 +369,8 @@ def assert_selected_paper_primary(
         return _fail(reason, {"selector_load": False}, {})
 
     aid = str(selector.get("activation_id") or "")
+    if aid == ACTIVATION_V16_ID:
+        return _assert_safe_pm_flatten(selector, manifest)
     if aid in (ACTIVATION_ID, ACTIVATION_V2_ID, ACTIVATION_V3_ID, ACTIVATION_V4_ID, ACTIVATION_V5_ID, ACTIVATION_V6_ID, ACTIVATION_V7_ID, ACTIVATION_V8_ID, ACTIVATION_V9_ID, ACTIVATION_V10_ID, ACTIVATION_V11_ID, ACTIVATION_V12_ID, ACTIVATION_V13_ID, ACTIVATION_V14_ID, ACTIVATION_V15_ID):
         result = _assert_fixed_entry_support(selector, manifest)
         if not result.ok:

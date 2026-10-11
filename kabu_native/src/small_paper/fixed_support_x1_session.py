@@ -131,6 +131,7 @@ class _Sym:
         self.open_episode = False
         self.frozen = float("nan")
         self.predicate_true_n = 0
+        self.entry_not_before: Optional[float] = None
 
     def _grow(self) -> None:
         ncap = self.cap * 2
@@ -270,6 +271,8 @@ class _Sym:
         finite = _finite_pos(price)
         if not self.open_episode:
             if predicate:
+                if self.entry_not_before is not None and float(self.t[index]) + 1e-9 < float(self.entry_not_before):
+                    return
                 self.signals.append(index)
                 self.open_episode = True
                 self.frozen = float(level)
@@ -340,6 +343,12 @@ class FixedSupportX1SessionExecutor:
         self.runtime_session_boundary = 0.0
         self.final_summary_ok = False
         self.boundary_error = ""
+        self.entry_not_before: Optional[float] = None
+        self.flatten_start: Optional[float] = None
+        self.flatten_deadline: Optional[float] = None
+        self._flatten_armed = False
+        self._entries_closed = False
+        self.unfilled: list[dict[str, Any]] = []
 
     def start_session(
         self,
@@ -363,6 +372,11 @@ class FixedSupportX1SessionExecutor:
         self.sess_end = float(sess_end)
         self._manual = True
         self._closed = False
+        self.flatten_start = None
+        self.flatten_deadline = None
+        self._flatten_armed = False
+        self._entries_closed = False
+        self.unfilled = []
         self._bucket = []
         self._bucket_t = None
         self.syms = {}
@@ -396,7 +410,10 @@ class FixedSupportX1SessionExecutor:
         self._note_cum(ev)
         if float(ev["t"]) > self.sess_end + _EPS:
             self._flush_bucket()
-            self._close_positions()
+            if self.flatten_deadline is not None:
+                self._finalize_safe_flatten()
+            else:
+                self._close_positions()
             self._closed = True
             return
         if self._bucket_t is not None and float(ev["t"]) > float(self._bucket_t) + _EPS:
@@ -414,6 +431,21 @@ class FixedSupportX1SessionExecutor:
         self.runtime_session_boundary = float(end)
         self._assert_boundary()
 
+    def bind_safe_pm_flatten(self, *, day: str) -> None:
+        """PM continuous flatten. Bids at or after 15:25 are not exits."""
+        from research.anchor_timing_robustness.grid import hm_epoch
+
+        start = float(hm_epoch(str(day), 12, 30))
+        flat = float(hm_epoch(str(day), 15, 20))
+        deadline = float(hm_epoch(str(day), 15, 25))
+        self.start_session(day=str(day), session="PM", sess_start=start, sess_end=deadline)
+        self._manual = True
+        self.flatten_start = flat
+        self.flatten_deadline = deadline
+        self.executor_session_boundary = deadline
+        self.runtime_session_boundary = deadline
+        self._assert_boundary()
+
     def _assert_boundary(self) -> None:
         if abs(float(self.executor_session_boundary) - float(self.runtime_session_boundary)) > _EPS:
             self.boundary_error = BOUNDARY_CONTRADICTION
@@ -424,6 +456,18 @@ class FixedSupportX1SessionExecutor:
 
     def close_at_runtime_boundary(self, *, day: str, kind: str) -> dict[str, Any]:
         """Flat the book at the Paper force-close. No later market event is required."""
+        if self.flatten_deadline is not None:
+            self.runtime_session_boundary = float(self.sess_end)
+            if not self.session:
+                self.bind_safe_pm_flatten(day=str(day))
+            self.executor_session_boundary = float(self.sess_end)
+            self._assert_boundary()
+            if not self._closed:
+                self.on_session_boundary()
+            self.flush_ledger()
+            perf = self.x1_performance()
+            self.final_summary_ok = bool(perf["final_ok"])
+            return perf
         session, start, end = production_session_bounds(day, kind)
         self.runtime_session_boundary = float(end)
         if not self.session:
@@ -442,7 +486,10 @@ class FixedSupportX1SessionExecutor:
         if self._closed:
             return
         self._flush_bucket()
-        self._close_positions()
+        if self.flatten_deadline is not None:
+            self._finalize_safe_flatten()
+        else:
+            self._close_positions()
         self._closed = True
         self.flush_ledger()
 
@@ -545,8 +592,10 @@ class FixedSupportX1SessionExecutor:
         ]
         for ev in events:
             st = self._sym(str(ev["symbol"]))
-            if _bid_ok(ev) and float(ev["t"]) <= self.sess_end + _EPS:
-                st.bids.append((float(ev["t"]), float(ev["bid"])))
+            bid_t = float(ev["t"])
+            bid_allowed = bid_t < float(self.flatten_deadline) - _EPS if self.flatten_deadline is not None else bid_t <= self.sess_end + _EPS
+            if _bid_ok(ev) and bid_allowed:
+                st.bids.append((bid_t, float(ev["bid"])))
             if not ev.get("continuous", True):
                 continue
             if not (self.sess_start - _EPS <= float(ev["t"]) < self.sess_end):
@@ -557,6 +606,7 @@ class FixedSupportX1SessionExecutor:
         for sym, start in added.items():
             pos = self.open_pos.get(sym)
             st = self.syms[sym]
+            st.entry_not_before = self.entry_not_before
             force = bool(
                 pos is not None
                 and not pos.get("exiting")
@@ -564,7 +614,13 @@ class FixedSupportX1SessionExecutor:
             )
             st.seal_group(start, self.sess_start, force_full=force)
         heap: list[tuple] = []
+        if self.flatten_start is not None and flush_t + _EPS >= float(self.flatten_start):
+            self._ensure_flatten(flush_t)
+            self._fill_flatten_pending(flush_t)
         for sym in pending_before:
+            pos = self.open_pos.get(sym)
+            if pos is not None and pos.get("pending_reason") == "SESSION_EXIT_PENDING":
+                continue
             self._arm_pending_fill(sym, flush_t, heap)
         for sym, start in added.items():
             st = self.syms[sym]
@@ -670,6 +726,14 @@ class FixedSupportX1SessionExecutor:
             return
         st.sig_ptr += 1
         self.signal_seen_n += 1
+        if self._entries_closed or (
+            self.flatten_start is not None and float(event_t) + _EPS >= float(self.flatten_start)
+        ):
+            if st.sig_ptr < len(st.signals):
+                nxt = int(st.signals[st.sig_ptr])
+                if float(st.t[nxt]) <= flush_t + _EPS:
+                    heapq.heappush(heap, (float(st.t[nxt]), 2, sym, "SIG", nxt))
+            return
         if st.sig_ptr < len(st.signals):
             nxt = int(st.signals[st.sig_ptr])
             if float(st.t[nxt]) <= flush_t + _EPS:
@@ -767,6 +831,93 @@ class FixedSupportX1SessionExecutor:
             if _finite_pos(float(price)):
                 found = (float(event_t), float(price))
         return found
+
+    def _bid_known_at(self, sym: str, at: float) -> Optional[tuple[float, float]]:
+        best: Optional[tuple[float, float]] = None
+        for event_t, price in self._sym(sym).bids:
+            if float(event_t) > float(at) + _EPS:
+                break
+            if float(event_t) + FRESH_SEC + _EPS >= float(at) and _finite_pos(float(price)):
+                best = (float(event_t), float(price))
+        return best
+
+    def _first_bid_before(self, sym: str, start: float, deadline: float) -> Optional[tuple[float, float]]:
+        for event_t, price in self._sym(sym).bids:
+            if float(event_t) <= float(start) + _EPS:
+                continue
+            if float(event_t) >= float(deadline) - _EPS:
+                break
+            if _finite_pos(float(price)):
+                return float(event_t), float(price)
+        return None
+
+    def _ensure_flatten(self, now: float) -> None:
+        if self.flatten_start is None or float(now) + _EPS < float(self.flatten_start) or self._flatten_armed:
+            return
+        self._flatten_armed = True
+        self._entries_closed = True
+        for sym in list(self.open_pos):
+            pos = self.open_pos.get(sym)
+            if pos is None or pos.get("fill_scheduled"):
+                continue
+            known = self._bid_known_at(sym, float(self.flatten_start))
+            if known is not None:
+                if "exit_trigger_t" not in pos:
+                    pos["exit_trigger_t"] = float(self.flatten_start)
+                self._release(sym, "SESSION_FLAT", float(self.flatten_start), known[1])
+                continue
+            pos["exiting"] = True
+            pos["pending_reason"] = "SESSION_EXIT_PENDING"
+            pos["exit_trigger_t"] = float(self.flatten_start)
+
+    def _fill_flatten_pending(self, flush_t: float) -> None:
+        if self.flatten_deadline is None:
+            return
+        for sym in list(self.open_pos):
+            pos = self.open_pos.get(sym)
+            if pos is None or pos.get("pending_reason") != "SESSION_EXIT_PENDING" or pos.get("fill_scheduled"):
+                continue
+            found = self._first_bid_before(sym, float(self.flatten_start or 0.0), float(self.flatten_deadline))
+            if found is None or float(found[0]) > float(flush_t) + _EPS:
+                continue
+            self._release(sym, "SESSION_FLAT", found[0], found[1])
+
+    def _finalize_safe_flatten(self) -> None:
+        self._ensure_flatten(float(self.flatten_start or 0.0))
+        self._fill_flatten_pending(float(self.flatten_deadline or 0.0))
+        for sym in list(self.open_pos):
+            self._mark_unfilled(sym)
+
+    def _mark_unfilled(self, sym: str) -> None:
+        pos = self.open_pos.get(sym)
+        if pos is None:
+            return
+        self.open_pos.pop(sym, None)
+        row = {
+            "date": self.day,
+            "session": self.session,
+            "symbol": sym,
+            "signal_uid": pos.get("signal_uid"),
+            "entry_t": float(pos["entry_t"]),
+            "entry_px": float(pos["entry_px"]),
+            "reason": "SESSION_EXIT_UNFILLED",
+            "pnl_yen": None,
+            "exit_t": None,
+            "exit_px": None,
+            "slot_release": True,
+        }
+        self.unfilled.append(row)
+        self._write_ledger(
+            {
+                "event": "EXIT",
+                "symbol": sym,
+                "signal_uid": pos.get("signal_uid"),
+                "exit_reason": "SESSION_EXIT_UNFILLED",
+                "exit_price": None,
+                "pnl_yen": None,
+                "slot_release": True,
+            }
+        )
 
     def _close_positions(self) -> None:
         for sym in list(self.open_pos):
@@ -1075,6 +1226,7 @@ class FixedSupportX1SessionExecutor:
             "exit_n": int(counters["x1_exit_n"]),
             "open_n": int(counters["x1_open_n"]),
             "exit_pending_n": int(counters["x1_exit_pending_n"]),
+            "unfilled_n": len(self.unfilled),
             "net_pnl_yen": net,
             "gross_profit_yen": gross_profit,
             "gross_loss_yen": gross_loss,

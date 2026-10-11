@@ -38,6 +38,16 @@ def test_normal_launcher_does_not_boot_v1r(monkeypatch: pytest.MonkeyPatch, tmp_
 
     monkeypatch.setattr(native, "boot_v1r_native_entry", boom)
     monkeypatch.setattr(
+        native,
+        "resolve_day_fixed_am_runtime_universe",
+        lambda *_a, **_k: {
+            "ok": True,
+            "symbols": [f"{7000 + i:04d}" for i in range(50)],
+            "source": "TEST_FREEZE",
+            "authority": "SAME_DAY_AM_FROZEN_UNIVERSE",
+        },
+    )
+    monkeypatch.setattr(
         "small_paper.kabu_registration_authority.verify_exact50_membership",
         lambda *_a, **_k: {"ok": True, "actual_n": 50},
     )

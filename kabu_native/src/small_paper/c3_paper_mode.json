@@ -1,0 +1,6 @@
+{
+  "selected": "C3",
+  "enabled": false,
+  "restore": "FIXED_SUPPORT_X1",
+  "note": "C3 is implemented and tested. Real-time Paper stays on the sealed X1 owner until an explicit start confirmation sets enabled to true."
+}
