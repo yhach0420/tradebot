@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from small_paper.paper_trade_checked_runner import PaperTradeCheckedRunner
 from small_paper.pre_paper_ready_seal import (
     CLASS_CERT_ONLY,
@@ -16,6 +18,7 @@ from small_paper.pre_paper_ready_seal import (
 )
 
 OWNER = "FixedSupportX1SessionExecutor"
+C3_OWNER = "C3PaperSessionExecutor"
 
 
 def _pass_body() -> dict:
@@ -89,7 +92,11 @@ def _alive(pid: int) -> bool:
     return int(pid) == 99
 
 
-def test_passing_seal_allows_exactly_one_noop_launch(tmp_path: Path) -> None:
+def test_passing_seal_allows_exactly_one_noop_launch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "small_paper.kabu_registration_authority.is_pre_warmup",
+        lambda **_k: False,
+    )
     body = _pass_body()
     assert seal_conditions_pass(body)
     written = write_seal(tmp_path, body)
@@ -189,6 +196,26 @@ def test_stale_startup_does_not_call_paper(tmp_path: Path) -> None:
     assert runner.step_start_paper() == 2
     assert runner.paper_call_count == 0
     assert calls == []
+
+
+def test_c3_owner_seal_allows_paper_start(tmp_path: Path) -> None:
+    body = {
+        **_pass_body(),
+        "session_owner_class": C3_OWNER,
+        "admission_owner_class": C3_OWNER,
+        "portfolio_owner_class": OWNER,
+    }
+    assert seal_conditions_pass(body)
+    written = write_seal(tmp_path, body)
+    assert written["ready"] is True
+    current = {**_current(), "session_owner_class": C3_OWNER}
+    ok, reason = authorize_paper_launch(written, current, pid_alive=_alive)
+    assert ok and reason == ""
+
+
+def test_v1r_owner_seal_is_invalid() -> None:
+    body = {**_pass_body(), "session_owner_class": "V1rPassiveSessionExecutor"}
+    assert seal_conditions_pass(body) is False
 
 
 def test_synthetic_universe_is_unavailable() -> None:

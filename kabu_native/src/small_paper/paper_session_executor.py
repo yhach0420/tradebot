@@ -13,7 +13,8 @@ X1_IMMEDIATE_ASK = "X1_IMMEDIATE_ASK"
 V1R_EXECUTOR = "V1rPassiveSessionExecutor"
 X1_EXECUTOR = "FixedSupportX1SessionExecutor"
 C3_EXECUTOR = "C3PaperSessionExecutor"
-X1_OWNER_CLASSES = {X1_EXECUTOR, C3_EXECUTOR}
+CAUSAL_EXECUTOR = "PaperExecutionCausalBook"
+X1_OWNER_CLASSES = {X1_EXECUTOR, C3_EXECUTOR, CAUSAL_EXECUTOR}
 X1_OWNER_ENV = "TRADEBOT_X1_SESSION_OWNER"
 BINDING_CONTRADICTION = "PAPER_EXECUTOR_BINDING_CONTRADICTION"
 
@@ -75,20 +76,31 @@ def bind_selected_live_executor(
         "admission_owner_class": cls,
         "portfolio_owner_class": getattr(exe, "session_executor", cls),
         "execution_family": family,
+        "execution_mode": str(getattr(exe, "execution_mode", "") or ""),
         "session_executor": getattr(exe, "session_executor", ""),
         "boot_v1r_native_entry": 0 if x1 else None,
     }
+
+
+def resolve_sealed_session_executor(
+    activation: Mapping[str, Any],
+    *,
+    strategy_mode: Optional[str] = None,
+) -> Any:
+    """Immediate-fill owner. Replay uses this so the offline flag cannot select it."""
+    return resolve_paper_session_executor(activation, strategy_mode=strategy_mode, sealed=True)
 
 
 def resolve_paper_session_executor(
     activation: Mapping[str, Any],
     *,
     strategy_mode: Optional[str] = None,
+    sealed: bool = False,
 ) -> Any:
     """Map activation metadata to the one session executor.
 
     PASSIVE_FILL_ENTRY_V1 → V1r passiveSessionExecutor
-    X1_IMMEDIATE_ASK → FixedSupportX1SessionExecutor, or C3 when the mode file is enabled
+    X1_IMMEDIATE_ASK → C3, or the causal C3 book when the paper flag is on
     """
     family = execution_family_of(activation)
     named = str(activation.get("session_executor") or "")
@@ -99,7 +111,18 @@ def resolve_paper_session_executor(
             from small_paper.c3_paper_session import read_paper_strategy_mode
 
             strategy_mode = read_paper_strategy_mode()
-        if strategy_mode == "C3":
+        if strategy_mode == "C3" and not sealed:
+            from small_paper.paper_runner_settlement_v1 import causal_paper_enabled
+
+            if causal_paper_enabled():
+                from small_paper.paper_execution_causal_v1 import PaperExecutionCausalBook
+
+                executor = PaperExecutionCausalBook()
+            else:
+                from small_paper.c3_paper_session import C3PaperSessionExecutor
+
+                executor = C3PaperSessionExecutor()
+        elif strategy_mode == "C3":
             from small_paper.c3_paper_session import C3PaperSessionExecutor
 
             executor = C3PaperSessionExecutor()

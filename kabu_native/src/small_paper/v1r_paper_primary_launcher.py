@@ -372,6 +372,7 @@ def _run_daily_live(out: Path, hb_path: Path, assertion, selected_executor: Any 
                 "admission_owner_class": type(selected_executor).__name__,
                 "portfolio_owner_class": getattr(selected_executor, "session_executor", type(selected_executor).__name__),
                 "execution_family": getattr(selected_executor, "execution_family", ""),
+                "execution_mode": str(getattr(selected_executor, "execution_mode", "") or ""),
                 "session_executor": getattr(selected_executor, "session_executor", ""),
                 "boot_v1r_native_entry": 0,
             }
@@ -393,7 +394,9 @@ def _run_daily_live(out: Path, hb_path: Path, assertion, selected_executor: Any 
                 return 2
             print(
                 f"[PAPER PRIMARY] live owner={owner_cls} "
-                "family=X1_IMMEDIATE_ASK boot_v1r_native_entry=0",
+                "family=X1_IMMEDIATE_ASK "
+                f"execution_mode={owner_record.get('execution_mode') or 'IMMEDIATE'} "
+                "boot_v1r_native_entry=0",
                 flush=True,
             )
         else:
@@ -575,6 +578,10 @@ def launch_primary(
         print(f"[PAPER PRIMARY] {ASSERTION_FAIL}: {assertion.reason}", flush=True)
         print("[PAPER PRIMARY] NO PAPER PRIMARY - FIXED600/PBv2 Primary fallback FORBIDDEN", flush=True)
         return 2
+    if mode == "live":
+        from small_paper.paper_runner_settlement_v1 import prepare_live_paper_execution_env
+
+        prepare_live_paper_execution_env()
     owner = assertion.identity.get("session_loop_owner")
     if owner == "candidate_factory":
         print(f"[PAPER PRIMARY] {SESSION_NOT_STARTED}", flush=True)

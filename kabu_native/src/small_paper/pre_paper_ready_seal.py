@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
@@ -20,6 +21,8 @@ FAIL_BINDING = "PAPER_EXECUTOR_BINDING_CONTRADICTION"
 CLASS_CERT_ONLY = "CERT_ONLY"
 CLASS_PAPER_START = "PAPER_START"
 OWNER = "FixedSupportX1SessionExecutor"
+C3_OWNER = "C3PaperSessionExecutor"
+X1_OWNERS = frozenset({OWNER, C3_OWNER})
 FAMILY = "X1_IMMEDIATE_ASK"
 CLEAN = "CURRENT_CLEAN"
 SYNTHETIC_CODES = frozenset(str(n) for n in range(7200, 7250))
@@ -149,11 +152,11 @@ def seal_conditions_pass(body: Mapping[str, Any]) -> bool:
         return False
     if any(_int(item) != 0 for item in broker_counts):
         return False
-    if str(body.get("session_owner_class") or "") != OWNER:
+    if str(body.get("session_owner_class") or "") not in X1_OWNERS:
         return False
-    if str(body.get("admission_owner_class") or "") != OWNER:
+    if str(body.get("admission_owner_class") or "") not in X1_OWNERS:
         return False
-    if str(body.get("portfolio_owner_class") or "") != OWNER:
+    if str(body.get("portfolio_owner_class") or "") not in X1_OWNERS:
         return False
     if str(body.get("execution_family") or "") != FAMILY:
         return False
@@ -288,6 +291,39 @@ def notify_ready_once(seal: Mapping[str, Any], *, notifier: Any = None) -> bool:
     return False
 
 
+def _load_json_dict(path: Path, *, attempts: int = 5) -> dict[str, Any]:
+    """Best-effort JSON object load. Concurrent writers can produce a partial read."""
+    target = Path(path)
+    for _ in range(max(1, int(attempts))):
+        try:
+            if not target.is_file():
+                time.sleep(0.05)
+                continue
+            loaded = json.loads(target.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and loaded:
+                return loaded
+        except Exception:
+            pass
+        time.sleep(0.05)
+    return {}
+
+
+def _put_regist_symbols(trace: Mapping[str, Any]) -> list[str]:
+    from small_paper.kabu_registration_authority import canonical_symbols
+
+    body = trace.get("response_body") if isinstance(trace.get("response_body"), dict) else {}
+    rows = list(body.get("RegistList") or [])
+    from_body = canonical_symbols(
+        [
+            str((row.get("Symbol") or row.get("symbol") or "")) if isinstance(row, dict) else str(row)
+            for row in rows
+        ]
+    )
+    if from_body:
+        return from_body
+    return canonical_symbols(list(trace.get("actual_symbols") or []))
+
+
 def prove_exact50(
     native_root: Path,
     trading_date: str,
@@ -296,6 +332,7 @@ def prove_exact50(
     """Readonly recheck after PUT. Count 50 is not enough; the symbol sets must match."""
     from api.rest_client import default_base_url
     from small_paper.kabu_registration_authority import (
+        actual_snapshot_path,
         canonical_symbols,
         fetch_kabu_regist_list,
         verify_exact50_membership,
@@ -321,28 +358,50 @@ def prove_exact50(
     source = "GET_register"
     if not fetched.get("ok") and str(fetched.get("reason") or "") == "GET_NOT_SUPPORTED":
         trace_path = Path(native_root) / "data" / "market_capture" / str(trading_date) / "ingress_register_api_trace.json"
-        trace: dict[str, Any] = {}
-        if trace_path.is_file():
-            try:
-                loaded = json.loads(trace_path.read_text(encoding="utf-8"))
-                trace = loaded if isinstance(loaded, dict) else {}
-            except Exception:
-                trace = {}
-        body = trace.get("response_body") if isinstance(trace.get("response_body"), dict) else {}
-        fetched = {
-            "ok": bool(trace.get("put_executed") and int(trace.get("http_status") or 0) == 200),
-            "reason": "PUT_response_recheck",
-            "http_status": trace.get("http_status"),
-            "symbols": canonical_symbols(
-                [
-                    str((row.get("Symbol") or row.get("symbol") or ""))
-                    if isinstance(row, dict)
-                    else str(row)
-                    for row in list(body.get("RegistList") or [])
-                ]
-            ),
-        }
-        source = "PUT_response_http_200"
+        trace = _load_json_dict(trace_path)
+        put_symbols = _put_regist_symbols(trace)
+        put_http = _int(trace.get("http_status"))
+        put_ok = bool(trace.get("put_executed") and put_http == 200 and len(put_symbols) == 50)
+        if put_ok:
+            fetched = {
+                "ok": True,
+                "reason": "PUT_response_recheck",
+                "http_status": 200,
+                "symbols": put_symbols,
+            }
+            source = "PUT_response_http_200"
+        else:
+            snap = _load_json_dict(actual_snapshot_path(Path(native_root)))
+            snap_src = str(snap.get("source") or "")
+            snap_symbols = canonical_symbols(list(snap.get("symbols") or []))
+            snap_ok = (
+                str(snap.get("trading_date") or "") == str(trading_date)
+                and snap_src in ("kabu_readonly_get", "kabu_put_response", "push_fetch_regist_list", "push_regist_attr")
+                and len(snap_symbols) == 50
+            )
+            if snap_ok:
+                fetched = {
+                    "ok": True,
+                    "reason": "snapshot_recheck",
+                    "http_status": 200,
+                    "symbols": snap_symbols,
+                }
+                source = f"snapshot:{snap_src}"
+            else:
+                fetched = {
+                    "ok": False,
+                    "reason": (
+                        "PUT_response_recheck"
+                        f":put_executed={trace.get('put_executed')}"
+                        f":http={trace.get('http_status')}"
+                        f":put_n={len(put_symbols)}"
+                        f":snap_n={len(snap_symbols)}"
+                        f":snap_src={snap_src or 'missing'}"
+                    ),
+                    "http_status": put_http,
+                    "symbols": put_symbols,
+                }
+                source = "PUT_response_http_200"
     actual = canonical_symbols(list(fetched.get("symbols") or []))
     match = len(desired) == 50 and len(actual) == 50 and set(actual) == set(desired) and len(set(actual)) == 50
     membership = verify_exact50_membership(
@@ -352,7 +411,7 @@ def prove_exact50(
         require_actual_kabu=True,
         allow_self_record_only=False,
     )
-    http = fetched.get("http_status")
+    http = _int(fetched.get("http_status"))
     ok = bool(fetched.get("ok") and match and membership.get("ok") and http == 200)
     return {
         "ok": ok,
@@ -446,12 +505,13 @@ def prove_x1_binding(
     ctx = SimpleNamespace(state=state, native_root=Path(native_root))
     same = exe is not None and exe is state.paper_session_executor and exe is _resolve_ctx_executor(ctx)
     family = str(wiring.get("execution_family") or "")
+    owner = str(wiring.get("session_owner_class") or "")
     return {
         "ok": bool(
             same
             and wiring.get("boot_v1r_native_entry") == 0
             and family == FAMILY
-            and wiring.get("session_owner_class") == OWNER
+            and owner in X1_OWNERS
             and getattr(exe, "ledger_path", None)
             and getattr(exe, "notifier", None) is not None
             and hasattr(exe, "x1_counters")
@@ -467,7 +527,7 @@ def prove_x1_binding(
         "boot_v1r_native_entry_n": int(wiring.get("boot_v1r_native_entry") or 0),
         "passive_fill_n": 0 if family == FAMILY else 1,
         "v1r_pending_n": 0,
-        "reason": "" if family == FAMILY else FAIL_BINDING,
+        "reason": "" if family == FAMILY and owner in X1_OWNERS else FAIL_BINDING,
     }
 
 

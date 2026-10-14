@@ -139,16 +139,73 @@ def validate_universe_sot(
             "empty_symbol_count": empty_n,
         }
     )
-    checks = [
-        ("file_exists", True, name),
-        ("filename_date", trading_date in name, name),
-        ("symbol_count_50", total == EXPECTED_SYMBOLS, f"count={total}"),
-        ("core_10", core == EXPECTED_CORE, f"core={core}"),
-        ("dynamic_40", dyn == EXPECTED_DYNAMIC, f"dynamic={dyn}"),
-        ("no_duplicates", dup == 0, f"dup={dup}"),
-        ("no_empty_symbols", empty_n == 0, f"empty={empty_n}"),
-        ("not_over_50", total <= EXPECTED_SYMBOLS, f"count={total}"),
-    ]
+    from small_paper.auto50_g1m_selector import (
+        SELECTOR_ID,
+        canonical_membership,
+        read_selector_mode,
+    )
+
+    auto50 = read_selector_mode() == SELECTOR_ID
+    auto_n = 0
+    bucket_bad = 0
+    ordered_bare: list[str] = []
+    if auto50:
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            for row in csv.DictReader(fh):
+                slot = str(row.get("universe_slot") or "").lower()
+                if slot == "auto50":
+                    auto_n += 1
+                if str(row.get("source_bucket") or "") != "auto50_g1m":
+                    bucket_bad += 1
+                raw_sym = str(row.get("symbol") or "").strip()
+                if raw_sym.endswith(".T"):
+                    raw_sym = raw_sym[:-2]
+                if raw_sym:
+                    ordered_bare.append(raw_sym)
+        identity = path.parent / f"auto50_g1m_identity_am_{trading_date}.json"
+        identity_ok = False
+        identity_detail = "missing"
+        if identity.is_file():
+            try:
+                body = json.loads(identity.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                body = {}
+            identity_ok = (
+                str(body.get("selector_id") or "") == SELECTOR_ID
+                and str(body.get("trading_date") or "") == trading_date
+                and str(body.get("canonical_membership_sha") or "")
+                == canonical_membership(ordered_bare)
+                and len(ordered_bare) == EXPECTED_SYMBOLS
+            )
+            identity_detail = (
+                f"selector={body.get('selector_id')} date={body.get('trading_date')}"
+            )
+        checks = [
+            ("file_exists", True, name),
+            ("filename_date", trading_date in name, name),
+            ("symbol_count_50", total == EXPECTED_SYMBOLS, f"count={total}"),
+            ("auto50_50", auto_n == EXPECTED_SYMBOLS, f"auto50={auto_n}"),
+            ("fixed_core_slot_absent", core == 0, f"core={core}"),
+            ("fixed_dynamic_slot_absent", dyn == 0, f"dynamic={dyn}"),
+            ("source_bucket_auto50", bucket_bad == 0, f"bad={bucket_bad}"),
+            ("selector_identity", identity_ok, identity_detail),
+            ("no_duplicates", dup == 0, f"dup={dup}"),
+            ("no_empty_symbols", empty_n == 0, f"empty={empty_n}"),
+            ("not_over_50", total <= EXPECTED_SYMBOLS, f"count={total}"),
+        ]
+        out["selector_id"] = SELECTOR_ID
+        out["fixed_core10_path"] = False
+    else:
+        checks = [
+            ("file_exists", True, name),
+            ("filename_date", trading_date in name, name),
+            ("symbol_count_50", total == EXPECTED_SYMBOLS, f"count={total}"),
+            ("core_10", core == EXPECTED_CORE, f"core={core}"),
+            ("dynamic_40", dyn == EXPECTED_DYNAMIC, f"dynamic={dyn}"),
+            ("no_duplicates", dup == 0, f"dup={dup}"),
+            ("no_empty_symbols", empty_n == 0, f"empty={empty_n}"),
+            ("not_over_50", total <= EXPECTED_SYMBOLS, f"count={total}"),
+        ]
     if require_session:
         try:
             with path.open(encoding="utf-8-sig", newline="") as fh:

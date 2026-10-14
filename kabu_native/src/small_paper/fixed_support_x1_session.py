@@ -1115,9 +1115,20 @@ class FixedSupportX1SessionExecutor:
             else:
                 self.discord_failures += 1
                 self.discord_failure_n += 1
-        except Exception:
+        except Exception as exc:
             self.discord_failures += 1
             self.discord_failure_n += 1
+            recorder = getattr(self.notifier, "_record_trade_notify_failure", None)
+            if recorder is not None:
+                recorder(
+                    dedupe_key=f"x1-entry|{sym}|{pos.get('signal_uid') or ''}",
+                    reason=type(exc).__name__,
+                    event_tag="X1_PAPER_ENTRY",
+                    http_status=None,
+                    retry_count=0,
+                    notification_id="",
+                    response_body_len=None,
+                )
 
     def _notify_exit(self, trade: Mapping[str, Any]) -> None:
         if self.notifier is None:
@@ -1146,6 +1157,7 @@ class FixedSupportX1SessionExecutor:
                     "activation_id": self.activation_id,
                     "execution_family": self.execution_family,
                     "source": self.session_executor,
+                    "signal_uid": trade.get("signal_uid") or "",
                 }
             )
             if _discord_delivered(result):
@@ -1153,9 +1165,20 @@ class FixedSupportX1SessionExecutor:
             else:
                 self.discord_failures += 1
                 self.discord_failure_n += 1
-        except Exception:
+        except Exception as exc:
             self.discord_failures += 1
             self.discord_failure_n += 1
+            recorder = getattr(self.notifier, "_record_trade_notify_failure", None)
+            if recorder is not None:
+                recorder(
+                    dedupe_key=f"x1-exit|{trade.get('symbol')}|{trade.get('signal_uid') or ''}|{trade.get('reason')}|{trade.get('exit_px')}",
+                    reason=type(exc).__name__,
+                    event_tag="X1_PAPER_EXIT",
+                    http_status=None,
+                    retry_count=0,
+                    notification_id="",
+                    response_body_len=None,
+                )
 
     def x1_counters(self) -> dict[str, Any]:
         """Live X1 book. These fields are not PBv2 or V1R counters."""

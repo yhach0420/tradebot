@@ -223,3 +223,50 @@ def test_old_strategy_discord_is_not_sent(routed) -> None:
     assert sends == []
     assert routing_counters()["suppressed_n"] >= 11
     assert _no_enqueue and routing_mod_enqueue is None
+
+
+def test_distinct_exit_uids_are_not_collapsed(routed) -> None:
+    """Same symbol, reason, and price are different trades when the uid differs."""
+    notifier, sends, envelopes = routed
+
+    def post(uid: str) -> bool:
+        return notifier.notify_exit(
+            context={
+                "source": "FixedSupportX1SessionExecutor",
+                "execution_family": "X1_IMMEDIATE_ASK",
+                "activation_id": AID,
+                "symbol": "4382.T",
+                "signal_uid": uid,
+                "exit_reason": "BREAK_SUPPORT_FAILURE",
+                "current_price": 1244.0,
+                "entry_price": 1247.0,
+                "qty": 100,
+                "realized_pnl_yen": -300,
+                "is_structural_exit": True,
+            }
+        )
+
+    assert post("20261013|AM|4382.T|1378") is True
+    assert post("20261013|AM|4382.T|1432") is True
+    assert post("20261013|AM|4382.T|1378") is False
+    assert sends == ["X1_PAPER_EXIT", "X1_PAPER_EXIT"]
+    keys = [str(getattr(item, "dedupe_key", "")) for item in envelopes]
+    assert "20261013|AM|4382.T|1378" in keys[0]
+    assert "20261013|AM|4382.T|1432" in keys[1]
+    assert keys[0] != keys[1]
+    suppressed = notifier._post_with_result(
+        event_tag="X1_PAPER_EXIT",
+        title_line="[X1 PAPER EXIT]",
+        fields=[],
+        color=1,
+        dedupe_key=keys[0],
+        trade_notify=True,
+        route_source="FixedSupportX1SessionExecutor",
+        route_activation_id=AID,
+        route_family="X1_IMMEDIATE_ASK",
+    )
+    assert suppressed.final_result == "suppressed"
+    assert suppressed.failure_reason == "cooldown"
+    assert suppressed.http_status is None
+    assert suppressed.retry_count == 0
+    assert sends == ["X1_PAPER_EXIT", "X1_PAPER_EXIT"]

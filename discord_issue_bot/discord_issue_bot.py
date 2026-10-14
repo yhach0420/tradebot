@@ -179,6 +179,12 @@ _CORE_SRC = REPO_ROOT / "kabu_native" / "src"
 if str(_CORE_SRC) not in sys.path:
     sys.path.insert(0, str(_CORE_SRC))
 
+from research.daytrade50_capital_efficient_selector_v2.gross_budget_control import (  # noqa: E402
+    default_budget_paths,
+    handle_budget_command,
+    handle_capital_command,
+    handle_leverage_command,
+)
 from universe.core_watchlist import (  # noqa: E402
     CORE_LIMIT,
     CORE_LIMIT_MESSAGE,
@@ -386,6 +392,96 @@ async def watch_remove_command(ctx: commands.Context, symbol: str) -> None:
 @watch_group.command(name="list")
 async def watch_list_command(ctx: commands.Context) -> None:
     await _core_list_reply(ctx)
+
+
+async def _run_budget_command(
+    ctx: commands.Context,
+    action: str,
+    amount: Optional[str] = None,
+    handler=handle_budget_command,
+) -> None:
+    """Persist or display capital inputs. Does not touch a running Paper session."""
+    channel = getattr(getattr(ctx, "channel", None), "id", None)
+    author = getattr(ctx, "author", None)
+    user = getattr(author, "id", None)
+    message = getattr(getattr(ctx, "message", None), "id", None)
+    store_path, audit_path = default_budget_paths(REPO_ROOT)
+    result = handler(
+        action,
+        amount,
+        channel_id=None if channel is None else int(channel),
+        user_id=None if user is None else int(user),
+        message_id=None if message is None else str(message),
+        control_channel_id=os.getenv("CONTROL_CHANNEL_ID"),
+        allowlist_raw=os.getenv("CAPITAL_CONTROL_USER_IDS"),
+        store_path=store_path,
+        audit_path=audit_path,
+        session_snapshot=None,
+    )
+    reply = result.get("reply")
+    if reply is None:
+        return
+    await ctx.reply(str(reply))
+
+
+@bot.group(name="budget", invoke_without_command=True)
+async def budget_group(ctx: commands.Context) -> None:
+    await _run_budget_command(ctx, "show")
+
+
+@budget_group.command(name="show")
+async def budget_show_command(ctx: commands.Context) -> None:
+    await _run_budget_command(ctx, "show")
+
+
+@budget_group.command(name="set")
+async def budget_set_command(ctx: commands.Context, *, amount: str = "") -> None:
+    await _run_budget_command(ctx, "set", amount)
+
+
+@bot.group(name="g", invoke_without_command=True)
+async def g_alias_group(ctx: commands.Context) -> None:
+    await _run_budget_command(ctx, "show")
+
+
+@g_alias_group.command(name="show")
+async def g_show_command(ctx: commands.Context) -> None:
+    await _run_budget_command(ctx, "show")
+
+
+@g_alias_group.command(name="set")
+async def g_set_command(ctx: commands.Context, *, amount: str = "") -> None:
+    await _run_budget_command(ctx, "set", amount)
+
+
+@bot.group(name="capital", invoke_without_command=True)
+async def capital_group(ctx: commands.Context) -> None:
+    await _run_budget_command(ctx, "show", handler=handle_capital_command)
+
+
+@capital_group.command(name="show")
+async def capital_show_command(ctx: commands.Context) -> None:
+    await _run_budget_command(ctx, "show", handler=handle_capital_command)
+
+
+@capital_group.command(name="set")
+async def capital_set_command(ctx: commands.Context, *, amount: str = "") -> None:
+    await _run_budget_command(ctx, "set", amount, handler=handle_capital_command)
+
+
+@bot.group(name="leverage", invoke_without_command=True)
+async def leverage_group(ctx: commands.Context) -> None:
+    await _run_budget_command(ctx, "show", handler=handle_leverage_command)
+
+
+@leverage_group.command(name="show")
+async def leverage_show_command(ctx: commands.Context) -> None:
+    await _run_budget_command(ctx, "show", handler=handle_leverage_command)
+
+
+@leverage_group.command(name="set")
+async def leverage_set_command(ctx: commands.Context, *, amount: str = "") -> None:
+    await _run_budget_command(ctx, "set", amount, handler=handle_leverage_command)
 
 
 def _compact_title(text: str, max_len: int = 80) -> str:

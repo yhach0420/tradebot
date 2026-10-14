@@ -8429,6 +8429,15 @@ def run_live_dry_run(
 
     load_kabu_env(repo_root=repo_root)
     now = session_now()
+    from dataclasses import replace
+
+    from small_paper.paper_runner_settlement_v1 import feed_session_end
+
+    extended_end = feed_session_end(session_end, kind=getattr(am_pm_policy, "kind", None))
+    if extended_end != session_end:
+        session_end = extended_end
+        if getattr(config, "live_session_end", "") == "11:25":
+            config = replace(config, live_session_end=session_end)
     sched = SessionSchedule(session_start, session_end, now.date())
 
     if full_session and sched.is_after_session(now):
@@ -9112,6 +9121,17 @@ def run_live_dry_run(
 
     def _maybe_am_pm_force_close() -> None:
         if am_pm_policy is None or state.session_force_close_done:
+            return
+        from small_paper.paper_runner_settlement_v1 import runner_close_action
+
+        action = runner_close_action(str(am_pm_policy.kind), day=str(day_compact), now_epoch=None)
+        if action == "hold":
+            state.entry_admission_closed = True
+            exe_hold = getattr(state, "paper_session_executor", None)
+            if exe_hold is not None and hasattr(exe_hold, "hold_for_settlement"):
+                exe_hold.hold_for_settlement()
+            return
+        if action == "continue":
             return
         if not am_pm_policy.force_close_due():
             return

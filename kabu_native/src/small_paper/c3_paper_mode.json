@@ -1,6 +1,6 @@
 {
   "selected": "C3",
-  "enabled": false,
+  "enabled": true,
   "restore": "FIXED_SUPPORT_X1",
-  "note": "C3 is implemented and tested. Real-time Paper stays on the sealed X1 owner until an explicit start confirmation sets enabled to true."
+  "note": "Latest C3 is the live Paper owner. Residual ledger blocks an X1 restore while positions remain open. Live orders stay off."
 }

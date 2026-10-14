@@ -1,0 +1,7 @@
+{
+  "selected": "AUTO50_G1M",
+  "enabled": true,
+  "restore": "CORE10_DYNAMIC40",
+  "selector_version": "AUTO50_G1M_CAUSAL_BASELINE_READY_V1",
+  "note": "Enabled for the next paper start. Failure stays AUTO50_G1M_FAIL_CLOSED."
+}

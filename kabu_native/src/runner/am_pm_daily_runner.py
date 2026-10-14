@@ -446,6 +446,126 @@ def _build_am_universe_price_risk(state: DailyRunnerState, feature_rows: list[di
     }
 
 
+def _build_am_universe_auto50_g1m(
+    state: DailyRunnerState,
+    feature_rows: list[dict[str, str]],
+    feat_path: Path,
+) -> dict[str, Any]:
+    """Replace only the daily 50. C3 entry and exit rules stay on the executor."""
+    from small_paper.auto50_g1m_selector import FAIL_CLOSED, select_auto50_g1m, write_selection
+
+    if not feature_rows:
+        return {"ok": False, "error": FAIL_CLOSED, "reason": "MISSING_FEATURES", "features_path": str(feat_path)}
+    dates = {str(row.get("trade_date") or "") for row in feature_rows if str(row.get("trade_date") or "")}
+    target = state.trade_date.isoformat()
+    if any(item > target for item in dates):
+        return {"ok": False, "error": FAIL_CLOSED, "reason": "FUTURE_FEATURE_BAR", "trade_dates": sorted(dates)}
+    selected = select_auto50_g1m(feature_rows)
+    if selected.get("status") != "TOP50":
+        return {
+            "ok": False,
+            "error": FAIL_CLOSED,
+            "reason": selected.get("reason") or FAIL_CLOSED,
+            "eligible_n": selected.get("eligible_n"),
+            "rejected_budget_n": selected.get("rejected_budget_n"),
+            "rejected_data_n": selected.get("rejected_data_n"),
+            "selector_version": selected.get("selector_version"),
+        }
+    written = write_selection(state.reports_dir, state.options.day_stamp, selected, session="am")
+    price_risk_am = universe_am_csv(
+        state.reports_dir, state.options.day_stamp, universe_mode=state.options.universe_mode
+    )
+    from universe.core10_dynamic40 import write_universe_csv
+
+    write_universe_csv(price_risk_am, written["rows"])
+    return {
+        "ok": True,
+        "selector_id": selected["selector_id"],
+        "selector_version": selected["selector_version"],
+        "canonical_membership_sha": selected["canonical_membership_sha"],
+        "universe_sha256": written["body"]["universe_sha256"],
+        "am_csv": rel_path(state.repo_root, price_risk_am),
+        "am_row_count": 50,
+        "am_rows": written["rows"],
+        "symbols": written["body"]["symbols"],
+        "eligible_n": selected["eligible_n"],
+        "rejected_budget_n": selected["rejected_budget_n"],
+        "rejected_data_n": selected["rejected_data_n"],
+        "gross_budget_yen": 1_000_000,
+        "qty": 100,
+        "max_concurrent": 5,
+        "exact50": True,
+        "price_risk_filter_enabled": False,
+        "economic_superiority_claimed": False,
+        "identity_path": rel_path(state.repo_root, written["identity"]),
+    }
+
+
+def _build_pm_universe_auto50_g1m(state: DailyRunnerState) -> dict[str, Any]:
+    """PM registers the AM list. It does not score a second 50."""
+    from small_paper.auto50_g1m_selector import FAIL_CLOSED, canonical_membership, load_symbols, pm_matches_am, write_selection
+    from universe.core10_dynamic40 import write_universe_csv
+
+    am_path = universe_am_csv(
+        state.reports_dir, state.options.day_stamp, universe_mode=state.options.universe_mode
+    )
+    identity_path = state.reports_dir / f"auto50_g1m_identity_am_{state.options.day_stamp}.json"
+    symbols = load_symbols(am_path)
+    if len(symbols) != 50 or len(set(symbols)) != 50 or not identity_path.is_file():
+        return {"ok": False, "error": FAIL_CLOSED, "reason": "AM_UNIVERSE_MISSING", "am_count": len(symbols)}
+    body = json.loads(identity_path.read_text(encoding="utf-8"))
+    by_symbol = {str(item["symbol"]): item for item in body.get("scores") or []}
+    rows = []
+    for index, symbol in enumerate(symbols, start=1):
+        saved = by_symbol.get(symbol)
+        if saved is None:
+            return {"ok": False, "error": FAIL_CLOSED, "reason": "AM_SCORE_MISSING", "symbol": symbol}
+        notional = float(saved.get("one_lot_notional") or 0)
+        if notional <= 0 or notional > 1_000_000:
+            return {"ok": False, "error": FAIL_CLOSED, "reason": "NOTIONAL_OVER_G", "symbol": symbol}
+        code = symbol[:-2] if symbol.endswith(".T") else symbol
+        rows.append(
+            {
+                "symbol": code,
+                "score": float(saved["score"]),
+                "one_lot_notional": notional,
+                "prior_close": float(saved.get("prior_close") or 0),
+                "rank": index,
+            }
+        )
+    selected = {
+        "status": "TOP50",
+        "selector_id": "AUTO50_G1M",
+        "selector_version": body.get("selector_version"),
+        "canonical_membership_sha": canonical_membership([row["symbol"] for row in rows]),
+        "eligible_n": body.get("eligible_n"),
+        "rejected_budget_n": body.get("rejected_budget_n"),
+        "rejected_data_n": body.get("rejected_data_n"),
+        "rows": rows,
+    }
+    if selected["canonical_membership_sha"] != body.get("canonical_membership_sha"):
+        return {"ok": False, "error": FAIL_CLOSED, "reason": "AM_MEMBERSHIP_SHA_MISMATCH"}
+    written = write_selection(state.reports_dir, state.options.day_stamp, selected, session="pm")
+    pm_path = universe_pm_csv(
+        state.reports_dir, state.options.day_stamp, universe_mode=state.options.universe_mode
+    )
+    write_universe_csv(pm_path, written["rows"])
+    pm_symbols = load_symbols(pm_path)
+    if not pm_matches_am(symbols, pm_symbols):
+        return {"ok": False, "error": FAIL_CLOSED, "reason": "PM_DIVERGED_FROM_AM"}
+    return {
+        "ok": True,
+        "selector_version": "AUTO50_G1M_CAUSAL_BASELINE_READY_V1",
+        "pm_csv": rel_path(state.repo_root, pm_path),
+        "pm_row_count": 50,
+        "symbols": pm_symbols,
+        "same_as_am": True,
+        "exact50": True,
+        "gross_budget_yen": 1_000_000,
+        "qty": 100,
+    }
+
+
 def build_am_universe(state: DailyRunnerState) -> dict[str, Any]:
     from small_paper.day_fixed_am_registration import (
         POST_BIND_UNIVERSE_MUTATION,
@@ -479,12 +599,17 @@ def build_am_universe(state: DailyRunnerState) -> dict[str, Any]:
         "features_row_count": len(feature_rows),
         "universe_mode": state.options.universe_mode,
     }
-    if not feat_path.is_file() or len(feature_rows) < 100:
+    from small_paper.auto50_g1m_selector import SELECTOR_ID, read_selector_mode
+
+    selector = read_selector_mode()
+    if selector != SELECTOR_ID and (not feat_path.is_file() or len(feature_rows) < 100):
         out["ok"] = False
         out["error"] = "features_missing_or_too_small"
         return out
 
-    if is_price_risk_universe_mode(state.options.universe_mode):
+    if selector == SELECTOR_ID:
+        built = _build_am_universe_auto50_g1m(state, feature_rows, feat_path)
+    elif is_price_risk_universe_mode(state.options.universe_mode):
         built = _build_am_universe_price_risk(state, feature_rows, feat_path)
     else:
         built = _build_am_universe_standard(state, feature_rows, feat_path)
@@ -581,7 +706,11 @@ def build_pm_universe(state: DailyRunnerState) -> dict[str, Any]:
         }
 
     feature_rows = load_features_csv(feat_path)
-    if is_price_risk_universe_mode(state.options.universe_mode):
+    from small_paper.auto50_g1m_selector import SELECTOR_ID, read_selector_mode
+
+    if read_selector_mode() == SELECTOR_ID:
+        built = _build_pm_universe_auto50_g1m(state)
+    elif is_price_risk_universe_mode(state.options.universe_mode):
         built = _build_pm_universe_price_risk(state, feature_rows)
     else:
         built = _build_pm_universe_standard(state, feature_rows)
@@ -617,13 +746,105 @@ def _intraday_refresh_preflight(state: DailyRunnerState, cfg_check: dict[str, An
     return None
 
 
+def _refresh_auto50_g1m_same_membership(state: DailyRunnerState) -> dict[str, Any]:
+    """Copy the AM AUTO50 list into refresh files. Do not rescore or consult Core10."""
+    import csv
+
+    from small_paper.auto50_g1m_selector import (
+        FAIL_CLOSED,
+        SELECTOR_ID,
+        canonical_membership,
+        load_symbols,
+    )
+    from universe.core10_dynamic40 import write_universe_csv
+
+    day = state.options.day_stamp
+    am_path = universe_am_csv(
+        state.reports_dir, day, universe_mode=state.options.universe_mode
+    )
+    identity_path = state.reports_dir / f"auto50_g1m_identity_am_{day}.json"
+    symbols = load_symbols(am_path)
+    if len(symbols) != 50 or len(set(symbols)) != 50 or not identity_path.is_file():
+        return {
+            "ok": False,
+            "error": FAIL_CLOSED,
+            "reason": "AM_UNIVERSE_MISSING",
+            "am_count": len(symbols),
+            "core_watchlist_consulted": False,
+        }
+    body = json.loads(identity_path.read_text(encoding="utf-8"))
+    if str(body.get("selector_id") or "") != SELECTOR_ID or str(body.get("trading_date") or "") != day:
+        return {
+            "ok": False,
+            "error": FAIL_CLOSED,
+            "reason": "SELECTOR_IDENTITY_MISMATCH",
+            "core_watchlist_consulted": False,
+        }
+    bare = [item[:-2] if str(item).endswith(".T") else str(item) for item in symbols]
+    if canonical_membership(bare) != str(body.get("canonical_membership_sha") or ""):
+        return {
+            "ok": False,
+            "error": FAIL_CLOSED,
+            "reason": "AM_MEMBERSHIP_SHA_MISMATCH",
+            "core_watchlist_consulted": False,
+        }
+    with am_path.open(encoding="utf-8", newline="") as handle:
+        rows = [dict(row) for row in csv.DictReader(handle)]
+    if any(str(row.get("universe_slot") or "") == "core" for row in rows):
+        return {
+            "ok": False,
+            "error": FAIL_CLOSED,
+            "reason": "FIXED_CORE10_SLOT_PRESENT",
+            "core_watchlist_consulted": False,
+        }
+    if any(str(row.get("source_bucket") or "") != "auto50_g1m" for row in rows):
+        return {
+            "ok": False,
+            "error": FAIL_CLOSED,
+            "reason": "SOURCE_BUCKET_NOT_AUTO50",
+            "core_watchlist_consulted": False,
+        }
+    am_refresh = universe_am_refresh_csv(state.reports_dir, day)
+    pm_refresh = universe_pm_refresh_csv(state.reports_dir, day)
+    write_universe_csv(am_refresh, rows)
+    write_universe_csv(pm_refresh, rows)
+    if load_symbols(am_refresh) != symbols or load_symbols(pm_refresh) != symbols:
+        return {
+            "ok": False,
+            "error": FAIL_CLOSED,
+            "reason": "REFRESH_DIVERGED_FROM_AM",
+            "core_watchlist_consulted": False,
+        }
+    return {
+        "ok": True,
+        "selector_id": SELECTOR_ID,
+        "selector_version": body.get("selector_version"),
+        "canonical_membership_sha": body.get("canonical_membership_sha"),
+        "trading_date": day,
+        "am_refresh_csv": rel_path(state.repo_root, am_refresh),
+        "pm_refresh_csv": rel_path(state.repo_root, pm_refresh),
+        "symbols": symbols,
+        "same_as_am": True,
+        "exact50": True,
+        "core_watchlist_consulted": False,
+        "fixed_core10_path": False,
+    }
+
+
 def build_intraday_refresh_universes(
     state: DailyRunnerState,
     *,
     feature_rows: list[dict[str, str]],
     open_symbols_test: Optional[Sequence[str]] = None,
 ) -> dict[str, Any]:
-    """Build AM/PM refresh CSVs (price-risk mode only)."""
+    """Build AM/PM refresh CSVs. AUTO50 keeps the AM 50 and does not call Core10."""
+    from small_paper.auto50_g1m_selector import SELECTOR_ID, read_selector_mode
+
+    if read_selector_mode() == SELECTOR_ID:
+        built = _refresh_auto50_g1m_same_membership(state)
+        if not built.get("ok"):
+            return built
+        return built
     from universe.core_watchlist import load_core_watchlist
     from universe.intraday_refresh import (
         AM_REFRESH_TIME,

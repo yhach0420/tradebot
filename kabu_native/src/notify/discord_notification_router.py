@@ -129,6 +129,26 @@ class DiscordNotificationRouter:
                             "status": "DEDUPED",
                             "dedupe_key": dedupe_key,
                             "dedupe_result": chk.get("result"),
+                            "reason": chk.get("result") or "DEDUPED",
+                            "http_status": None,
+                            "retry_count": 0,
+                            "response_body_len": None,
+                            "response_body_preview": "",
+                            "channel_delivery": "NOT_SENT",
+                        }
+                    )
+                    self.audit.record_failure(
+                        {
+                            "notification_id": envelope.notification_id,
+                            "category": cat,
+                            "status": "DEDUPED",
+                            "dedupe_key": dedupe_key,
+                            "reason": chk.get("result") or "DEDUPED",
+                            "http_status": None,
+                            "retry_count": 0,
+                            "response_body_len": None,
+                            "response_body_preview": "",
+                            "channel_delivery": "NOT_SENT",
                         }
                     )
                     return {"status": "DEDUPED", "queued": False}

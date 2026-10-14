@@ -64,6 +64,8 @@ class PreviousDayFeatures:
     volume_surge_5: Optional[float] = None
     volatility_liquidity_score: Optional[float] = None
     data_source: str = ""
+    source_bar_date: str = ""
+    source_available_at: str = ""
 
 
 @dataclass
@@ -268,29 +270,162 @@ def opening_features_from_push(
     )
 
 
-def fetch_previous_day_yfinance(
+WITNESS_SYMBOLS = ("1301.T", "7203.T")
+SESSION_AVAILABLE = time(15, 30)
+
+
+def session_available_at(day_ymd: str) -> datetime:
+    """A cash daily bar is confirmed at 15:30 JST on its session date."""
+    day = date(int(day_ymd[:4]), int(day_ymd[4:6]), int(day_ymd[6:8]))
+    return datetime.combine(day, SESSION_AVAILABLE, tzinfo=JST)
+
+
+def confirmed_session(sessions: Sequence[str], target_ymd: str, as_of: datetime) -> Optional[str]:
+    """Latest observed session strictly before the target whose bar is already available."""
+    target = target_ymd.replace("-", "")
+    prior = [
+        session
+        for session in sorted({item.replace("-", "") for item in sessions})
+        if session < target and session_available_at(session) <= as_of
+    ]
+    return prior[-1] if prior else None
+
+
+def select_confirmed_bar(
+    bars: Sequence[Mapping[str, Any]],
+    *,
+    required: str,
+    target_ymd: str,
+    as_of: datetime,
+) -> tuple[str, Optional[Mapping[str, Any]]]:
+    """Use the required session. An older bar is a retreat, not a substitute."""
+    target = target_ymd.replace("-", "")
+    eligible = []
+    for bar in bars:
+        day = str(bar.get("source_bar_date") or "").replace("-", "")
+        if len(day) != 8 or day >= target:
+            continue
+        if session_available_at(day) > as_of:
+            continue
+        eligible.append(bar)
+    eligible.sort(key=lambda item: str(item["source_bar_date"]))
+    if not eligible:
+        return "LATEST_SESSION_DATA_MISSING", None
+    newest = str(eligible[-1]["source_bar_date"]).replace("-", "")
+    if newest < required:
+        return "STALE_BAR", None
+    if newest != required:
+        return "CALENDAR_MISMATCH", None
+    return "", eligible[-1]
+
+
+def _bar_ymd(index: Any) -> str:
+    stamp = index
+    if getattr(stamp, "tzinfo", None) is not None:
+        stamp = stamp.tz_convert(JST)
+    return stamp.strftime("%Y%m%d")
+
+
+def _frame_for_symbol(data: Any, sym: str, batch_size: int) -> Any:
+    import pandas as pd
+
+    if batch_size == 1:
+        frame = data.copy()
+        if isinstance(frame.columns, pd.MultiIndex):
+            return data.xs(sym, axis=1, level=0)
+        return frame
+    if isinstance(data.columns, pd.MultiIndex):
+        level0 = set(data.columns.get_level_values(0))
+        if sym in level0:
+            return data.xs(sym, axis=1, level=0)
+        level1 = set(data.columns.get_level_values(1))
+        if sym in level1:
+            return data.xs(sym, axis=1, level=1)
+        return None
+    if sym not in data.columns:
+        return None
+    return data[sym]
+
+
+def _bars_from_frame(frame: Any) -> list[dict[str, Any]]:
+    if frame is None or getattr(frame, "empty", True):
+        return []
+    frame = frame.dropna(how="all")
+    bars: list[dict[str, Any]] = []
+    for index, row in frame.iterrows():
+        close = _as_float(row.get("Close"))
+        high = _as_float(row.get("High"))
+        low = _as_float(row.get("Low"))
+        volume = _as_float(row.get("Volume"))
+        if close is None or close <= 0 or high is None or low is None or volume is None:
+            continue
+        bars.append(
+            {
+                "source_bar_date": _bar_ymd(index),
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            }
+        )
+    bars.sort(key=lambda item: item["source_bar_date"])
+    return bars
+
+
+def _feature_from_bars(symbol: str, bars: Sequence[Mapping[str, Any]], required: str) -> Optional[PreviousDayFeatures]:
+    chosen = [bar for bar in bars if str(bar["source_bar_date"]) <= required]
+    if not chosen or str(chosen[-1]["source_bar_date"]) != required:
+        return None
+    row = chosen[-1]
+    close = float(row["close"])
+    high = float(row["high"])
+    low = float(row["low"])
+    volume = float(row["volume"])
+    atr_pct = round((high - low) / close * 100.0, 6)
+    trading_value = volume * close if volume and close else None
+    recent = [float(bar["volume"]) for bar in chosen[-5:]]
+    average = statistics.mean(recent) if recent else None
+    surge = round(volume / average, 6) if average and average > 0 else None
+    return PreviousDayFeatures(
+        symbol=symbol,
+        close=close,
+        volume=volume,
+        trading_value=trading_value,
+        atr_pct=atr_pct,
+        intraday_range_pct=atr_pct,
+        volume_surge_5=surge,
+        volatility_liquidity_score=volatility_liquidity_score(atr_pct, trading_value),
+        data_source="yfinance_daily",
+        source_bar_date=required,
+        source_available_at=session_available_at(required).isoformat(),
+    )
+
+
+def fetch_confirmed_daily(
     symbols: Sequence[str],
     trade_date: date,
     *,
+    as_of: Optional[datetime] = None,
     lookback_days: int = 12,
-) -> dict[str, PreviousDayFeatures]:
-    """T-1 daily features via yfinance (shadow design fetch; not persisted)."""
+) -> tuple[dict[str, PreviousDayFeatures], str, str]:
+    """Previous JPX session for trade_date. Does not use a bar on or after that date."""
     try:
         import yfinance as yf
     except ImportError:
-        return {}
-
-    prev = trade_date
+        return {}, "", "YFINANCE_MISSING"
+    when = as_of or datetime.now(JST)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=JST)
     from datetime import timedelta
 
+    target = trade_date.strftime("%Y%m%d")
     start = trade_date - timedelta(days=lookback_days)
     end = trade_date + timedelta(days=1)
-    tickers = [s.replace(".T", ".T") for s in symbols]
-    out: dict[str, PreviousDayFeatures] = {}
-
-    chunk = 80
-    for i in range(0, len(tickers), chunk):
-        batch = tickers[i : i + chunk]
+    requested = [_norm_symbol(symbol) for symbol in symbols if _norm_symbol(symbol)]
+    tickers = list(dict.fromkeys([*WITNESS_SYMBOLS, *requested]))
+    panels: dict[str, list[dict[str, Any]]] = {}
+    for offset in range(0, len(tickers), 80):
+        batch = tickers[offset : offset + 80]
         try:
             data = yf.download(
                 batch,
@@ -304,61 +439,52 @@ def fetch_previous_day_yfinance(
             )
         except Exception:
             continue
-        if data is None or data.empty:
+        if data is None or getattr(data, "empty", True):
             continue
-        import pandas as pd
-
         for sym in batch:
             try:
-                if len(batch) == 1:
-                    df = data.copy()
-                    if isinstance(df.columns, pd.MultiIndex):
-                        df = data.xs(sym, axis=1, level=0)
-                elif isinstance(data.columns, pd.MultiIndex):
-                    lvl0 = set(data.columns.get_level_values(0))
-                    if sym in lvl0:
-                        df = data.xs(sym, axis=1, level=0)
-                    elif sym in data.columns.get_level_values(1):
-                        df = data.xs(sym, axis=1, level=1)
-                    else:
-                        continue
-                else:
-                    if sym not in data.columns:
-                        continue
-                    df = data[sym]
-                if df is None or df.empty or len(df) < 2:
-                    continue
-                df = df.dropna(how="all")
-                if len(df) < 2:
-                    continue
-                row = df.iloc[-2]
-                o, h, l, c = map(_as_float, (row.get("Open"), row.get("High"), row.get("Low"), row.get("Close")))
-                if c is None or c <= 0:
-                    continue
-                atr_pct = None
-                if h is not None and l is not None:
-                    atr_pct = round((h - l) / c * 100.0, 6)
-                vol = _as_float(row.get("Volume")) or 0.0
-                tv = vol * c if vol and c else None
-                vols = [_as_float(df.iloc[j].get("Volume")) or 0.0 for j in range(max(0, len(df) - 6), len(df) - 1)]
-                avg5 = statistics.mean(vols) if vols else None
-                surge = round(vol / avg5, 6) if avg5 and avg5 > 0 and vol else None
-                vl = volatility_liquidity_score(atr_pct, tv)
-                ysym = _norm_symbol(sym)
-                out[ysym] = PreviousDayFeatures(
-                    symbol=ysym,
-                    close=c,
-                    volume=vol if vol else None,
-                    trading_value=tv,
-                    atr_pct=atr_pct,
-                    intraday_range_pct=atr_pct,
-                    volume_surge_5=surge,
-                    volatility_liquidity_score=vl,
-                    data_source="yfinance_daily",
-                )
+                panels[_norm_symbol(sym)] = _bars_from_frame(_frame_for_symbol(data, sym, len(batch)))
             except Exception:
                 continue
-    return out
+    sessions: set[str] = set()
+    for symbol in WITNESS_SYMBOLS:
+        sessions.update(bar["source_bar_date"] for bar in panels.get(symbol) or [])
+    required = confirmed_session(sorted(sessions), target, when)
+    if not required:
+        return {}, "", "NO_CONFIRMED_SESSION"
+    if required >= target:
+        return {}, required, "FUTURE_BAR"
+    out: dict[str, PreviousDayFeatures] = {}
+    for symbol in requested:
+        reason, _bar = select_confirmed_bar(
+            panels.get(symbol) or [],
+            required=required,
+            target_ymd=target,
+            as_of=when,
+        )
+        if reason:
+            continue
+        feature = _feature_from_bars(symbol, panels.get(symbol) or [], required)
+        if feature is not None:
+            out[symbol] = feature
+    return out, required, ""
+
+
+def fetch_previous_day_yfinance(
+    symbols: Sequence[str],
+    trade_date: date,
+    *,
+    lookback_days: int = 12,
+    as_of: Optional[datetime] = None,
+) -> dict[str, PreviousDayFeatures]:
+    """Confirmed previous cash session. An older bar is not used as a substitute."""
+    features, _required, _reason = fetch_confirmed_daily(
+        symbols,
+        trade_date,
+        as_of=as_of,
+        lookback_days=lookback_days,
+    )
+    return features
 
 
 def compute_opening_daytrade_scores(

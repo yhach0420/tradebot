@@ -321,6 +321,41 @@ class SmallPaperDiscordNotifier:
                 payload,
             )
 
+    def _record_trade_notify_failure(
+        self,
+        *,
+        dedupe_key: str,
+        reason: str,
+        event_tag: str,
+        http_status: Optional[int],
+        retry_count: int,
+        notification_id: str,
+        response_body_len: Optional[int],
+    ) -> None:
+        """Persist a trade notify that did not reach HTTP. No resend."""
+        row = {
+            "notification_id": notification_id,
+            "dedupe_key": dedupe_key,
+            "event_tag": event_tag,
+            "reason": reason,
+            "http_status": http_status,
+            "retry_count": int(retry_count),
+            "response_body_len": response_body_len,
+            "response_body_preview": "",
+            "channel_delivery": "NOT_SENT",
+            "status": "SUPPRESSED",
+        }
+        try:
+            from notify.discord_notification_router import get_router
+
+            audit = getattr(get_router(Path(__file__).resolve().parents[2]), "audit", None)
+            if audit is not None and hasattr(audit, "record_failure"):
+                audit.record_failure(row)
+                return
+        except Exception:
+            pass
+        self._log_failure("trade_notify_suppressed", reason, row)
+
     def _log_entry_notify_failure(
         self,
         *,
@@ -407,6 +442,18 @@ class SmallPaperDiscordNotifier:
             res.final_result = FINAL_SUPPRESSED
             res.suppressed_reason = f"cooldown:{dedupe_key}"
             res.failure_classification = CLASS_OTHER
+            res.failure_reason = "cooldown"
+            res.http_status = None
+            res.retry_count = 0
+            self._record_trade_notify_failure(
+                dedupe_key=dedupe_key,
+                reason="cooldown",
+                event_tag=event_tag,
+                http_status=None,
+                retry_count=0,
+                notification_id="",
+                response_body_len=None,
+            )
             return res
         from notify.x1_discord_gate import (
             FAMILY as _X1_FAMILY,
@@ -1066,7 +1113,10 @@ class SmallPaperDiscordNotifier:
                 title_line="[X1 PAPER EXIT]",
                 fields=x1_exit_discord_fields(context),
                 color=0xC53030,
-                dedupe_key=f"x1-exit|{sym}|{context.get('exit_reason')}|{context.get('current_price')}",
+                dedupe_key=(
+                    f"x1-exit|{sym}|{context.get('signal_uid') or ''}|"
+                    f"{context.get('exit_reason')}|{context.get('current_price')}"
+                ),
                 trade_notify=True,
                 route_source=str(context.get("source") or ""),
                 route_activation_id=str(context.get("activation_id") or ""),

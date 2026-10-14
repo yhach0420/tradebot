@@ -1600,6 +1600,8 @@ class PaperTradeCheckedRunner:
                     "exact50": exact.get("exact50"),
                     "registered_n": exact.get("registered_n"),
                     "symbol_set_match": exact.get("symbol_set_match"),
+                    "exact50_reason": exact.get("reason"),
+                    "actual_source": exact.get("actual_source"),
                     "current_reconciliation": recovery.get("current_reconciliation"),
                     "recovery_ready": recovery.get("recovery_ready"),
                     "binding_ok": binding.get("ok"),
@@ -2766,6 +2768,17 @@ class PaperTradeCheckedRunner:
         )
         self._print_step(7, self._step_total, "Capture reuse", step.result)
         if ok:
+            from small_paper.auth_lifecycle import PHASE_BOARD_ACTIVE, PHASE_POST_INGRESS_PRE_BOARD, set_auth_phase
+
+            set_auth_phase(PHASE_POST_INGRESS_PRE_BOARD)
+            try:
+                from small_paper.runtime_lifecycle import is_auth_ready
+
+                ready, _ready_reason = is_auth_ready(status=attach.get("snapshot") or {})
+                if ready:
+                    set_auth_phase(PHASE_BOARD_ACTIVE)
+            except Exception:
+                set_auth_phase(PHASE_BOARD_ACTIVE)
             print(
                 f"  [{7}/{self._step_total}] REUSE_CAPTURE pid={attach.get('pid')} "
                 f"state={attach.get('status')} owned_by_runner=false",

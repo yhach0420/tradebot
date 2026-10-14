@@ -10,7 +10,8 @@ from small_paper.paper_primary_activation import (
     ACTIVATION_ID,
     ACTIVATION_V2_ID,
     ACTIVATION_V14_ID,
-    ACTIVATION_V16_ID,
+    ACTIVATION_V19_ID,
+    ACTIVATION_V20_ID,
     safe_pm_complete_sha,
     CANDIDATE_ID,
     CANDIDATE_MANIFEST_SHA,
@@ -68,11 +69,13 @@ def _rewrite(tmp_path: Path, manifest: dict, *, selector_sha: str | None = None)
 
 def test_selector_resolves_new_activation() -> None:
     selector, manifest = _active()
-    assert selector["activation_id"] == ACTIVATION_V16_ID
+    assert selector["activation_id"] == ACTIVATION_V20_ID
     assert selector["activation_sha"] == manifest["sha256"]
     result = assert_selected_paper_primary()
     assert result.ok, result.reason
-    assert result.identity["activation_id"] == ACTIVATION_V16_ID
+    assert result.identity["activation_id"] == ACTIVATION_V20_ID
+    parent = json.loads((OUT / f"{ACTIVATION_V19_ID}.json").read_text(encoding="utf-8"))
+    assert parent["sha256"] == "2454d6cf69f53fe362cb0a61ddc3206459333f0bed8867e7de0161af158012cd"
     assert result.identity["activation_sha"] == manifest["sha256"]
     assert result.identity["execution_family"] == "X1_IMMEDIATE_ASK"
     v1 = OUT / f"{ACTIVATION_ID}.json"
@@ -88,7 +91,7 @@ def test_identity_hashes_match_accepted_pins() -> None:
     assert ident["complete_strategy_sha"] == safe_pm_complete_sha()
     assert ident["manifest_sha"] == CANDIDATE_MANIFEST_SHA
     assert "ENTRY_SHA=" + ENTRY_SHA in result.startup_block
-    assert "activation_id=" + ACTIVATION_V16_ID in result.startup_block
+    assert "activation_id=" + ACTIVATION_V20_ID in result.startup_block
     assert ident["activation_sha"] in result.startup_block
 
 

@@ -202,7 +202,12 @@ def test_launcher_selects_c3_and_disabled_mode_stays_on_x1(
     assert (out / "heartbeat.jsonl").is_file()
     assert code == 4
 
-    monkeypatch.delenv("TRADEBOT_PAPER_STRATEGY_MODE_PATH", raising=False)
+    disabled = tmp_path / "c3_off.json"
+    disabled.write_text(
+        json.dumps({"selected": "C3", "enabled": False, "restore": "FIXED_SUPPORT_X1"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TRADEBOT_PAPER_STRATEGY_MODE_PATH", str(disabled))
     monkeypatch.delenv(X1_OWNER_ENV, raising=False)
     out_x1 = tmp_path / "x1_launch"
     out_x1.mkdir()

@@ -10,7 +10,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
-from universe.opening_screen import PreviousDayFeatures, fetch_previous_day_yfinance
+from universe.opening_screen import PreviousDayFeatures, fetch_confirmed_daily
 
 PUSH_LIMIT = 50
 FOCUS_SYMBOLS = ("3905.T", "6613.T")
@@ -29,6 +29,8 @@ FEATURE_FIELDS = (
     "volatility_liquidity_score",
     "data_source",
     "trade_date",
+    "source_bar_date",
+    "source_available_at",
 )
 
 
@@ -47,7 +49,19 @@ def generate_features_csv(
     symbol_meta: Mapping[str, Mapping[str, Any]],
     out_path: Path,
 ) -> dict[str, Any]:
-    prev_by_sym = fetch_previous_day_yfinance(symbols, trade_date)
+    prev_by_sym, required, reason = fetch_confirmed_daily(symbols, trade_date)
+    target = trade_date.strftime("%Y%m%d")
+    if reason or not required or required >= target:
+        return {
+            "ok": False,
+            "reason": reason or "NO_CONFIRMED_SESSION",
+            "required_session": required,
+            "path": str(out_path),
+            "row_count": 0,
+            "valid_vol_liq_count": 0,
+            "requested": len(symbols),
+            "fetched": 0,
+        }
     rows: list[dict[str, Any]] = []
     valid_vol_liq = 0
 
@@ -73,8 +87,19 @@ def generate_features_csv(
                 "volatility_liquidity_score": p.volatility_liquidity_score,
                 "data_source": p.data_source,
                 "trade_date": trade_date.isoformat(),
+                "source_bar_date": p.source_bar_date,
+                "source_available_at": p.source_available_at,
             }
         )
+        if p.source_bar_date != required or p.source_bar_date >= target:
+            return {
+                "ok": False,
+                "reason": "STALE_OR_FUTURE_BAR",
+                "required_session": required,
+                "path": str(out_path),
+                "row_count": 0,
+                "symbol": sym,
+            }
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8", newline="") as f:
@@ -84,6 +109,9 @@ def generate_features_csv(
             w.writerow({k: row.get(k, "") for k in FEATURE_FIELDS})
 
     return {
+        "ok": True,
+        "reason": "",
+        "required_session": required,
         "path": str(out_path),
         "row_count": len(rows),
         "valid_vol_liq_count": valid_vol_liq,

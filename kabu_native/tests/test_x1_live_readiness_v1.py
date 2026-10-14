@@ -69,7 +69,7 @@ def test_package_does_not_call_real_broker_and_v12_inventory_matches() -> None:
     selected = assert_selected_paper_primary()
     from small_paper.paper_primary_activation import safe_pm_complete_sha
 
-    assert selected.identity["activation_id"] == "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V16"
+    assert selected.identity["activation_id"] == "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V20"
     assert selected.identity["entry_sha"] == "c93c69f0edf84f5ec03b145ee17e25ef5bc2c4ecaa08cfb5e1c6fca7ec052ba9"
     assert selected.identity["exit_sha"] == "8f8ddb3d47190b96df84eb83d9e5f694bfd034ebc650a8a86a85822b5bcb8175"
     assert selected.identity["complete_strategy_sha"] == safe_pm_complete_sha()

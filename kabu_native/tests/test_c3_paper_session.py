@@ -131,9 +131,11 @@ def test_am_pm_boundaries_and_mode_restore(tmp_path: Path) -> None:
     previous = os.environ.get("TRADEBOT_X1_SESSION_OWNER")
     try:
         bound = bind_selected_live_executor(activation=activation)
-        assert bound["session_owner_class"] == "FixedSupportX1SessionExecutor"
+        assert bound["session_owner_class"] == "C3PaperSessionExecutor"
         assert bound["x1"] is True
         assert bound["boot_v1r_native_entry"] == 0
+        x1_bound = bind_selected_live_executor(activation=activation, strategy_mode="FIXED_SUPPORT_X1")
+        assert x1_bound["session_owner_class"] == "FixedSupportX1SessionExecutor"
         c3_bound = bind_selected_live_executor(activation=activation, strategy_mode="C3")
         assert c3_bound["session_owner_class"] == "C3PaperSessionExecutor"
         assert c3_bound["x1"] is True

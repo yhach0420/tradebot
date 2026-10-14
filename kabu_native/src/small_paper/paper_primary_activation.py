@@ -39,6 +39,10 @@ ACTIVATION_V13_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V13"
 ACTIVATION_V14_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V14"
 ACTIVATION_V15_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V15"
 ACTIVATION_V16_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V16"
+ACTIVATION_V17_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V17"
+ACTIVATION_V18_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V18"
+ACTIVATION_V19_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V19"
+ACTIVATION_V20_ID = "FIXED_ENTRY_SUPPORT_PAPER_PRIMARY_ACTIVATION_V20"
 _X1_PARENT = {
     ACTIVATION_V2_ID: ACTIVATION_ID,
     ACTIVATION_V3_ID: ACTIVATION_V2_ID,
@@ -55,6 +59,10 @@ _X1_PARENT = {
     ACTIVATION_V14_ID: ACTIVATION_V13_ID,
     ACTIVATION_V15_ID: ACTIVATION_V14_ID,
     ACTIVATION_V16_ID: ACTIVATION_V15_ID,
+    ACTIVATION_V17_ID: ACTIVATION_V16_ID,
+    ACTIVATION_V18_ID: ACTIVATION_V17_ID,
+    ACTIVATION_V19_ID: ACTIVATION_V18_ID,
+    ACTIVATION_V20_ID: ACTIVATION_V19_ID,
 }
 X1_EXECUTION_FAMILY = "X1_IMMEDIATE_ASK"
 X1_SESSION_EXECUTOR = "FixedSupportX1SessionExecutor"
@@ -326,7 +334,8 @@ def _assert_safe_pm_flatten(
     checks["parent_complete_unchanged"] = bound["complete_strategy_sha256"] == COMPLETE_STRATEGY_SHA
     checks["implementation_manifest_sha"] = bound["manifest_sha256"] == CANDIDATE_MANIFEST_SHA
     checks["implementation_candidate"] = bound["manifest"]["candidate_id"] == CANDIDATE_ID
-    checks["parent_activation"] = identity.get("parent_activation_id") == ACTIVATION_V15_ID
+    expected_parent = _X1_PARENT.get(str(identity.get("activation_id") or ""), ACTIVATION_V15_ID)
+    checks["parent_activation"] = identity.get("parent_activation_id") == expected_parent
     checks["execution_family"] = identity.get("execution_family") == X1_EXECUTION_FAMILY
     checks["session_executor"] = identity.get("session_executor") == X1_SESSION_EXECUTOR
     checks["session_loop_owner"] = identity.get("session_loop_owner") == X1_SESSION_LOOP_OWNER
@@ -369,7 +378,7 @@ def assert_selected_paper_primary(
         return _fail(reason, {"selector_load": False}, {})
 
     aid = str(selector.get("activation_id") or "")
-    if aid == ACTIVATION_V16_ID:
+    if aid in (ACTIVATION_V16_ID, ACTIVATION_V17_ID, ACTIVATION_V18_ID, ACTIVATION_V19_ID, ACTIVATION_V20_ID):
         return _assert_safe_pm_flatten(selector, manifest)
     if aid in (ACTIVATION_ID, ACTIVATION_V2_ID, ACTIVATION_V3_ID, ACTIVATION_V4_ID, ACTIVATION_V5_ID, ACTIVATION_V6_ID, ACTIVATION_V7_ID, ACTIVATION_V8_ID, ACTIVATION_V9_ID, ACTIVATION_V10_ID, ACTIVATION_V11_ID, ACTIVATION_V12_ID, ACTIVATION_V13_ID, ACTIVATION_V14_ID, ACTIVATION_V15_ID):
         result = _assert_fixed_entry_support(selector, manifest)
